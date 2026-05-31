@@ -2031,16 +2031,14 @@ async def run_replica_remote(app_id: int, req: RunReplicaRequest, db: AsyncSessi
     """Internal endpoint called by the node agent to start a replica container locally.
     The agent guarantees the image is already built before calling this endpoint.
     Does NOT create a DB row — the main server already has it."""
-    if req.local_app_id is not None:
-        local_app = await _get_or_404(req.local_app_id, db)
-        app_name = local_app.name
-    elif req.app_name:
+    # app_name is always supplied by the agent — no local DB lookup needed
+    if req.app_name:
         app_name = req.app_name
     else:
         app = await _get_or_404(app_id, db)
         app_name = app.name
 
-    # Image is named after local_app_id (built under that id on this node)
+    # Image was built under local_app_id (= main_id on remote nodes)
     build_app_id = req.local_app_id if req.local_app_id is not None else app_id
 
     try:
