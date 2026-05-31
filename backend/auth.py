@@ -301,7 +301,7 @@ async def authorize_websocket(websocket, required_permission: str | None = None)
     Returns True if allowed, False if the connection was rejected (with 1008 close).
 
     Usage in a WS endpoint:
-        if not await authorize_websocket(websocket, "logs.view"):
+        if not await authorize_websocket(websocket, "apps.view"):
             return
         await websocket.accept()
     """

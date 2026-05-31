@@ -1614,7 +1614,7 @@ async def node_events_ws(node_id: int, websocket: WebSocket):
 @router.websocket("/{node_id}/stats")
 async def node_stats_ws(node_id: int, websocket: WebSocket):
     """Browser-facing WebSocket: streams the remote node's system stats."""
-    if not await _auth.authorize_websocket(websocket, "stats.view"):
+    if not await _auth.authorize_websocket(websocket, "apps.view"):
         return
     await websocket.accept()
     agent_ws_conn = _node_ws_connections.get(node_id)

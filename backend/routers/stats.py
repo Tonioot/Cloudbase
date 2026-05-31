@@ -142,7 +142,7 @@ async def _open_remote_stream(node: Node, app_id: int, app_name: str, out_q: asy
 
 @router.websocket("/ws/apps/{app_id}/stats")
 async def stream_stats(app_id: int, websocket: WebSocket):
-    if not await auth.authorize_websocket(websocket, "stats.view"):
+    if not await auth.authorize_websocket(websocket, "apps.view"):
         return
     await websocket.accept()
 
@@ -306,7 +306,7 @@ async def _get_app_node(app: Application, db, local_node: Node) -> Node:
 
 @router.websocket("/ws/system/stats")
 async def stream_system_stats(websocket: WebSocket):
-    if not await auth.authorize_websocket(websocket, "stats.view"):
+    if not await auth.authorize_websocket(websocket, "apps.view"):
         return
     await websocket.accept()
     try:

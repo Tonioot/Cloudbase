@@ -90,9 +90,6 @@ async def init_db():
                     (encrypted, app_id),
                 )
 
-        # Cloudbase now runs applications in Docker-only mode.
-        await conn.exec_driver_sql("UPDATE applications SET use_docker = 1 WHERE use_docker IS NULL OR use_docker = 0")
-
         result = await conn.exec_driver_sql("PRAGMA table_info(nodes)")
         existing_node_cols = {row[1] for row in result.fetchall()}
         for col, definition in [
@@ -176,6 +173,12 @@ async def init_db():
         if "role_id" not in existing_user_cols:
             await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN role_id INTEGER REFERENCES roles(id) ON DELETE SET NULL")
 
+        # applications table — add github_token_id column if missing
+        result = await conn.exec_driver_sql("PRAGMA table_info(applications)")
+        existing_app_cols = {row[1] for row in result.fetchall()}
+        if "github_token_id" not in existing_app_cols:
+            await conn.exec_driver_sql("ALTER TABLE applications ADD COLUMN github_token_id VARCHAR(100)")
+
     # Seed default permissions, roles, and admin user
     import os as _os
     from sqlalchemy import select as _select
@@ -183,8 +186,8 @@ async def init_db():
 
     # All known permissions in the system
     ALL_PERMISSIONS = [
-        # Apps — viewing
-        ("apps.view",         "View applications, status and configuration"),
+        # Apps — viewing (includes logs and stats)
+        ("apps.view",         "View applications, status, logs and statistics"),
         # Apps — lifecycle
         ("apps.deploy",       "Deploy (create) new applications"),
         ("apps.start",        "Start applications"),
@@ -201,8 +204,6 @@ async def init_db():
         ("nodes.configure",   "Rename, enable and disable nodes"),
         ("nodes.delete",      "Delete nodes"),
         # Observability
-        ("logs.view",         "View application logs"),
-        ("stats.view",        "View application statistics"),
         ("audit.view",        "View audit logs"),
         # System & users
         ("system.manage",     "Manage Cloudbase server settings, server logs and nginx"),
@@ -223,6 +224,8 @@ async def init_db():
         "apps.create",   # replaced by apps.deploy / apps.start / apps.stop / apps.restart / apps.pull / apps.scale
         "apps.manage",   # replaced by apps.configure / apps.delete
         "nodes.manage",  # replaced by nodes.configure / nodes.delete
+        "logs.view",     # merged into apps.view
+        "stats.view",    # merged into apps.view
     ]
 
     async with AsyncSessionLocal() as session:
@@ -277,7 +280,7 @@ async def init_db():
         # Built-in roles are reset to their canonical permission set on every startup
         # so they cannot drift from the source of truth.
         from sqlalchemy import delete as _delete
-        viewer_perms = ["apps.view", "nodes.view", "logs.view", "stats.view", "audit.view"]
+        viewer_perms = ["apps.view", "nodes.view", "audit.view"]
         admin_perms  = [p for p, _ in ALL_PERMISSIONS]
 
         for role_name, role_desc, perms in [

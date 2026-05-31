@@ -820,37 +820,6 @@ def _update_template(title: str, message: str, color: str, status_url: str = Non
 
 
 
-    """Write downtime.html and update.html to /var/www/cloudbase/maintenance/{app_id}/."""
-    app_dir = os.path.join(MAINTENANCE_DIR, str(app_id))
-    log.info("[maint-files] writing to %s", app_dir)
-    try:
-        r = subprocess.run(["sudo", "mkdir", "-p", app_dir], capture_output=True, text=True)
-        log.info("[maint-files] mkdir rc=%d stderr=%r", r.returncode, r.stderr)
-        if r.returncode != 0:
-            return False, r.stderr or "Failed to create maintenance directory"
-
-        for filename, content in [("downtime.html", downtime_html), ("update.html", update_html)]:
-            path = os.path.join(app_dir, filename)
-            r = subprocess.run(["sudo", "tee", path], input=content, text=True, capture_output=True)
-            log.info("[maint-files] tee %s rc=%d stderr=%r", path, r.returncode, r.stderr)
-            if r.returncode != 0:
-                return False, r.stderr or f"Failed to write {filename}"
-
-        r = subprocess.run(
-            ["sudo", "chmod", "644",
-             os.path.join(app_dir, "downtime.html"),
-             os.path.join(app_dir, "update.html")],
-            capture_output=True, text=True,
-        )
-        log.info("[maint-files] chmod rc=%d stderr=%r", r.returncode, r.stderr)
-        log.info("[maint-files] done - files: %s", os.listdir(app_dir) if os.path.isdir(app_dir) else "DIR MISSING")
-        return True, "OK"
-    except FileNotFoundError:
-        log.error("[maint-files] sudo not found")
-        return False, "sudo not available  -  cannot write maintenance files"
-    except Exception as e:
-        log.exception("[maint-files] unexpected error")
-        return False, str(e)
 
 
 # â"€â"€ Nginx config generation â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -1299,9 +1268,6 @@ def get_config_path(app_name: str) -> str:
 def config_uses_restart_page(content: str) -> bool:
     return "try_files /restart.html" in (content or "")
 
-
-def config_uses_starting_page(content: str) -> bool:
-    return "try_files /starting.html" in (content or "")
 
 
 def write_maintenance_files(app_id: int, downtime_html: str, update_html: str, restart_html: str = None, starting_html: str = None) -> tuple[bool, str]:

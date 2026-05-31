@@ -102,7 +102,8 @@ class UpdateRequest(BaseModel):
     docker_read_only_root: Optional[bool] = None
     docker_tmpfs_enabled: Optional[bool] = None
     docker_tmpfs_size_mb: Optional[int] = None
-    env_vars: Optional[dict] = None
+    env_vars: Optional[dict] = None       # new/changed values only (write-only UI)
+    env_var_keys: Optional[list] = None   # full set of remaining key names (None = keep all)
     github_token: Optional[str] = None
     github_token_id: Optional[str] = None   # ID of a saved vault token
     auto_start:     Optional[bool] = None
@@ -671,6 +672,19 @@ def _encrypt_github_token(token: Optional[str]) -> Optional[str]:
     return encrypt_text(token)
 
 
+def _github_token_label(app) -> Optional[str]:
+    """Return a display label for the app's GitHub token — never the raw value.
+    If the token came from the vault, return its label. Otherwise return '****'."""
+    if not app.github_token:
+        return None
+    if app.github_token_id:
+        hints = token_vault.list_hints()
+        match = next((h for h in hints if h["id"] == app.github_token_id), None)
+        if match:
+            return match["label"]
+    return "****"
+
+
 def _decrypt_github_token(stored: Optional[str]) -> Optional[str]:
     if not stored:
         return None
@@ -862,40 +876,6 @@ async def list_git_commits(
     return {"branch": branch, "ref": ref, "commits": commits}
 
 
-def _run_install(app_dir: str) -> str:
-    outputs = []
-    if os.path.exists(os.path.join(app_dir, "package.json")):
-        r = subprocess.run(["npm", "install"], cwd=app_dir, capture_output=True, text=True)
-        outputs.append(f"--- npm install ---\n{r.stdout}\n{r.stderr}")
-
-    if os.path.exists(os.path.join(app_dir, "requirements.txt")):
-        venv_dir = os.path.join(app_dir, "venv")
-        if not os.path.exists(venv_dir):
-            r = subprocess.run(["python3", "-m", "venv", "venv"], cwd=app_dir, capture_output=True, text=True)
-            outputs.append(f"--- python3 -m venv venv ---\n{r.stdout}\n{r.stderr}")
-        
-        venv_bin_name = "Scripts" if os.name == "nt" else "bin"
-        pip_name = "pip.exe" if os.name == "nt" else "pip"
-        pip_path = os.path.join(venv_dir, venv_bin_name, pip_name)
-        if not os.path.exists(pip_path): pip_path = "pip3"
-            
-        r = subprocess.run([pip_path, "install", "-r", "requirements.txt"], cwd=app_dir, capture_output=True, text=True)
-        outputs.append(f"--- pip install -r requirements.txt ---\n{r.stdout}\n{r.stderr}")
-
-    if os.path.exists(os.path.join(app_dir, "Gemfile")):
-        r = subprocess.run(["bundle", "install"], cwd=app_dir, capture_output=True, text=True)
-        outputs.append(f"--- bundle install ---\n{r.stdout}\n{r.stderr}")
-
-    if os.path.exists(os.path.join(app_dir, "composer.json")):
-        r = subprocess.run(["composer", "install"], cwd=app_dir, capture_output=True, text=True)
-        outputs.append(f"--- composer install ---\n{r.stdout}\n{r.stderr}")
-
-    if os.path.exists(os.path.join(app_dir, "go.mod")):
-        r = subprocess.run(["go", "mod", "download"], cwd=app_dir, capture_output=True, text=True)
-        outputs.append(f"--- go mod download ---\n{r.stdout}\n{r.stderr}")
-    
-    return "\n\n".join(outputs)
-
 
 async def _deploy_app(app: Application):
     app_dir = pm.get_app_dir(app.name)
@@ -936,26 +916,14 @@ async def _deploy_app(app: Application):
         app.working_dir = app_dir
         app.source_revision = _resolve_source_revision(app_dir)
         app.image_revision = None
-    app_type, default_cmd, default_port = pm.detect_app_type(app_dir)
+    app.app_type = pm.detect_app_type_from_command(app.start_command) if app.start_command else "unknown"
 
-    if not app.start_command:
-        app.start_command = default_cmd
-    if not app.port and default_port:
-        app.port = default_port
-
-    app.app_type = pm.detect_app_type_from_command(app.start_command) if app.start_command else app_type
-
-    if app.use_docker:
-        log.info("[deploy] Docker mode — skipping host-side dependency install for app=%s", app.name)
-        dm.ensure_dockerfile(
-            app_dir,
-            app.app_type or "unknown",
-            app.start_command or "",
-            app.port or 8000,
-        )
-    else:
-        log.info("[deploy] Running install for app=%s", app.name)
-        await asyncio.to_thread(_run_install, app_dir)
+    dm.ensure_dockerfile(
+        app_dir,
+        app.app_type or "unknown",
+        app.start_command or "",
+        app.port or 8000,
+    )
     log.info("[deploy] Deployment finished for app=%s", app.name)
 
 
@@ -1109,30 +1077,11 @@ async def _sync_process_status(app, db) -> None:
         return
 
     # Legacy single-container model
-    if app.use_docker:
-        alive = await asyncio.to_thread(pm.is_docker_app_running, app.id)
-        new_status = "running" if alive else "stopped"
-        if app.status != new_status:
-            app.status = new_status
-            await db.commit()
-        return
-    if not app.pid:
-        return
-    alive = await asyncio.to_thread(pm.is_process_running, app.pid, app.id)
-    if alive:
-        app.status = "running"
-        return
-    # Stored PID is dead — try to recover via port before declaring stopped
-    if app.port:
-        recovered = await asyncio.to_thread(pm.find_process_by_port, app.port)
-        if recovered:
-            app.pid = recovered
-            app.status = "running"
-            await db.commit()
-            return
-    app.status = "stopped"
-    app.pid = None
-    await db.commit()
+    alive = await asyncio.to_thread(pm.is_docker_app_running, app.id)
+    new_status = "running" if alive else "stopped"
+    if app.status != new_status:
+        app.status = new_status
+        await db.commit()
 
 
 @router.get("")
@@ -1225,6 +1174,7 @@ async def deploy_app(
         name=req.name,
         repo_url=req.repo_url,
         github_token=_encrypt_github_token(_resolve_token(req.github_token, req.github_token_id)),
+        github_token_id=req.github_token_id or None,
         domain=req.domain,
         extra_domains=json.dumps(req.extra_domains or []),
         redirect_domains=json.dumps(req.redirect_domains or []),
@@ -1237,7 +1187,6 @@ async def deploy_app(
         auto_start=bool(req.auto_start) if req.auto_start is not None else False,
         restart_policy=req.restart_policy or "no",
         no_web=is_no_web,
-        use_docker=True,
         docker_cpu_limit=req.docker_cpu_limit,
         docker_memory_limit_mb=req.docker_memory_limit_mb,
         docker_read_only_root=bool(req.docker_read_only_root) if req.docker_read_only_root is not None else False,
@@ -1294,7 +1243,7 @@ async def get_stats_history(
     app_id: int,
     hours: int = Query(24, ge=1, le=168),
     db: AsyncSession = Depends(get_db),
-    _user: dict = Depends(_auth.require_permission("stats.view")),
+    _user: dict = Depends(_auth.require_permission("apps.view")),
 ):
     since = _dt.datetime.utcnow() - _dt.timedelta(hours=hours)
     result = await db.execute(
@@ -1360,11 +1309,19 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.docker_tmpfs_enabled = req.docker_tmpfs_enabled
     if req.docker_tmpfs_size_mb is not None:
         app.docker_tmpfs_size_mb = req.docker_tmpfs_size_mb
-    if req.env_vars is not None:
-        app.env_vars = encrypt_env(req.env_vars)
+    if req.env_vars is not None or req.env_var_keys is not None:
+        existing = decrypt_env(app.env_vars or "")
+        if req.env_var_keys is not None:
+            # Keep only keys that are still present in the UI
+            existing = {k: v for k, v in existing.items() if k in req.env_var_keys}
+        if req.env_vars:
+            # Merge in new/changed values
+            existing.update(req.env_vars)
+        app.env_vars = encrypt_env(existing)
     resolved = _resolve_token(req.github_token, req.github_token_id)
     if resolved is not None:
         app.github_token = _encrypt_github_token(resolved)
+        app.github_token_id = req.github_token_id or None
     if req.auto_start is not None:
         app.auto_start = req.auto_start
     if req.restart_policy is not None and req.restart_policy in ("no", "always", "on-failure"):
@@ -1381,7 +1338,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
     if req.image_revision is not None:
         app.image_revision = req.image_revision
 
-    if app.use_docker and dockerfile_changed:
+    if dockerfile_changed:
         if app.working_dir and os.path.exists(app.working_dir):
             await asyncio.to_thread(
                 dm.ensure_dockerfile,
@@ -1507,7 +1464,7 @@ async def export_apps(req: ExportRequest, _user: dict = Depends(_auth.require_pe
         export_data.append({
             "name": app.name,
             "repo_url": app.repo_url,
-            "github_token": _decrypt_github_token(app.github_token),
+            "github_token": None,
             "domain": app.domain,
             "extra_domains": json.loads(app.extra_domains or "[]"),
             "redirect_domains": json.loads(app.redirect_domains or "[]"),
@@ -1515,10 +1472,9 @@ async def export_apps(req: ExportRequest, _user: dict = Depends(_auth.require_pe
             "ssl_key_path": app.ssl_key_path,
             "start_command": app.start_command,
             "port": app.port,
-            "env_vars": decrypt_env(app.env_vars or ""),
+            "env_vars": {},
             "auto_start": app.auto_start,
             "restart_policy": app.restart_policy,
-            "use_docker": True,
             "docker_cpu_limit": app.docker_cpu_limit,
             "docker_memory_limit_mb": app.docker_memory_limit_mb,
             "docker_read_only_root": bool(app.docker_read_only_root),
@@ -1571,8 +1527,7 @@ async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, _us
             env_vars=encrypt_env(app_data.get("env_vars") or {}),
             auto_start=bool(app_data.get("auto_start")) if app_data.get("auto_start") is not None else False,
             restart_policy=app_data.get("restart_policy") or "no",
-            use_docker=True,
-            docker_cpu_limit=app_data.get("docker_cpu_limit"),
+                docker_cpu_limit=app_data.get("docker_cpu_limit"),
             docker_memory_limit_mb=app_data.get("docker_memory_limit_mb"),
             docker_read_only_root=bool(app_data.get("docker_read_only_root")) if app_data.get("docker_read_only_root") is not None else False,
             docker_tmpfs_enabled=bool(app_data.get("docker_tmpfs_enabled")) if app_data.get("docker_tmpfs_enabled") is not None else False,
@@ -2634,82 +2589,70 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
         rev = _resolve_source_revision(app_dir)
         return branch, reset.stdout.strip(), commit_info, rev
 
-    branch, reset_stdout, commit_info, source_revision = await asyncio.to_thread(_git_ops)
+    branch, _, commit_info, source_revision = await asyncio.to_thread(_git_ops)
     if source_revision:
         app.source_revision = source_revision
 
-    if app.use_docker:
-        was_running = pm.is_docker_app_running(app_id)
-        action_logs: list[str] = [f"[Git] Updated code to {target_commit or branch} ({commit_info})"]
-        action_logs.append("[Docker] Rebuilding image...")
+    was_running = pm.is_docker_app_running(app_id)
+    action_logs: list[str] = [f"[Git] Updated code to {target_commit or branch} ({commit_info})"]
+    action_logs.append("[Docker] Rebuilding image...")
 
-        def _push(aid, line):
-            _ = aid
-            action_logs.append(str(line))
+    def _push(aid, line):
+        _ = aid
+        action_logs.append(str(line))
 
-        try:
-            await asyncio.to_thread(
-                dm.build_image,
-                app_id, app.name, app_dir, _push,
-                app.app_type or "unknown", app.start_command or "",
-                app.port or 8000,
-            )
-        except Exception as e:
-            raise HTTPException(500, f"Failed to rebuild Docker image: {e}") from e
-
-        app.docker_image = dm.image_name(app_id, app.name)
-        if source_revision:
-            app.image_revision = source_revision
-        await log_audit(db, "app.pull", actor=actor, app_id=app_id, detail={"name": app.name, "commit": commit_info})
-
-        # Push updated source to all remote nodes that have instances for this app.
-        # Offline nodes keep the queued refresh and catch up when they reconnect.
-        remote_replica_result = await db.execute(
-            select(ApplicationReplica, Node)
-            .join(Node, ApplicationReplica.node_id == Node.id)
-            .where(ApplicationReplica.app_id == app_id, Node.is_local == False)
+    try:
+        await asyncio.to_thread(
+            dm.build_image,
+            app_id, app.name, app_dir, _push,
+            app.app_type or "unknown", app.start_command or "",
+            app.port or 8000,
         )
-        remote_nodes_notified: set[int] = set()
-        for _, r_node in remote_replica_result.all():
-            if r_node.id not in remote_nodes_notified:
-                await queue_node_command(
-                    db, node_id=r_node.id, app_id=app_id,
-                    command_type="refresh_source",
-                    payload={
-                        "app_id": app_id,
-                        "app_name": app.name,
-                        "commit": commit_info,
-                        "source_revision": source_revision,
-                    },
-                )
-                action_logs.append(f"[Remote] Queued source refresh on node '{r_node.name}'.")
-                remote_nodes_notified.add(r_node.id)
+    except Exception as e:
+        raise HTTPException(500, f"Failed to rebuild Docker image: {e}") from e
 
-        await db.commit()
-        if was_running:
-            action_logs.append("[Docker] Image rebuilt. Running container left untouched (no stop/restart). Restart manually to use the new image.")
-        else:
-            action_logs.append("[Docker] Image rebuilt. Start the app to apply changes.")
-        return {
-            "message": f"Updated and rebuilt Docker image from {target_commit or branch}",
-            "output": (
-                f"Latest commit: {commit_info}\n\nImage rebuilt. Running container was not stopped or restarted. "
-                "Restart manually when you want to switch to the new image."
-                if was_running
-                else f"Latest commit: {commit_info}\n\nImage rebuilt. Start the app to apply changes."
-            ),
-            "commit": commit_info,
-            "source_revision": source_revision,
-            "action_logs": action_logs,
-        }
+    app.docker_image = dm.image_name(app_id, app.name)
+    if source_revision:
+        app.image_revision = source_revision
+    await log_audit(db, "app.pull", actor=actor, app_id=app_id, detail={"name": app.name, "commit": commit_info})
 
-    app.image_revision = None
+    remote_replica_result = await db.execute(
+        select(ApplicationReplica, Node)
+        .join(Node, ApplicationReplica.node_id == Node.id)
+        .where(ApplicationReplica.app_id == app_id, Node.is_local == False)
+    )
+    remote_nodes_notified: set[int] = set()
+    for _, r_node in remote_replica_result.all():
+        if r_node.id not in remote_nodes_notified:
+            await queue_node_command(
+                db, node_id=r_node.id, app_id=app_id,
+                command_type="refresh_source",
+                payload={
+                    "app_id": app_id,
+                    "app_name": app.name,
+                    "commit": commit_info,
+                    "source_revision": source_revision,
+                },
+            )
+            action_logs.append(f"[Remote] Queued source refresh on node '{r_node.name}'.")
+            remote_nodes_notified.add(r_node.id)
+
     await db.commit()
+    if was_running:
+        action_logs.append("[Docker] Image rebuilt. Running container left untouched (no stop/restart). Restart manually to use the new image.")
+    else:
+        action_logs.append("[Docker] Image rebuilt. Start the app to apply changes.")
     return {
-        "message": f"Updated code to {target_commit or branch}",
-        "output": f"{reset_stdout}\nLatest commit: {commit_info}\n\nNote: You may need to RESTART the app to apply changes.",
+        "message": f"Updated and rebuilt Docker image from {target_commit or branch}",
+        "output": (
+            f"Latest commit: {commit_info}\n\nImage rebuilt. Running container was not stopped or restarted. "
+            "Restart manually when you want to switch to the new image."
+            if was_running
+            else f"Latest commit: {commit_info}\n\nImage rebuilt. Start the app to apply changes."
+        ),
         "commit": commit_info,
         "source_revision": source_revision,
+        "action_logs": action_logs,
     }
 
 
@@ -2717,8 +2660,6 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
 async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
 
-    if not app.use_docker:
-        raise HTTPException(400, "Rebuild is only available for Docker apps")
     if not app.working_dir:
         raise HTTPException(400, "No working directory — deploy the app first")
 
@@ -2780,8 +2721,6 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
 
-    if not app.use_docker:
-        raise HTTPException(400, "Zero-downtime deploy is only available for Docker apps")
     if not _has_public_nginx_domain(app):
         raise HTTPException(400, "Zero-downtime deploy requires a custom app domain or a configured base domain")
 
@@ -3123,48 +3062,38 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
             if source_revision:
                 app.source_revision = source_revision
 
-            if app.use_docker:
-                was_running = pm.is_docker_app_running(app_id)
-                _q("[Docker] Rebuilding image…")
+            was_running = pm.is_docker_app_running(app_id)
+            _q("[Docker] Rebuilding image…")
 
-                def _docker_push(aid, line):
-                    _q(str(line))
+            def _docker_push(_aid, line):
+                _q(str(line))
 
-                await asyncio.to_thread(
-                    dm.build_image,
-                    app_id, app.name, app_dir, _docker_push,
-                    app.app_type or "unknown", app.start_command or "",
-                    app.port or 8000,
-                )
-                app.docker_image = dm.image_name(app_id, app.name)
-                if source_revision:
-                    app.image_revision = source_revision
-                await db.commit()
+            await asyncio.to_thread(
+                dm.build_image,
+                app_id, app.name, app_dir, _docker_push,
+                app.app_type or "unknown", app.start_command or "",
+                app.port or 8000,
+            )
+            app.docker_image = dm.image_name(app_id, app.name)
+            if source_revision:
+                app.image_revision = source_revision
+            await db.commit()
 
-                if was_running:
-                    _q("[Docker] Image rebuilt. Running container left untouched. Restart manually to use the new image.")
-                else:
-                    _q("[Docker] Image rebuilt. Start the app to apply changes.")
-
-                result_holder["result"] = {
-                    "message": f"Updated and rebuilt Docker image from {target_commit or branch}",
-                    "commit": commit_info,
-                    "source_revision": source_revision,
-                    "output": (
-                        "Image rebuilt. Restart manually to switch to the new image."
-                        if was_running else
-                        "Image rebuilt. Start the app to apply changes."
-                    ),
-                }
+            if was_running:
+                _q("[Docker] Image rebuilt. Running container left untouched. Restart manually to use the new image.")
             else:
-                app.image_revision = None
-                await db.commit()
-                result_holder["result"] = {
-                    "message": f"Updated code to {target_commit or branch}",
-                    "output": f"Latest commit: {commit_info}\n\nRestart the app to apply changes.",
-                    "commit": commit_info,
-                    "source_revision": source_revision,
-                }
+                _q("[Docker] Image rebuilt. Start the app to apply changes.")
+
+            result_holder["result"] = {
+                "message": f"Updated and rebuilt Docker image from {target_commit or branch}",
+                "commit": commit_info,
+                "source_revision": source_revision,
+                "output": (
+                    "Image rebuilt. Restart manually to switch to the new image."
+                    if was_running else
+                    "Image rebuilt. Start the app to apply changes."
+                ),
+            }
         except HTTPException as exc:
             result_holder["error"] = exc.detail
         except Exception as exc:
@@ -3195,8 +3124,6 @@ async def rebuild_docker_image_stream(app_id: int, _user: dict = Depends(_auth.r
     """Streaming SSE variant of rebuild_docker_image."""
     app = await _get_or_404(app_id, db)
 
-    if not app.use_docker:
-        raise HTTPException(400, "Rebuild is only available for Docker apps")
     if not app.working_dir:
         raise HTTPException(400, "No working directory — deploy the app first")
 
@@ -3356,15 +3283,10 @@ async def get_stats(app_id: int, db: AsyncSession = Depends(get_db)):
     if replica_stats.get("status") == "running":
         return replica_stats
 
-    if app.use_docker:
-        if pm.is_docker_app_running(app_id):
-            stats = await asyncio.to_thread(pm.get_docker_stats, app_id)
-            return {"status": "running", "docker": True, **stats}
-        return {"status": "stopped", "docker": True}
-    if app.pid and pm.is_process_running(app.pid, app.id):
-        stats = await asyncio.to_thread(pm.get_process_stats, app.pid)
-        return {"status": "running", **stats}
-    return {"status": "stopped"}
+    if pm.is_docker_app_running(app_id):
+        stats = await asyncio.to_thread(pm.get_docker_stats, app_id)
+        return {"status": "running", "docker": True, **stats}
+    return {"status": "stopped", "docker": True}
 
 
 @router.get("/{app_id}/logs/tail")
@@ -3393,10 +3315,7 @@ async def get_logs_tail(app_id: int, limit: int = Query(200, ge=1, le=2000), db:
     if replica_lines:
         return {"lines": replica_lines, "remote": False}
 
-    if app.use_docker:
-        lines = pm.get_recent_docker_logs(app_id, limit)
-    else:
-        lines = pm.get_recent_logs(app_id, app.name)[-limit:]
+    lines = pm.get_recent_docker_logs(app_id, limit)
     return {"lines": lines, "remote": False}
 
 
@@ -3445,11 +3364,10 @@ def _app_to_dict(
         "status": app.status,
         "working_dir": app.working_dir,
         "last_error": app.last_error,
-        "env_vars": decrypt_env(app.env_vars or "") if include_sensitive else {},
+        "env_vars": {k: "" for k in decrypt_env(app.env_vars or "")} if include_sensitive else {},
         "nginx_enabled": app.nginx_enabled,
         "auto_start":     app.auto_start,
         "restart_policy": app.restart_policy or "no",
-        "use_docker":     True,
         "docker_image":   app.docker_image,
         "source_revision": app.source_revision,
         "image_revision": app.image_revision,
@@ -3466,7 +3384,9 @@ def _app_to_dict(
         "starting_page":    starting_page,
         "ssl_cert_path": app.ssl_cert_path,
         "ssl_key_path": app.ssl_key_path,
-        "github_token": "***" if app.github_token else None,
+        "github_token_set": bool(app.github_token),
+        "github_token_id": app.github_token_id or None,
+        "github_token_label": _github_token_label(app),
         "created_at": app.created_at.isoformat() if app.created_at else None,
         "updated_at": app.updated_at.isoformat() if app.updated_at else None,
         "app_url": _app_url,

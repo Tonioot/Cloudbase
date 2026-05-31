@@ -72,7 +72,8 @@ async function loadSidebarTree() {
   // ── Nodes section (only when multi-node and user can see nodes) ───────
   let nodesHtml = '';
   const remoteNodes = canSeeNodes ? nodes.filter(n => !n.is_local) : [];
-  if (canSeeNodes && remoteNodes.length) {
+  const showNodeSection = canSeeNodes && remoteNodes.length;
+  if (showNodeSection) {
     nodesHtml = `
       <div class="sidebar-section-label" style="margin-top:10px">Nodes</div>
       ${nodes.map(n => {
@@ -83,14 +84,17 @@ async function loadSidebarTree() {
           <span class="sidebar-app-dot" style="background:${dot}"></span>
           <span class="sidebar-app-name">${label}</span>
         </a>`;
-      }).join('')}
-      <div class="sidebar-section-label" style="margin-top:10px">Apps</div>`;
+      }).join('')}`;
   }
 
-  // ── Flat apps list ────────────────────────────────────────────────────
+  // ── Apps section label + list ─────────────────────────────────────────
   let appsHtml = '';
   if (canSeeApps) {
-    appsHtml = apps.length
+    // Only show the "Apps" section label when nodes are also visible (otherwise it's the only section, label is redundant)
+    const appsLabel = showNodeSection
+      ? `<div class="sidebar-section-label" style="margin-top:10px">Apps</div>`
+      : '';
+    const appsList = apps.length
       ? apps.map(app => {
           const appDot = STATUS_DOT[app.status] || 'var(--text-muted)';
           const active = app.id === currentAppId ? ' active' : '';
@@ -113,6 +117,7 @@ async function loadSidebarTree() {
           </a>`;
         }).join('')
       : `<div class="sidebar-apps-empty">No apps yet</div>`;
+    appsHtml = appsLabel + appsList;
   }
 
   container.innerHTML = nodesHtml + appsHtml;
@@ -867,7 +872,6 @@ async function initRoleBasedUI() {
       const ALL_KNOWN_PERMS = [
         'apps.view','apps.deploy','apps.start','apps.stop','apps.restart','apps.pull','apps.scale','apps.configure','apps.delete',
         'nodes.view','nodes.add','nodes.configure','nodes.delete',
-        'logs.view','stats.view',
         'system.manage',
         'users.manage','roles.manage',
         'audit.view','tokens.manage',

@@ -1269,12 +1269,28 @@ function initSettings() {
   setCertDisplay('cfg-cert', 'cfg-cert-name', app.ssl_cert_path || '');
   setCertDisplay('cfg-key',  'cfg-key-name',  app.ssl_key_path  || '');
 
-  // Env vars
+  // Env vars — values are write-only: server returns names with empty values.
+  // Rows with an empty value field mean "keep existing value unless user types a new one".
   const envContainer = document.getElementById('cfg-env-rows');
   envContainer.innerHTML = '';
-  Object.entries(app.env_vars || {}).forEach(([k, v]) => addEnvRow(envContainer, k, v));
+  Object.keys(app.env_vars || {}).forEach(k => addEnvRow(envContainer, k, ''));
 
   document.getElementById('cfg-add-env').onclick = () => addEnvRow(envContainer, '', '');
+
+  // Show current token hint (label for vault tokens, '****' for inline)
+  const tokenCurrentEl = document.getElementById('cfg-token-current');
+  const tokenCurrentLabel = document.getElementById('cfg-token-current-label');
+  if (tokenCurrentEl && tokenCurrentLabel) {
+    if (app.github_token_label) {
+      tokenCurrentLabel.textContent = app.github_token_label;
+      tokenCurrentEl.style.display = '';
+    } else {
+      tokenCurrentEl.style.display = 'none';
+    }
+  }
+  // Pre-fill vault token ID so save keeps it unless user changes it
+  const tokenIdEl = document.getElementById('cfg-token-id');
+  if (tokenIdEl) tokenIdEl.value = app.github_token_id || '';
 
   // Pick saved GitHub token
   document.getElementById('cfg-token-pick').onclick = () => {
@@ -1782,11 +1798,14 @@ function addDomainRow(container, value = '') {
   container.appendChild(row);
 }
 
-function addEnvRow(container, key = '', value = '') {  const row = document.createElement('div');
+function addEnvRow(container, key = '', value = '') {
+  const row = document.createElement('div');
   row.className = 'env-row';
+  // If key exists but value is empty, this is a write-only existing var — show placeholder hint
+  const valuePlaceholder = key && value === '' ? '(unchanged — type to update)' : 'value';
   row.innerHTML = `
     <input class="input input-mono" placeholder="KEY"   value="${escAttr(key)}"   data-env-key />
-    <input class="input input-mono" placeholder="value" value="${escAttr(value)}" data-env-val />
+    <input class="input input-mono" placeholder="${valuePlaceholder}" value="${escAttr(value)}" data-env-val />
     <button type="button" class="btn-remove" title="Remove">${icon.trash}</button>`;
   row.querySelector('.btn-remove').addEventListener('click', () => row.remove());
   container.appendChild(row);
@@ -2147,11 +2166,16 @@ async function saveSettings() {
   btn.disabled = true;
   btn.innerHTML = `${spinner} Saving…`;
 
+  // Build env var update: send new/changed values + the full set of remaining keys
+  // so the backend knows which keys to remove (those not in env_var_keys).
   const env_vars = {};
+  const env_var_keys = [];
   document.querySelectorAll('#cfg-env-rows .env-row').forEach(row => {
     const k = row.querySelector('[data-env-key]').value.trim();
     const v = row.querySelector('[data-env-val]').value;
-    if (k) env_vars[k] = v;
+    if (!k) return;
+    env_var_keys.push(k);
+    if (v !== '') env_vars[k] = v;  // only send value if user typed something
   });
 
   const tokenId = document.getElementById('cfg-token-id')?.value?.trim();
@@ -2180,6 +2204,7 @@ async function saveSettings() {
     docker_tmpfs_enabled: document.getElementById('cfg-docker-tmpfs-enabled').checked,
     docker_tmpfs_size_mb: Number.isInteger(dockerTmpfsSize) ? dockerTmpfsSize : null,
     env_vars,
+    env_var_keys,
     ...(tokenId ? { github_token_id: tokenId } : token ? { github_token: token } : {}),
   };
 

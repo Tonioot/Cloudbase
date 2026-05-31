@@ -3,6 +3,8 @@ import json
 import logging
 import logging.handlers
 import os
+
+log = logging.getLogger("cloudbase.main")
 import time as _time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -168,65 +170,47 @@ async def _stats_collector():
                         return  # remote node apps stream their own stats via the agent
                     import time as _time
                     timestamp = int(_time.time() * 1000)  # milliseconds
-                    if a.use_docker:
-                        app_replicas = replicas_by_app.get(a.id, [])
-                        if app_replicas:
-                            # Instance-based: aggregate stats from all running replicas
-                            stats_list = await asyncio.gather(*[
-                                asyncio.to_thread(
-                                    dm.get_container_stats_by_name,
-                                    dm.replica_container_name(a.id, r.id),
-                                )
-                                for r in app_replicas
-                            ])
-                            stats_list = [s for s in stats_list if s]
-                            if not stats_list:
-                                return
-                            n = len(stats_list)
-                            s = {
-                                "cpu_percent":    round(sum(s.get("cpu_percent",    0) for s in stats_list) / n, 2),
-                                "memory_mb":      round(sum(s.get("memory_mb",      0) for s in stats_list), 2),
-                                "memory_vms_mb":  round(sum(s.get("memory_vms_mb",  0) for s in stats_list), 2),
-                                "net_rx_mb":      round(sum(s.get("net_rx_mb",      0) for s in stats_list), 2),
-                                "net_tx_mb":      round(sum(s.get("net_tx_mb",      0) for s in stats_list), 2),
-                                "disk_read_mb":   round(sum(s.get("disk_read_mb",   0) for s in stats_list), 2),
-                                "disk_write_mb":  round(sum(s.get("disk_write_mb",  0) for s in stats_list), 2),
-                                "uptime_seconds": max((s.get("uptime_seconds", 0) for s in stats_list), default=0),
-                            }
-                        else:
-                            # Legacy single-container model
-                            s = await asyncio.to_thread(pm.get_docker_stats, a.id)
-                            if not s:
-                                return
-                        mem = psutil.virtual_memory()
-                        data = {
-                            "status": "running",
-                            "pid": None,
-                            "docker": True,
-                            "timestamp": timestamp,
-                            **s,
-                            "system_cpu_percent": psutil.cpu_percent(interval=None),
-                            "system_memory_total_mb": round(mem.total / 1024 / 1024),
-                            "system_memory_used_mb":  round(mem.used  / 1024 / 1024),
-                            "system_memory_percent":  mem.percent,
+                    app_replicas = replicas_by_app.get(a.id, [])
+                    if app_replicas:
+                        # Instance-based: aggregate stats from all running replicas
+                        stats_list = await asyncio.gather(*[
+                            asyncio.to_thread(
+                                dm.get_container_stats_by_name,
+                                dm.replica_container_name(a.id, r.id),
+                            )
+                            for r in app_replicas
+                        ])
+                        stats_list = [s for s in stats_list if s]
+                        if not stats_list:
+                            return
+                        n = len(stats_list)
+                        s = {
+                            "cpu_percent":    round(sum(s.get("cpu_percent",    0) for s in stats_list) / n, 2),
+                            "memory_mb":      round(sum(s.get("memory_mb",      0) for s in stats_list), 2),
+                            "memory_vms_mb":  round(sum(s.get("memory_vms_mb",  0) for s in stats_list), 2),
+                            "net_rx_mb":      round(sum(s.get("net_rx_mb",      0) for s in stats_list), 2),
+                            "net_tx_mb":      round(sum(s.get("net_tx_mb",      0) for s in stats_list), 2),
+                            "disk_read_mb":   round(sum(s.get("disk_read_mb",   0) for s in stats_list), 2),
+                            "disk_write_mb":  round(sum(s.get("disk_write_mb",  0) for s in stats_list), 2),
+                            "uptime_seconds": max((s.get("uptime_seconds", 0) for s in stats_list), default=0),
                         }
                     else:
-                        if not a.pid:
-                            return
-                        s = await asyncio.to_thread(pm.get_process_stats, a.pid)
+                        # Legacy single-container model
+                        s = await asyncio.to_thread(pm.get_docker_stats, a.id)
                         if not s:
                             return
-                        mem = psutil.virtual_memory()
-                        data = {
-                            "status": "running",
-                            "pid": a.pid,
-                            "timestamp": timestamp,
-                            **s,
-                            "system_cpu_percent": psutil.cpu_percent(interval=None),
-                            "system_memory_total_mb": round(mem.total / 1024 / 1024),
-                            "system_memory_used_mb":  round(mem.used  / 1024 / 1024),
-                            "system_memory_percent":  mem.percent,
-                        }
+                    mem = psutil.virtual_memory()
+                    data = {
+                        "status": "running",
+                        "pid": None,
+                        "docker": True,
+                        "timestamp": timestamp,
+                        **s,
+                        "system_cpu_percent": psutil.cpu_percent(interval=None),
+                        "system_memory_total_mb": round(mem.total / 1024 / 1024),
+                        "system_memory_used_mb":  round(mem.used  / 1024 / 1024),
+                        "system_memory_percent":  mem.percent,
+                    }
                     pm._stats_history.setdefault(a.id, deque(maxlen=60)).append(data)
                     pm._push_stat(a.id, data)
                 except Exception:
@@ -746,12 +730,12 @@ _PERMISSION_PREFIX_OVERRIDES: tuple[tuple[str, str, str | None], ...] = (
 # (logs.view, stats.view) for specific app sub-resources.
 def _resolve_apps_get_permission(path: str) -> str:
     """For GET /api/apps/* paths, return the required permission."""
-    # /logs, /logs/tail, /replicas/*/logs → logs.view
+    # /logs, /logs/tail, /replicas/*/logs → apps.view
     if "/logs" in path:
-        return "logs.view"
-    # /stats, /stats-remote, /aggregate-stats, /stats/history → stats.view
+        return "apps.view"
+    # /stats, /stats-remote, /aggregate-stats, /stats/history → apps.view
     if "/stats" in path or "stats-remote" in path or "stats-debug" in path:
-        return "stats.view"
+        return "apps.view"
     # Everything else under /api/apps/ → apps.view
     return "apps.view"
 

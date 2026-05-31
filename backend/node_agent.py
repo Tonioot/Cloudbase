@@ -1,5 +1,4 @@
 import os
-import sys
 import json
 import time
 import socket
@@ -11,7 +10,7 @@ import platform
 import subprocess
 import logging
 from typing import Optional, Any, Tuple, Dict, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import httpx
 import websockets
@@ -40,7 +39,6 @@ class AgentState:
     node_id: int
     node_name: str
     heartbeat_interval: int = 15
-    app_id_map: dict[str, int] = field(default_factory=dict)
 
 def _normalize_url(url: str) -> str:
     url = url.strip().rstrip("/")
@@ -183,7 +181,6 @@ async def _register(
         "invite_code": invite_code,
         "name": node_name,
         "public_host": public_host,
-        "api_base_url": _LOCAL_API_BASE,
         "heartbeat_interval": heartbeat_interval,
         "capabilities": _build_capabilities(),
         "metadata_json": _collect_system_info(),
@@ -434,43 +431,49 @@ async def _cleanup_orphaned_replica_containers(client: httpx.AsyncClient, state:
 
 # ─── Command Handlers ─────────────────────────────────────────────────────────
 
-async def _resolve_local_id(client, state, main_app_id, payload, headers) -> int:
-    local_id = state.app_id_map.get(str(main_app_id))
-    if local_id: return local_id
-    app_name = payload.get("name") or payload.get("app_name")
-    if app_name:
-        resp = await client.get(f"{_LOCAL_API_BASE}/api/apps", headers=headers, timeout=10)
-        if resp.status_code == 200:
-            for a in resp.json():
-                if a.get("name") == app_name:
-                    found = int(a["id"])
-                    state.app_id_map[str(main_app_id)] = found
-                    _save_state(state)
-                    return found
-    raise ValueError(f"Unknown app (id={main_app_id}, name={app_name or '?'})")
 
-async def cmd_delete_app(client, state, main_id, payload, headers):
+async def cmd_delete_app(_client, _state, main_id, _payload, _headers):
+    """Stop all replica containers for this app on this node."""
     try:
-        local_id = await _resolve_local_id(client, state, main_id, payload, headers)
-    except ValueError:
-        # App was never deployed to this node (e.g. created but never started) — nothing to delete.
-        _agent_log(f"[delete_app] No local record for main_id={main_id}, skipping")
-        return {"message": "App not found locally, nothing to delete"}
-    resp = await client.delete(f"{_LOCAL_API_BASE}/api/apps/{local_id}", headers=headers, timeout=60)
-    resp.raise_for_status()
-    return resp.json()
+        result = subprocess.run(
+            ["docker", "ps", "-a", "--format", "{{.Names}}", "--filter", f"name=cloudbase-app-{main_id}-replica-"],
+            capture_output=True, text=True, timeout=10,
+        )
+        for cname in result.stdout.splitlines():
+            cname = cname.strip()
+            if cname:
+                subprocess.run(["docker", "rm", "-f", cname], capture_output=True, timeout=15)
+                _agent_log(f"[delete_app] Removed container '{cname}'")
+    except Exception as e:
+        _agent_log(f"[delete_app] Error stopping containers for app {main_id}: {e}")
+    return {"message": f"Containers for app {main_id} removed"}
 
-async def cmd_get_logs_tail(client, state, main_id, payload, headers):
-    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
+
+async def cmd_get_logs_tail(_client, _state, main_id, payload, _headers):
+    """Get recent logs from all replica containers for this app."""
     limit = payload.get("limit") or 200
-    resp = await client.get(f"{_LOCAL_API_BASE}/api/apps/{local_id}/logs/tail", params={"limit": limit}, headers=headers, timeout=20)
-    resp.raise_for_status()
-    return resp.json()
+    lines: list[str] = []
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "-a", "--format", "{{.Names}}", "--filter", f"name=cloudbase-app-{main_id}-replica-"],
+            capture_output=True, text=True, timeout=10,
+        )
+        for cname in result.stdout.splitlines():
+            cname = cname.strip()
+            if not cname:
+                continue
+            r = subprocess.run(
+                ["docker", "logs", "--tail", str(limit), cname],
+                capture_output=True, text=True, timeout=10,
+            )
+            lines.extend((r.stdout + r.stderr).splitlines())
+    except Exception as e:
+        _agent_log(f"[get_logs_tail] Error: {e}")
+    return {"lines": lines[-limit:]}
+
 
 async def cmd_get_stats(client, state, main_id, payload, headers):
-    # On remote nodes the app runs as replica containers (cloudbase-app-{main_id}-replica-{n}),
-    # not as a standalone app container.  Use the aggregate-stats endpoint so we get real
-    # CPU/memory numbers instead of {"status":"stopped"}.
+    """Aggregate stats across all replica containers for this app on this node."""
     resp = await client.get(
         f"{_LOCAL_API_BASE}/api/apps/{main_id}/replicas/aggregate-stats",
         headers=headers, timeout=20,
@@ -518,13 +521,6 @@ async def cmd_get_replica_logs(client, state, main_id, payload, headers):
         return {"lines": [], "error": str(e)}
 
 
-async def _find_local_app_by_name(client: httpx.AsyncClient, headers, app_name: str) -> Optional[dict[str, Any]]:
-    resp = await client.get(f"{_LOCAL_API_BASE}/api/apps", headers=headers, timeout=20)
-    resp.raise_for_status()
-    for app in resp.json():
-        if app.get("name") == app_name:
-            return app
-    return None
 
 
 def _local_app_dir(app_name: str) -> str:
@@ -592,57 +588,6 @@ async def _download_and_extract_source(client: httpx.AsyncClient, state, main_id
     return app_dir
 
 
-async def _register_local_app(client: httpx.AsyncClient, state, main_id: int, payload: dict, app_dir: str, headers) -> int:
-    """Ensure app exists in local Cloudbase DB with correct working_dir. Returns local_app_id."""
-    import re as _re
-    app_name = payload.get("app_name") or payload.get("name") or ""
-    start_command = payload.get("start_command") or ""
-    port = payload.get("internal_port") or payload.get("port") or 8000
-
-    local_app = await _find_local_app_by_name(client, headers, app_name)
-    if not local_app:
-        reg_payload = {
-            "name": app_name,
-            "repo_url": "local://primary",
-            "start_command": start_command,
-            "port": port,
-            "docker_cpu_limit": payload.get("docker_cpu_limit"),
-            "docker_memory_limit_mb": payload.get("docker_memory_limit_mb"),
-            "docker_read_only_root": payload.get("docker_read_only_root"),
-            "docker_tmpfs_enabled": payload.get("docker_tmpfs_enabled"),
-            "docker_tmpfs_size_mb": payload.get("docker_tmpfs_size_mb"),
-            "env_vars": payload.get("env_vars") or {},
-            "auto_start": False,
-            "restart_policy": payload.get("restart_policy") or "no",
-            "use_docker": True,
-        }
-        resp = await client.post(f"{_LOCAL_API_BASE}/api/apps", json=reg_payload, headers=headers, timeout=60)
-        if resp.status_code == 400 and "already exists" in resp.text:
-            local_app = await _find_local_app_by_name(client, headers, app_name)
-        else:
-            resp.raise_for_status()
-            local_app = resp.json()
-
-    local_id = int(local_app["id"])
-
-    # Persist working_dir and keep start_command in sync — done via a single PUT
-    update: dict = {}
-    if local_app.get("working_dir") != app_dir:
-        update["working_dir"] = app_dir
-    if start_command and local_app.get("start_command") != start_command:
-        update["start_command"] = start_command
-    if update:
-        upd = await client.put(
-            f"{_LOCAL_API_BASE}/api/apps/{local_id}",
-            json=update, headers=headers, timeout=30,
-        )
-        upd.raise_for_status()
-
-    if main_id:
-        state.app_id_map[str(main_id)] = local_id
-        _save_state(state)
-
-    return local_id
 
 
 async def _build_image_local(local_id: int, app_name: str, app_dir: str, payload: dict) -> str:
@@ -657,10 +602,7 @@ async def _build_image_local(local_id: int, app_name: str, app_dir: str, payload
     port = payload.get("internal_port") or payload.get("port") or 8000
 
     if not app_type or app_type == "unknown":
-        inferred_type = pm.detect_app_type_from_command(start_cmd) if start_cmd else "unknown"
-        if inferred_type == "unknown":
-            inferred_type, _, _ = pm.detect_app_type(app_dir)
-        app_type = inferred_type or "unknown"
+        app_type = pm.detect_app_type_from_command(start_cmd) if start_cmd else "unknown"
 
     img = dm.image_name(local_id, app_name)
 
@@ -678,33 +620,9 @@ async def _build_image_local(local_id: int, app_name: str, app_dir: str, payload
     return img
 
 
-async def _update_local_app_revision(
-    client: httpx.AsyncClient,
-    local_id: int,
-    headers,
-    *,
-    source_revision: Optional[str],
-    image_revision: Optional[str],
-) -> None:
-    update_payload: dict[str, str] = {}
-    if source_revision is not None:
-        update_payload["source_revision"] = source_revision
-    if image_revision is not None:
-        update_payload["image_revision"] = image_revision
-    if not update_payload:
-        return
-    resp = await client.put(
-        f"{_LOCAL_API_BASE}/api/apps/{local_id}",
-        json=update_payload,
-        headers=headers,
-        timeout=30,
-    )
-    resp.raise_for_status()
-
-
 async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id, payload, headers) -> int:
     """Ensure source + image are ready on this node. Only downloads/builds when needed.
-    Returns local_app_id."""
+    Returns main_id (used directly as the image app_id — no local DB needed)."""
     import docker_manager as dm
     import process_manager as pm
 
@@ -717,63 +635,30 @@ async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id
     if not desired_app_type or desired_app_type == "unknown":
         desired_app_type = pm.detect_app_type_from_command(desired_start_command) if desired_start_command else "unknown"
 
-    # Check if we already have a valid image for this architecture
-    local_app = await _find_local_app_by_name(client, headers, app_name)
-    if local_app:
-        local_id = int(local_app["id"])
-        img = dm.image_name(local_id, app_name)
-        local_source_revision = local_app.get("source_revision")
-        local_image_revision = local_app.get("image_revision")
-        local_start_command = local_app.get("start_command") or ""
-        local_app_type = (local_app.get("app_type") or "").strip().lower()
-        revision_matches = (
-            not desired_revision
-            or (local_source_revision == desired_revision and local_image_revision == desired_revision)
-        )
-        runtime_matches = True
-        if desired_start_command and local_start_command != desired_start_command:
-            runtime_matches = False
-        if desired_app_type and desired_app_type != "unknown" and local_app_type != desired_app_type:
-            runtime_matches = False
-
-        if _local_image_ok(img) and revision_matches and runtime_matches:
-            # Image present and correct arch — just make sure state map is current
-            if main_id:
-                state.app_id_map[str(main_id)] = local_id
-                _save_state(state)
+    # Check if we already have a valid image built under main_id
+    img = dm.image_name(int(main_id), app_name)
+    if _local_image_ok(img):
+        if not desired_revision:
             _agent_log(f"[deploy] Image {img} already present, skipping build")
-            return local_id
-        else:
-            if desired_revision and local_image_revision != desired_revision:
-                _agent_log(f"[deploy] Image {img} exists but revision is stale ({local_image_revision} != {desired_revision}), rebuilding...")
-            elif not runtime_matches:
-                _agent_log(
-                    f"[deploy] Image {img} exists but runtime config changed "
-                    f"(app_type {local_app_type or '?'} -> {desired_app_type or '?'}, "
-                    f"start_command changed={local_start_command != desired_start_command}), rebuilding..."
-                )
-            else:
-                _agent_log(f"[deploy] Image {img} missing or wrong arch, rebuilding...")
+            return int(main_id)
+        # Check revision via docker inspect label
+        try:
+            r = subprocess.run(
+                ["docker", "inspect", "--format", "{{index .Config.Labels \"cloudbase.source_revision\"}}", img],
+                capture_output=True, text=True, timeout=10,
+            )
+            image_revision = r.stdout.strip()
+        except Exception:
+            image_revision = ""
+        if image_revision == desired_revision:
+            _agent_log(f"[deploy] Image {img} already at revision {desired_revision}, skipping build")
+            return int(main_id)
+        _agent_log(f"[deploy] Image {img} stale ({image_revision!r} != {desired_revision!r}), rebuilding")
 
-    # Image missing or wrong arch — fetch source from primary and build
-    app_dir = await _download_and_extract_source(client, state, main_id, app_name, headers)
-    local_id = await _register_local_app(client, state, main_id, payload, app_dir, headers)
-    await _update_local_app_revision(
-        client,
-        local_id,
-        headers,
-        source_revision=desired_revision,
-        image_revision=None,
-    )
-    await _build_image_local(local_id, app_name, app_dir, payload)
-    await _update_local_app_revision(
-        client,
-        local_id,
-        headers,
-        source_revision=desired_revision,
-        image_revision=desired_revision,
-    )
-    return local_id
+    # Image missing, wrong arch or stale — fetch source from primary and build
+    app_dir = await _download_and_extract_source(client, state, int(main_id), app_name, headers)
+    await _build_image_local(int(main_id), app_name, app_dir, payload)
+    return int(main_id)
 
 
 async def cmd_start_replica(client, state, main_id, payload, headers):
@@ -823,33 +708,17 @@ async def cmd_stop_replica(client, state, main_id, payload, headers):
     return resp.json()
 
 
-async def cmd_refresh_source(client, state, main_id, payload, headers):
+async def cmd_refresh_source(client, state, main_id, payload, _headers):
     """Download fresh source from primary and rebuild the Docker image for this architecture.
     Called automatically after a git pull on the primary node. Always re-downloads and rebuilds."""
     app_name = payload.get("app_name") or ""
     if not app_name:
         raise RuntimeError("Missing app_name in refresh_source payload")
 
-    app_dir = await _download_and_extract_source(client, state, main_id, app_name, headers)
-    local_id = await _register_local_app(client, state, main_id, payload, app_dir, headers)
-    desired_revision = payload.get("source_revision")
-    await _update_local_app_revision(
-        client,
-        local_id,
-        headers,
-        source_revision=desired_revision,
-        image_revision=None,
-    )
-    await _build_image_local(local_id, app_name, app_dir, payload)
-    await _update_local_app_revision(
-        client,
-        local_id,
-        headers,
-        source_revision=desired_revision,
-        image_revision=desired_revision,
-    )
+    app_dir = await _download_and_extract_source(client, state, int(main_id), app_name, headers={"X-Node-Token": state.auth_token})
+    await _build_image_local(int(main_id), app_name, app_dir, payload)
     _agent_log(f"[refresh_source] app='{app_name}' rebuilt from updated source")
-    return {"ok": True, "local_app_id": local_id, "app_dir": app_dir}
+    return {"ok": True, "app_dir": app_dir}
 
 
 # ─── Command Dispatcher ───────────────────────────────────────────────────────
@@ -888,15 +757,9 @@ async def _execute_command(
             if command_type == "node_stats_stream":
                 local_path = "/ws/system/stats"
             else:
-                agent_token = _load_agent_token()
-                headers = {"X-Agent-Token": agent_token, "Content-Type": "application/json"}
-                try:
-                    local_id = await _resolve_local_id(client, state, main_id, payload, headers)
-                except Exception as e:
-                    _agent_log(f"[agent] stream {command_type}: cannot resolve app {main_id}: {e}")
-                    return "failed", None, f"Cannot resolve local app: {e}"
+                # main_id is used directly — no local DB lookup needed
                 suffix = "logs" if command_type == "stream_logs" else "stats"
-                local_path = f"/ws/apps/{local_id}/{suffix}"
+                local_path = f"/ws/apps/{main_id}/{suffix}"
 
             stream_id = payload.get("stream_id") or secrets.token_hex(8)
             _agent_log(f"[agent] starting {command_type} relay: local={local_path} stream_id={stream_id}")
@@ -967,39 +830,7 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState):
                 await _ws_send(json.dumps({"type": "auth", "token": state.auth_token}))
 
                 async def _heartbeat_task():
-                    _known_statuses: dict[int, str] = {}
-                    
-                    async def _check_and_report_statuses():
-                        try:
-                            agent_token = _load_agent_token()
-                            headers = {"X-Agent-Token": agent_token}
-                            resp = await client.get(f"{_LOCAL_API_BASE}/api/apps", headers=headers, timeout=5)
-                            if resp.status_code == 200:
-                                for app_info in resp.json():
-                                    local_id = int(app_info["id"])
-                                    new_status = app_info.get("status") or "stopped"
-                                    main_id = next(
-                                        (int(k) for k, v in state.app_id_map.items() if v == local_id),
-                                        None,
-                                    )
-                                    if not main_id:
-                                        continue
-                                    old_status = _known_statuses.get(local_id)
-                                    _known_statuses[local_id] = new_status
-                                    if old_status != new_status:
-                                        _agent_log(f"[agent] app local_id={local_id} main_id={main_id} status {old_status}→{new_status}")
-                                        await _ws_send(json.dumps({
-                                            "type": "status_update",
-                                            "app_id": main_id,
-                                            "status": new_status,
-                                        }))
-                        except Exception as e:
-                            _agent_log(f"[agent] app status monitor error: {e}")
-
-                    # Initial check immediately on connect
-                    await _check_and_report_statuses()
                     await _cleanup_orphaned_replica_containers(client, state)
-
                     while True:
                         await asyncio.sleep(state.heartbeat_interval)
                         await _ws_send(json.dumps({
@@ -1008,7 +839,6 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState):
                             "metadata_json": _collect_system_info(),
                             "capabilities": _build_capabilities()
                         }))
-                        await _check_and_report_statuses()
                         _heartbeat_task._cleanup_tick = getattr(_heartbeat_task, "_cleanup_tick", 0) + 1
                         if _heartbeat_task._cleanup_tick % 5 == 0:
                             await _cleanup_orphaned_replica_containers(client, state)
