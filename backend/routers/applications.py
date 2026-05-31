@@ -2534,25 +2534,42 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
         return base
 
     if target_node.is_local:
-        try:
-            replica.docker_cpu_limit = req.docker_cpu_limit
-            replica.docker_memory_limit_mb = req.docker_memory_limit_mb
-            replica.docker_read_only_root = bool(req.docker_read_only_root) if req.docker_read_only_root is not None else False
-            replica.docker_tmpfs_enabled = bool(req.docker_tmpfs_enabled) if req.docker_tmpfs_enabled is not None else False
-            replica.docker_tmpfs_size_mb = req.docker_tmpfs_size_mb
-            container_id = await _start_instance_local(app, replica, env_vars, app_id)
-            replica.status = "running"
-            replica.container_id = container_id
-        except Exception as e:
-            replica.status = "error"
-            replica.last_error = str(e)
-            await db.commit()
-            raise HTTPException(500, f"Failed to start replica: {e}") from e
+        replica.docker_cpu_limit = req.docker_cpu_limit
+        replica.docker_memory_limit_mb = req.docker_memory_limit_mb
+        replica.docker_read_only_root = bool(req.docker_read_only_root) if req.docker_read_only_root is not None else False
+        replica.docker_tmpfs_enabled = bool(req.docker_tmpfs_enabled) if req.docker_tmpfs_enabled is not None else False
+        replica.docker_tmpfs_size_mb = req.docker_tmpfs_size_mb
+        replica.status = "starting"
 
-        # Regenerate nginx with new backend — flush first so the new running replica is visible.
-        if _has_public_nginx_domain(app):
-            await db.flush()
-            await _write_app_nginx_config(app, db, local_node)
+        replica_id_for_task = replica.id
+        local_node_id = local_node.id
+        has_nginx = _has_public_nginx_domain(app)
+
+        async def _start_local_in_background():
+            async with AsyncSessionLocal() as bg_db:
+                bg_app = (await bg_db.execute(select(Application).where(Application.id == app_id))).scalar_one_or_none()
+                bg_replica = (await bg_db.execute(select(ApplicationReplica).where(ApplicationReplica.id == replica_id_for_task))).scalar_one_or_none()
+                bg_local_node = (await bg_db.execute(select(Node).where(Node.id == local_node_id))).scalar_one_or_none()
+                if not bg_app or not bg_replica or not bg_local_node:
+                    return
+                bg_env_vars = decrypt_env(bg_app.env_vars or "")
+                try:
+                    await _set_replica_substatus(replica_id_for_task, "creating_container")
+                    container_id = await _start_instance_local(bg_app, bg_replica, bg_env_vars, app_id)
+                    bg_replica.status = "running"
+                    bg_replica.substatus = None
+                    bg_replica.container_id = container_id
+                    bg_replica.last_error = None
+                    if has_nginx:
+                        await bg_db.flush()
+                        await _write_app_nginx_config(bg_app, bg_db, bg_local_node)
+                except Exception as e:
+                    bg_replica.status = "error"
+                    bg_replica.substatus = None
+                    bg_replica.last_error = str(e)
+                await bg_db.commit()
+
+        asyncio.create_task(_start_local_in_background())
     else:
         if target_node.status != "online":
             raise HTTPException(400, f"Node '{target_node.name}' is not online")
