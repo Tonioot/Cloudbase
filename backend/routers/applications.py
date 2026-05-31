@@ -1065,6 +1065,12 @@ async def _sync_process_status(app, db) -> None:
                 continue
             if replica.status == "stopping":
                 continue
+            # Grace period: skip container check for replicas that just became "running"
+            # to avoid a false "stopped" flash while Docker transitions from "created" to "running".
+            if replica.status == "running":
+                age = (_dt.datetime.utcnow() - (replica.updated_at or replica.created_at)).total_seconds()
+                if age < 15:
+                    continue
             alive = await asyncio.to_thread(dm.is_replica_container_running, app.id, replica.id)
             new_status = "running" if alive else "stopped"
             if replica.status != new_status:
