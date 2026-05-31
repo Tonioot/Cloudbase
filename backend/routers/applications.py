@@ -824,7 +824,7 @@ def _recent_git_commits(app_dir: str, limit: int = 20, ref: Optional[str] = None
 
 
 @router.get("/{app_id}/source-archive")
-async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.view"))):
+async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db)):
     """Return a .tar.gz of the app's working directory for remote nodes to build from.
     Only the local primary serves this — remote nodes call this endpoint directly."""
     app = await _get_or_404(app_id, db)
