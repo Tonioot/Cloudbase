@@ -2597,7 +2597,11 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
                         err_replica.last_error = str(e)
                         await bg_db.commit()
 
-        asyncio.create_task(_start_local_in_background())
+        _task = asyncio.create_task(_start_local_in_background())
+        _task.add_done_callback(
+            lambda t: log.error("[scale] background task crashed: %s", t.exception(), exc_info=t.exception())
+            if not t.cancelled() and t.exception() else None
+        )
     else:
         if target_node.status != "online":
             raise HTTPException(400, f"Node '{target_node.name}' is not online")
