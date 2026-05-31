@@ -297,20 +297,45 @@ def get_current_actor(pdm_token: Optional[str] = Cookie(default=None)) -> str:
 
 async def authorize_websocket(websocket, required_permission: str | None = None) -> bool:
     """
-    Validate a browser WebSocket connection's auth cookie and (optionally) a permission.
-    Returns True if allowed, False if the connection was rejected (with 1008 close).
+    Validate a WebSocket connection. Accepts either:
+    - Browser session: pdm_token cookie (user JWT) with optional permission check.
+    - Node agent: X-Node-Token header (stored in Node.auth_token) — bypasses permission checks.
+    - Local agent: X-Agent-Token header — bypasses permission checks.
 
-    Usage in a WS endpoint:
-        if not await authorize_websocket(websocket, "apps.view"):
-            return
-        await websocket.accept()
+    Returns True if allowed, False if rejected (connection closed with 1008).
     """
+    # Local agent token (node_agent.py on the same machine)
+    agent_token = websocket.headers.get("x-agent-token", "")
+    if agent_token:
+        if verify_agent_token(agent_token):
+            return True
+        await websocket.close(code=1008, reason="Invalid agent token")
+        return False
+
+    # Remote node agent token
+    node_token = websocket.headers.get("x-node-token", "")
+    if node_token:
+        from database import AsyncSessionLocal
+        from models import Node
+        from sqlalchemy import select
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(Node).where(Node.auth_token == node_token, Node.enabled == True)
+                )
+                if result.scalar_one_or_none() is not None:
+                    return True
+        except Exception:
+            pass
+        await websocket.close(code=1008, reason="Invalid node token")
+        return False
+
+    # Browser session cookie
     token = websocket.cookies.get(_COOKIE_NAME)
     user = decode_token(token) if token else None
     if not user:
         await websocket.close(code=1008, reason="Not authenticated")
         return False
-    # Root (built-in admin) bypasses permission checks
     if user.get("username") == "admin":
         return True
     if required_permission is not None:

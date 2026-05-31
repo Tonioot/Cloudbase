@@ -1899,15 +1899,15 @@ async function initInstances() {
         const sub = inst.substatus;
         // Steps in the order they always appear — building_image may be skipped (cached image)
         const steps = [
-          { key: 'building_image',     label: 'Image bouwen' },
-          { key: 'creating_container', label: 'Container aanmaken' },
-          { key: 'waiting',            label: 'App opstarten' },
+          { key: 'building_image',     label: 'Building image' },
+          { key: 'creating_container', label: 'Creating container' },
+          { key: 'waiting',            label: 'Starting app' },
         ];
         // Determine which step is active and which are done
         const activeIdx = sub ? Math.max(steps.findIndex(s => s.key === sub), 0) : 0;
         startupHtml = `
           <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border-muted)">
-            <div style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin-bottom:6px">Opstarten</div>
+            <div style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin-bottom:6px">Starting up</div>
             <div style="display:flex;flex-direction:column;gap:5px">
               ${steps.map((step, i) => {
                 const isDone   = i < activeIdx;

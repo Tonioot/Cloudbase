@@ -779,11 +779,13 @@ class _AuthMiddleware(BaseHTTPMiddleware):
         if path in _PUBLIC:
             return await call_next(request)
 
-        # Note: WebSocket endpoints (/ws/*, /api/nodes/{id}/events|stats|commands/live, /api/nodes/ws/*)
-        # are NOT intercepted by BaseHTTPMiddleware — they use ASGI's "websocket" scope which bypasses
-        # HTTP middleware. Each WS endpoint must call `auth.authorize_websocket(...)` itself.
+        # WebSocket upgrade requests reach BaseHTTPMiddleware as HTTP GET requests.
+        # All /ws/* endpoints authenticate themselves via auth.authorize_websocket(),
+        # which now accepts cookies, X-Agent-Token, and X-Node-Token. Pass them through.
+        if path.startswith("/ws/"):
+            return await call_next(request)
 
-        if (path.startswith("/api/") and path not in _PUBLIC) or path.startswith("/ws/"):
+        if path.startswith("/api/") and path not in _PUBLIC:
             token = request.cookies.get(_COOKIE_NAME)
             if token:
                 user = auth.decode_token(token)
