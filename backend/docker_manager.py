@@ -366,9 +366,20 @@ def _restart_policy_config(policy: str | None) -> dict:
     policy = (policy or "no").strip().lower()
     if policy == "always":
         return {"Name": "always"}
+    if policy == "unless-stopped":
+        return {"Name": "unless-stopped"}
     if policy == "on-failure":
         return {"Name": "on-failure", "MaximumRetryCount": 5}
     return {"Name": "no"}
+
+
+def _replica_restart_policy_config(docker_options: dict) -> dict:
+    """Replica containers always use 'unless-stopped' so Docker auto-restarts them
+    after a node reboot. Explicit 'always' or 'on-failure' from docker_options is honoured."""
+    policy = (docker_options.get("restart_policy") or "").strip().lower()
+    if policy in ("always", "on-failure"):
+        return _restart_policy_config(policy)
+    return {"Name": "unless-stopped"}
 
 
 # ── Port allocation ───────────────────────────────────────────────────────────
@@ -826,7 +837,7 @@ def run_replica_container(
         "name": cname,
         "ports": port_bindings,
         "environment": env_vars,
-        "restart_policy": _restart_policy_config(docker_options.get("restart_policy")),
+        "restart_policy": _replica_restart_policy_config(docker_options),
         "labels": {
             "cloudbase.app_id": str(app_id),
             "cloudbase.replica_id": str(replica_id),
