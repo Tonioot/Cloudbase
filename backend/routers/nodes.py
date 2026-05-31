@@ -327,17 +327,19 @@ async def _apply_command_result(
                                 replica.last_error = error_message
             app.updated_at = _utcnow()
 
-    await db.commit()
+    await _commit_with_sqlite_lock_retry(db, context=f"apply_command_result cmd_id={command_id}")
     _get_command_event(command_id).set()
 
-    # Broadcast completion event to browser subscribers
+    # Broadcast completion event to browser subscribers — use a fresh session to avoid
+    # autoflush on the already-committed session triggering a lock error.
     new_app_status = None
     if cmd.app_id:
         from models import Application
-        app_result2 = await db.execute(select(Application).where(Application.id == cmd.app_id))
-        app2 = app_result2.scalar_one_or_none()
-        if app2:
-            new_app_status = app2.status
+        async with AsyncSessionLocal() as fresh_db:
+            app_result2 = await fresh_db.execute(select(Application).where(Application.id == cmd.app_id))
+            app2 = app_result2.scalar_one_or_none()
+            if app2:
+                new_app_status = app2.status
     _push_node_event(node.id, {
         "type": "command_update",
         "command_id": command_id,

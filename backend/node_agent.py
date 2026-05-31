@@ -623,7 +623,20 @@ async def _build_image_local(local_id: int, app_name: str, app_dir: str, payload
     return img
 
 
-async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id, payload, headers) -> int:
+async def _report_replica_substatus(client: httpx.AsyncClient, state, main_id: int, replica_id: int, substatus: Optional[str]) -> None:
+    """Fire-and-forget: update substatus on the main server so the UI can show startup progress."""
+    try:
+        await client.patch(
+            f"{state.main_url}/api/apps/{main_id}/replicas/{replica_id}/substatus",
+            json={"substatus": substatus},
+            headers={"X-Node-Token": state.auth_token},
+            timeout=5,
+        )
+    except Exception as e:
+        _agent_log(f"[agent] substatus report failed (replica={replica_id} substatus={substatus}): {e}")
+
+
+async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id, payload, headers, replica_id: Optional[int] = None) -> int:
     """Ensure source + image are ready on this node. Only downloads/builds when needed.
     Returns main_id (used directly as the image app_id — no local DB needed)."""
     import docker_manager as dm
@@ -658,7 +671,9 @@ async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id
             return int(main_id)
         _agent_log(f"[deploy] Image {img} stale ({image_revision!r} != {desired_revision!r}), rebuilding")
 
-    # Image missing, wrong arch or stale — fetch source from primary and build
+    # Image missing or stale — report substatus and build
+    if replica_id is not None:
+        await _report_replica_substatus(client, state, int(main_id), replica_id, "building_image")
     app_dir = await _download_and_extract_source(client, state, int(main_id), app_name, headers)
     await _build_image_local(int(main_id), app_name, app_dir, payload)
     return int(main_id)
@@ -668,10 +683,14 @@ async def cmd_start_replica(client, state, main_id, payload, headers):
     # Ensure the app source exists locally on this node. The replica container
     # itself still uses the main app id for naming, logs, and tunnel identity.
     app_name = payload.get("app_name") or ""
-    local_id = await _ensure_replica_app_deployed(client, state, main_id, payload, headers)
+    replica_id = payload["replica_id"]
+
+    local_id = await _ensure_replica_app_deployed(client, state, main_id, payload, headers, replica_id)
+
+    await _report_replica_substatus(client, state, int(main_id), replica_id, "creating_container")
 
     body = {
-        "replica_id": payload["replica_id"],
+        "replica_id": replica_id,
         "local_app_id": local_id,
         "app_name":   app_name,
         "internal_port": payload.get("internal_port", 8000),
@@ -686,9 +705,10 @@ async def cmd_start_replica(client, state, main_id, payload, headers):
     resp.raise_for_status()
     result = resp.json()
 
+    await _report_replica_substatus(client, state, int(main_id), replica_id, "waiting")
+
     # Start the reverse tunnel so the main node can reach the replica without
     # opening any inbound firewall ports on this node.
-    replica_id  = payload["replica_id"]
     local_port  = payload["external_port"]  # port the container listens on locally
     _start_tunnel_task(state, replica_id, local_port)
 

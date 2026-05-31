@@ -2128,6 +2128,28 @@ async def stop_replica_remote(app_id: int, replica_id: int, _node: None = Depend
     return {"ok": ok, "replica_id": replica_id}
 
 
+class _SubstatusUpdate(BaseModel):
+    substatus: Optional[str] = None
+
+
+@router.patch("/{app_id}/replicas/{replica_id}/substatus")
+async def update_replica_substatus(
+    app_id: int,
+    replica_id: int,
+    body: _SubstatusUpdate,
+    _node: None = Depends(_require_node_agent_for_app()),
+    db: AsyncSession = Depends(get_db),
+):
+    """Internal endpoint called by node agents to report startup progress."""
+    await db.execute(
+        update(ApplicationReplica)
+        .where(ApplicationReplica.id == replica_id, ApplicationReplica.app_id == app_id)
+        .values(substatus=body.substatus)
+    )
+    await db.commit()
+    return {"ok": True}
+
+
 @router.get("/{app_id}/replicas/aggregate-stats")
 async def get_replica_aggregate_stats(app_id: int, _node: None = Depends(_require_node_agent_for_app())):
     """Internal endpoint called by the node agent to collect stats across all local
