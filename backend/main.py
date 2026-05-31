@@ -137,28 +137,26 @@ async def _stats_collector():
     await asyncio.sleep(4)
     while True:
         try:
+            # Short read — session closed before any Docker/thread work begins.
+            from models import Node as _Node, ApplicationReplica as _AppReplica
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
                     select(Application).where(Application.status == "running")
                 )
                 apps = result.scalars().all()
-                from models import Node as _Node
                 local_node_result = await db.execute(
                     select(_Node).where(_Node.is_local == True)
                 )
                 local_node_obj = local_node_result.scalar_one_or_none()
                 local_node_id = local_node_obj.id if local_node_obj else None
-
-                    # Fetch running local replicas alongside apps so _one() can aggregate them
-            async with AsyncSessionLocal() as _rep_db:
-                from models import ApplicationReplica as _AppReplica
-                rep_result = await _rep_db.execute(
+                rep_result = await db.execute(
                     select(_AppReplica).where(
                         _AppReplica.status == "running",
                         (_AppReplica.node_id == local_node_id) | (_AppReplica.node_id.is_(None)),
                     )
                 )
                 running_replicas = rep_result.scalars().all()
+            # Session is now closed — Docker stats collection happens below with no lock held.
 
             replicas_by_app: dict[int, list] = {}
             for _r in running_replicas:
@@ -415,6 +413,33 @@ async def _stats_history_writer():
         await asyncio.sleep(30)
 
 
+# ── NodeCommand cleanup ───────────────────────────────────────────────────────
+async def _node_command_cleanup():
+    """Delete completed/failed NodeCommands older than 24h every hour.
+    Keeps the table small so scans for 'queued' commands stay fast.
+    """
+    import datetime as _dt
+    from models import NodeCommand as _NC
+    from sqlalchemy import delete as _del
+    await asyncio.sleep(60)
+    while True:
+        try:
+            cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=24)
+            async with AsyncSessionLocal() as db:
+                await db.execute(
+                    _del(_NC).where(
+                        _NC.status.in_(["done", "failed"]),
+                        _NC.completed_at < cutoff,
+                    )
+                )
+                await db.commit()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            pass
+        await asyncio.sleep(3600)
+
+
 # ── Crash monitor ─────────────────────────────────────────────────────────────
 async def _crash_monitor():
     await asyncio.sleep(5)
@@ -646,6 +671,7 @@ async def lifespan(app: FastAPI):
     node_task          = asyncio.create_task(_node_health_monitor())
     history_task       = asyncio.create_task(_stats_history_writer())
     remote_stats_task  = asyncio.create_task(_remote_replica_stats_poller())
+    cleanup_task       = asyncio.create_task(_node_command_cleanup())
 
     # Start node agent if configured (as an integrated background task)
     agent_task = None
@@ -654,7 +680,7 @@ async def lifespan(app: FastAPI):
         agent_task = asyncio.create_task(node_agent.start_agent())
 
     yield
-    for task in (monitor_task, stats_task, node_task, history_task, remote_stats_task, agent_task):
+    for task in (monitor_task, stats_task, node_task, history_task, remote_stats_task, cleanup_task, agent_task):
         if not task: continue
         task.cancel()
         try:
