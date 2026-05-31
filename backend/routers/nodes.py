@@ -1259,6 +1259,22 @@ async def recover_node_replicas(node_id: int) -> None:
         log.info("Node id=%d reconnected — recovering %d replica(s)", node_id, len(replicas))
 
         for replica in replicas:
+            # Cancel any queued stop_replica for this replica — it was queued while the
+            # node was offline and would undo the recovery start we're about to send.
+            await db.execute(
+                update(NodeCommand)
+                .where(
+                    and_(
+                        NodeCommand.node_id == node_id,
+                        NodeCommand.command_type == "stop_replica",
+                        NodeCommand.status == "queued",
+                        NodeCommand.payload.like(f'%"replica_id": {replica.id}%'),
+                    )
+                )
+                .values(status="failed", error_message="Cancelled: node reconnected, recovery takes priority")
+            )
+            await db.commit()
+
             # Guard against queue storms during reconnect flapping:
             # if a start_replica command for this replica is already pending,
             # do not enqueue another one.
