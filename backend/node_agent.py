@@ -685,6 +685,15 @@ async def cmd_start_replica(client, state, main_id, payload, headers):
     app_name = payload.get("app_name") or ""
     replica_id = payload["replica_id"]
 
+    # If the container is already running (node briefly disconnected), just
+    # reconnect the tunnel instead of doing a full stop/start cycle.
+    import docker_manager as dm
+    if dm.is_replica_container_running(int(main_id), replica_id):
+        _agent_log(f"[agent] replica={replica_id} container already running, reconnecting tunnel only")
+        local_port = payload.get("external_port", 8000)
+        _start_tunnel_task(state, replica_id, local_port)
+        return {"container_id": None, "replica_id": replica_id, "reused": True}
+
     local_id = await _ensure_replica_app_deployed(client, state, main_id, payload, headers, replica_id)
 
     await _report_replica_substatus(client, state, int(main_id), replica_id, "creating_container")

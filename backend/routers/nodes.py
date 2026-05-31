@@ -975,6 +975,7 @@ async def agent_ws(websocket: WebSocket):
                             )
                             for _r in rep_res.scalars().all():
                                 _r.status = "node_offline"
+                                _r.substatus = None
                                 _r.tunnel_port = None
                             await _commit_with_sqlite_lock_retry(
                                 db,
@@ -1288,7 +1289,17 @@ async def recover_node_replicas(node_id: int) -> None:
                 env_vars = {}
 
             ext_port = replica.external_port or app.port or 8000
-            remote_payload = _remote_replica_command_payload(app, env_vars, ext_port)
+            try:
+                import asyncio as _asyncio
+                from routers.applications import _refresh_app_source_revision as _rsr
+                source_revision = await _asyncio.to_thread(_rsr, app)
+                remote_payload = _remote_replica_command_payload(app, env_vars, ext_port, source_revision)
+            except Exception as _payload_exc:
+                log.warning("recover_node_replicas: failed to build payload for replica %d: %s", replica.id, _payload_exc)
+                replica.status = "error"
+                replica.last_error = f"Recovery payload error: {_payload_exc}"
+                await db.commit()
+                continue
 
             replica.status = "starting"
             replica.tunnel_port = None
@@ -1336,6 +1347,7 @@ async def mark_stale_nodes_offline(db: AsyncSession) -> None:
             )
             for replica in rep_result.scalars().all():
                 replica.status = "node_offline"
+                replica.substatus = None
                 replica.tunnel_port = None
     if changed:
         await db.commit()
