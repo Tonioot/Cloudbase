@@ -2546,12 +2546,16 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
         has_nginx = _has_public_nginx_domain(app)
 
         async def _start_local_in_background():
+            print(f"[scale-debug] task entered replica_id={replica_id_for_task} app_id={app_id}", flush=True)
+            log.info("[scale] background task entered: replica_id=%s app_id=%s local_node_id=%s", replica_id_for_task, app_id, local_node_id)
             # Load data needed for the start — short read, session closed immediately.
             async with AsyncSessionLocal() as bg_db:
                 bg_app = (await bg_db.execute(select(Application).where(Application.id == app_id))).scalar_one_or_none()
                 bg_replica = (await bg_db.execute(select(ApplicationReplica).where(ApplicationReplica.id == replica_id_for_task))).scalar_one_or_none()
                 bg_local_node = (await bg_db.execute(select(Node).where(Node.id == local_node_id))).scalar_one_or_none()
+                log.info("[scale] loaded: app=%s replica=%s node=%s", bg_app and bg_app.id, bg_replica and bg_replica.id, bg_local_node and bg_local_node.id)
                 if not bg_app or not bg_replica or not bg_local_node:
+                    log.error("[scale] aborting: missing app=%s replica=%s node=%s", bg_app, bg_replica, bg_local_node)
                     return
                 bg_env_vars = decrypt_env(bg_app.env_vars or "")
 
