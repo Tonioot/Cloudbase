@@ -528,8 +528,9 @@ async def _restore_nginx_after_transition(
         pm._push_line(app_id, f"Failed to restore nginx after {transition_label}: {msg}")
 
 
-def _remote_replica_command_payload(app: Application, env_vars: dict, external_port: int) -> dict:
-    source_revision = _refresh_app_source_revision(app)
+def _remote_replica_command_payload(app: Application, env_vars: dict, external_port: int, source_revision: Optional[str] = None) -> dict:
+    if source_revision is None:
+        source_revision = _refresh_app_source_revision(app)
     app_type = app.app_type or pm.detect_app_type_from_command(app.start_command or "")
     return {
         "app_id": app.id,
@@ -2252,35 +2253,41 @@ async def get_instance_stats(app_id: int, _user: dict = Depends(_auth.require_pe
     replica_ids = [r.id for r in replicas]
     snapshots = pm.get_all_replica_stats(app_id, replica_ids)
 
-    # On-demand fallback: if a remote running replica has no cached snapshot,
-    # fetch its stats directly from the node agent once.
+    # On-demand fallback: remote replicas without a cached snapshot get fetched in parallel.
+    # We fire all commands concurrently so the total wait is bounded by one timeout, not N×timeout.
     missing_remote_running = [
         r for r in replicas
         if r.id not in snapshots and r.status in ("running", "starting") and r.node_id is not None
     ]
     if missing_remote_running:
         node_map = await _load_node_map(db)
-        for r in missing_remote_running:
+
+        async def _fetch_one(r):
             node = node_map.get(r.node_id)
             if not node or node.is_local or node.status != "online":
-                continue
+                return
             try:
-                cmd = await queue_node_command(
-                    db,
-                    node_id=node.id,
-                    app_id=r.app_id,
-                    command_type="get_replica_stats",
-                    payload={"app_id": r.app_id, "app_name": "", "replica_id": r.id},
-                    allow_existing_inflight=True,
-                )
-                done = await wait_for_node_command(db, cmd.id, timeout_seconds=8)
+                async with AsyncSessionLocal() as fetch_db:
+                    cmd = await queue_node_command(
+                        fetch_db,
+                        node_id=node.id,
+                        app_id=r.app_id,
+                        command_type="get_replica_stats",
+                        payload={"app_id": r.app_id, "app_name": "", "replica_id": r.id},
+                        allow_existing_inflight=True,
+                    )
+                    cmd_id = cmd.id
+                async with AsyncSessionLocal() as wait_db:
+                    done = await wait_for_node_command(wait_db, cmd_id, timeout_seconds=4)
                 if done.status == "done" and done.result:
-                    payload = json.loads(done.result or "{}")
-                    if payload.get("cpu_percent") is not None:
-                        pm.set_replica_stats(r.id, {"replica_id": r.id, **payload})
-                        snapshots[r.id] = {"replica_id": r.id, **payload}
+                    result = json.loads(done.result)
+                    if result.get("cpu_percent") is not None:
+                        pm.set_replica_stats(r.id, {"replica_id": r.id, **result})
+                        snapshots[r.id] = {"replica_id": r.id, **result}
             except Exception:
                 pass
+
+        await asyncio.gather(*[_fetch_one(r) for r in missing_remote_running])
 
     return {
         str(rid): {

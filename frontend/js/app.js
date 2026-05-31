@@ -2039,20 +2039,17 @@ async function initInstances() {
         const ok = await confirm('Remove instance?', 'The instance container will be stopped and removed.');
         if (!ok) return;
         pendingRemovals.add(instanceId);
+        clearInterval(_instancesRefreshTimer);
         await renderInstances();
         try {
           await api.deleteInstance(APP_ID, instanceId);
-          const removed = await _waitForInstanceSync(instances => !instances.some(i => i.id === instanceId));
+          await _waitForInstanceSync(instances => !instances.some(i => i.id === instanceId));
           pendingRemovals.delete(instanceId);
           app = await api.getApp(APP_ID);
           updateHeaderStatus();
           renderHeader();
           await renderInstances();
-          if (removed) {
-            toast('Instance removed');
-          } else {
-            toast('Instance removal duurt langer dan verwacht');
-          }
+          toast('Instance removed');
         } catch (e) {
           pendingRemovals.delete(instanceId);
           await renderInstances();
