@@ -318,8 +318,8 @@
     location.href = '/login';
   }
 
+  await initSidebar();
   initDashboard();
-  initSidebar();
 
   document.getElementById('btn-logout').addEventListener('click', async () => {
     await api.logout().catch(() => {});

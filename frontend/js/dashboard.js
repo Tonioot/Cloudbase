@@ -82,6 +82,7 @@ function renderNodes() {
   }
 
   grid.innerHTML = nodesData.map(n => nodeCardHTML(n)).join('');
+  if (window._applyPermVisibility) window._applyPermVisibility(grid);
 
   grid.querySelectorAll('.node-card').forEach(card => {
     card.addEventListener('click', (e) => {
@@ -410,6 +411,7 @@ function renderApps() {
   }
 
   grid.innerHTML = appsData.map(app => appCardHTML(app)).join('');
+  if (window._applyPermVisibility) window._applyPermVisibility(grid);
 
   appsData.forEach(app => {
     const card = document.getElementById(`card-${app.id}`);

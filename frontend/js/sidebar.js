@@ -35,7 +35,7 @@ function setCertDisplay(modal, nameId, hiddenId, path) {
   }
 }
 
-export function initSidebar() {
+export async function initSidebar() {
   loadSidebarTree();
   setInterval(loadSidebarTree, 10000);
   wireNodesButton();
@@ -43,7 +43,7 @@ export function initSidebar() {
   initSessionTimer();
   wireGitHubTokensButton();
   wireExportImportButton();
-  initRoleBasedUI();
+  await initRoleBasedUI();
   wireSystemSettingsButton();
 }
 
@@ -838,12 +838,13 @@ async function loadImportNodesList(modal) {
 // Tracks which data-perm values should be hidden (used for dynamic DOM too)
 window._hiddenPerms = new Set();
 
-function _applyPermVisibility(root = document) {
+export function _applyPermVisibility(root = document) {
   if (!window._hiddenPerms.size) return;
   root.querySelectorAll('[data-perm]').forEach(el => {
     if (window._hiddenPerms.has(el.dataset.perm)) el.style.display = 'none';
   });
 }
+window._applyPermVisibility = _applyPermVisibility;
 
 async function initRoleBasedUI() {
   try {

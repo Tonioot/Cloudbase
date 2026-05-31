@@ -890,8 +890,8 @@
     location.href = '/login';
   }
 
+  await initSidebar();
   initApp();
-  initSidebar();
 
   document.getElementById('btn-logout').addEventListener('click', async () => {
     await api.logout().catch(() => {});

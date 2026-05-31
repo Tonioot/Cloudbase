@@ -244,6 +244,22 @@ async def init_db():
                 await session.delete(dead)
         await session.commit()
 
+        # Remove non-built-in seeded roles that were added in earlier versions
+        _REMOVED_ROLES = ["Developer"]
+        for dead_role in _REMOVED_ROLES:
+            res = await session.execute(_select(Role).where(Role.name == dead_role))
+            role_obj = res.scalar_one_or_none()
+            if role_obj is not None:
+                # Unassign users from this role before deleting
+                from models import User as _User
+                await session.execute(
+                    _User.__table__.update()
+                    .where(_User.__table__.c.role_id == role_obj.id)
+                    .values(role_id=None)
+                )
+                await session.delete(role_obj)
+        await session.commit()
+
         # Ensure all permissions exist
         perm_map: dict[str, int] = {}
         for pname, pdesc in ALL_PERMISSIONS:
@@ -262,17 +278,11 @@ async def init_db():
         # so they cannot drift from the source of truth.
         from sqlalchemy import delete as _delete
         viewer_perms = ["apps.view", "nodes.view", "logs.view", "stats.view", "audit.view"]
-        # "Developer" role: can operate apps but not configure or delete them
-        developer_perms = [
-            "apps.view", "apps.start", "apps.stop", "apps.restart", "apps.pull", "apps.scale",
-            "nodes.view", "logs.view", "stats.view", "audit.view", "tokens.manage",
-        ]
         admin_perms  = [p for p, _ in ALL_PERMISSIONS]
 
         for role_name, role_desc, perms in [
-            ("Viewer",        "Read-only access to all resources",                    viewer_perms),
-            ("Developer",     "Can operate apps but cannot configure or delete them", developer_perms),
-            ("Administrator", "Full access to all features",                          admin_perms),
+            ("Viewer",        "Read-only access to all resources", viewer_perms),
+            ("Administrator", "Full access to all features",       admin_perms),
         ]:
             res = await session.execute(_select(Role).where(Role.name == role_name))
             role_obj = res.scalar_one_or_none()
