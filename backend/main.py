@@ -3,8 +3,6 @@ import json
 import logging
 import logging.handlers
 import os
-
-log = logging.getLogger("cloudbase.main")
 import time as _time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -51,6 +49,8 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[logging.StreamHandler(), _log_file_handler],
 )
+
+log = logging.getLogger("cloudbase.main")
 
 PORT = _cfg.get_server_port()
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
@@ -101,7 +101,7 @@ def _restore_stuck_restart_configs(apps: list[Application]) -> None:
         if not nm.config_uses_restart_page(current_config):
             continue
 
-        pm._debug(
+        log.debug(
             f"STARTUP nginx recovery for app {app.id} ({app.name}): "
             "restart page config detected, restoring normal proxy"
         )
@@ -115,7 +115,7 @@ def _restore_stuck_restart_configs(apps: list[Application]) -> None:
             mode="normal",
         )
         ok, msg = nm.write_nginx_config(app.name, normal_cfg)
-        pm._debug(f"STARTUP nginx recovery result for app {app.id} ({app.name}): ok={ok} msg={msg!r}")
+        log.debug(f"STARTUP nginx recovery result for app {app.id} ({app.name}): ok={ok} msg={msg!r}")
         if ok:
             pm._push_line(app.id, "Recovered a stale restart page after Cloudbase startup.")
 
@@ -530,7 +530,6 @@ async def _crash_monitor():
 async def lifespan(app: FastAPI):
     await init_db()
     pm.set_main_loop(asyncio.get_event_loop())
-    pm.load_registry()   # restore PID + shell_pid from disk before any process checks
 
     # Keep DB-backed global system settings in memory (with one-time config.yaml bootstrap).
     async with AsyncSessionLocal() as _db:
@@ -576,7 +575,7 @@ async def lifespan(app: FastAPI):
             new_status = "running" if alive else "stopped"
             if new_status != replica.status:
                 replica.status = new_status
-                pm._debug(f"RECOVERY replica {replica.id} app={replica.app_id}: → {new_status}")
+                log.debug(f"RECOVERY replica {replica.id} app={replica.app_id}: → {new_status}")
             if alive:
                 dm.attach_container_log_tailer(replica.app_id, pm.log_buffers, pm._push_line, asyncio.get_event_loop())
 
@@ -585,7 +584,7 @@ async def lifespan(app: FastAPI):
         for app_id in list(app_ids_with_replicas):
             if pm.is_docker_app_running(app_id):
                 pm.stop_docker_app(app_id)
-                pm._debug(f"RECOVERY killed orphan legacy container for app {app_id}")
+                log.debug(f"RECOVERY killed orphan legacy container for app {app_id}")
 
         # Sync app statuses from their replicas
         result = await db.execute(select(Application))
@@ -616,9 +615,9 @@ async def lifespan(app: FastAPI):
                         )
                         replica.status = "running"
                         replica.container_id = cid
-                        pm._debug(f"AUTO-START replica {replica.id} app={a.id}: {cid[:12]}")
+                        log.debug(f"AUTO-START replica {replica.id} app={a.id}: {cid[:12]}")
                     except Exception as exc:
-                        pm._debug(f"AUTO-START replica {replica.id} app={a.id}: FAILED — {exc}")
+                        log.debug(f"AUTO-START replica {replica.id} app={a.id}: FAILED — {exc}")
                 a.status = _derive_app_status_from_instances(app_replicas)
 
         await db.commit()
@@ -638,9 +637,9 @@ async def lifespan(app: FastAPI):
                 continue
             try:
                 await _startup_nginx(a, db, _startup_local)
-                pm._debug(f"STARTUP nginx regenerated for app {a.id} ({a.name})")
+                log.debug(f"STARTUP nginx regenerated for app {a.id} ({a.name})")
             except Exception as exc:
-                pm._debug(f"STARTUP nginx regen failed for app {a.id}: {exc}")
+                log.debug(f"STARTUP nginx regen failed for app {a.id}: {exc}")
 
     monitor_task       = asyncio.create_task(_crash_monitor())
     stats_task         = asyncio.create_task(_stats_collector())
@@ -651,7 +650,7 @@ async def lifespan(app: FastAPI):
     # Start node agent if configured (as an integrated background task)
     agent_task = None
     if node_agent._load_state() is not None:
-        pm._debug("INIT: Node state detected, starting integrated agent task")
+        log.debug("INIT: Node state detected, starting integrated agent task")
         agent_task = asyncio.create_task(node_agent.start_agent())
 
     yield
