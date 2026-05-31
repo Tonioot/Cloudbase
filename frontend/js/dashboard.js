@@ -4,6 +4,8 @@ import { openDeployModal } from './modal.js';
 
 let appsData = [];
 let nodesData = [];
+let _noAppsPermission  = false;
+let _noNodesPermission = false;
 const _pingIntervals = new Map();
 
 function renderPortRows(app) {
@@ -30,9 +32,11 @@ export async function initDashboard() {
 
   document.getElementById('btn-add-node')?.addEventListener('click', () => openAddNodeModal());
 
+  // Load independently — a 403 on one must not block the other
   await Promise.all([loadApps(), loadNodes()]);
-  setInterval(loadApps, 6000);
-  setInterval(loadNodes, 15000);
+  // Only poll if the user actually has the permission
+  if (!_noAppsPermission)  setInterval(loadApps,  6000);
+  if (!_noNodesPermission) setInterval(loadNodes, 15000);
 }
 
 /* ─── Load apps ─────────────────────────────────────────────────────────── */
@@ -43,7 +47,16 @@ async function loadApps() {
     renderApps();
     if (nodesData.length) renderNodes();
   } catch (e) {
-    console.error('Failed to load apps:', e);
+    if (e instanceof PermissionError) {
+      _noAppsPermission = true;
+      const appsSection = document.getElementById('apps-section');
+      if (appsSection) appsSection.style.display = 'none';
+      const appsGrid = document.getElementById('apps-grid');
+      if (appsGrid) appsGrid.style.display = 'none';
+      document.querySelector('.stat-strip')?.style.setProperty('display', 'none');
+    } else {
+      console.error('Failed to load apps:', e);
+    }
   }
 }
 
@@ -53,7 +66,13 @@ async function loadNodes() {
     nodesData = await api.listNodes();
     renderNodes();
   } catch (e) {
-    console.error('Failed to load nodes:', e);
+    if (e instanceof PermissionError) {
+      _noNodesPermission = true;
+      const section = document.getElementById('nodes-section');
+      if (section) section.style.display = 'none';
+    } else {
+      console.error('Failed to load nodes:', e);
+    }
   }
 }
 
@@ -73,8 +92,11 @@ function timeAgo(iso) {
 
 /* ─── Nodes grid ─────────────────────────────────────────────────────────── */
 function renderNodes() {
+  const section = document.getElementById('nodes-section');
   const grid = document.getElementById('nodes-grid');
   if (!grid) return;
+  // If the section is hidden (no permission), don't re-render it
+  if (section && section.style.display === 'none') return;
 
   if (!nodesData.length) {
     grid.innerHTML = `<div class="card" style="padding:18px;grid-column:1/-1;font-size:13px;color:var(--text-muted)">No nodes connected yet. Click <strong>Add Node</strong> to connect a remote Cloudbase installation.</div>`;

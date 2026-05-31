@@ -1948,8 +1948,8 @@ async function initInstances() {
               ${containerShort ? `<span style="font-family:var(--font-mono)" title="${escHtml(inst.container_id || '')}">${containerShort}</span>` : ''}
             </div>
             <div style="display:flex;gap:4px;flex-shrink:0">
-              <button class="btn btn-secondary btn-sm inst-restart-btn" data-id="${inst.id}" style="font-size:10px;padding:2px 8px" ${removePending ? 'disabled' : ''}>Restart</button>
-              <button class="btn btn-danger btn-sm inst-remove-btn" data-id="${inst.id}" style="font-size:10px;padding:2px 8px" ${removePending ? 'disabled' : ''}>${removePending ? `${spinner} Removing…` : 'Remove'}</button>
+              <button class="btn btn-secondary btn-sm inst-restart-btn" data-perm="apps.restart" data-id="${inst.id}" style="font-size:10px;padding:2px 8px" ${removePending ? 'disabled' : ''}>Restart</button>
+              <button class="btn btn-danger btn-sm inst-remove-btn" data-perm="apps.scale" data-id="${inst.id}" style="font-size:10px;padding:2px 8px" ${removePending ? 'disabled' : ''}>${removePending ? `${spinner} Removing…` : 'Remove'}</button>
             </div>
           </div>
         </div>
@@ -1957,6 +1957,7 @@ async function initInstances() {
     }).join('');
 
     wrap.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">${cards}</div>`;
+    if (window._applyPermVisibility) window._applyPermVisibility(wrap);
 
     wrap.querySelectorAll('.inst-restart-btn').forEach(btn => {
       btn.addEventListener('click', async () => {

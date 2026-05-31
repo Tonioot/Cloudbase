@@ -51,40 +51,46 @@ async function loadSidebarTree() {
   const container = document.getElementById('sidebar-nodes');
   if (!container) return;
 
-  try {
-    const [nodes, apps] = await Promise.all([
-      api.listNodes(),
-      api.listApps(),
-    ]);
+  // Load nodes and apps independently — a 403 on one must not break the other
+  const [nodesResult, appsResult] = await Promise.allSettled([
+    api.listNodes(),
+    api.listApps(),
+  ]);
 
-    const nodeMap = new Map(nodes.map(n => [n.id, n]));
-    const localNode = nodes.find(n => n.is_local);
+  const nodes = nodesResult.status === 'fulfilled' ? nodesResult.value : [];
+  const apps  = appsResult.status  === 'fulfilled' ? appsResult.value  : [];
+  const canSeeNodes = nodesResult.status === 'fulfilled';
+  const canSeeApps  = appsResult.status  === 'fulfilled';
 
-    const onAppPage     = location.pathname.startsWith('/app');
-    const onNodePage    = location.pathname.startsWith('/node');
-    const currentAppId  = onAppPage  ? parseInt(new URLSearchParams(location.search).get('id')) : NaN;
-    const currentNodeId = onNodePage ? parseInt(new URLSearchParams(location.search).get('id')) : NaN;
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
 
-    // ── Nodes section (only when multi-node) ──────────────────────────────
-    let nodesHtml = '';
-    const remoteNodes = nodes.filter(n => !n.is_local);
-    if (remoteNodes.length) {
-      nodesHtml = `
-        <div class="sidebar-section-label" style="margin-top:10px">Nodes</div>
-        ${nodes.map(n => {
-          const dot = n.status === 'online' ? 'var(--green)' : n.status === 'offline' ? 'var(--red)' : 'var(--yellow)';
-          const active = n.id === currentNodeId ? ' active' : '';
-          const label = n.is_local ? 'Primary Node' : n.name;
-          return `<a href="/node?id=${n.id}" class="sidebar-app-item${active}">
-            <span class="sidebar-app-dot" style="background:${dot}"></span>
-            <span class="sidebar-app-name">${label}</span>
-          </a>`;
-        }).join('')}
-        <div class="sidebar-section-label" style="margin-top:10px">Apps</div>`;
-    }
+  const onAppPage     = location.pathname.startsWith('/app');
+  const onNodePage    = location.pathname.startsWith('/node');
+  const currentAppId  = onAppPage  ? parseInt(new URLSearchParams(location.search).get('id')) : NaN;
+  const currentNodeId = onNodePage ? parseInt(new URLSearchParams(location.search).get('id')) : NaN;
 
-    // ── Flat apps list ────────────────────────────────────────────────────
-    const appsHtml = apps.length
+  // ── Nodes section (only when multi-node and user can see nodes) ───────
+  let nodesHtml = '';
+  const remoteNodes = canSeeNodes ? nodes.filter(n => !n.is_local) : [];
+  if (canSeeNodes && remoteNodes.length) {
+    nodesHtml = `
+      <div class="sidebar-section-label" style="margin-top:10px">Nodes</div>
+      ${nodes.map(n => {
+        const dot = n.status === 'online' ? 'var(--green)' : n.status === 'offline' ? 'var(--red)' : 'var(--yellow)';
+        const active = n.id === currentNodeId ? ' active' : '';
+        const label = n.is_local ? 'Primary Node' : n.name;
+        return `<a href="/node?id=${n.id}" class="sidebar-app-item${active}">
+          <span class="sidebar-app-dot" style="background:${dot}"></span>
+          <span class="sidebar-app-name">${label}</span>
+        </a>`;
+      }).join('')}
+      <div class="sidebar-section-label" style="margin-top:10px">Apps</div>`;
+  }
+
+  // ── Flat apps list ────────────────────────────────────────────────────
+  let appsHtml = '';
+  if (canSeeApps) {
+    appsHtml = apps.length
       ? apps.map(app => {
           const appDot = STATUS_DOT[app.status] || 'var(--text-muted)';
           const active = app.id === currentAppId ? ' active' : '';
@@ -100,7 +106,6 @@ async function loadSidebarTree() {
                 return `<span style="font-size:10px;color:var(--text-muted);margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60px" title="${label}">${label}</span>`;
               })()
             : '';
-
           return `<a href="/app?id=${app.id}" class="sidebar-app-item${active}">
             <span class="sidebar-app-dot" style="background:${appDot}"></span>
             <span class="sidebar-app-name">${app.name}</span>
@@ -108,15 +113,15 @@ async function loadSidebarTree() {
           </a>`;
         }).join('')
       : `<div class="sidebar-apps-empty">No apps yet</div>`;
+  }
 
-    container.innerHTML = nodesHtml + appsHtml;
+  container.innerHTML = nodesHtml + appsHtml;
 
-    const appsContainer = document.getElementById('sidebar-apps');
-    if (appsContainer) {
-      appsContainer.innerHTML = '';
-      appsContainer.style.display = 'none';
-    }
-  } catch {}
+  const appsContainer = document.getElementById('sidebar-apps');
+  if (appsContainer) {
+    appsContainer.innerHTML = '';
+    appsContainer.style.display = 'none';
+  }
 }
 
 function wireNodesButton() {
