@@ -2555,27 +2555,40 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
                     return
                 bg_env_vars = decrypt_env(bg_app.env_vars or "")
 
+            log.info("[scale] starting local replica %d for app %d", replica_id_for_task, app_id)
             # Heavy Docker work runs with no DB session open — only _set_replica_substatus
             # opens short-lived sessions for substatus updates.
             try:
                 container_id = await _start_instance_local(bg_app, bg_replica, bg_env_vars, app_id)
+                log.info("[scale] local replica %d started, container=%s", replica_id_for_task, container_id)
                 await _set_replica_substatus(replica_id_for_task, "waiting")
-                # Short write: mark running
+                # Write back: mark replica running + persist any image_revision update from the build
                 async with AsyncSessionLocal() as bg_db:
                     done_replica = (await bg_db.execute(select(ApplicationReplica).where(ApplicationReplica.id == replica_id_for_task))).scalar_one_or_none()
+                    done_app = (await bg_db.execute(select(Application).where(Application.id == app_id))).scalar_one_or_none()
                     if done_replica:
                         done_replica.status = "running"
                         done_replica.substatus = None
                         done_replica.container_id = container_id
                         done_replica.last_error = None
+                        # _start_instance_local may have reassigned port on conflict
+                        if bg_replica.external_port:
+                            done_replica.external_port = bg_replica.external_port
+                    if done_app:
+                        # Persist image_revision/docker_image updates that _build_image() wrote
+                        # onto the detached bg_app object.
+                        if bg_app.image_revision:
+                            done_app.image_revision = bg_app.image_revision
+                        if bg_app.docker_image:
+                            done_app.docker_image = bg_app.docker_image
                         if has_nginx:
-                            done_app = (await bg_db.execute(select(Application).where(Application.id == app_id))).scalar_one_or_none()
                             done_node = (await bg_db.execute(select(Node).where(Node.id == local_node_id))).scalar_one_or_none()
-                            if done_app and done_node:
+                            if done_node:
                                 await bg_db.flush()
                                 await _write_app_nginx_config(done_app, bg_db, done_node)
-                        await bg_db.commit()
+                    await bg_db.commit()
             except Exception as e:
+                log.error("[scale] local replica %d failed: %s", replica_id_for_task, e, exc_info=True)
                 async with AsyncSessionLocal() as bg_db:
                     err_replica = (await bg_db.execute(select(ApplicationReplica).where(ApplicationReplica.id == replica_id_for_task))).scalar_one_or_none()
                     if err_replica:

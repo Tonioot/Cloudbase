@@ -883,6 +883,7 @@ def run_replica_container(
 
 
 def stop_replica_container(app_id: int, replica_id: int, push_line_fn=None) -> bool:
+    import docker  # type: ignore
     client = _get_client()
     cname = replica_container_name(app_id, replica_id)
     try:
@@ -891,6 +892,9 @@ def stop_replica_container(app_id: int, replica_id: int, push_line_fn=None) -> b
         c.remove()
         if push_line_fn:
             push_line_fn(app_id, f"[Replica] Container {replica_id} stopped and removed.")
+        return True
+    except docker.errors.NotFound:
+        # Container already gone — treat as success.
         return True
     except Exception as e:
         if push_line_fn:
