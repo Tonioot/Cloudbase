@@ -733,7 +733,7 @@ def _resolve_apps_get_permission(path: str) -> str:
     if "/logs" in path:
         return "apps.view"
     # /stats, /stats-remote, /aggregate-stats, /stats/history → apps.view
-    if "/stats" in path or "stats-remote" in path or "stats-debug" in path:
+    if "/stats" in path or "stats-remote" in path:
         return "apps.view"
     # Everything else under /api/apps/ → apps.view
     return "apps.view"

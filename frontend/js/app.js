@@ -1893,6 +1893,39 @@ async function initInstances() {
         connHtml = `<span style="font-size:12px;color:var(--red)">no tunnel</span>`;
       }
 
+      // Startup progress steps
+      let startupHtml = '';
+      if (isStarting) {
+        const sub = inst.substatus;
+        // Steps in the order they always appear — building_image may be skipped (cached image)
+        const steps = [
+          { key: 'building_image',     label: 'Image bouwen' },
+          { key: 'creating_container', label: 'Container aanmaken' },
+          { key: 'waiting',            label: 'App opstarten' },
+        ];
+        // Determine which step is active and which are done
+        const activeIdx = sub ? Math.max(steps.findIndex(s => s.key === sub), 0) : 0;
+        startupHtml = `
+          <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border-muted)">
+            <div style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin-bottom:6px">Opstarten</div>
+            <div style="display:flex;flex-direction:column;gap:5px">
+              ${steps.map((step, i) => {
+                const isDone   = i < activeIdx;
+                const isActive = i === activeIdx;
+                return `<div style="display:flex;align-items:center;gap:7px">
+                  ${isActive
+                    ? `<svg style="animation:spin 0.8s linear infinite;flex-shrink:0;color:var(--yellow)" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>`
+                    : isDone
+                      ? `<svg style="flex-shrink:0;color:var(--green)" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`
+                      : `<div style="width:9px;height:9px;border-radius:50%;border:1.5px solid var(--border);flex-shrink:0"></div>`
+                  }
+                  <span style="font-size:11px;color:${isActive ? 'var(--text-primary)' : isDone ? 'var(--green)' : 'var(--text-muted)'};${isActive ? 'font-weight:500' : ''}">${step.label}</span>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>`;
+      }
+
       // Live metrics
       const snap = instStats[String(inst.id)];
       let metricsHtml = '';
@@ -1957,6 +1990,7 @@ async function initInstances() {
             </div>
           </div>
 
+          ${startupHtml}
           ${metricsHtml}
 
           ${inst.last_error ? `<div style="margin-top:7px;padding:5px 7px;background:var(--red-bg);border:1px solid var(--red-border);border-radius:4px;font-size:10px;color:var(--red);font-family:var(--font-mono);word-break:break-all">${escHtml(inst.last_error)}</div>` : ''}
@@ -2029,6 +2063,22 @@ async function initInstances() {
   }
 
   await renderInstances();
+  // Reschedule timer after each render: fast (1.5s) while any instance is starting, slow (5s) otherwise
+  let _lastKnownInstances = [];
+  const _origRenderInstances = renderInstances;
+  renderInstances = async function() {
+    await _origRenderInstances();
+    const hasStarting = _lastKnownInstances.some(i => i.status === 'starting');
+    clearInterval(_instancesRefreshTimer);
+    _instancesRefreshTimer = setInterval(renderInstances, hasStarting ? 1500 : 5000);
+  };
+  // Intercept listInstances to capture last result for scheduling
+  const _origListInstances = api.listInstances.bind(api);
+  api.listInstances = async function(...args) {
+    const result = await _origListInstances(...args);
+    _lastKnownInstances = result;
+    return result;
+  };
   _instancesRefreshTimer = setInterval(renderInstances, 5000);
 
   const refreshBtn = document.getElementById('btn-instances-refresh');

@@ -1058,6 +1058,7 @@ async def _sync_process_status(app, db) -> None:
                 age = (_dt.datetime.utcnow() - (replica.updated_at or replica.created_at)).total_seconds()
                 if age > 600:
                     replica.status = "error"
+                    replica.substatus = None
                     replica.last_error = f"Timed out after {int(age)}s in '{replica.status}' state"
                     changed = True
                 continue
@@ -1067,6 +1068,8 @@ async def _sync_process_status(app, db) -> None:
             new_status = "running" if alive else "stopped"
             if replica.status != new_status:
                 replica.status = new_status
+                if new_status in ("running", "stopped"):
+                    replica.substatus = None
                 changed = True
         new_app_status = _derive_app_status_from_instances(replicas)
         if app.status != new_app_status:
@@ -1225,7 +1228,7 @@ async def deploy_app(
 
 
 @router.get("/{app_id}")
-async def get_app(app_id: int, request: Request, db: AsyncSession = Depends(get_db)):
+async def get_app(app_id: int, request: Request, _user: dict = Depends(_auth.require_permission("apps.view")), db: AsyncSession = Depends(get_db)):
     await ensure_local_node(db)
     app = await _get_or_404(app_id, db)
     await _sync_process_status(app, db)
@@ -1563,6 +1566,20 @@ async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, _us
     return {"message": f"Successfully imported {imported_count} apps."}
 
 
+async def _set_replica_substatus(replica_id: int, substatus: Optional[str]) -> None:
+    """Write substatus to DB for a replica — fire and forget, never raises."""
+    try:
+        async with AsyncSessionLocal() as _db:
+            await _db.execute(
+                update(ApplicationReplica)
+                .where(ApplicationReplica.id == replica_id)
+                .values(substatus=substatus)
+            )
+            await _db.commit()
+    except Exception:
+        pass
+
+
 async def _start_instance_local(app: "Application", replica: "ApplicationReplica", env_vars: dict, app_id: int) -> str:
     """Start a local replica container, building the Docker image first if needed."""
     desired_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
@@ -1580,6 +1597,7 @@ async def _start_instance_local(app: "Application", replica: "ApplicationReplica
         docker_opts["tmpfs_size_mb"] = replica.docker_tmpfs_size_mb
 
     async def _run_replica(ext_port: int) -> str:
+        await _set_replica_substatus(replica.id, "creating_container")
         return await asyncio.to_thread(
             pm.start_docker_replica,
             app_id, replica.id, app.name,
@@ -1594,6 +1612,7 @@ async def _start_instance_local(app: "Application", replica: "ApplicationReplica
             raise HTTPException(400, "No working directory — deploy the app first")
         def _push(_aid, line):
             pm._push_line(app_id, str(line))
+        await _set_replica_substatus(replica.id, "building_image")
         await asyncio.to_thread(
             dm.build_image,
             app_id, app.name, app.working_dir, _push,
@@ -1605,6 +1624,7 @@ async def _start_instance_local(app: "Application", replica: "ApplicationReplica
             app.image_revision = built_revision
 
     ext_port = replica.external_port or app.port or 8000
+    await _set_replica_substatus(replica.id, "creating_container")
     if desired_revision and app.image_revision != desired_revision:
         await _build_image()
     try:
@@ -1688,8 +1708,11 @@ async def _start_replica_runtime(
         return
 
     if replica_node.is_local:
+        await _set_replica_substatus(replica.id, "creating_container")
         cid = await _start_instance_local(app, replica, env_vars, app.id)
+        await _set_replica_substatus(replica.id, "waiting")
         replica.status = "running"
+        replica.substatus = None
         replica.container_id = cid
         replica.last_error = None
         return
@@ -2025,9 +2048,47 @@ class RunReplicaRequest(BaseModel):
     app_name: Optional[str] = None
 
 
+def _require_node_agent_for_app(app_id_param: str = "app_id"):
+    """Dependency factory that authenticates node-agent calls and verifies the
+    calling node actually has a replica for the requested app.
+
+    Accepts either:
+    - X-Agent-Token: local agent — trusted unconditionally (runs on this machine).
+    - X-Node-Token: remote node — validated against DB and must have a replica of app_id.
+    """
+    async def _dep(request: Request, app_id: int, db: AsyncSession = Depends(get_db)):
+        import auth as _auth_mod
+        agent_token = request.headers.get("X-Agent-Token", "")
+        if agent_token:
+            if not _auth_mod.verify_agent_token(agent_token):
+                raise HTTPException(status_code=401, detail="Invalid agent token")
+            return
+
+        node_token = request.headers.get("X-Node-Token", "")
+        if not node_token:
+            raise HTTPException(status_code=401, detail="Node agent token required")
+
+        node_result = await db.execute(
+            select(Node).where(Node.auth_token == node_token, Node.enabled == True)
+        )
+        node = node_result.scalar_one_or_none()
+        if node is None:
+            raise HTTPException(status_code=401, detail="Invalid or disabled node token")
+
+        replica_result = await db.execute(
+            select(ApplicationReplica).where(
+                ApplicationReplica.app_id == app_id,
+                ApplicationReplica.node_id == node.id,
+            )
+        )
+        if replica_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=403, detail="Node has no replica for this app")
+
+    return _dep
+
 
 @router.post("/{app_id}/replicas/run-remote")
-async def run_replica_remote(app_id: int, req: RunReplicaRequest, db: AsyncSession = Depends(get_db)):
+async def run_replica_remote(app_id: int, req: RunReplicaRequest, _node: None = Depends(_require_node_agent_for_app()), db: AsyncSession = Depends(get_db)):
     """Internal endpoint called by the node agent to start a replica container locally.
     The agent guarantees the image is already built before calling this endpoint.
     Does NOT create a DB row — the main server already has it."""
@@ -2061,14 +2122,14 @@ async def run_replica_remote(app_id: int, req: RunReplicaRequest, db: AsyncSessi
 
 
 @router.delete("/{app_id}/replicas/{replica_id}/stop-remote")
-async def stop_replica_remote(app_id: int, replica_id: int):
+async def stop_replica_remote(app_id: int, replica_id: int, _node: None = Depends(_require_node_agent_for_app())):
     """Internal endpoint called by the node agent to stop a replica container locally."""
     ok = await asyncio.to_thread(pm.stop_docker_replica, app_id, replica_id)
     return {"ok": ok, "replica_id": replica_id}
 
 
 @router.get("/{app_id}/replicas/aggregate-stats")
-async def get_replica_aggregate_stats(app_id: int):
+async def get_replica_aggregate_stats(app_id: int, _node: None = Depends(_require_node_agent_for_app())):
     """Internal endpoint called by the node agent to collect stats across all local
     replica containers for app_id.  Returns aggregated cpu/memory/net/disk numbers
     plus status=running when at least one container is up."""
@@ -2119,7 +2180,7 @@ async def get_replica_aggregate_stats(app_id: int):
 
 
 @router.get("/{app_id}/replicas/{replica_id}/stats-remote")
-async def get_replica_stats_remote(app_id: int, replica_id: int):
+async def get_replica_stats_remote(app_id: int, replica_id: int, _node: None = Depends(_require_node_agent_for_app())):
     """Internal endpoint called by node-agent to get one replica container's stats.
 
     This avoids app-level aggregate ambiguity when replica mapping is in transition.
@@ -2135,7 +2196,7 @@ async def get_replica_stats_remote(app_id: int, replica_id: int):
 
 
 @router.get("/{app_id}/replicas")
-async def list_replicas(app_id: int, db: AsyncSession = Depends(get_db)):
+async def list_replicas(app_id: int, _user: dict = Depends(_auth.require_permission("apps.view")), db: AsyncSession = Depends(get_db)):
     await _get_or_404(app_id, db)
     node_map = await _load_node_map(db)
     result = await db.execute(
@@ -2146,7 +2207,7 @@ async def list_replicas(app_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{app_id}/instances")
-async def list_instances(app_id: int, db: AsyncSession = Depends(get_db)):
+async def list_instances(app_id: int, _user: dict = Depends(_auth.require_permission("apps.view")), db: AsyncSession = Depends(get_db)):
     """Return all instances (ApplicationReplica rows) for an app."""
     await _get_or_404(app_id, db)
     node_map = await _load_node_map(db)
@@ -2157,57 +2218,9 @@ async def list_instances(app_id: int, db: AsyncSession = Depends(get_db)):
     return [_replica_to_dict(r, node_map.get(r.node_id)) for r in rep_result.scalars().all()]
 
 
-@router.get("/{app_id}/instances/stats-debug")
-async def debug_instance_stats(app_id: int, db: AsyncSession = Depends(get_db)):
-    """Debug endpoint: run one poll cycle for remote replicas and return raw results."""
-    from database import AsyncSessionLocal as _ASL
-    from routers.nodes import queue_node_command, wait_for_node_command, _node_ws_connections
-    await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
-    rep_result = await db.execute(
-        select(ApplicationReplica).where(
-            ApplicationReplica.app_id == app_id,
-            ApplicationReplica.status == "running",
-            ApplicationReplica.node_id.isnot(None),
-            ApplicationReplica.node_id != local_node.id,
-        )
-    )
-    remote_replicas = rep_result.scalars().all()
-    if not remote_replicas:
-        return {"error": "no remote running replicas found", "local_node_id": local_node.id}
-
-    results = []
-    for r in remote_replicas:
-        entry = {"replica_id": r.id, "node_id": r.node_id, "app_id": r.app_id,
-                 "ws_connected": r.node_id in _node_ws_connections}
-        if r.node_id not in _node_ws_connections:
-            entry["skip_reason"] = "no agent websocket"
-            results.append(entry)
-            continue
-        try:
-            app_r = await db.execute(select(Application).where(Application.id == r.app_id))
-            app_obj = app_r.scalar_one_or_none()
-            async with _ASL() as cmd_db:
-                cmd = await queue_node_command(
-                    cmd_db, node_id=r.node_id, app_id=r.app_id,
-                    command_type="get_replica_stats",
-                    payload={"app_id": r.app_id, "app_name": app_obj.name if app_obj else "", "replica_id": r.id},
-                    allow_existing_inflight=True,
-                )
-            async with _ASL() as wait_db:
-                done = await wait_for_node_command(wait_db, cmd.id, timeout_seconds=12)
-            entry["cmd_id"] = cmd.id
-            entry["cmd_status"] = done.status
-            entry["cmd_error"] = done.error_message
-            entry["raw_result"] = json.loads(done.result) if done.result else None
-        except Exception as e:
-            entry["exception"] = str(e)
-        results.append(entry)
-    return results
-
 
 @router.get("/{app_id}/instances/stats")
-async def get_instance_stats(app_id: int, db: AsyncSession = Depends(get_db)):
+async def get_instance_stats(app_id: int, _user: dict = Depends(_auth.require_permission("apps.view")), db: AsyncSession = Depends(get_db)):
     """Return the latest stats snapshot for each replica of this app."""
     await _get_or_404(app_id, db)
     rep_result = await db.execute(
@@ -3230,7 +3243,7 @@ async def save_nginx_config(app_id: int, payload: dict, _user: dict = Depends(_a
 
 
 @router.get("/{app_id}/stats")
-async def get_stats(app_id: int, db: AsyncSession = Depends(get_db)):
+async def get_stats(app_id: int, _user: dict = Depends(_auth.require_permission("apps.view")), db: AsyncSession = Depends(get_db)):
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
     node = await _get_app_node(app, db, local_node)
@@ -3405,6 +3418,7 @@ def _replica_to_dict(replica: ApplicationReplica, node: Optional[Node] = None) -
         "tunnel_connected": replica.tunnel_port is not None,
         "container_id": replica.container_id,
         "status": replica.status,
+        "substatus": replica.substatus,
         "last_error": replica.last_error,
         "docker_cpu_limit": replica.docker_cpu_limit,
         "docker_memory_limit_mb": replica.docker_memory_limit_mb,
@@ -3478,7 +3492,7 @@ async def _load_node_map(db: AsyncSession) -> dict[int, Node]:
 # ── Maintenance page endpoints ─────────────────────────────────────────────
 
 @router.get("/{app_id}/maintenance-pages")
-async def get_maintenance_pages(app_id: int, db: AsyncSession = Depends(get_db)):
+async def get_maintenance_pages(app_id: int, _user: dict = Depends(_auth.require_permission("apps.view")), db: AsyncSession = Depends(get_db)):
     app = await _get_or_404(app_id, db)
     return {
         "maintenance_mode": app.maintenance_mode or False,
@@ -3624,6 +3638,7 @@ async def toggle_update_mode(app_id: int, _user: dict = Depends(_auth.require_pe
 async def preview_maintenance_page(
     app_id: int,
     page_type: str,
+    _user: dict = Depends(_auth.require_permission("apps.view")),
     db: AsyncSession = Depends(get_db),
 ):
     """Return the rendered HTML for a maintenance page — opens directly in the browser."""

@@ -160,6 +160,7 @@ async def init_db():
             ("docker_read_only_root",    "BOOLEAN NOT NULL DEFAULT 0"),
             ("docker_tmpfs_enabled",     "BOOLEAN NOT NULL DEFAULT 0"),
             ("docker_tmpfs_size_mb",     "INTEGER"),
+            ("substatus",               "VARCHAR(40)"),
         ]:
             if col in existing_replica_cols:
                 continue
