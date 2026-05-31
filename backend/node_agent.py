@@ -74,7 +74,10 @@ def _load_state() -> Optional[AgentState]:
     try:
         with open(STATE_PATH, "r") as f:
             data = json.load(f)
-            return AgentState(**data)
+        # Strip unknown fields so old state files with removed fields (e.g. app_id_map) still load
+        known = {f for f in AgentState.__dataclass_fields__}
+        data = {k: v for k, v in data.items() if k in known}
+        return AgentState(**data)
     except Exception as e:
         _agent_log(f"[agent] Error loading state: {e}")
         return None
