@@ -1965,7 +1965,7 @@ async function initInstances() {
       const containerShort = inst.container_id ? inst.container_id.slice(0, 12) : null;
 
       return `
-      <div class="card" style="padding:0;overflow:hidden">
+      <div class="card" style="padding:0;overflow:hidden"${isStarting ? ' data-starting="1"' : ''}>
         <div style="padding:8px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid var(--border-muted)">
           <div style="display:flex;align-items:center;gap:7px;min-width:0">
             <div style="width:6px;height:6px;border-radius:50%;background:${statusDot};flex-shrink:0"></div>
@@ -2011,6 +2011,7 @@ async function initInstances() {
 
     wrap.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">${cards}</div>`;
     if (window._applyPermVisibility) window._applyPermVisibility(wrap);
+    _rescheduleInstancesTimer();
 
     wrap.querySelectorAll('.inst-restart-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -2062,24 +2063,16 @@ async function initInstances() {
 
   }
 
-  await renderInstances();
-  // Reschedule timer after each render: fast (1.5s) while any instance is starting, slow (5s) otherwise
-  let _lastKnownInstances = [];
-  const _origRenderInstances = renderInstances;
-  renderInstances = async function() {
-    await _origRenderInstances();
-    const hasStarting = _lastKnownInstances.some(i => i.status === 'starting');
+  // After each render, check instance states and reschedule the timer accordingly.
+  // renderInstances already fetches instances internally, so we peek at the DOM
+  // to detect starting states without an extra API call.
+  function _rescheduleInstancesTimer() {
     clearInterval(_instancesRefreshTimer);
+    const hasStarting = wrap.querySelector('[data-starting="1"]') !== null;
     _instancesRefreshTimer = setInterval(renderInstances, hasStarting ? 1500 : 5000);
-  };
-  // Intercept listInstances to capture last result for scheduling
-  const _origListInstances = api.listInstances.bind(api);
-  api.listInstances = async function(...args) {
-    const result = await _origListInstances(...args);
-    _lastKnownInstances = result;
-    return result;
-  };
-  _instancesRefreshTimer = setInterval(renderInstances, 5000);
+  }
+
+  await renderInstances();
 
   const refreshBtn = document.getElementById('btn-instances-refresh');
   if (refreshBtn) refreshBtn.onclick = renderInstances;
