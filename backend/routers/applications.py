@@ -2546,16 +2546,14 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
         has_nginx = _has_public_nginx_domain(app)
 
         async def _start_local_in_background():
-            print(f"[scale-debug] task entered replica_id={replica_id_for_task} app_id={app_id}", flush=True)
             log.info("[scale] background task entered: replica_id=%s app_id=%s local_node_id=%s", replica_id_for_task, app_id, local_node_id)
             # Load data needed for the start — short read, session closed immediately.
             async with AsyncSessionLocal() as bg_db:
                 bg_app = (await bg_db.execute(select(Application).where(Application.id == app_id))).scalar_one_or_none()
                 bg_replica = (await bg_db.execute(select(ApplicationReplica).where(ApplicationReplica.id == replica_id_for_task))).scalar_one_or_none()
                 bg_local_node = (await bg_db.execute(select(Node).where(Node.id == local_node_id))).scalar_one_or_none()
-                log.info("[scale] loaded: app=%s replica=%s node=%s", bg_app and bg_app.id, bg_replica and bg_replica.id, bg_local_node and bg_local_node.id)
                 if not bg_app or not bg_replica or not bg_local_node:
-                    log.error("[scale] aborting: missing app=%s replica=%s node=%s", bg_app, bg_replica, bg_local_node)
+                    log.error("[scale] aborting: app=%s replica=%s node=%s", bg_app and bg_app.id, bg_replica, bg_local_node and bg_local_node.id)
                     return
                 bg_env_vars = decrypt_env(bg_app.env_vars or "")
 
@@ -2601,11 +2599,6 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
                         err_replica.last_error = str(e)
                         await bg_db.commit()
 
-        _task = asyncio.create_task(_start_local_in_background())
-        _task.add_done_callback(
-            lambda t: log.error("[scale] background task crashed: %s", t.exception(), exc_info=t.exception())
-            if not t.cancelled() and t.exception() else None
-        )
     else:
         if target_node.status != "online":
             raise HTTPException(400, f"Node '{target_node.name}' is not online")
@@ -2627,6 +2620,15 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
     await log_audit(db, "app.scale_up", actor=actor, app_id=app_id, detail={"replica_id": replica.id, "node": target_node.name})
     await db.commit()
     await db.refresh(replica)
+
+    # Start background task AFTER commit so the replica row is visible to the new session.
+    if target_node.is_local:
+        _task = asyncio.create_task(_start_local_in_background())
+        _task.add_done_callback(
+            lambda t: log.error("[scale] background task crashed: %s", t.exception(), exc_info=t.exception())
+            if not t.cancelled() and t.exception() else None
+        )
+
     return _replica_to_dict(replica, target_node)
 
 
