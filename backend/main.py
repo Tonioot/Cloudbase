@@ -691,44 +691,54 @@ _PUBLIC = {
     "/api/auth/check",
 }
 
-# Permission prefix maps — checked live against DB.
+# Permission prefix maps — second line of defence (explicit Depends on each endpoint is primary).
 # Order matters: more specific prefixes first.
+# Write map: fallback permission required for any write to a prefix.
 _PERMISSION_WRITE_MAP = (
-    ("/api/apps",      "apps.manage"),
-    ("/api/nodes",     "nodes.manage"),
+    ("/api/apps",      "apps.configure"),  # safest fallback; granular checks on endpoints
+    ("/api/nodes",     "nodes.configure"),
     ("/api/system",    "system.manage"),
     ("/api/users",     "users.manage"),
     ("/api/roles",     "roles.manage"),
-    ("/api/audit-log", "audit.view"),  # no write ops, but guard anyway
+    ("/api/audit-log", "audit.view"),
 )
 
 _PERMISSION_READ_MAP = (
     ("/api/apps",      "apps.view"),
     ("/api/nodes",     "nodes.view"),
     ("/api/system",    "system.manage"),
-    ("/api/users",     "users.manage"),   # listing users is itself a privileged op
-    ("/api/roles",     "roles.manage"),   # listing roles too — except /api/roles/permissions
+    ("/api/users",     "users.manage"),
+    ("/api/roles",     "roles.manage"),
     ("/api/audit-log", "audit.view"),
 )
 
 # Per-path overrides — used when the prefix default doesn't fit the endpoint's semantics.
-# Key: (METHOD, exact path or path-prefix to substring-match), value: permission.
-# Substring overrides (PREFIX_OVERRIDES) match if path starts with key path.
 _PERMISSION_EXACT_OVERRIDES: dict[tuple[str, str], str] = {
     ("POST", "/api/nodes/invites"): "nodes.add",
     # /api/roles/permissions and /api/roles list are read by any authenticated user (UI needs it)
-    ("GET",  "/api/roles"): None,                  # any authenticated user
-    ("GET",  "/api/roles/permissions"): None,      # any authenticated user
+    ("GET",  "/api/roles"): None,
+    ("GET",  "/api/roles/permissions"): None,
 }
 
 _PERMISSION_PREFIX_OVERRIDES: tuple[tuple[str, str, str | None], ...] = (
     # (METHOD, path prefix, required permission OR None to allow any authenticated user)
-    ("GET",    "/api/roles/",                "roles.manage"),    # individual role detail
-    ("GET",    "/api/apps/system/certs",     "apps.view"),       # cert discovery (under apps router)
+    ("GET",    "/api/roles/",                None),
+    ("GET",    "/api/apps/system/certs",     "apps.view"),
     # GitHub token endpoints — under /api/system but use tokens.manage instead
     ("GET",    "/api/system/github-tokens",  "tokens.manage"),
     ("POST",   "/api/system/github-tokens",  "tokens.manage"),
     ("DELETE", "/api/system/github-tokens",  "tokens.manage"),
+    # Apps write/delete: each endpoint has its own granular Depends() check.
+    # Middleware only requires apps.view as a backstop so it never over-blocks.
+    ("POST",   "/api/apps",                  "apps.view"),
+    ("PUT",    "/api/apps/",                 "apps.view"),
+    ("DELETE", "/api/apps/",                 "apps.view"),
+    ("PATCH",  "/api/apps/",                 "apps.view"),
+    # Nodes write/delete: same pattern
+    ("POST",   "/api/nodes/",                "nodes.view"),
+    ("PUT",    "/api/nodes/",                "nodes.view"),
+    ("DELETE", "/api/nodes/",                "nodes.view"),
+    ("PATCH",  "/api/nodes/",                "nodes.view"),
 )
 
 # Sub-path → permission overrides for /api/apps/* endpoints based on URL segments.

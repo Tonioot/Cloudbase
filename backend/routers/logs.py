@@ -21,7 +21,7 @@ router = APIRouter(tags=["logs"])
 
 
 @router.get("/api/apps/{app_id}/logs/tail")
-async def logs_tail(app_id: int, limit: int = Query(200, ge=1, le=2000), db: AsyncSession = Depends(get_db)):
+async def logs_tail(app_id: int, limit: int = Query(200, ge=1, le=2000), db: AsyncSession = Depends(get_db), _user: dict = Depends(auth.require_permission("logs.view"))):
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
     node = await _get_app_node(app, db, local_node)

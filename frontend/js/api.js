@@ -5,6 +5,13 @@ function redirectToLogin() {
   location.href = `/login?next=${next}`;
 }
 
+export class PermissionError extends Error {
+  constructor(detail) {
+    super(detail || 'Permission denied');
+    this.name = 'PermissionError';
+  }
+}
+
 async function request(method, path, body) {
   const opts = { method, headers: {}, credentials: 'same-origin' };
   if (body) {
@@ -14,6 +21,7 @@ async function request(method, path, body) {
   const res = await fetch(BASE + path, opts);
   if (res.status === 401) { redirectToLogin(); return; }
   const data = await res.json().catch(() => ({}));
+  if (res.status === 403) throw new PermissionError(data.detail);
   if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
   return data;
 }
@@ -74,6 +82,7 @@ export const api = {
     if (res.status === 401) { redirectToLogin(); return; }
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
+      if (res.status === 403) throw new PermissionError(d.detail);
       throw new Error(d.detail || `HTTP ${res.status}`);
     }
     const reader = res.body.getReader();
@@ -110,12 +119,12 @@ export const api = {
   uploadSystemCert: (file) => {
     const fd = new FormData(); fd.append('file', file);
     return fetch(BASE + '/system/certs/upload', { method: 'POST', body: fd, credentials: 'same-origin' })
-      .then(r => { if (r.status === 401) { redirectToLogin(); return; } return r.json().then(d => { if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`); return d; }); });
+      .then(r => { if (r.status === 401) { redirectToLogin(); return; } return r.json().then(d => { if (r.status === 403) throw new PermissionError(d.detail); if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`); return d; }); });
   },
   uploadAppCert: (id, file) => {
     const fd = new FormData(); fd.append('file', file);
     return fetch(BASE + `/apps/${id}/certs/upload`, { method: 'POST', body: fd, credentials: 'same-origin' })
-      .then(r => { if (r.status === 401) { redirectToLogin(); return; } return r.json().then(d => { if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`); return d; }); });
+      .then(r => { if (r.status === 401) { redirectToLogin(); return; } return r.json().then(d => { if (r.status === 403) throw new PermissionError(d.detail); if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`); return d; }); });
   },
   nginxRefresh:   (id)       => request('POST',  `/apps/${id}/nginx-refresh`),
   getNginxConfig: (id) => request('GET',    `/apps/${id}/nginx-config`),

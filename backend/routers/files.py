@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from models import Application
 import process_manager as pm
+import auth as _auth
 
 log = logging.getLogger("cloudbase.files")
 
@@ -31,6 +32,7 @@ async def list_files(
     app_id: int,
     path: str = Query("", description="Relative path inside the app directory"),
     db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("apps.configure")),
 ):
     app = await _get_or_404(app_id, db)
 
@@ -62,6 +64,7 @@ async def get_file_content(
     app_id: int,
     path: str = Query(..., description="Relative file path"),
     db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("apps.configure")),
 ):
     app = await _get_or_404(app_id, db)
 

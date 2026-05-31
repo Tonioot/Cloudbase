@@ -1,5 +1,13 @@
-import { api } from './api.js';
+import { api, PermissionError } from './api.js';
 import { toast, confirm } from './utils.js';
+
+// Global handler: show a clear toast for any unhandled 403 PermissionError
+window.addEventListener('unhandledrejection', e => {
+  if (e.reason instanceof PermissionError) {
+    e.preventDefault();
+    toast(`Geen toegang: ${e.reason.message}`, 'error');
+  }
+});
 
 const STATUS_DOT = {
   running:  'var(--green)',
@@ -851,8 +859,8 @@ async function initRoleBasedUI() {
     if (!isRoot) {
       // Build the set of permissions the user LACKS — used to hide data-perm elements
       const ALL_KNOWN_PERMS = [
-        'apps.view','apps.manage','apps.create',
-        'nodes.view','nodes.manage','nodes.add',
+        'apps.view','apps.deploy','apps.start','apps.stop','apps.restart','apps.pull','apps.scale','apps.configure','apps.delete',
+        'nodes.view','nodes.add','nodes.configure','nodes.delete',
         'logs.view','stats.view',
         'system.manage',
         'users.manage','roles.manage',

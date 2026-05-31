@@ -183,29 +183,47 @@ async def init_db():
 
     # All known permissions in the system
     ALL_PERMISSIONS = [
-        ("apps.view",         "View applications and their status"),
-        ("apps.manage",       "Create, edit, configure and delete applications"),
-        ("apps.create",       "Deploy, start, stop and restart applications"),
-        ("nodes.view",        "View nodes"),
-        ("nodes.manage",      "Edit, enable, disable and delete nodes"),
+        # Apps — viewing
+        ("apps.view",         "View applications, status and configuration"),
+        # Apps — lifecycle
+        ("apps.deploy",       "Deploy (create) new applications"),
+        ("apps.start",        "Start applications"),
+        ("apps.stop",         "Stop applications"),
+        ("apps.restart",      "Restart applications"),
+        ("apps.pull",         "Pull latest code and rebuild Docker image"),
+        ("apps.scale",        "Add or remove application instances"),
+        # Apps — configuration & removal
+        ("apps.configure",    "Edit application settings, nginx, certs, env vars and maintenance pages"),
+        ("apps.delete",       "Delete applications"),
+        # Nodes
+        ("nodes.view",        "View nodes and their status"),
         ("nodes.add",         "Add new nodes and create node invites"),
+        ("nodes.configure",   "Rename, enable and disable nodes"),
+        ("nodes.delete",      "Delete nodes"),
+        # Observability
         ("logs.view",         "View application logs"),
         ("stats.view",        "View application statistics"),
-        ("system.manage",     "Manage Cloudbase server settings, server logs and Cloudbase nginx"),
+        ("audit.view",        "View audit logs"),
+        # System & users
+        ("system.manage",     "Manage Cloudbase server settings, server logs and nginx"),
         ("users.manage",      "Create, edit and delete users"),
         ("roles.manage",      "Create, edit and delete roles"),
-        ("audit.view",        "View audit logs"),
         ("tokens.manage",     "Manage GitHub tokens"),
     ]
 
     # Rename stale permission names that may already exist in the database
     _RENAMES = [
-        ("apps.deploy",   "apps.create"),
         ("github.manage", "tokens.manage"),
     ]
 
     # Permissions that no longer exist — clean them up if they're still in the DB
-    _REMOVED_PERMISSIONS = ["system.view"]
+    # Old coarse-grained permissions replaced by the granular set above.
+    _REMOVED_PERMISSIONS = [
+        "system.view",
+        "apps.create",   # replaced by apps.deploy / apps.start / apps.stop / apps.restart / apps.pull / apps.scale
+        "apps.manage",   # replaced by apps.configure / apps.delete
+        "nodes.manage",  # replaced by nodes.configure / nodes.delete
+    ]
 
     async with AsyncSessionLocal() as session:
         # Apply renames before seeding so existing DBs stay consistent
@@ -244,11 +262,17 @@ async def init_db():
         # so they cannot drift from the source of truth.
         from sqlalchemy import delete as _delete
         viewer_perms = ["apps.view", "nodes.view", "logs.view", "stats.view", "audit.view"]
+        # "Developer" role: can operate apps but not configure or delete them
+        developer_perms = [
+            "apps.view", "apps.start", "apps.stop", "apps.restart", "apps.pull", "apps.scale",
+            "nodes.view", "logs.view", "stats.view", "audit.view", "tokens.manage",
+        ]
         admin_perms  = [p for p, _ in ALL_PERMISSIONS]
 
         for role_name, role_desc, perms in [
-            ("Viewer",        "Read-only access to all resources", viewer_perms),
-            ("Administrator", "Full access to all features",       admin_perms),
+            ("Viewer",        "Read-only access to all resources",                    viewer_perms),
+            ("Developer",     "Can operate apps but cannot configure or delete them", developer_perms),
+            ("Administrator", "Full access to all features",                          admin_perms),
         ]:
             res = await session.execute(_select(Role).where(Role.name == role_name))
             role_obj = res.scalar_one_or_none()

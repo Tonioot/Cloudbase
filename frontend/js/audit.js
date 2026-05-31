@@ -1,4 +1,4 @@
-import { api } from './api.js';
+import { api, PermissionError } from './api.js';
 
 const LIMIT = 100;
 let page = 0;
@@ -48,7 +48,10 @@ async function loadPage() {
     if (btn) btn.style.display = hasMore ? '' : 'none';
     page++;
   } catch (e) {
-    wrap.innerHTML = `<div style="padding:20px;color:var(--red);font-size:13px">${e.message}</div>`;
+    const msg = e instanceof PermissionError
+      ? 'Je hebt geen toegang tot de audit logs (audit.view vereist).'
+      : e.message;
+    wrap.innerHTML = `<div style="padding:20px;color:var(--red);font-size:13px">${msg}</div>`;
   }
 }
 

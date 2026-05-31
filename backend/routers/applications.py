@@ -678,10 +678,16 @@ def _decrypt_github_token(stored: Optional[str]) -> Optional[str]:
     return plain or None
 
 
-def _request_is_admin(request: Request) -> bool:
+async def _request_can_manage_apps(request: Request) -> bool:
+    """Return True if the requester has apps.configure (or is superadmin)."""
     token = request.cookies.get("pdm_token")
     user = _auth.decode_token(token) if token else None
-    return bool(user and user.get("role") == "admin")
+    if not user:
+        return False
+    if user.get("username") == "admin":
+        return True
+    perms = await _auth.get_user_permissions(user["username"])
+    return "apps.configure" in perms
 
 
 def _build_clone_url(repo_url: str, token: Optional[str]) -> str:
@@ -804,7 +810,7 @@ def _recent_git_commits(app_dir: str, limit: int = 20, ref: Optional[str] = None
 
 
 @router.get("/{app_id}/source-archive")
-async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db)):
+async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.view"))):
     """Return a .tar.gz of the app's working directory for remote nodes to build from.
     Only the local primary serves this — remote nodes call this endpoint directly."""
     app = await _get_or_404(app_id, db)
@@ -835,6 +841,7 @@ async def list_git_commits(
     limit: int = Query(20, ge=1, le=100),
     refresh: bool = Query(True),
     db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("apps.view")),
 ):
     app = await _get_or_404(app_id, db)
     app_dir = _git_app_dir_or_404(app.name)
@@ -997,7 +1004,7 @@ async def discover_certs():
 
 
 @router.get("/{app_id}/certs")
-async def discover_app_certs(app_id: int, db: AsyncSession = Depends(get_db)):
+async def discover_app_certs(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.view"))):
     """Scan for cert/key files inside the app's working directory only."""
     app = await _get_or_404(app_id, db)
 
@@ -1037,7 +1044,7 @@ async def discover_app_certs(app_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{app_id}/certs/upload")
-async def upload_app_cert(app_id: int, file: UploadFile = File(...), _user: dict = Depends(_auth.require_permission("apps.manage")), db: AsyncSession = Depends(get_db)):
+async def upload_app_cert(app_id: int, file: UploadFile = File(...), _user: dict = Depends(_auth.require_permission("apps.configure")), db: AsyncSession = Depends(get_db)):
     """Upload a cert/key file into the app's certs subfolder and return its path."""
     app = await _get_or_404(app_id, db)
 
@@ -1129,7 +1136,7 @@ async def _sync_process_status(app, db) -> None:
 
 
 @router.get("")
-async def list_apps(request: Request, db: AsyncSession = Depends(get_db)):
+async def list_apps(request: Request, db: AsyncSession = Depends(get_db), _viewer: dict = Depends(_auth.require_permission("apps.view"))):
     await ensure_local_node(db)
     result = await db.execute(select(Application))
     apps = result.scalars().all()
@@ -1162,7 +1169,7 @@ async def list_apps(request: Request, db: AsyncSession = Depends(get_db)):
     if dirty:
         await db.commit()
 
-    include_sensitive = _request_is_admin(request)
+    include_sensitive = await _request_can_manage_apps(request)
     result_list = []
     for a in apps:
         app_replicas = replica_map.get(a.id, [])
@@ -1183,6 +1190,7 @@ async def deploy_app(
     req: DeployRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("apps.deploy")),
     actor: str = Depends(_auth.get_current_actor),
 ):
     existing = await db.execute(select(Application).where(Application.name == req.name))
@@ -1278,7 +1286,7 @@ async def get_app(app_id: int, request: Request, db: AsyncSession = Depends(get_
     )
     replicas = replica_result.scalars().all()
     replicas_dicts = [_replica_to_dict(r, node_map.get(r.node_id)) for r in replicas]
-    return _app_to_dict(app, include_sensitive=_request_is_admin(request), replicas=replicas_dicts)
+    return _app_to_dict(app, include_sensitive=await _request_can_manage_apps(request), replicas=replicas_dicts)
 
 
 @router.get("/{app_id}/stats/history")
@@ -1286,6 +1294,7 @@ async def get_stats_history(
     app_id: int,
     hours: int = Query(24, ge=1, le=168),
     db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("stats.view")),
 ):
     since = _dt.datetime.utcnow() - _dt.timedelta(hours=hours)
     result = await db.execute(
@@ -1307,7 +1316,7 @@ async def get_stats_history(
 
 
 @router.put("/{app_id}")
-async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
+async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.configure")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
     await ensure_local_node(db)
     _validate_docker_runtime_settings(req.docker_cpu_limit, req.docker_memory_limit_mb, req.docker_tmpfs_size_mb)
@@ -1408,7 +1417,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
 
 
 @router.delete("/{app_id}")
-async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
+async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.delete")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
     node = await _get_app_node(app, db, local_node)
@@ -1486,7 +1495,7 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str
 
 
 @router.post("/export")
-async def export_apps(req: ExportRequest, _user: dict = Depends(_auth.require_permission("apps.manage")), db: AsyncSession = Depends(get_db)):
+async def export_apps(req: ExportRequest, _user: dict = Depends(_auth.require_permission("apps.configure")), db: AsyncSession = Depends(get_db)):
     query = select(Application)
     if req.app_ids:
         query = query.where(Application.id.in_(req.app_ids))
@@ -1530,7 +1539,7 @@ async def export_apps(req: ExportRequest, _user: dict = Depends(_auth.require_pe
 
 
 @router.post("/import")
-async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, _user: dict = Depends(_auth.require_permission("apps.manage")), db: AsyncSession = Depends(get_db)):
+async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, _user: dict = Depends(_auth.require_permission("apps.configure")), db: AsyncSession = Depends(get_db)):
     local_node = await ensure_local_node(db)
     
     imported_count = 0
@@ -1865,7 +1874,7 @@ async def _get_local_replica_logs(
 
 
 @router.post("/{app_id}/start")
-async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
+async def start_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.start")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
     replicas = await _load_app_replicas(app_id, db)
@@ -1918,7 +1927,7 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str 
 
 
 @router.post("/{app_id}/stop")
-async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
+async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.stop")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
     replicas = await _load_app_replicas(app_id, db)
@@ -1952,7 +1961,7 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str =
 
 
 @router.post("/{app_id}/restart")
-async def restart_app(app_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
+async def restart_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.restart")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
     replicas = await _load_app_replicas(app_id, db)
@@ -2368,6 +2377,7 @@ async def restart_instance(
     app_id: int,
     instance_id: int,
     db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("apps.restart")),
     actor: str = Depends(_auth.get_current_actor),
 ):
     """Restart a single application instance."""
@@ -2433,6 +2443,7 @@ async def delete_instance(
     app_id: int,
     instance_id: int,
     db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("apps.scale")),
     actor: str = Depends(_auth.get_current_actor),
 ):
     """Stop and remove a single application instance."""
@@ -2489,7 +2500,7 @@ async def delete_instance(
 
 
 @router.post("/{app_id}/scale")
-async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
+async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.scale")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
 
@@ -2585,7 +2596,7 @@ async def remove_replica(app_id: int, replica_id: int, db: AsyncSession = Depend
 
 
 @router.post("/{app_id}/pull")
-async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None), db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
+async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None), db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
     target_commit = (payload.commit.strip() if payload and payload.commit else None)
     app_dir = pm.get_app_dir(app.name)
@@ -2703,7 +2714,7 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
 
 
 @router.post("/{app_id}/rebuild")
-async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
+async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
 
     if not app.use_docker:
@@ -2764,7 +2775,7 @@ async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), 
 
 
 @router.post("/{app_id}/deploy-zero-downtime")
-async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
+async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
     from database import AsyncSessionLocal
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
@@ -3042,7 +3053,7 @@ _SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 
 @router.post("/{app_id}/pull/stream")
-async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(default=None), _user: dict = Depends(_auth.require_permission("apps.create")), db: AsyncSession = Depends(get_db)):
+async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(default=None), _user: dict = Depends(_auth.require_permission("apps.pull")), db: AsyncSession = Depends(get_db)):
     """Streaming SSE variant of git_pull. Each build log line is emitted as it happens."""
     app = await _get_or_404(app_id, db)
     target_commit = (payload.commit.strip() if payload and payload.commit else None)
@@ -3180,7 +3191,7 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
 
 
 @router.post("/{app_id}/rebuild/stream")
-async def rebuild_docker_image_stream(app_id: int, _user: dict = Depends(_auth.require_permission("apps.create")), db: AsyncSession = Depends(get_db)):
+async def rebuild_docker_image_stream(app_id: int, _user: dict = Depends(_auth.require_permission("apps.pull")), db: AsyncSession = Depends(get_db)):
     """Streaming SSE variant of rebuild_docker_image."""
     app = await _get_or_404(app_id, db)
 
@@ -3258,7 +3269,7 @@ async def rebuild_docker_image_stream(app_id: int, _user: dict = Depends(_auth.r
 
 
 @router.get("/{app_id}/nginx-config")
-async def get_nginx_config(app_id: int, db: AsyncSession = Depends(get_db)):
+async def get_nginx_config(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.configure"))):
     app = await _get_or_404(app_id, db)
 
     safe = nm._safe_name(app.name)
@@ -3282,7 +3293,7 @@ async def get_nginx_config(app_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.put("/{app_id}/nginx-config")
-async def save_nginx_config(app_id: int, payload: dict, _user: dict = Depends(_auth.require_permission("apps.manage")), db: AsyncSession = Depends(get_db)):
+async def save_nginx_config(app_id: int, payload: dict, _user: dict = Depends(_auth.require_permission("apps.configure")), db: AsyncSession = Depends(get_db)):
     app = await _get_or_404(app_id, db)
 
     content = payload.get("content", "")
@@ -3565,7 +3576,7 @@ async def get_maintenance_pages(app_id: int, db: AsyncSession = Depends(get_db))
 async def save_maintenance_pages(
     app_id: int,
     req: MaintenanceSettings,
-    _user: dict = Depends(_auth.require_permission("apps.manage")),
+    _user: dict = Depends(_auth.require_permission("apps.configure")),
     db: AsyncSession = Depends(get_db),
 ):
     app = await _get_or_404(app_id, db)
@@ -3630,7 +3641,7 @@ async def save_maintenance_pages(
 
 
 @router.post("/{app_id}/maintenance-mode/toggle")
-async def toggle_maintenance_mode(app_id: int, _user: dict = Depends(_auth.require_permission("apps.manage")), db: AsyncSession = Depends(get_db)):
+async def toggle_maintenance_mode(app_id: int, _user: dict = Depends(_auth.require_permission("apps.configure")), db: AsyncSession = Depends(get_db)):
     local_node = await ensure_local_node(db)
     app = await _get_or_404(app_id, db)
     previous_maintenance_mode = bool(app.maintenance_mode)
@@ -3661,7 +3672,7 @@ async def toggle_maintenance_mode(app_id: int, _user: dict = Depends(_auth.requi
 
 
 @router.post("/{app_id}/update-mode/toggle")
-async def toggle_update_mode(app_id: int, _user: dict = Depends(_auth.require_permission("apps.manage")), db: AsyncSession = Depends(get_db)):
+async def toggle_update_mode(app_id: int, _user: dict = Depends(_auth.require_permission("apps.configure")), db: AsyncSession = Depends(get_db)):
     local_node = await ensure_local_node(db)
     app = await _get_or_404(app_id, db)
     previous_maintenance_mode = bool(app.maintenance_mode)
@@ -3758,7 +3769,7 @@ async def preview_maintenance_page(
 
 
 @router.post("/{app_id}/nginx-refresh")
-async def nginx_refresh(app_id: int, db: AsyncSession = Depends(get_db), _actor: str = Depends(_auth.get_current_actor)):
+async def nginx_refresh(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.configure"))):
     """Regenerate the nginx config from the current set of running replicas."""
     app = await _get_or_404(app_id, db)
     if not _has_public_nginx_domain(app):
@@ -3771,7 +3782,7 @@ async def nginx_refresh(app_id: int, db: AsyncSession = Depends(get_db), _actor:
 
 
 @router.get("/{app_id}/nginx-debug")
-async def nginx_debug(app_id: int, db: AsyncSession = Depends(get_db)):
+async def nginx_debug(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.configure"))):
     """Return a full diagnostic snapshot for nginx + maintenance config of this app."""
     import subprocess as sp
     app = await _get_or_404(app_id, db)

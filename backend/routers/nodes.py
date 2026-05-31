@@ -736,7 +736,7 @@ def _as_node_dict(node: Node) -> dict:
 
 
 @router.get("")
-async def list_nodes(db: AsyncSession = Depends(get_db)):
+async def list_nodes(db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("nodes.view"))):
     await ensure_local_node(db)
     result = await db.execute(select(Node).order_by(Node.is_local.desc(), Node.name.asc()))
     nodes = result.scalars().all()
@@ -1110,7 +1110,7 @@ async def agent_ws(websocket: WebSocket):
 
 
 @router.post("/{node_id}/enable")
-async def enable_node(node_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
+async def enable_node(node_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("nodes.configure")), actor: str = Depends(_auth.get_current_actor)):
     node = await get_node_or_404(node_id, db)
     node.enabled = True
     await log_audit(db, "node.enable", actor=actor, detail={"name": node.name, "node_id": node_id})
@@ -1119,7 +1119,7 @@ async def enable_node(node_id: int, db: AsyncSession = Depends(get_db), actor: s
 
 
 @router.post("/{node_id}/disable")
-async def disable_node(node_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
+async def disable_node(node_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("nodes.configure")), actor: str = Depends(_auth.get_current_actor)):
     node = await get_node_or_404(node_id, db)
     if node.is_local:
         raise HTTPException(400, "Local node cannot be disabled")
@@ -1137,7 +1137,7 @@ class NodeUpdateRequest(BaseModel):
 
 
 @router.patch("/{node_id}")
-async def update_node(node_id: int, req: NodeUpdateRequest, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
+async def update_node(node_id: int, req: NodeUpdateRequest, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("nodes.configure")), actor: str = Depends(_auth.get_current_actor)):
     node = await get_node_or_404(node_id, db)
     old_name = node.name
     if req.name is not None:
@@ -1155,7 +1155,7 @@ async def update_node(node_id: int, req: NodeUpdateRequest, db: AsyncSession = D
 
 
 @router.delete("/{node_id}")
-async def delete_node(node_id: int, db: AsyncSession = Depends(get_db), actor: str = Depends(_auth.get_current_actor)):
+async def delete_node(node_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("nodes.delete")), actor: str = Depends(_auth.get_current_actor)):
     node = await get_node_or_404(node_id, db)
     if node.is_local:
         raise HTTPException(400, "Local node cannot be deleted")
@@ -1189,7 +1189,7 @@ async def delete_node(node_id: int, db: AsyncSession = Depends(get_db), actor: s
 
 
 @router.get("/{node_id}/commands")
-async def list_node_commands(node_id: int, db: AsyncSession = Depends(get_db)):
+async def list_node_commands(node_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("nodes.view"))):
     await get_node_or_404(node_id, db)
     result = await db.execute(
         select(NodeCommand)
@@ -1219,7 +1219,7 @@ async def list_node_commands(node_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{node_id}/commands/{command_id}")
-async def get_node_command_status(node_id: int, command_id: int, db: AsyncSession = Depends(get_db)):
+async def get_node_command_status(node_id: int, command_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("nodes.view"))):
     await get_node_or_404(node_id, db)
     result = await db.execute(
         select(NodeCommand).where(NodeCommand.node_id == node_id, NodeCommand.id == command_id)
@@ -1399,7 +1399,7 @@ async def ping_node(node_id: int, _user: dict = Depends(_auth.require_permission
 
 
 @router.get("/{node_id}/connection-status")
-async def get_node_connection_status(node_id: int, db: AsyncSession = Depends(get_db)):
+async def get_node_connection_status(node_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("nodes.view"))):
     node = await get_node_or_404(node_id, db)
     pending_count_result = await db.execute(
         select(func.count()).where(
@@ -1562,7 +1562,7 @@ async def replica_tunnel_ws(replica_id: int, websocket: WebSocket):
 
 
 @router.get("/{node_id}/agent-logs")
-async def get_node_agent_logs(node_id: int, limit: int = 200, db: AsyncSession = Depends(get_db)):
+async def get_node_agent_logs(node_id: int, limit: int = 200, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("nodes.view"))):
     node = await get_node_or_404(node_id, db)
     if node.is_local:
         import os

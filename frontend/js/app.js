@@ -1,4 +1,4 @@
-import { api, wsLogs, wsStats, wsNodeEvents } from './api.js';
+import { api, wsLogs, wsStats, wsNodeEvents, PermissionError } from './api.js';
 import { icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, setBtn } from './utils.js';
 import { pickGitHubToken } from './sidebar.js';
 
@@ -24,14 +24,14 @@ let _settingsInitialized = false;
 function _canManageApps() {
   try {
     const perms = JSON.parse(document.body.dataset.permissions || '[]');
-    return perms.includes('apps.manage');
+    return perms.includes('apps.configure');
   } catch { return false; }
 }
 
 window.addEventListener('cloudbase-role-ready', (evt) => {
   if (!_settingsInitialized) return;
   const perms = new Set(evt?.detail?.permissions || []);
-  if (!perms.has('apps.manage')) _disableSettingsForViewer();
+  if (!perms.has('apps.configure')) _disableSettingsForViewer();
   else _enableSettingsForEditor();
 });
 
