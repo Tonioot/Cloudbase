@@ -1368,10 +1368,6 @@
   align-self: center;
 }
 
-.commit-picker-syncing {
-  color: var(--text-muted);
-  font-style: italic;
-}
 
 .action-log-dialog {
   max-height: 86vh;

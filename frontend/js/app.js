@@ -2442,18 +2442,10 @@ async function openCommitPicker() {
       const list = backdrop.querySelector('#commit-picker-list');
       const sync = backdrop.querySelector('#commit-picker-sync');
 
-      // Fast path: show local commits immediately, then silently refresh from remote.
-      const localData = await api.listCommits(APP_ID, 40, false);
+      const data = await api.listCommits(APP_ID, 40, true);
       if (!closed) {
-        renderCommitRows(list, localData.commits || []);
-        sync.innerHTML = '<span class="commit-picker-syncing">Checking for new commits&#8230;</span>';
-      }
-
-      // Background refresh: fetch origin and update list if there are new commits.
-      const freshData = await api.listCommits(APP_ID, 40, true);
-      if (!closed) {
-        renderCommitRows(list, freshData.commits || []);
-        sync.textContent = `Showing ${freshData.ref || 'latest'} commits`;
+        renderCommitRows(list, data.commits || []);
+        sync.textContent = `Showing ${data.ref || 'latest'} commits`;
       }
     } catch (e) {
       if (!closed) {
