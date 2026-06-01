@@ -432,6 +432,102 @@ async def _stats_history_writer():
         await asyncio.sleep(30)
 
 
+# ── Autoscaler ───────────────────────────────────────────────────────────────
+async def _autoscaler():
+    """Every 60s check CPU for autoscale-enabled apps and add/remove replicas."""
+    import datetime as _dt
+    from models import StatsHistory, ApplicationReplica
+    from routers.applications import _assign_external_port, _start_replica_runtime, ensure_local_node
+    from env_crypto import decrypt_env
+
+    # cooldown: app_id → last scale action timestamp
+    _last_scaled: dict[int, float] = {}
+    COOLDOWN = 120  # seconds between scale actions per app
+
+    await asyncio.sleep(60)
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(Application).where(
+                        Application.autoscale_enabled == True,
+                        Application.status == "running",
+                    )
+                )
+                apps = result.scalars().all()
+
+                for app in apps:
+                    now = asyncio.get_running_loop().time()
+                    if now - _last_scaled.get(app.id, 0) < COOLDOWN:
+                        continue
+
+                    # Average CPU over last 2 minutes from StatsHistory
+                    since = _dt.datetime.utcnow() - _dt.timedelta(minutes=2)
+                    hist = await db.execute(
+                        select(StatsHistory)
+                        .where(StatsHistory.app_id == app.id, StatsHistory.timestamp >= since)
+                        .order_by(StatsHistory.timestamp.desc())
+                    )
+                    rows = hist.scalars().all()
+                    if not rows:
+                        continue
+                    avg_cpu = sum(r.cpu_percent for r in rows) / len(rows)
+
+                    rep_result = await db.execute(
+                        select(ApplicationReplica).where(
+                            ApplicationReplica.app_id == app.id,
+                            ApplicationReplica.status.in_(["running", "starting"]),
+                        )
+                    )
+                    replicas = rep_result.scalars().all()
+                    count = len(replicas)
+
+                    min_r = app.autoscale_min_replicas or 1
+                    max_r = app.autoscale_max_replicas or 4
+                    target = app.autoscale_cpu_target or 70.0
+
+                    if avg_cpu > target and count < max_r:
+                        # Scale up: add one replica on local node
+                        local_node = await ensure_local_node(db)
+                        env_vars = decrypt_env(app.env_vars or "")
+                        new_port = await _assign_external_port(None, local_node.id, None, db)
+                        new_replica = ApplicationReplica(
+                            app_id=app.id,
+                            node_id=local_node.id,
+                            external_port=new_port,
+                            status="starting",
+                        )
+                        db.add(new_replica)
+                        await db.flush()
+                        try:
+                            await _start_replica_runtime(app, new_replica, local_node, env_vars, db)
+                            log.info("[autoscaler] app_id=%d scaled UP to %d replicas (cpu=%.1f%%)", app.id, count + 1, avg_cpu)
+                            _last_scaled[app.id] = now
+                        except Exception as e:
+                            log.warning("[autoscaler] app_id=%d scale up failed: %s", app.id, e)
+                            await db.rollback()
+                            continue
+
+                    elif avg_cpu < target * 0.5 and count > min_r:
+                        # Scale down: remove the last replica
+                        victim = replicas[-1]
+                        try:
+                            await asyncio.to_thread(process_manager.stop_docker_replica, app.id, victim.id)
+                        except Exception:
+                            pass
+                        await db.delete(victim)
+                        log.info("[autoscaler] app_id=%d scaled DOWN to %d replicas (cpu=%.1f%%)", app.id, count - 1, avg_cpu)
+                        _last_scaled[app.id] = now
+
+                    await db.commit()
+
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            log.warning("[autoscaler] error: %s", e)
+        await asyncio.sleep(60)
+
+
 # ── NodeCommand cleanup ───────────────────────────────────────────────────────
 async def _node_command_cleanup():
     """Delete completed/failed NodeCommands older than 24h every hour.
@@ -691,6 +787,7 @@ async def lifespan(app: FastAPI):
     history_task       = asyncio.create_task(_stats_history_writer())
     remote_stats_task  = asyncio.create_task(_remote_replica_stats_poller())
     cleanup_task       = asyncio.create_task(_node_command_cleanup())
+    autoscaler_task    = asyncio.create_task(_autoscaler())
 
     # Start node agent if configured (as an integrated background task)
     agent_task = None
@@ -699,7 +796,7 @@ async def lifespan(app: FastAPI):
         agent_task = asyncio.create_task(node_agent.start_agent())
 
     yield
-    for task in (monitor_task, stats_task, node_task, history_task, remote_stats_task, cleanup_task, agent_task):
+    for task in (monitor_task, stats_task, node_task, history_task, remote_stats_task, cleanup_task, autoscaler_task, agent_task):
         if not task: continue
         task.cancel()
         try:

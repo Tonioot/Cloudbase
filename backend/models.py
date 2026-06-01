@@ -76,6 +76,10 @@ class Application(Base):
     docker_tmpfs_enabled = Column(Boolean, default=False)
     docker_tmpfs_size_mb = Column(Integer, nullable=True)
     no_web           = Column(Boolean, default=False)   # True = no web server, skip nginx + port
+    autoscale_enabled      = Column(Boolean, default=False)
+    autoscale_min_replicas = Column(Integer, default=1)
+    autoscale_max_replicas = Column(Integer, default=4)
+    autoscale_cpu_target   = Column(Float,   default=70.0)  # % CPU to trigger scale up
     maintenance_mode = Column(Boolean, default=False)
     update_mode      = Column(Boolean, default=False)
     downtime_page    = Column(Text, nullable=True)  # JSON: {title, message, color, custom_html}

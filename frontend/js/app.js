@@ -183,7 +183,7 @@ function _syncZeroDowntimeButton() {
         const orig = zdBtn.innerHTML;
         zdBtn.textContent = 'Deploying…';
         try {
-          const res = await api.deployZeroDowntime(APP_ID);
+          const res = await api.deployBlueGreen(APP_ID);
           toast(`Blue/Green deploy complete — instance ${res.instance_id}`, 'success');
           app = await api.getApp(APP_ID);
           updateHeaderStatus();
@@ -1289,6 +1289,17 @@ function initSettings() {
   document.getElementById('cfg-docker-tmpfs-enabled').checked = !!app.docker_tmpfs_enabled;
   document.getElementById('cfg-docker-tmpfs-size').value = app.docker_tmpfs_size_mb || '';
   const dockerSection = document.getElementById('docker-runtime-section');
+
+  // Autoscaling
+  const autoscaleEnabled = !!app.autoscale_enabled;
+  document.getElementById('cfg-autoscale-enabled').checked = autoscaleEnabled;
+  document.getElementById('cfg-autoscale-min').value = app.autoscale_min_replicas || 1;
+  document.getElementById('cfg-autoscale-max').value = app.autoscale_max_replicas || 4;
+  document.getElementById('cfg-autoscale-cpu').value = app.autoscale_cpu_target || 70;
+  document.getElementById('autoscale-options').style.display = autoscaleEnabled ? '' : 'none';
+  document.getElementById('cfg-autoscale-enabled').onchange = function() {
+    document.getElementById('autoscale-options').style.display = this.checked ? '' : 'none';
+  };
   if (dockerSection) dockerSection.style.display = '';
 
   // Cert/key hidden inputs + filename display
@@ -2277,6 +2288,10 @@ async function saveSettings() {
     docker_read_only_root: document.getElementById('cfg-docker-readonly').checked,
     docker_tmpfs_enabled: document.getElementById('cfg-docker-tmpfs-enabled').checked,
     docker_tmpfs_size_mb: Number.isInteger(dockerTmpfsSize) ? dockerTmpfsSize : null,
+    autoscale_enabled:      document.getElementById('cfg-autoscale-enabled').checked,
+    autoscale_min_replicas: parseInt(document.getElementById('cfg-autoscale-min').value) || 1,
+    autoscale_max_replicas: parseInt(document.getElementById('cfg-autoscale-max').value) || 4,
+    autoscale_cpu_target:   parseFloat(document.getElementById('cfg-autoscale-cpu').value) || 70,
     env_vars,
     env_var_keys,
     ...(tokenId ? { github_token_id: tokenId } : token ? { github_token: token } : {}),

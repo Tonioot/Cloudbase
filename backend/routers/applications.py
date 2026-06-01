@@ -112,6 +112,10 @@ class UpdateRequest(BaseModel):
     working_dir:    Optional[str] = None   # set by node agents after source extraction
     source_revision: Optional[str] = None
     image_revision: Optional[str] = None
+    autoscale_enabled:      Optional[bool]  = None
+    autoscale_min_replicas: Optional[int]   = None
+    autoscale_max_replicas: Optional[int]   = None
+    autoscale_cpu_target:   Optional[float] = None
 
 
 class MaintenancePageConfig(BaseModel):
@@ -1347,6 +1351,14 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.source_revision = req.source_revision
     if req.image_revision is not None:
         app.image_revision = req.image_revision
+    if req.autoscale_enabled is not None:
+        app.autoscale_enabled = req.autoscale_enabled
+    if req.autoscale_min_replicas is not None:
+        app.autoscale_min_replicas = max(1, req.autoscale_min_replicas)
+    if req.autoscale_max_replicas is not None:
+        app.autoscale_max_replicas = max(1, req.autoscale_max_replicas)
+    if req.autoscale_cpu_target is not None:
+        app.autoscale_cpu_target = max(10.0, min(95.0, req.autoscale_cpu_target))
 
     if dockerfile_changed:
         if app.working_dir and os.path.exists(app.working_dir):
@@ -3084,7 +3096,7 @@ async def deploy_rolling(app_id: int, db: AsyncSession = Depends(get_db), _user:
     return {"status": "ok", "image": app.docker_image, "replaced": len(completed_new_ids)}
 
 
-@router.post("/{app_id}/deploy-zero-downtime")
+@router.post("/{app_id}/deploy-blue-green")
 async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
     from database import AsyncSessionLocal
     app = await _get_or_404(app_id, db)
@@ -3751,6 +3763,10 @@ def _app_to_dict(
         "docker_read_only_root": bool(app.docker_read_only_root),
         "docker_tmpfs_enabled": bool(app.docker_tmpfs_enabled),
         "docker_tmpfs_size_mb": app.docker_tmpfs_size_mb,
+        "autoscale_enabled":      bool(app.autoscale_enabled),
+        "autoscale_min_replicas": app.autoscale_min_replicas or 1,
+        "autoscale_max_replicas": app.autoscale_max_replicas or 4,
+        "autoscale_cpu_target":   app.autoscale_cpu_target or 70.0,
         "maintenance_mode": app.maintenance_mode or False,
         "update_mode":      app.update_mode or False,
         "downtime_page":    downtime_page,

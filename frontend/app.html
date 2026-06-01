@@ -455,6 +455,42 @@
               </div>
             </div>
 
+            <!-- Autoscaling -->
+            <div class="settings-group">
+              <div class="settings-group-hd">
+                <div class="settings-group-title">Autoscaling</div>
+                <div class="settings-group-sub">Automatically add or remove replicas based on CPU usage.</div>
+              </div>
+              <div class="settings-group-bd">
+                <div class="field">
+                  <label class="toggle-row">
+                    <span class="field-label" style="margin-bottom:0">Enable autoscaling</span>
+                    <label class="toggle">
+                      <input type="checkbox" id="cfg-autoscale-enabled" />
+                      <span class="toggle-slider"></span>
+                    </label>
+                  </label>
+                </div>
+                <div id="autoscale-options">
+                  <div class="grid-3-1">
+                    <div class="field">
+                      <label class="field-label">Min replicas</label>
+                      <input class="input" id="cfg-autoscale-min" type="number" min="1" step="1" placeholder="1" style="max-width:100px" />
+                    </div>
+                    <div class="field">
+                      <label class="field-label">Max replicas</label>
+                      <input class="input" id="cfg-autoscale-max" type="number" min="1" step="1" placeholder="4" style="max-width:100px" />
+                    </div>
+                    <div class="field">
+                      <label class="field-label">CPU target (%)</label>
+                      <input class="input" id="cfg-autoscale-cpu" type="number" min="10" max="95" step="1" placeholder="70" style="max-width:100px" />
+                      <div class="field-hint">Scale up above this, scale down below half.</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <!-- Network -->
             <div class="settings-group">
               <div class="settings-group-hd">
