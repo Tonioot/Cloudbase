@@ -2284,7 +2284,7 @@ async def get_instance_stats(app_id: int, _user: dict = Depends(_auth.require_pe
                     )
                     cmd_id = cmd.id
                 async with AsyncSessionLocal() as wait_db:
-                    done = await wait_for_node_command(wait_db, cmd_id, timeout_seconds=4)
+                    done = await wait_for_node_command(wait_db, cmd_id, timeout_seconds=1.5)
                 if done.status == "done" and done.result:
                     result = json.loads(done.result)
                     if result.get("cpu_percent") is not None:

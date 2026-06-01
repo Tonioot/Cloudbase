@@ -1361,6 +1361,18 @@
   line-height: 1.4;
 }
 
+.commit-picker-sync {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-left: 10px;
+  align-self: center;
+}
+
+.commit-picker-syncing {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
 .action-log-dialog {
   max-height: 86vh;
 }

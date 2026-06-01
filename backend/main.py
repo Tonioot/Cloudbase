@@ -267,10 +267,29 @@ async def _remote_replica_stats_poller():
                     select(_AR).where(
                         _AR.status.in_(["running", "starting"]),
                         _AR.node_id.isnot(None),
-                        _AR.node_id != local_node_id,
                     )
                 )
-                remote_replicas = rep_result.scalars().all()
+                all_running_replicas = rep_result.scalars().all()
+
+            remote_replicas = [r for r in all_running_replicas if r.node_id != local_node_id]
+            local_replicas  = [r for r in all_running_replicas if r.node_id == local_node_id]
+
+            # Poll local replica stats in-process (no command queue needed)
+            if local_replicas:
+                import docker_manager as _dm
+                import time as _time
+
+                async def _poll_local_replica(r):
+                    try:
+                        cname = _dm.replica_container_name(r.app_id, r.id)
+                        snap = await asyncio.to_thread(_dm.get_container_stats_by_name, cname)
+                        if snap and snap.get("cpu_percent") is not None:
+                            snap["timestamp"] = int(_time.time() * 1000)
+                            pm.set_replica_stats(r.id, {"replica_id": r.id, **snap})
+                    except Exception:
+                        pass
+
+                await asyncio.gather(*[_poll_local_replica(r) for r in local_replicas])
 
             if not remote_replicas:
                 await asyncio.sleep(15)

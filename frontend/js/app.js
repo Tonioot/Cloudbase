@@ -2313,15 +2313,13 @@ async function tileAction(endpoint, label) {
   const origIcon = tile.querySelector('.action-tile-icon').innerHTML;
   tile.querySelector('.action-tile-icon').innerHTML = spinner;
   const logsTitle = endpoint === 'pull' ? 'Pull + Rebuild Logs' : 'Rebuild Logs';
-  const logDialog = openActionLogsDialog(logsTitle);
+  let logDialog;
 
   try {
     let streamPath, body = null;
     if (endpoint === 'pull') {
       const selectedCommit = await openCommitPicker();
       if (selectedCommit === null) {
-        logDialog.append('[Action] Cancelled by user.');
-        logDialog.setStatus('Cancelled');
         return;
       }
       streamPath = `/apps/${APP_ID}/pull/stream`;
@@ -2330,11 +2328,14 @@ async function tileAction(endpoint, label) {
       streamPath = `/apps/${APP_ID}/rebuild/stream`;
     }
 
+    logDialog = openActionLogsDialog(logsTitle);
     await api.streamAction(streamPath, body, line => logDialog.append(line));
     logDialog.setStatus('Done');
   } catch (e) {
-    logDialog.append(`[Error] ${e.message}`);
-    logDialog.setStatus('Failed');
+    if (logDialog) {
+      logDialog.append(`[Error] ${e.message}`);
+      logDialog.setStatus('Failed');
+    }
     toast(e.message, 'error');
   } finally {
     tile.disabled = false;
@@ -2441,14 +2442,14 @@ async function openCommitPicker() {
       const list = backdrop.querySelector('#commit-picker-list');
       const sync = backdrop.querySelector('#commit-picker-sync');
 
-      // Fast path: local HEAD history without fetch so the picker opens immediately.
+      // Fast path: show local commits immediately, then silently refresh from remote.
       const localData = await api.listCommits(APP_ID, 40, false);
       if (!closed) {
         renderCommitRows(list, localData.commits || []);
-        sync.textContent = 'Syncing latest from remote...';
+        sync.innerHTML = '<span class="commit-picker-syncing">Checking for new commits&#8230;</span>';
       }
 
-      // Slow path: fetch origin and render latest remote commits when available.
+      // Background refresh: fetch origin and update list if there are new commits.
       const freshData = await api.listCommits(APP_ID, 40, true);
       if (!closed) {
         renderCommitRows(list, freshData.commits || []);
