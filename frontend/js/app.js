@@ -162,37 +162,68 @@ function renderHeader() {
 }
 
 function _syncZeroDowntimeButton() {
-  const zdBtn = document.getElementById('btn-zero-downtime');
-  if (!zdBtn) return;
+  const zdBtn      = document.getElementById('btn-zero-downtime');
+  const rollingBtn = document.getElementById('btn-rolling-deploy');
 
   // Base-domain routed apps can have app_url without app.nginx_enabled.
   const hasPublicRoute = !!(app?.app_url || (app?.nginx_enabled && app?.domain));
-  const canUseRollingRestart = !!(!app?.no_web && hasPublicRoute);
-  zdBtn.style.display = canUseRollingRestart ? '' : 'none';
+  const canDeploy = !!(!app?.no_web && hasPublicRoute);
 
-  if (zdBtn.dataset.bound === '1') return;
-  zdBtn.dataset.bound = '1';
-  zdBtn.onclick = async () => {
-    const ok = await confirm(
-      'Rolling Restart',
-      'Builds a new image for every running instance, starts each on a new port, verifies health, then atomically swaps nginx. Old containers stop only after the new ones are live.'
-    );
-    if (!ok) return;
-    zdBtn.disabled = true;
-    const orig = zdBtn.innerHTML;
-    zdBtn.textContent = 'Restarting…';
-    try {
-      const res = await api.deployZeroDowntime(APP_ID);
-      toast(`Rolling restart complete — instance ${res.instance_id}`, 'success');
-      app = await api.getApp(APP_ID);
-      updateHeaderStatus();
-    } catch (e) {
-      toast(e.message || 'Rolling restart failed', 'error');
-    } finally {
-      zdBtn.disabled = false;
-      zdBtn.innerHTML = orig;
+  if (zdBtn) {
+    zdBtn.style.display = canDeploy ? '' : 'none';
+    if (!zdBtn.dataset.bound) {
+      zdBtn.dataset.bound = '1';
+      zdBtn.onclick = async () => {
+        const ok = await confirm(
+          'Blue/Green Deploy',
+          'Builds a new image for every instance simultaneously, starts them on new ports, verifies health, then atomically swaps nginx. Old containers stop only after all new ones are live.'
+        );
+        if (!ok) return;
+        zdBtn.disabled = true;
+        const orig = zdBtn.innerHTML;
+        zdBtn.textContent = 'Deploying…';
+        try {
+          const res = await api.deployZeroDowntime(APP_ID);
+          toast(`Blue/Green deploy complete — instance ${res.instance_id}`, 'success');
+          app = await api.getApp(APP_ID);
+          updateHeaderStatus();
+        } catch (e) {
+          toast(e.message || 'Blue/Green deploy failed', 'error');
+        } finally {
+          zdBtn.disabled = false;
+          zdBtn.innerHTML = orig;
+        }
+      };
     }
-  };
+  }
+
+  if (rollingBtn) {
+    rollingBtn.style.display = canDeploy ? '' : 'none';
+    if (!rollingBtn.dataset.bound) {
+      rollingBtn.dataset.bound = '1';
+      rollingBtn.onclick = async () => {
+        const ok = await confirm(
+          'Rolling Deploy',
+          'Replaces each replica one at a time with a freshly built image. While one replica is updating, the others keep serving traffic — no downtime page is shown.'
+        );
+        if (!ok) return;
+        rollingBtn.disabled = true;
+        const orig = rollingBtn.innerHTML;
+        rollingBtn.textContent = 'Deploying…';
+        try {
+          const res = await api.deployRolling(APP_ID);
+          toast(`Rolling deploy complete — ${res.replaced} replica(s) replaced`, 'success');
+          app = await api.getApp(APP_ID);
+          updateHeaderStatus();
+        } catch (e) {
+          toast(e.message || 'Rolling deploy failed', 'error');
+        } finally {
+          rollingBtn.disabled = false;
+          rollingBtn.innerHTML = orig;
+        }
+      };
+    }
+  }
 }
 
 function _updateHeaderStatus_legacy() {
@@ -1191,6 +1222,7 @@ async function initActivity() {
       'app.config_update': 'var(--text-muted)',
       'app.delete':        'var(--red)',
       'app.zero_downtime_deploy': 'var(--green)',
+      'app.rolling_deploy':       'var(--green)',
       'auth.login':        'var(--text-muted)',
       'auth.logout':       'var(--text-muted)',
       'auth.change_password': 'var(--yellow)',

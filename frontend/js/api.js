@@ -136,6 +136,7 @@ export const api = {
   getAuditLog: (appId, limit, offset) => request('GET', `/audit-log?limit=${limit || 100}&offset=${offset || 0}${appId ? `&app_id=${appId}` : ''}`),
   getStatsHistory:(id, hours) => request('GET', `/apps/${id}/stats/history?hours=${hours || 24}`),
   deployZeroDowntime: (id) => request('POST', `/apps/${id}/deploy-zero-downtime`),
+  deployRolling:      (id) => request('POST', `/apps/${id}/deploy-rolling`),
   listReplicas:   (id)             => request('GET',    `/apps/${id}/replicas`),
   listInstances:  (id)             => request('GET',    `/apps/${id}/instances`),
   getInstanceStats:(id)            => request('GET',    `/apps/${id}/instances/stats`),

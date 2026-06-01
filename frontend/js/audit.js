@@ -15,6 +15,7 @@ const BADGE_COLOR = {
   'app.config_update':      'var(--text-muted)',
   'app.delete':             'var(--red)',
   'app.zero_downtime_deploy': 'var(--green)',
+  'app.rolling_deploy':       'var(--green)',
   'auth.login':             'var(--text-muted)',
   'auth.logout':            'var(--text-muted)',
   'auth.change_password':   'var(--yellow)',
