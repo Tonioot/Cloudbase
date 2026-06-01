@@ -673,8 +673,10 @@ async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id
 
     # Image missing or stale — report substatus and build
     if replica_id is not None:
-        await _report_replica_substatus(client, state, int(main_id), replica_id, "building_image")
+        await _report_replica_substatus(client, state, int(main_id), replica_id, "downloading")
     app_dir = await _download_and_extract_source(client, state, int(main_id), app_name, headers)
+    if replica_id is not None:
+        await _report_replica_substatus(client, state, int(main_id), replica_id, "building_image")
     await _build_image_local(int(main_id), app_name, app_dir, payload)
     return int(main_id)
 

@@ -1897,14 +1897,16 @@ async function initInstances() {
       let startupHtml = '';
       if (isStarting) {
         const sub = inst.substatus;
-        // Steps in the order they always appear — building_image may be skipped (cached image)
+        // Steps in the order they always appear — downloading/building may be skipped (cached image)
         const steps = [
+          { key: 'downloading',        label: 'Downloading source' },
           { key: 'building_image',     label: 'Building image' },
           { key: 'creating_container', label: 'Creating container' },
           { key: 'waiting',            label: 'Starting app' },
         ];
         // Determine which step is active and which are done
-        const activeIdx = sub ? Math.max(steps.findIndex(s => s.key === sub), 0) : 0;
+        const foundIdx = sub ? steps.findIndex(s => s.key === sub) : -1;
+        const activeIdx = foundIdx >= 0 ? foundIdx : 0;
         startupHtml = `
           <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border-muted)">
             <div style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin-bottom:6px">Starting up</div>

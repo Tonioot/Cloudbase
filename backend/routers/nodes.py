@@ -1299,6 +1299,11 @@ async def recover_node_replicas(node_id: int) -> None:
                 await db.commit()
                 continue
 
+            # Skip recovery if the app is not configured to auto-start or restart
+            if not app.auto_start and app.restart_policy in (None, "no"):
+                log.info("recover_node_replicas: skipping replica %d (app %d has auto_start=False, restart_policy=%r)", replica.id, app.id, app.restart_policy)
+                continue
+
             try:
                 env_vars = decrypt_env(app.env_vars or "")
             except Exception:
