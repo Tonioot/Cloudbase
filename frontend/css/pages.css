@@ -920,39 +920,6 @@
   flex-shrink: 0;
 }
 
-/* Theme picker */
-.maint-theme-row {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-
-.maint-theme-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 5px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg-surface);
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: border-color .15s, color .15s, background .15s;
-}
-
-.maint-theme-btn:hover {
-  border-color: var(--accent);
-  color: var(--text-primary);
-}
-
-.maint-theme-btn.active {
-  border-color: var(--accent);
-  background: var(--accent-bg);
-  color: var(--text-primary);
-}
-
 /* ─── Maintenance page editor modal ─────────────────────────────────────── */
 .maint-modal {
   width: 520px;

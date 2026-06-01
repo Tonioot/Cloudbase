@@ -69,7 +69,6 @@ def generate_maintenance_html(
     custom_html: str = None,
     page_type: str = "downtime",
     logo_data: str = None,
-    dark_mode: str = "auto",
 ) -> str:
     """Return a full HTML page for downtime or update mode. Uses custom_html if provided."""
     if custom_html:
@@ -78,7 +77,6 @@ def generate_maintenance_html(
     safe_title   = (title or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     safe_message = (message or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     safe_color   = color if color and color.startswith("#") and len(color) in (4, 7) else "#f85149"
-    safe_dark    = dark_mode if dark_mode in ("auto", "light", "dark") else "auto"
     # Validate URL to prevent injection
     import re as _re
     safe_status_url = status_url if status_url and _re.match(r'^https?://', status_url) else None
@@ -86,12 +84,12 @@ def generate_maintenance_html(
     safe_logo_data = logo_data if logo_data and _re.match(r'^data:image/[a-zA-Z0-9+/.-]+;base64,', logo_data) else None
 
     if page_type == "downtime":
-        return _downtime_template(safe_title, safe_message, safe_color, safe_status_url, safe_logo_data, safe_dark)
+        return _downtime_template(safe_title, safe_message, safe_color, safe_status_url, safe_logo_data)
     if page_type == "restart":
-        return _restart_template(safe_title, safe_message, safe_color, safe_status_url, safe_logo_data, safe_dark)
+        return _restart_template(safe_title, safe_message, safe_color, safe_status_url, safe_logo_data)
     if page_type == "starting":
-        return _starting_template(safe_title, safe_message, safe_color, safe_status_url, safe_logo_data, safe_dark)
-    return _update_template(safe_title, safe_message, safe_color, safe_status_url, safe_logo_data, safe_dark)
+        return _starting_template(safe_title, safe_message, safe_color, safe_status_url, safe_logo_data)
+    return _update_template(safe_title, safe_message, safe_color, safe_status_url, safe_logo_data)
 
 
 def generate_cloudbase_unavailable_html(domain: str | None = None) -> str:
@@ -336,130 +334,7 @@ def _render_visual_block(color: str, icon_svg: str, logo_data: str = None) -> st
     return f'<div class="icon-ring">{inner}</div>'
 
 
-def _base_css(color: str, spin_dur: str = "2.5s", dark_mode: str = "auto") -> str:
-    dark_vars = """
-        --bg:     #0d0d0f;
-        --card:   #141418;
-        --border: #27272f;
-        --shadow: rgba(0,0,0,.5);
-        --h1:     #f4f4f5;
-        --msg:    #8c8c9a;
-        --foot:   #4a4a5a;
-        --track:  #27272f;"""
-    if dark_mode == "dark":
-        dark_section = f":root {{{dark_vars}\n    }}"
-    elif dark_mode == "light":
-        dark_section = ""
-    else:
-        dark_section = f"@media (prefers-color-scheme: dark) {{\n      :root {{{dark_vars}\n      }}\n    }}"
-
-    return f"""
-    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    :root {{
-      --bg:        #f1f5f9;
-      --card:      #ffffff;
-      --border:    #e2e8f0;
-      --shadow:    rgba(0,0,0,.07);
-      --h1:        #0f172a;
-      --msg:       #64748b;
-      --foot:      #94a3b8;
-      --track:     #e2e8f0;
-      --accent:    {color};
-    }}
-    {dark_section}
-    body {{
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
-      background: var(--bg);
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 40px 20px;
-    }}
-    .card {{
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 24px;
-      box-shadow: 0 1px 3px rgba(0,0,0,.04), 0 12px 40px var(--shadow);
-      padding: 56px 48px 48px;
-      max-width: 480px;
-      width: 100%;
-      text-align: center;
-    }}
-    .icon-ring {{
-      width: 80px; height: 80px;
-      border-radius: 50%;
-      background: color-mix(in srgb, var(--accent) 10%, var(--card));
-      border: 1.5px solid color-mix(in srgb, var(--accent) 22%, transparent);
-      display: flex; align-items: center; justify-content: center;
-      margin: 0 auto 28px;
-      position: relative;
-    }}
-    .icon-glyph {{ display: inline-flex; align-items: center; justify-content: center; }}
-    .icon-glyph svg {{ display: block; }}
-    .icon-logo {{
-      width: 56px; height: 56px;
-      border-radius: 50%;
-      overflow: hidden;
-      display: flex; align-items: center; justify-content: center;
-      background: var(--card);
-    }}
-    .icon-logo img {{
-      width: 100%; height: 100%;
-      object-fit: contain;
-      padding: 8px;
-    }}
-    .icon-ring::before {{
-      content: '';
-      position: absolute; inset: -6px; border-radius: 50%;
-      border: 2px solid color-mix(in srgb, var(--accent) 14%, transparent);
-      border-top-color: var(--accent);
-      animation: spin {spin_dur} linear infinite;
-    }}
-    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
-    .badge {{
-      display: inline-flex; align-items: center; gap: 7px;
-      background: color-mix(in srgb, var(--accent) 10%, var(--card));
-      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
-      border-radius: 100px; padding: 5px 15px; margin-bottom: 24px;
-      font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
-      color: var(--accent);
-    }}
-    .dot {{ width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: blink 1.8s ease-in-out infinite; }}
-    @keyframes blink {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: .25; }} }}
-    .spinner {{
-      width: 8px; height: 8px; border-radius: 50%;
-      border: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
-      border-top-color: var(--accent);
-      animation: spin .7s linear infinite;
-    }}
-    h1 {{ font-size: 27px; font-weight: 700; color: var(--h1); letter-spacing: -.03em; line-height: 1.25; margin-bottom: 14px; }}
-    .msg {{ font-size: 15px; color: var(--msg); line-height: 1.85; margin-bottom: 30px; }}
-    .divider {{ width: 40px; height: 2px; background: linear-gradient(90deg, transparent, var(--accent), transparent); margin: 0 auto 26px; border-radius: 2px; }}
-    .track {{ background: var(--track); border-radius: 100px; height: 3px; overflow: hidden; margin-bottom: 30px; }}
-    .bar {{ height: 100%; background: linear-gradient(90deg, transparent, var(--accent), transparent); animation: sweep 1.4s ease-in-out infinite; }}
-    @keyframes sweep {{ 0% {{ transform: translateX(-100%) scaleX(.6); }} 100% {{ transform: translateX(200%) scaleX(.6); }} }}
-    .status-link {{
-      display: inline-flex; align-items: center; gap: 7px;
-      font-size: 13px; font-weight: 500; color: var(--accent);
-      text-decoration: none; padding: 10px 22px;
-      border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-      border-radius: 12px;
-      background: color-mix(in srgb, var(--accent) 7%, transparent);
-      transition: background .15s, border-color .15s;
-    }}
-    .status-link:hover {{
-      background: color-mix(in srgb, var(--accent) 14%, transparent);
-      border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-    }}
-    .footer {{ margin-top: 36px; font-size: 11px; color: var(--foot); line-height: 1.6; }}
-    @media (max-width: 500px) {{
-      .card {{ padding: 40px 28px 36px; border-radius: 18px; }}
-      h1 {{ font-size: 23px; }}
-    }}"""
-
-
-def _downtime_template(title: str, message: str, color: str, status_url: str = None, logo_data: str = None, dark_mode: str = "auto") -> str:
+def _downtime_template(title: str, message: str, color: str, status_url: str = None, logo_data: str = None) -> str:
     status_btn = f"""
     <a class="status-link" href="{status_url}" target="_blank" rel="noopener noreferrer">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 16 12 13 21 11 3 8 12 2 12"/></svg>
@@ -468,7 +343,7 @@ def _downtime_template(title: str, message: str, color: str, status_url: str = N
     </a>""" if status_url else ""
     visual_block = _render_visual_block(
         color,
-        f"""<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round">
+        f"""<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round">
         <circle cx="12" cy="12" r="10"/>
         <polyline points="12 6 12 12 16 14"/>
       </svg>""",
@@ -481,12 +356,89 @@ def _downtime_template(title: str, message: str, color: str, status_url: str = N
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{title}</title>
-  <style>{_base_css(color, "2.5s", dark_mode)}</style>
+  <style>
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+      background: #f1f5f9;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }}
+    .card {{
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.04), 0 8px 32px rgba(0,0,0,.07);
+      padding: 52px 44px 44px;
+      max-width: 460px;
+      width: 100%;
+      text-align: center;
+    }}
+    .icon-ring {{
+      width: 72px; height: 72px;
+      border-radius: 50%;
+      background: color-mix(in srgb, {color} 8%, #fff);
+      border: 1.5px solid color-mix(in srgb, {color} 20%, transparent);
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 24px;
+      position: relative;
+    }}
+    .icon-glyph {{ display: inline-flex; align-items: center; justify-content: center; }}
+    .icon-glyph svg {{ display: block; }}
+    .icon-logo {{
+      width: 52px; height: 52px;
+      border-radius: 50%;
+      overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+      background: #ffffff;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.7);
+    }}
+    .icon-logo img {{
+      width: 100%; height: 100%;
+      object-fit: contain;
+      padding: 8px;
+      background: #ffffff;
+    }}
+    .icon-ring::before {{
+      content: '';
+      position: absolute; inset: -5px; border-radius: 50%;
+      border: 2px solid color-mix(in srgb, {color} 15%, transparent);
+      border-top-color: {color};
+      animation: spin 2.5s linear infinite;
+    }}
+    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+    .badge {{
+      display: inline-flex; align-items: center; gap: 7px;
+      background: color-mix(in srgb, {color} 8%, #fff);
+      border: 1px solid color-mix(in srgb, {color} 22%, transparent);
+      border-radius: 100px; padding: 5px 14px; margin-bottom: 22px;
+      font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+      color: {color};
+    }}
+    .dot {{ width: 6px; height: 6px; border-radius: 50%; background: {color}; animation: blink 1.8s ease-in-out infinite; }}
+    @keyframes blink {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: .25; }} }}
+    h1 {{ font-size: 26px; font-weight: 700; color: #0f172a; letter-spacing: -.03em; line-height: 1.25; margin-bottom: 12px; }}
+    .msg {{ font-size: 15px; color: #64748b; line-height: 1.8; margin-bottom: 28px; }}
+    .divider {{ width: 40px; height: 2px; background: linear-gradient(90deg, transparent, {color}, transparent); margin: 0 auto 24px; border-radius: 2px; }}
+    .status-link {{
+      display: inline-flex; align-items: center; gap: 7px;
+      font-size: 13px; font-weight: 500; color: {color};
+      text-decoration: none; padding: 9px 20px;
+      border: 1px solid color-mix(in srgb, {color} 30%, transparent);
+      border-radius: 10px;
+      background: color-mix(in srgb, {color} 5%, transparent);
+      transition: background .15s;
+    }}
+    .status-link:hover {{ background: color-mix(in srgb, {color} 12%, transparent); }}
+    .footer {{ margin-top: 36px; font-size: 11px; color: #94a3b8; }}
+  </style>
 </head>
 <body>
   <div class="card">
     {visual_block}
-    <div class="badge"><span class="dot"></span> Down for maintenance</div>
     <h1>{title}</h1>
     <p class="msg">{message}</p>
     <div class="divider"></div>
@@ -498,7 +450,7 @@ def _downtime_template(title: str, message: str, color: str, status_url: str = N
 """
 
 
-def _restart_template(title: str, message: str, color: str, status_url: str = None, logo_data: str = None, dark_mode: str = "auto") -> str:
+def _restart_template(title: str, message: str, color: str, status_url: str = None, logo_data: str = None) -> str:
     status_btn = f"""
     <a class="status-link" href="{status_url}" target="_blank" rel="noopener noreferrer">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 16 12 13 21 11 3 8 12 2 12"/></svg>
@@ -507,7 +459,7 @@ def _restart_template(title: str, message: str, color: str, status_url: str = No
     </a>""" if status_url else ""
     visual_block = _render_visual_block(
         color,
-        f"""<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round">
+        f"""<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round">
         <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
         <path d="M3 3v5h5"/>
       </svg>""",
@@ -521,12 +473,95 @@ def _restart_template(title: str, message: str, color: str, status_url: str = No
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="refresh" content="8">
   <title>{title}</title>
-  <style>{_base_css(color, ".9s", dark_mode)}</style>
+  <style>
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+      background: #f1f5f9;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }}
+    .card {{
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.04), 0 8px 32px rgba(0,0,0,.07);
+      padding: 52px 44px 44px;
+      max-width: 460px;
+      width: 100%;
+      text-align: center;
+    }}
+    .icon-ring {{
+      width: 72px; height: 72px;
+      border-radius: 50%;
+      background: color-mix(in srgb, {color} 8%, #fff);
+      border: 1.5px solid color-mix(in srgb, {color} 20%, transparent);
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 24px;
+      position: relative;
+    }}
+    .icon-glyph {{ display: inline-flex; align-items: center; justify-content: center; }}
+    .icon-glyph svg {{ display: block; }}
+    .icon-logo {{
+      width: 52px; height: 52px;
+      border-radius: 50%;
+      overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+      background: #ffffff;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.7);
+    }}
+    .icon-logo img {{
+      width: 100%; height: 100%;
+      object-fit: contain;
+      padding: 8px;
+      background: #ffffff;
+    }}
+    .icon-ring::before {{
+      content: '';
+      position: absolute; inset: -5px; border-radius: 50%;
+      border: 2px solid color-mix(in srgb, {color} 15%, transparent);
+      border-top-color: {color};
+      animation: spin .9s linear infinite;
+    }}
+    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+    .badge {{
+      display: inline-flex; align-items: center; gap: 7px;
+      background: color-mix(in srgb, {color} 8%, #fff);
+      border: 1px solid color-mix(in srgb, {color} 22%, transparent);
+      border-radius: 100px; padding: 5px 14px; margin-bottom: 22px;
+      font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+      color: {color};
+    }}
+    .spinner {{
+      width: 8px; height: 8px; border-radius: 50%;
+      border: 2px solid color-mix(in srgb, {color} 22%, transparent);
+      border-top-color: {color};
+      animation: spin .7s linear infinite;
+    }}
+    h1 {{ font-size: 26px; font-weight: 700; color: #0f172a; letter-spacing: -.03em; line-height: 1.25; margin-bottom: 12px; }}
+    .msg {{ font-size: 15px; color: #64748b; line-height: 1.8; margin-bottom: 28px; }}
+    .track {{ background: #f1f5f9; border-radius: 100px; height: 3px; overflow: hidden; margin-bottom: 28px; }}
+    .bar {{ height: 100%; background: linear-gradient(90deg, transparent, {color}, transparent); animation: sweep 1.1s ease-in-out infinite; }}
+    @keyframes sweep {{ 0% {{ transform: translateX(-100%) scaleX(.5); }} 100% {{ transform: translateX(200%) scaleX(.5); }} }}
+    .status-link {{
+      display: inline-flex; align-items: center; gap: 7px;
+      font-size: 13px; font-weight: 500; color: {color};
+      text-decoration: none; padding: 9px 20px;
+      border: 1px solid color-mix(in srgb, {color} 30%, transparent);
+      border-radius: 10px;
+      background: color-mix(in srgb, {color} 5%, transparent);
+      transition: background .15s;
+    }}
+    .status-link:hover {{ background: color-mix(in srgb, {color} 12%, transparent); }}
+    .footer {{ margin-top: 28px; font-size: 11px; color: #94a3b8; }}
+  </style>
 </head>
 <body>
   <div class="card">
     {visual_block}
-    <div class="badge"><span class="spinner"></span> Restarting</div>
     <h1>{title}</h1>
     <p class="msg">{message}</p>
     <div class="track"><div class="bar"></div></div>
@@ -538,7 +573,7 @@ def _restart_template(title: str, message: str, color: str, status_url: str = No
 """
 
 
-def _starting_template(title: str, message: str, color: str, status_url: str = None, logo_data: str = None, dark_mode: str = "auto") -> str:
+def _starting_template(title: str, message: str, color: str, status_url: str = None, logo_data: str = None) -> str:
     status_btn = f"""
     <a class="status-link" href="{status_url}" target="_blank" rel="noopener noreferrer">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 16 12 13 21 11 3 8 12 2 12"/></svg>
@@ -547,7 +582,7 @@ def _starting_template(title: str, message: str, color: str, status_url: str = N
     </a>""" if status_url else ""
     visual_block = _render_visual_block(
         color,
-        f"""<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        f"""<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
         <polygon points="5 3 19 12 5 21 5 3"/>
       </svg>""",
         logo_data,
@@ -560,12 +595,95 @@ def _starting_template(title: str, message: str, color: str, status_url: str = N
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="refresh" content="8">
   <title>{title}</title>
-  <style>{_base_css(color, ".9s", dark_mode)}</style>
+  <style>
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+      background: #f1f5f9;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }}
+    .card {{
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.04), 0 8px 32px rgba(0,0,0,.07);
+      padding: 52px 44px 44px;
+      max-width: 460px;
+      width: 100%;
+      text-align: center;
+    }}
+    .icon-ring {{
+      width: 72px; height: 72px;
+      border-radius: 50%;
+      background: color-mix(in srgb, {color} 8%, #fff);
+      border: 1.5px solid color-mix(in srgb, {color} 20%, transparent);
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 24px;
+      position: relative;
+    }}
+    .icon-glyph {{ display: inline-flex; align-items: center; justify-content: center; }}
+    .icon-glyph svg {{ display: block; }}
+    .icon-logo {{
+      width: 52px; height: 52px;
+      border-radius: 50%;
+      overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+      background: #ffffff;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.7);
+    }}
+    .icon-logo img {{
+      width: 100%; height: 100%;
+      object-fit: contain;
+      padding: 8px;
+      background: #ffffff;
+    }}
+    .icon-ring::before {{
+      content: '';
+      position: absolute; inset: -5px; border-radius: 50%;
+      border: 2px solid color-mix(in srgb, {color} 15%, transparent);
+      border-top-color: {color};
+      animation: spin .9s linear infinite;
+    }}
+    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+    .badge {{
+      display: inline-flex; align-items: center; gap: 7px;
+      background: color-mix(in srgb, {color} 8%, #fff);
+      border: 1px solid color-mix(in srgb, {color} 22%, transparent);
+      border-radius: 100px; padding: 5px 14px; margin-bottom: 22px;
+      font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+      color: {color};
+    }}
+    .spinner {{
+      width: 8px; height: 8px; border-radius: 50%;
+      border: 2px solid color-mix(in srgb, {color} 22%, transparent);
+      border-top-color: {color};
+      animation: spin .7s linear infinite;
+    }}
+    h1 {{ font-size: 26px; font-weight: 700; color: #0f172a; letter-spacing: -.03em; line-height: 1.25; margin-bottom: 12px; }}
+    .msg {{ font-size: 15px; color: #64748b; line-height: 1.8; margin-bottom: 28px; }}
+    .track {{ background: #f1f5f9; border-radius: 100px; height: 3px; overflow: hidden; margin-bottom: 28px; }}
+    .bar {{ height: 100%; background: linear-gradient(90deg, transparent, {color}, transparent); animation: sweep 1.1s ease-in-out infinite; }}
+    @keyframes sweep {{ 0% {{ transform: translateX(-100%) scaleX(.5); }} 100% {{ transform: translateX(200%) scaleX(.5); }} }}
+    .status-link {{
+      display: inline-flex; align-items: center; gap: 7px;
+      font-size: 13px; font-weight: 500; color: {color};
+      text-decoration: none; padding: 9px 20px;
+      border: 1px solid color-mix(in srgb, {color} 30%, transparent);
+      border-radius: 10px;
+      background: color-mix(in srgb, {color} 5%, transparent);
+      transition: background .15s;
+    }}
+    .status-link:hover {{ background: color-mix(in srgb, {color} 12%, transparent); }}
+    .footer {{ margin-top: 28px; font-size: 11px; color: #94a3b8; }}
+  </style>
 </head>
 <body>
   <div class="card">
     {visual_block}
-    <div class="badge"><span class="spinner"></span> Starting up</div>
     <h1>{title}</h1>
     <p class="msg">{message}</p>
     <div class="track"><div class="bar"></div></div>
@@ -577,7 +695,7 @@ def _starting_template(title: str, message: str, color: str, status_url: str = N
 """
 
 
-def _update_template(title: str, message: str, color: str, status_url: str = None, logo_data: str = None, dark_mode: str = "auto") -> str:
+def _update_template(title: str, message: str, color: str, status_url: str = None, logo_data: str = None) -> str:
     status_btn = f"""
     <a class="status-link" href="{status_url}" target="_blank" rel="noopener noreferrer">
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 16 12 13 21 11 3 8 12 2 12"/></svg>
@@ -586,7 +704,7 @@ def _update_template(title: str, message: str, color: str, status_url: str = Non
     </a>""" if status_url else ""
     visual_block = _render_visual_block(
         color,
-        f"""<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        f"""<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="16 16 12 12 8 16"/>
         <line x1="12" y1="12" x2="12" y2="21"/>
         <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
@@ -601,12 +719,95 @@ def _update_template(title: str, message: str, color: str, status_url: str = Non
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="refresh" content="30">
   <title>{title}</title>
-  <style>{_base_css(color, "1.6s", dark_mode)}</style>
+  <style>
+    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+      background: #f1f5f9;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }}
+    .card {{
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 20px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.04), 0 8px 32px rgba(0,0,0,.07);
+      padding: 52px 44px 44px;
+      max-width: 460px;
+      width: 100%;
+      text-align: center;
+    }}
+    .icon-ring {{
+      width: 72px; height: 72px;
+      border-radius: 50%;
+      background: color-mix(in srgb, {color} 8%, #fff);
+      border: 1.5px solid color-mix(in srgb, {color} 20%, transparent);
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 24px;
+      position: relative;
+    }}
+    .icon-ring::before {{
+      content: '';
+      position: absolute; inset: -5px; border-radius: 50%;
+      border: 2px solid color-mix(in srgb, {color} 15%, transparent);
+      border-top-color: {color};
+      animation: spin 1.6s linear infinite;
+    }}
+    .icon-glyph {{ display: inline-flex; align-items: center; justify-content: center; }}
+    .icon-glyph svg {{ display: block; }}
+    .icon-logo {{
+      width: 52px; height: 52px;
+      border-radius: 50%;
+      overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+      background: #ffffff;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.7);
+    }}
+    .icon-logo img {{
+      width: 100%; height: 100%;
+      object-fit: contain;
+      padding: 8px;
+      background: #ffffff;
+    }}
+    .badge {{
+      display: inline-flex; align-items: center; gap: 8px;
+      background: color-mix(in srgb, {color} 8%, #fff);
+      border: 1px solid color-mix(in srgb, {color} 22%, transparent);
+      border-radius: 100px; padding: 5px 14px; margin-bottom: 22px;
+      font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+      color: {color};
+    }}
+    .spinner {{
+      width: 10px; height: 10px; border-radius: 50%;
+      border: 2px solid color-mix(in srgb, {color} 22%, transparent);
+      border-top-color: {color};
+      animation: spin .8s linear infinite;
+    }}
+    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+    h1 {{ font-size: 26px; font-weight: 700; color: #0f172a; letter-spacing: -.03em; line-height: 1.25; margin-bottom: 12px; }}
+    .msg {{ font-size: 15px; color: #64748b; line-height: 1.8; margin-bottom: 28px; }}
+    .track {{ background: #f1f5f9; border-radius: 100px; height: 3px; overflow: hidden; margin-bottom: 28px; }}
+    .bar {{ height: 100%; background: linear-gradient(90deg, transparent, {color}, transparent); animation: sweep 2.2s ease-in-out infinite; }}
+    @keyframes sweep {{ 0% {{ transform: translateX(-100%) scaleX(.5); }} 100% {{ transform: translateX(200%) scaleX(.5); }} }}
+    .status-link {{
+      display: inline-flex; align-items: center; gap: 7px;
+      font-size: 13px; font-weight: 500; color: {color};
+      text-decoration: none; padding: 9px 20px;
+      border: 1px solid color-mix(in srgb, {color} 30%, transparent);
+      border-radius: 10px;
+      background: color-mix(in srgb, {color} 5%, transparent);
+      transition: background .15s;
+    }}
+    .status-link:hover {{ background: color-mix(in srgb, {color} 12%, transparent); }}
+    .footer {{ margin-top: 28px; font-size: 11px; color: #94a3b8; }}
+  </style>
 </head>
 <body>
   <div class="card">
     {visual_block}
-    <div class="badge"><span class="spinner"></span> Updating</div>
     <h1>{title}</h1>
     <p class="msg">{message}</p>
     <div class="track"><div class="bar"></div></div>
