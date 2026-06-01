@@ -61,6 +61,26 @@
   box-shadow: var(--shadow);
 }
 
+/* ─── Service Type Badge ─────────────────────────────────────────────────── */
+.service-type-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .01em;
+  background: var(--bg-muted);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.service-type-badge--worker {
+  background: var(--purple-bg, rgba(139,92,246,.1));
+  color: var(--purple, #a78bfa);
+  border-color: var(--purple-border, rgba(139,92,246,.25));
+}
+
 /* ─── Badges ────────────────────────────────────────────────────────────── */
 .badge {
   display: inline-flex;

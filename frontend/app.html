@@ -100,6 +100,7 @@
           <div>
             <div class="detail-name-row">
               <div class="detail-name" id="app-name">Loading…</div>
+              <div id="app-service-type-badge" class="service-type-badge"></div>
               <div id="app-badge"></div>
             </div>
             <div class="detail-meta" id="app-meta">—</div>
@@ -373,16 +374,6 @@
                 <div class="field">
                   <label class="field-label">Start Command</label>
                   <input class="input input-mono" id="cfg-cmd" placeholder="npm start" />
-                </div>
-                <div class="field">
-                  <label class="toggle-row">
-                    <span class="field-label" style="margin-bottom:0">No web server</span>
-                    <label class="toggle">
-                      <input type="checkbox" id="cfg-no-web" />
-                      <span class="toggle-slider"></span>
-                    </label>
-                  </label>
-                  <div class="field-hint">Enable for apps that don't serve HTTP traffic (e.g. Discord bots, background workers). Skips port assignment and nginx routing.</div>
                 </div>
                 <div class="field" id="cfg-port-field">
                   <label class="field-label">Internal Port</label>

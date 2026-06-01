@@ -108,7 +108,6 @@ class UpdateRequest(BaseModel):
     github_token_id: Optional[str] = None   # ID of a saved vault token
     auto_start:     Optional[bool] = None
     restart_policy: Optional[str] = None   # no | always | on-failure
-    no_web:         Optional[bool] = None  # True = no web server, skip nginx + port assignment
     working_dir:    Optional[str] = None   # set by node agents after source extraction
     source_revision: Optional[str] = None
     image_revision: Optional[str] = None
@@ -1340,11 +1339,6 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.auto_start = req.auto_start
     if req.restart_policy is not None and req.restart_policy in ("no", "always", "on-failure"):
         app.restart_policy = req.restart_policy
-    if req.no_web is not None:
-        app.no_web = req.no_web
-        if app.no_web:
-            app.nginx_enabled = False
-            _best_effort_remove_app_nginx(app.name)
     if req.working_dir is not None:
         app.working_dir = req.working_dir
     if req.source_revision is not None:

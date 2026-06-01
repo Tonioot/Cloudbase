@@ -57,11 +57,7 @@ function _updateNoWebVisibility(noWeb) {
   if (sep) sep.style.display = noWeb ? 'none' : '';
 }
 
-document.addEventListener('change', e => {
-  if (e.target && e.target.id === 'cfg-no-web') {
-    _updateNoWebVisibility(e.target.checked);
-  }
-});
+// cfg-no-web checkbox removed — no_web is set at app creation via app type selector
 
 /* ─── Init ──────────────────────────────────────────────────────────────── */
 export async function initApp() {
@@ -143,6 +139,12 @@ function renderHeader() {
 
   const typeIconEl = document.getElementById('app-type-icon');
   if (typeIconEl) typeIconEl.innerHTML = typeIcon[app.app_type] || typeIcon.unknown;
+
+  const typeLabelEl = document.getElementById('app-service-type-badge');
+  if (typeLabelEl) {
+    typeLabelEl.textContent = app.no_web ? 'Background Worker' : 'Web Service';
+    typeLabelEl.className = 'service-type-badge' + (app.no_web ? ' service-type-badge--worker' : '');
+  }
 
   updateHeaderStatus();
 
@@ -1279,7 +1281,6 @@ function initSettings() {
   (app.redirect_domains || []).forEach(d => addDomainRow(redirectContainer, d));
   document.getElementById('cfg-add-redirect-domain').onclick = () => addDomainRow(redirectContainer, '');
 
-  document.getElementById('cfg-no-web').checked = !!app.no_web;
   _updateNoWebVisibility(!!app.no_web);
   document.getElementById('cfg-autostart').checked  = !!app.auto_start;
   document.getElementById('cfg-restart-policy').value = app.restart_policy || 'no';
@@ -2280,7 +2281,7 @@ async function saveSettings() {
                         .map(i => i.value.trim()).filter(Boolean),
     ssl_cert_path:  document.getElementById('cfg-cert').value.trim()   || null,
     ssl_key_path:   document.getElementById('cfg-key').value.trim()    || null,
-    no_web:         document.getElementById('cfg-no-web').checked,
+    no_web:         !!app?.no_web,
     auto_start:     document.getElementById('cfg-autostart').checked,
     restart_policy: document.getElementById('cfg-restart-policy').value,
     docker_cpu_limit: Number.isFinite(dockerCpu) ? dockerCpu : null,
