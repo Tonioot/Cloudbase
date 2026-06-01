@@ -167,7 +167,7 @@ function _syncZeroDowntimeButton() {
 
   // Base-domain routed apps can have app_url without app.nginx_enabled.
   const hasPublicRoute = !!(app?.app_url || (app?.nginx_enabled && app?.domain));
-  const canUseRollingRestart = !!(app?.use_docker && !app?.no_web && hasPublicRoute);
+  const canUseRollingRestart = !!(!app?.no_web && hasPublicRoute);
   zdBtn.style.display = canUseRollingRestart ? '' : 'none';
 
   if (zdBtn.dataset.bound === '1') return;
