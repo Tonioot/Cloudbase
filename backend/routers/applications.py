@@ -124,6 +124,7 @@ class MaintenancePageConfig(BaseModel):
     status_url: Optional[str] = None
     custom_html: Optional[str] = None
     logo_data: Optional[str] = None    # base64 data-URL for logo image
+    dark_mode: Optional[str] = "auto"  # "auto" | "light" | "dark"
 
 
 class ExportRequest(BaseModel):
@@ -601,6 +602,7 @@ def _ensure_maintenance_files(app: Application, app_id: int) -> tuple[bool, str]
         downtime_cfg.get("custom_html"),
         "downtime",
         logo_data=downtime_cfg.get("logo_data"),
+        dark_mode=downtime_cfg.get("dark_mode", "auto"),
     )
     update_html = nm.generate_maintenance_html(
         update_cfg.get("title")         or "Updating\u2026",
@@ -610,6 +612,7 @@ def _ensure_maintenance_files(app: Application, app_id: int) -> tuple[bool, str]
         update_cfg.get("custom_html"),
         "update",
         logo_data=update_cfg.get("logo_data"),
+        dark_mode=update_cfg.get("dark_mode", "auto"),
     )
     restart_html = nm.generate_maintenance_html(
         restart_cfg.get("title")        or "Restarting\u2026",
@@ -619,6 +622,7 @@ def _ensure_maintenance_files(app: Application, app_id: int) -> tuple[bool, str]
         restart_cfg.get("custom_html"),
         "restart",
         logo_data=restart_cfg.get("logo_data"),
+        dark_mode=restart_cfg.get("dark_mode", "auto"),
     )
     starting_html = nm.generate_maintenance_html(
         starting_cfg.get("title")       or "Starting\u2026",
@@ -628,6 +632,7 @@ def _ensure_maintenance_files(app: Application, app_id: int) -> tuple[bool, str]
         starting_cfg.get("custom_html"),
         "starting",
         logo_data=starting_cfg.get("logo_data"),
+        dark_mode=starting_cfg.get("dark_mode", "auto"),
     )
     ok, msg = nm.write_maintenance_files(app_id, downtime_html, update_html, restart_html, starting_html)
     log.info("[ensure-files] write result ok=%s msg=%r", ok, msg)

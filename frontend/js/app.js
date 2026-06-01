@@ -1632,6 +1632,13 @@ function _openMaintModal_legacy(type) {
   document.getElementById('maint-modal-custom-toggle').checked     = hasCustom;
   document.getElementById('maint-modal-custom-wrap').style.display = hasCustom ? '' : 'none';
   document.getElementById('maint-modal-custom-html').value         = cfg.custom_html || '';
+
+  // Theme
+  const darkMode = cfg.dark_mode || 'auto';
+  document.getElementById('maint-modal-dark-mode').value = darkMode;
+  document.querySelectorAll('.maint-theme-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.theme === darkMode);
+  });
 }
 
 function openMaintModal(type) {
@@ -1699,6 +1706,15 @@ function _initMaintModal() {
   picker.addEventListener('input', () => { hex.value = picker.value; });
   hex.addEventListener('input', () => {
     if (/^#[0-9a-fA-F]{6}$/.test(hex.value)) picker.value = hex.value;
+  });
+
+  // Theme buttons
+  backdrop.querySelectorAll('.maint-theme-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      backdrop.querySelectorAll('.maint-theme-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('maint-modal-dark-mode').value = btn.dataset.theme;
+    });
   });
 
   // Custom HTML toggle
@@ -1796,6 +1812,7 @@ async function saveMaintenancePage(type) {
     color:      getVal('maint-modal-color').trim()        || null,
     status_url: getVal('maint-modal-status-url').trim()   || null,
     logo_data:  _maintLogoData,
+    dark_mode:  document.getElementById('maint-modal-dark-mode')?.value || 'auto',
     custom_html: document.getElementById('maint-modal-custom-toggle')?.checked
                    ? getVal('maint-modal-custom-html') || null
                    : null,
