@@ -67,6 +67,10 @@ async def init_db():
             ("source_revision",   "VARCHAR(120)"),
             ("image_revision",    "VARCHAR(120)"),
             ("no_web",            "BOOLEAN NOT NULL DEFAULT 0"),
+            ("autoscale_enabled",      "BOOLEAN NOT NULL DEFAULT 0"),
+            ("autoscale_min_replicas", "INTEGER NOT NULL DEFAULT 1"),
+            ("autoscale_max_replicas", "INTEGER NOT NULL DEFAULT 4"),
+            ("autoscale_cpu_target",   "FLOAT NOT NULL DEFAULT 70.0"),
         ]:
             if col in existing_columns:
                 continue
