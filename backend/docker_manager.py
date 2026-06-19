@@ -988,3 +988,41 @@ def get_container_stats_by_name(container_name_str: str) -> dict:
             pass
         log.warning("get_container_stats_by_name failed for %s", container_name_str, exc_info=True)
         return {}
+
+
+# ── Orphan cleanup ─────────────────────────────────────────────────────────────
+
+def list_replica_containers() -> list[dict]:
+    """Return all local replica containers (running or not) with their parsed
+    app_id / replica_id. Used by the orphan cleaner to reconcile against the DB."""
+    import re
+    client = _get_client()
+    pattern = re.compile(r"^cloudbase-app-(\d+)-replica-(\d+)$")
+    out: list[dict] = []
+    for c in client.containers.list(all=True):
+        m = pattern.match(c.name)
+        if not m:
+            continue
+        out.append({
+            "name": c.name,
+            "app_id": int(m.group(1)),
+            "replica_id": int(m.group(2)),
+            "status": c.status,
+        })
+    return out
+
+
+def remove_container_by_name(cname: str) -> bool:
+    """Force-stop and remove a container by name. Returns True if it's gone."""
+    import docker  # type: ignore
+    client = _get_client()
+    try:
+        c = client.containers.get(cname)
+        c.remove(force=True)
+        log.info("[docker] Removed orphan container %s", cname)
+        return True
+    except docker.errors.NotFound:
+        return True
+    except Exception:
+        log.warning("[docker] Failed to remove container %s", cname, exc_info=True)
+        return False

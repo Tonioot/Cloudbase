@@ -509,12 +509,18 @@ async def _autoscaler():
                             continue
 
                     elif avg_cpu < target * 0.5 and count > min_r:
-                        # Scale down: remove the last replica
+                        # Scale down: remove the last replica. Only drop the DB row
+                        # once the container is actually gone — otherwise we'd leak
+                        # an orphaned container that keeps running forever.
                         victim = replicas[-1]
                         try:
-                            await asyncio.to_thread(process_manager.stop_docker_replica, app.id, victim.id)
-                        except Exception:
-                            pass
+                            stopped = await asyncio.to_thread(process_manager.stop_docker_replica, app.id, victim.id)
+                        except Exception as e:
+                            stopped = False
+                            log.warning("[autoscaler] app_id=%d scale down: stop replica %d raised: %s", app.id, victim.id, e)
+                        if not stopped:
+                            log.warning("[autoscaler] app_id=%d scale down aborted: replica %d container not stopped, keeping DB row", app.id, victim.id)
+                            continue
                         await db.delete(victim)
                         log.info("[autoscaler] app_id=%d scaled DOWN to %d replicas (cpu=%.1f%%)", app.id, count - 1, avg_cpu)
                         _last_scaled[app.id] = now
@@ -553,6 +559,55 @@ async def _node_command_cleanup():
         except Exception:
             pass
         await asyncio.sleep(3600)
+
+
+# ── Orphan replica cleanup ────────────────────────────────────────────────────
+async def _orphan_replica_cleanup():
+    """Every 30 min reconcile local replica containers against the DB and remove
+    leaks: dead/exited replica containers, and running replica containers that no
+    longer have a corresponding ApplicationReplica row. Prevents replicas from
+    piling up on the host (which starves memory and destabilises container DNS).
+    """
+    import docker_manager as _dm
+    from models import ApplicationReplica, Node as _Node
+
+    await asyncio.sleep(120)
+    while True:
+        try:
+            containers = await asyncio.to_thread(_dm.list_replica_containers)
+            if containers:
+                async with AsyncSessionLocal() as db:
+                    # Local node id — we only manage local containers here.
+                    nr = await db.execute(select(_Node).where(_Node.is_local == True))
+                    local_node = nr.scalar_one_or_none()
+                    local_node_id = local_node.id if local_node else None
+
+                    # Live replica ids that are expected to be running locally.
+                    rep_result = await db.execute(
+                        select(ApplicationReplica).where(
+                            ApplicationReplica.status.in_(["pending", "starting", "running", "stopping"])
+                        )
+                    )
+                    live = rep_result.scalars().all()
+                    live_ids = {
+                        r.id for r in live
+                        if local_node_id is None or r.node_id is None or r.node_id == local_node_id
+                    }
+
+                    for c in containers:
+                        rid = c["replica_id"]
+                        is_dead = c["status"] in ("exited", "dead", "created")
+                        is_orphan = rid not in live_ids
+                        if is_dead or is_orphan:
+                            removed = await asyncio.to_thread(_dm.remove_container_by_name, c["name"])
+                            if removed:
+                                reason = "dead" if is_dead else "no DB row"
+                                log.info("[orphan-cleanup] removed replica container %s (%s)", c["name"], reason)
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            log.warning("[orphan-cleanup] error: %s", e)
+        await asyncio.sleep(1800)
 
 
 # ── Crash monitor ─────────────────────────────────────────────────────────────
@@ -788,6 +843,7 @@ async def lifespan(app: FastAPI):
     remote_stats_task  = asyncio.create_task(_remote_replica_stats_poller())
     cleanup_task       = asyncio.create_task(_node_command_cleanup())
     autoscaler_task    = asyncio.create_task(_autoscaler())
+    orphan_task        = asyncio.create_task(_orphan_replica_cleanup())
 
     # Start node agent if configured (as an integrated background task)
     agent_task = None
@@ -796,7 +852,7 @@ async def lifespan(app: FastAPI):
         agent_task = asyncio.create_task(node_agent.start_agent())
 
     yield
-    for task in (monitor_task, stats_task, node_task, history_task, remote_stats_task, cleanup_task, autoscaler_task, agent_task):
+    for task in (monitor_task, stats_task, node_task, history_task, remote_stats_task, cleanup_task, autoscaler_task, orphan_task, agent_task):
         if not task: continue
         task.cancel()
         try:
