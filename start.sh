@@ -644,11 +644,29 @@ cmd_password() {
     fi
     cd "$BACKEND_DIR"
     "$VENV_PATH/bin/python3" - <<PYEOF
+import asyncio
 import sys
 sys.path.insert(0, '.')
 import auth
-auth.save_hashed_password(auth.hash_password('$new_pass'))
-print('Password updated')
+from database import AsyncSessionLocal
+from models import User
+from sqlalchemy import select
+
+async def main():
+    hashed = auth.hash_password('$new_pass')
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.username == 'admin'))
+        user = result.scalar_one_or_none()
+        if user is None:
+            print('No admin user found in the database', file=sys.stderr)
+            sys.exit(1)
+        user.password_hash = hashed
+        await session.commit()
+    # Keep legacy credentials file in sync (used only for first-run DB seeding)
+    auth.save_hashed_password(hashed)
+    print('Password updated')
+
+asyncio.run(main())
 PYEOF
     success "Admin password updated"
 }
