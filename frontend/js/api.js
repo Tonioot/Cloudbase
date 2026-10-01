@@ -97,11 +97,12 @@ export const api = {
       buf = events.pop();
       for (const ev of events) {
         if (!ev.trim()) continue;
-        let evType = 'message', data = '';
+        let evType = 'message', data = '', hasData = false;
         for (const line of ev.split('\n')) {
           if (line.startsWith('event: ')) evType = line.slice(7).trim();
-          else if (line.startsWith('data: ')) data = line.slice(6);
+          else if (line.startsWith('data: ')) { data = line.slice(6); hasData = true; }
         }
+        if (!hasData) continue;  // keep-alive comment (": ping")
         if (evType === 'result') { result = JSON.parse(data); }
         else if (data === '__DONE__') { return result; }
         else if (data === '__FAILED__') { throw new Error(result?.error || 'Action failed'); }
