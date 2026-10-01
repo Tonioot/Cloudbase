@@ -275,7 +275,9 @@ def generate_dockerfile(app_type: str, start_command: str, port: int, app_dir: s
     )
     extras: dict[str, str] = {
         "nodejs_copy_pkg": (
-            "COPY package*.json ./\nRUN npm install --production\n"
+            # Include devDependencies: frameworks like Next.js need typescript etc.
+            # at runtime (next.config.ts, `next dev`, `next build`).
+            "COPY package*.json ./\nRUN npm install\n"
             if _has_file("package.json") else ""
         ),
         "python_copy_req": (

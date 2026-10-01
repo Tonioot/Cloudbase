@@ -271,6 +271,14 @@ info "Configuring nginx management permissions for Cloudbase user '$RUN_USER'"
 bash "$SCRIPT_DIR/scripts/setup-nginx-permissions.sh" "$RUN_USER"
 success "Cloudbase can now manage nginx without sudo password prompts"
 
+# Remove the stock Debian/Ubuntu nginx placeholder site if present — it also
+# declares "default_server" for port 80/443 and will collide with the
+# Cloudbase catch-all below, causing `nginx -t` to fail.
+if [[ -e "/etc/nginx/sites-enabled/default" ]]; then
+  info "Removing stock nginx default site (conflicts with Cloudbase default_server)"
+  sudo rm -f "/etc/nginx/sites-enabled/default"
+fi
+
 # Write a default_server catch-all so unknown hostnames (e.g. hosting panels on
 # the same server) are never forwarded to a random app's nginx config.
 info "Installing nginx default catch-all (prevents redirect leak to apps)"
