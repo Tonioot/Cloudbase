@@ -111,6 +111,13 @@ export function openDeployModal(onSuccess) {
       modal.querySelector('#f-cmd').placeholder = isStatic ? 'dist' : 'npm start';
       modal.querySelector('#f-cmd-hint').style.display = isStatic ? '' : 'none';
     }
+    // Docker step: nginx (static sites) cannot run with a read-only root filesystem
+    if (idx === 4) {
+      const isStatic = modal.querySelector('.app-type-btn.active')?.dataset.type === 'static';
+      const readonly = modal.querySelector('#f-docker-readonly');
+      readonly.closest('.deploy-toggle-item').style.display = isStatic ? 'none' : '';
+      if (isStatic) readonly.checked = false;
+    }
   }
 
   function validateStep(idx) {

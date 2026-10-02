@@ -1,58 +1,64 @@
 import { api, wsNodeEvents, PermissionError } from './api.js';
-import { icon, typeIcon, badge, toast, confirm, spinner, setBtn } from './utils.js';
+import { icon, toast, confirm } from './utils.js';
 import { openDeployModal } from './modal.js';
+import { statusColor, esc } from './shell.js';
 
 let appsData = [];
 let nodesData = [];
 let _noAppsPermission  = false;
 let _noNodesPermission = false;
+let _appFilter = 'all';
+const _appStats = new Map();      // app id → { cpu, mem }
+const _nodePing = new Map();      // node id → latency text
 const _pingIntervals = new Map();
 
-function renderPortRows(app) {
-  const replicas = app.replicas || [];
-  if (replicas.length) {
-    const ports = replicas.map(r => r.external_port).filter(Boolean);
-    const portStr = ports.length ? ports.map(p => `:${p}`).join(', ') : 'no port';
-    return `<div class="app-meta-row">${icon.terminal}<span>Internal :${app.port || '?'} · ${ports.length} instance${ports.length !== 1 ? 's' : ''} (${portStr})</span></div>`;
-  }
-  if (app.port) {
-    return `<div class="app-meta-row">${icon.terminal}<span>Port ${app.port}</span></div>`;
-  }
-  return '';
-}
+// Rolling history for the sparklines (in-browser, while the page is open)
+const HISTORY_LEN = 30;
+const _history = { apps: [], instances: [], cpu: [], mem: [], nodes: [] };
 
 /* ─── Init ──────────────────────────────────────────────────────────────── */
 export async function initDashboard() {
-  document.getElementById('btn-deploy').addEventListener('click', () => {
-    openDeployModal(app => {
-      toast(`"${app.name}" deployed successfully`);
-      window.location.href = `/app?id=${app.id}`;
-    });
+  const openDeploy = () => openDeployModal(app => {
+    toast(`"${app.name}" deployed successfully`);
+    window.location.href = `/app?id=${app.id}`;
+  });
+  document.getElementById('btn-deploy').addEventListener('click', openDeploy);
+  document.getElementById('btn-add-node')?.addEventListener('click', () => openAddNodeModal());
+
+  document.getElementById('apps-filter')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-filter]');
+    if (!btn) return;
+    _appFilter = btn.dataset.filter;
+    document.querySelectorAll('#apps-filter [data-filter]').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+    renderApps();
   });
 
-  document.getElementById('btn-add-node')?.addEventListener('click', () => openAddNodeModal());
+  // Deep links from the command palette on other pages
+  const action = new URLSearchParams(location.search).get('action');
+  if (action) {
+    history.replaceState(null, '', '/');
+    if (action === 'new-app') openDeploy();
+    if (action === 'add-node') openAddNodeModal();
+  }
 
   // Load independently — a 403 on one must not block the other
   await Promise.all([loadApps(), loadNodes()]);
-  // Only poll if the user actually has the permission
-  if (!_noAppsPermission)  setInterval(loadApps,  6000);
+  loadAppStats();
+  if (!_noAppsPermission)  { setInterval(loadApps, 6000); setInterval(loadAppStats, 15000); }
   if (!_noNodesPermission) setInterval(loadNodes, 15000);
 }
 
-/* ─── Load apps ─────────────────────────────────────────────────────────── */
+/* ─── Data ──────────────────────────────────────────────────────────────── */
 async function loadApps() {
   try {
     appsData = await api.listApps();
-    renderStats();
+    renderKpis();
     renderApps();
     if (nodesData.length) renderNodes();
   } catch (e) {
     if (e instanceof PermissionError) {
       _noAppsPermission = true;
-      const appsSection = document.getElementById('apps-section');
-      if (appsSection) appsSection.style.display = 'none';
-      const appsGrid = document.getElementById('apps-grid');
-      if (appsGrid) appsGrid.style.display = 'none';
+      document.getElementById('apps-section')?.closest('section')?.style.setProperty('display', 'none');
       document.querySelector('.stat-strip')?.style.setProperty('display', 'none');
     } else {
       console.error('Failed to load apps:', e);
@@ -60,11 +66,11 @@ async function loadApps() {
   }
 }
 
-/* ─── Load nodes ─────────────────────────────────────────────────────────── */
 async function loadNodes() {
   try {
     nodesData = await api.listNodes();
     renderNodes();
+    renderKpis();
   } catch (e) {
     if (e instanceof PermissionError) {
       _noNodesPermission = true;
@@ -76,72 +82,196 @@ async function loadNodes() {
   }
 }
 
-/* ─── Relative time ─────────────────────────────────────────────────────── */
-function timeAgo(iso) {
-  if (!iso) return 'never';
-  const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (secs < 5)  return 'just now';
-  if (secs < 60) return `${secs}s ago`;
-  const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24)  return `${hrs}h ago`;
-  const days = Math.floor(hrs / 24);
-  return `${days}d ago`;
+// CPU / memory per app, summed over its instances. Only for running apps.
+async function loadAppStats() {
+  const running = appsData.filter(a => a.status === 'running');
+  await Promise.all(running.map(async a => {
+    try {
+      const snap = await api.getInstanceStats(a.id);
+      const rows = Object.values(snap || {});
+      if (!rows.length) return;
+      _appStats.set(a.id, {
+        cpu: rows.reduce((s, r) => s + (r.cpu_percent || 0), 0),
+        mem: rows.reduce((s, r) => s + (r.memory_mb || 0), 0),
+      });
+    } catch { /* stats are best-effort */ }
+  }));
+  for (const id of [..._appStats.keys()]) {
+    if (!running.some(a => a.id === id)) _appStats.delete(id);
+  }
+  renderApps();
 }
 
-/* ─── Nodes grid ─────────────────────────────────────────────────────────── */
+/* ─── Helpers ───────────────────────────────────────────────────────────── */
+const KINDS = { nodejs: 'Node.js', python: 'Python', go: 'Go', ruby: 'Ruby', php: 'PHP', java: 'Java', dotnet: '.NET' };
+
+function appCategory(app) {
+  if (app.no_web) return 'worker';
+  if (app.app_type === 'static') return 'static';
+  return 'web';
+}
+
+function appKind(app) {
+  if (app.no_web) return 'Worker';
+  if (app.app_type === 'static') return 'Static site';
+  return KINDS[app.app_type] || 'Web service';
+}
+
+function nodeLabel(n) {
+  return n ? (n.is_local ? 'primary' : n.name) : 'primary';
+}
+
+function replicasOnNode(app, node) {
+  return (app.replicas || []).filter(r =>
+    node.is_local ? (r.node_id === node.id || r.node_id == null) : r.node_id === node.id);
+}
+
+function fmtMem(mb) {
+  if (mb == null) return '—';
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
+}
+
+function pushHistory(key, value) {
+  if (value == null || Number.isNaN(value)) return;
+  const h = _history[key];
+  h.push(value);
+  if (h.length > HISTORY_LEN) h.shift();
+}
+
+function sparkPoints(values, w = 96, h = 18, pad = 2) {
+  if (values.length < 2) return '';
+  const max = Math.max(...values), min = Math.min(...values);
+  const span = max - min || 1;
+  return values.map((v, i) =>
+    `${(i * w / (values.length - 1)).toFixed(1)},${(h - pad - ((v - min) / span) * (h - pad * 2)).toFixed(1)}`).join(' ');
+}
+
+function setKpi(id, value, unit, histKey) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.querySelector('.kpi-value strong').textContent = value;
+  if (unit != null) el.querySelector('.kpi-value span').textContent = unit;
+  el.querySelector('.kpi-spark polyline').setAttribute('points', sparkPoints(_history[histKey]));
+}
+
+/* ─── Key numbers ───────────────────────────────────────────────────────── */
+function renderKpis() {
+  const running = appsData.filter(a => a.status === 'running').length;
+  const instances = appsData.reduce((s, a) => s + (a.replicas || []).filter(r => r.status === 'running').length, 0);
+  const online = nodesData.filter(n => n.status === 'online');
+
+  // Cluster CPU = average over online nodes; memory = used / total in GB
+  const cpuVals = online.map(n => n.node_metrics?.cpu_percent).filter(v => v != null);
+  const cpu = cpuVals.length ? cpuVals.reduce((a, b) => a + b, 0) / cpuVals.length : null;
+  let memUsed = 0, memTotal = 0;
+  for (const n of online) {
+    const total = n.metadata?.ram_total_mb;
+    const pct = n.node_metrics?.memory_percent;
+    if (total && pct != null) { memTotal += total; memUsed += total * pct / 100; }
+  }
+
+  pushHistory('apps', running);
+  pushHistory('instances', instances);
+  if (cpu != null) pushHistory('cpu', cpu);
+  if (memTotal) pushHistory('mem', memUsed);
+  pushHistory('nodes', online.length);
+
+  setKpi('kpi-apps', String(running), `of ${appsData.length}`, 'apps');
+  setKpi('kpi-instances', String(instances), null, 'instances');
+  setKpi('kpi-cpu', cpu != null ? cpu.toFixed(0) : '—', null, 'cpu');
+  setKpi('kpi-mem', memTotal ? (memUsed / 1024).toFixed(1) : '—', memTotal ? `of ${(memTotal / 1024).toFixed(0)} GB` : '', 'mem');
+  setKpi('kpi-nodes', nodesData.length ? String(online.length) : '—', nodesData.length ? `of ${nodesData.length} online` : 'online', 'nodes');
+
+  const meta = document.getElementById('overview-meta');
+  if (meta) {
+    const parts = [];
+    if (nodesData.length) parts.push(`${nodesData.length} node${nodesData.length === 1 ? '' : 's'}`);
+    parts.push(`${appsData.length} app${appsData.length === 1 ? '' : 's'}`);
+    meta.textContent = parts.join(' · ');
+  }
+}
+
+/* ─── Nodes ─────────────────────────────────────────────────────────────── */
+function meterHTML(label, pct) {
+  if (pct == null) return '';
+  const p = Math.max(0, Math.min(100, pct));
+  const level = p >= 90 ? 'crit' : p >= 80 ? 'warn' : '';
+  return `<div class="node-meter">
+    <span class="node-meter-label">${label}</span>
+    <div class="meter ${level}"><span style="width:${p}%"></span></div>
+    <span class="node-meter-value ${level}">${p.toFixed(0)}%</span>
+  </div>`;
+}
+
+function nodeRowHTML(n) {
+  const online = n.status === 'online';
+  const m = n.node_metrics || {};
+  const md = n.metadata || {};
+  const metaParts = [
+    md.arch,
+    n.is_local ? 'local' : (n.websocket_connected ? 'tunnel' : n.status),
+    md.ip || md.public_ip || n.public_host,
+    _nodePing.get(n.id),
+    n.agent_version ? `agent ${n.agent_version}` : null,
+  ].filter(Boolean);
+
+  const apps = appsData
+    .map(a => ({ app: a, reps: replicasOnNode(a, n) }))
+    .filter(x => x.reps.length);
+  const chips = apps.length
+    ? apps.map(({ app, reps }) => {
+        const up = reps.filter(r => r.status === 'running').length;
+        return `<a class="app-chip" href="/app?id=${app.id}"><span class="dot" style="background:${statusColor(app.status)}"></span>${esc(app.name)}<span class="app-chip-count">×${up}</span></a>`;
+      }).join('')
+    : '<span class="node-apps-empty">No apps on this node</span>';
+
+  const meters = online
+    ? meterHTML('CPU', m.cpu_percent) + meterHTML('Memory', m.memory_percent) + meterHTML('Disk', m.disk_percent)
+    : `<span class="node-offline-note">${n.status === 'offline' ? `Offline · last seen ${timeAgo(n.last_seen)}` : 'Connecting…'}</span>`;
+
+  const removeBtn = n.is_local ? '' : `
+    <button type="button" class="row-action node-row-remove" data-perm="nodes.delete" data-node-delete="${n.id}" data-node-name="${esc(n.name)}" aria-label="Remove node ${esc(n.name)}" title="Remove node">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+    </button>`;
+
+  return `
+    <div class="node-row" data-node-id="${n.id}">
+      <div class="node-row-id">
+        <span class="node-row-title">
+          <span class="dot" style="background:${statusColor(n.status)};box-shadow:0 0 0 4px ${online ? 'var(--green-halo)' : 'transparent'}"></span>
+          <a class="node-row-name" href="/node?id=${n.id}">${esc(nodeLabel(n))}</a>
+          ${n.is_local ? '<span class="node-row-tag">primary</span>' : ''}
+        </span>
+        <span class="node-row-meta">${esc(metaParts.join(' · '))}</span>
+      </div>
+      <div class="node-meters">${meters}</div>
+      <div class="node-apps">${chips}</div>
+      ${removeBtn}
+    </div>`;
+}
+
 function renderNodes() {
   const section = document.getElementById('nodes-section');
-  const grid = document.getElementById('nodes-grid');
-  if (!grid) return;
-  // If the section is hidden (no permission), don't re-render it
-  if (section && section.style.display === 'none') return;
+  const list = document.getElementById('nodes-grid');
+  if (!list || (section && section.style.display === 'none')) return;
 
   if (!nodesData.length) {
-    grid.innerHTML = `<div class="card" style="padding:18px;grid-column:1/-1;font-size:13px;color:var(--text-muted)">No nodes connected yet. Click <strong>Add Node</strong> to connect a remote Cloudbase installation.</div>`;
+    list.innerHTML = '<div class="apps-empty"><strong>No nodes yet</strong>Add a node to run apps on another server.</div>';
     return;
   }
 
-  grid.innerHTML = nodesData.map(n => nodeCardHTML(n)).join('');
-  if (window._applyPermVisibility) window._applyPermVisibility(grid);
+  list.innerHTML = nodesData.map(nodeRowHTML).join('');
+  if (window._applyPermVisibility) window._applyPermVisibility(list);
 
-  grid.querySelectorAll('.node-card').forEach(card => {
-    card.addEventListener('click', (e) => {
-      if (e.target.closest('button')) return;
-      const id = card.dataset.nodeId;
-      if (id) window.location.href = `/node?id=${id}`;
+  list.querySelectorAll('.node-row').forEach(row => {
+    row.addEventListener('click', e => {
+      if (e.target.closest('a, button')) return;
+      location.href = `/node?id=${row.dataset.nodeId}`;
     });
   });
 
-  // Auto-ping all non-local nodes — clear old intervals first to avoid stacking
-  _pingIntervals.forEach(id => clearInterval(id));
-  _pingIntervals.clear();
-
-  grid.querySelectorAll('[data-node-ping-badge]').forEach(async row => {
-    const id  = parseInt(row.dataset.nodePingBadge, 10);
-    const val = row.querySelector('.ping-val');
-    const doPing = async () => {
-      try {
-        const r = await api.pingNode(id);
-        if (r.reachable) {
-          val.textContent = `${r.latency_ms}ms`;
-          val.style.color = r.latency_ms < 100 ? 'var(--green)' : r.latency_ms < 300 ? 'var(--yellow)' : 'var(--red)';
-        } else {
-          val.textContent = 'offline';
-          val.style.color = 'var(--red)';
-        }
-      } catch {
-        val.textContent = '—';
-        val.style.color = 'var(--text-muted)';
-      }
-    };
-    await doPing();
-    _pingIntervals.set(id, setInterval(doPing, 10000));
-  });
-
-  grid.querySelectorAll('[data-node-delete]').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
+  list.querySelectorAll('[data-node-delete]').forEach(btn => {
+    btn.addEventListener('click', async e => {
       e.stopPropagation();
       const id   = parseInt(btn.dataset.nodeDelete, 10);
       const name = btn.dataset.nodeName || 'this node';
@@ -152,113 +282,144 @@ function renderNodes() {
         await api.deleteNode(id);
         await loadNodes();
         toast(`Node "${name}" removed`);
-      } catch (e) {
-        toast(e.message, 'error');
+      } catch (err) {
+        toast(err.message, 'error');
         btn.disabled = false;
       }
     });
   });
+
+  // Latency for remote nodes; results are shown in the meta line on the next render
+  for (const n of nodesData) {
+    if (n.is_local || n.status !== 'online' || _pingIntervals.has(n.id)) continue;
+    const ping = async () => {
+      try {
+        const r = await api.pingNode(n.id);
+        _nodePing.set(n.id, r.reachable ? `${r.latency_ms} ms` : 'unreachable');
+      } catch { _nodePing.delete(n.id); }
+    };
+    ping();
+    _pingIntervals.set(n.id, setInterval(ping, 15000));
+  }
 }
 
-function _connDot(node) {
-  if (node.is_local)             return `<span class="conn-dot green" title="Local node"></span>`;
-  if (node.websocket_connected)  return `<span class="conn-dot green" title="Connected via WebSocket"></span>`;
-  if (node.status === 'online')  return `<span class="conn-dot yellow" title="Connecting..."></span>`;
-  return `<span class="conn-dot muted" title="Offline"></span>`;
+function timeAgo(iso) {
+  if (!iso) return 'never';
+  const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 60) return 'just now';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
 }
 
-function _connLabel(node) {
-  if (node.is_local)            return 'local';
-  if (node.websocket_connected) return 'WS';
-  if (node.status === 'online') return 'Connecting';
-  return 'Offline';
+/* ─── Applications ──────────────────────────────────────────────────────── */
+const ACTION_ICONS = {
+  start:   '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"/></svg>',
+  stop:    '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>',
+  restart: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>',
+};
+
+function appSubline(app) {
+  if (app.status === 'error') return { text: app.last_error ? String(app.last_error).split('\n')[0] : 'Error', cls: 'error' };
+  if (app.no_web) return { text: 'Background worker', cls: '' };
+  if (app.app_url) return { text: app.app_url.replace(/^https?:\/\//, ''), cls: '' };
+  if (app.domain) return { text: app.domain, cls: '' };
+  return { text: (app.repo_url || '').replace(/^https:\/\/github\.com\//, ''), cls: '' };
 }
 
-function _metricsHTML(node) {
-  const online = node.status === 'online';
-  if (!online) return '';
-  const cpuVal = node.node_metrics?.cpu_percent;
-  const memVal = node.node_metrics?.memory_percent;
-
-  const cpu = cpuVal != null ? cpuVal.toFixed(0) : '—';
-  const mem = memVal != null ? memVal.toFixed(0) : '—';
-  const cpuColor = cpuVal > 80 ? 'var(--red)' : cpuVal > 60 ? 'var(--yellow)' : 'var(--green)';
-  const memColor = memVal > 80 ? 'var(--red)' : memVal > 60 ? 'var(--yellow)' : 'var(--green)';
-  return `
-    <div style="margin-top:10px;display:flex;gap:10px;font-size:11px;color:var(--text-secondary)">
-      <div style="flex:1">
-        <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span>CPU</span><span style="color:${cpuColor}">${cpu}%</span></div>
-        <div style="height:3px;background:var(--border);border-radius:2px"><div style="height:100%;width:${Math.min(cpu, 100)}%;background:${cpuColor};border-radius:2px;transition:width .4s"></div></div>
-      </div>
-      <div style="flex:1">
-        <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span>RAM</span><span style="color:${memColor}">${mem}%</span></div>
-        <div style="height:3px;background:var(--border);border-radius:2px"><div style="height:100%;width:${Math.min(mem, 100)}%;background:${memColor};border-radius:2px;transition:width .4s"></div></div>
-      </div>
-    </div>`;
-}
-
-function nodeCardHTML(n) {
-  const online  = n.status === 'online';
-  const offline = n.status === 'offline';
-  const statusColor = online ? 'var(--green)' : offline ? 'var(--red)' : 'var(--yellow)';
-  const statusBg    = online ? 'var(--green-bg)' : offline ? 'var(--red-bg)' : 'var(--bg-muted)';
-
-  const instanceCount = appsData.reduce((acc, a) => acc + (a.replicas || []).filter(r =>
-    n.is_local ? (r.node_id === n.id || r.node_id === null) : r.node_id === n.id
-  ).length, 0);
-
-  const serverSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>`;
-  const clockSvg  = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
-  const appSvg    = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>`;
-  const pingSvg   = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg>`;
-
-  const connDot   = _connDot(n);
-  const connLabel = _connLabel(n);
-  const agentVersion = n.agent_version ? ` · v${n.agent_version}` : '';
-
-  const deleteBtn = n.is_local ? '' : `
-    <button class="btn btn-sm btn-danger node-card-action-btn" data-perm="nodes.delete"
-      data-node-delete="${n.id}" data-node-name="${n.name}"
-      title="Remove node" style="padding:4px 8px">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-    </button>`;
+function appRowHTML(app) {
+  const reps = app.replicas || [];
+  const up = reps.filter(r => r.status === 'running').length;
+  const nodeIds = [...new Set(reps.map(r => r.node_id ?? null))];
+  const nodeNames = nodeIds.length
+    ? nodeIds.map(id => nodeLabel(nodesData.find(n => n.id === id) || (id == null ? null : { name: `node ${id}` }))).join(', ')
+    : '—';
+  const stats = _appStats.get(app.id);
+  const sub = appSubline(app);
+  const busy = ['deploying', 'starting', 'stopping', 'restarting'].includes(app.status);
+  const isRunning = app.status === 'running';
 
   return `
-    <div class="card node-card" data-node-id="${n.id}" style="cursor:pointer">
-      <div class="node-card-header">
-        <div style="display:flex;align-items:center;gap:8px;min-width:0">
-          <span style="color:var(--text-secondary);flex-shrink:0">${serverSvg}</span>
-          <span class="node-card-name" title="${n.name}">${n.name}</span>
-          ${n.is_local ? `<span style="font-size:10px;padding:2px 6px;border-radius:999px;background:var(--accent-bg);color:var(--accent);flex-shrink:0">primary</span>` : ''}
+    <tr class="clickable" data-app-id="${app.id}">
+      <td>
+        <div class="app-cell">
+          <span class="dot" style="background:${statusColor(app.status)}"></span>
+          <span class="app-cell-text">
+            <a class="app-cell-name" href="/app?id=${app.id}">${esc(app.name)}</a>
+            <span class="app-cell-sub ${sub.cls}">${esc(sub.text)}</span>
+          </span>
         </div>
-        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-          <span style="font-size:11px;padding:2px 8px;border-radius:999px;background:${statusBg};color:${statusColor}">${n.status}</span>
-          ${deleteBtn}
+      </td>
+      <td class="cell-muted">${esc(appKind(app))}</td>
+      <td class="cell-mono">${esc(nodeNames)}</td>
+      <td class="num">${reps.length ? `${up}/${reps.length}` : '—'}</td>
+      <td class="num">${stats ? `${stats.cpu.toFixed(stats.cpu < 10 ? 1 : 0)}%` : '—'}</td>
+      <td class="num">${stats ? fmtMem(stats.mem) : '—'}</td>
+      <td>
+        <div class="row-actions">
+          <button type="button" class="row-action" data-action="${isRunning ? 'stop' : 'start'}" data-perm="apps.${isRunning ? 'stop' : 'start'}" ${busy ? 'disabled' : ''} aria-label="${isRunning ? 'Stop' : 'Start'} ${esc(app.name)}" title="${isRunning ? 'Stop' : 'Start'}">${ACTION_ICONS[isRunning ? 'stop' : 'start']}</button>
+          <button type="button" class="row-action" data-action="restart" data-perm="apps.restart" ${busy || !isRunning ? 'disabled' : ''} aria-label="Restart ${esc(app.name)}" title="Restart">${ACTION_ICONS.restart}</button>
         </div>
-      </div>
-      <div class="node-card-meta">
-        <div class="node-meta-row">${connDot}<span style="font-size:11px;color:var(--text-muted)">${connLabel}${agentVersion}</span></div>
-        <div class="node-meta-row" style="margin-top:2px">
-          ${clockSvg}<span>Last seen: ${timeAgo(n.last_seen)}</span>
-        </div>
-        
-        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border-muted);display:flex;flex-direction:column;gap:6px">
-          <div class="node-meta-row" style="font-size:11px;opacity:0.8">
-            ${icon.cpu}<span>${n.metadata?.cpu_model || (n.metadata?.cpu_count ? `${n.metadata.cpu_count}-Core Processor` : 'System CPU')}</span>
-          </div>
-          <div style="display:flex;gap:12px;margin-top:2px">
-             ${n.metadata?.ram_total_mb ? `<div class="node-meta-row" style="font-size:11px">${icon.memory}<span>${Math.round(n.metadata.ram_total_mb / 1024)}GB RAM</span></div>` : ''}
-             ${n.metadata?.disk_total_gb ? `<div class="node-meta-row" style="font-size:11px">${icon.server}<span>${n.metadata.disk_total_gb}GB SSD</span></div>` : ''}
-          </div>
-        </div>
+      </td>
+    </tr>`;
+}
 
-        <div class="node-meta-row" style="margin-top:8px">${appSvg}<span>${instanceCount} instance${instanceCount !== 1 ? 's' : ''}</span></div>
-        ${(!n.is_local && n.status === 'online') ? `<div class="node-meta-row" data-node-ping-badge="${n.id}">
-          ${pingSvg}<span class="ping-val" style="font-size:11px;color:var(--text-muted)">…</span>
-        </div>` : ''}
-      </div>
-      ${_metricsHTML(n)}
-    </div>`;
+function renderApps() {
+  const wrap = document.getElementById('apps-grid');
+  if (!wrap || _noAppsPermission) return;
+
+  if (!appsData.length) {
+    wrap.innerHTML = `
+      <div class="apps-empty">
+        <strong>No applications yet</strong>
+        Deploy a repository from GitHub to get started.
+        <div style="margin-top:18px"><button class="btn btn-primary" id="empty-deploy-btn" data-perm="apps.deploy">${icon.plus} New app</button></div>
+      </div>`;
+    document.getElementById('empty-deploy-btn')?.addEventListener('click', () => {
+      openDeployModal(app => { window.location.href = `/app?id=${app.id}`; });
+    });
+    return;
+  }
+
+  const rows = appsData.filter(a => _appFilter === 'all' || appCategory(a) === _appFilter);
+  wrap.innerHTML = `
+    <table class="table apps-table">
+      <thead>
+        <tr><th>Name</th><th>Type</th><th>Node</th><th class="num">Instances</th><th class="num">CPU</th><th class="num">Memory</th><th><span class="sr-only">Actions</span></th></tr>
+      </thead>
+      <tbody>${rows.length ? rows.map(appRowHTML).join('') : `<tr><td colspan="7" class="cell-muted" style="padding:28px 0;text-align:center">No ${_appFilter === 'worker' ? 'workers' : _appFilter + ' apps'}</td></tr>`}</tbody>
+    </table>`;
+  if (window._applyPermVisibility) window._applyPermVisibility(wrap);
+
+  wrap.querySelectorAll('tr[data-app-id]').forEach(tr => {
+    const app = appsData.find(a => a.id === parseInt(tr.dataset.appId, 10));
+    tr.addEventListener('click', e => {
+      const actionBtn = e.target.closest('[data-action]');
+      if (actionBtn) { e.stopPropagation(); appAction(app, actionBtn.dataset.action, actionBtn); return; }
+      if (e.target.closest('a')) return;
+      location.href = `/app?id=${app.id}`;
+    });
+  });
+}
+
+async function appAction(app, action, btn) {
+  if (action === 'stop' || action === 'restart') {
+    const ok = await confirm(`${action === 'stop' ? 'Stop' : 'Restart'} ${esc(app.name)}?`,
+      action === 'stop' ? 'All running instances will be stopped.' : 'All running instances will be restarted.');
+    if (!ok) return;
+  }
+  btn.disabled = true;
+  try {
+    const fns = { start: api.start, stop: api.stop, restart: api.restart };
+    await fns[action](app.id);
+    await loadApps();
+    toast(`${app.name}: ${action} requested`);
+  } catch (e) {
+    toast(e.message, 'error');
+    btn.disabled = false;
+  }
 }
 
 /* ─── Add Node modal ────────────────────────────────────────────────────── */
@@ -399,127 +560,6 @@ function openAddNodeModal() {
       modal.querySelector('#node-invite-cmd').textContent = 'Failed to generate invite.';
     }
   })();
-}
-
-/* ─── Stat strip ────────────────────────────────────────────────────────── */
-function renderStats() {
-  const total    = appsData.length;
-  const running  = appsData.filter(a => a.status === 'running').length;
-  const stopped  = appsData.filter(a => a.status === 'stopped').length;
-  const errors   = appsData.filter(a => a.status === 'error').length;
-
-  document.getElementById('stat-total').textContent   = total;
-  document.getElementById('stat-running').textContent = running;
-  document.getElementById('stat-stopped').textContent = stopped;
-  document.getElementById('stat-errors').textContent  = errors;
-}
-
-/* ─── Apps grid ─────────────────────────────────────────────────────────── */
-function renderApps() {
-  const grid = document.getElementById('apps-grid');
-
-  if (appsData.length === 0) {
-    grid.innerHTML = `
-      <div class="empty-state" style="grid-column:1/-1">
-        <div class="empty-icon">${icon.server}</div>
-        <div class="empty-title">No applications deployed</div>
-        <div class="empty-sub">Deploy your first application from a GitHub repository to get started.</div>
-        <button class="btn btn-primary" id="empty-deploy-btn">${icon.plus} Deploy Application</button>
-      </div>`;
-    document.getElementById('empty-deploy-btn')?.addEventListener('click', () => {
-      openDeployModal(app => { window.location.href = `/app?id=${app.id}`; });
-    });
-    return;
-  }
-
-  grid.innerHTML = appsData.map(app => appCardHTML(app)).join('');
-  if (window._applyPermVisibility) window._applyPermVisibility(grid);
-
-  appsData.forEach(app => {
-    const card = document.getElementById(`card-${app.id}`);
-    if (!card) return;
-
-    card.addEventListener('click', () => {
-      window.location.href = `/app?id=${app.id}`;
-    });
-
-    card.querySelector('.btn-start')?.addEventListener('click', e => {
-      e.stopPropagation();
-      appAction(app, 'start', card);
-    });
-
-    card.querySelector('.btn-stop')?.addEventListener('click', e => {
-      e.stopPropagation();
-      appAction(app, 'stop', card);
-    });
-
-    card.querySelector('.btn-restart')?.addEventListener('click', e => {
-      e.stopPropagation();
-      appAction(app, 'restart', card);
-    });
-  });
-}
-
-function appCardHTML(app) {
-  const busy      = app.status === 'deploying';
-  const isRunning = app.status === 'running';
-
-  const primaryBtn = `
-    <button class="btn btn-success btn-sm btn-start" data-perm="apps.start"
-      ${isRunning || busy ? 'disabled' : ''}
-      style="opacity:${isRunning ? '.4' : '1'}">${icon.play} Start</button>
-    <button class="btn btn-danger btn-sm btn-stop" data-perm="apps.stop"
-      ${!isRunning || busy ? 'disabled' : ''}
-      style="opacity:${!isRunning ? '.4' : '1'}">${icon.stop} Stop</button>`;
-
-  const repoShort = (app.repo_url || '').replace('https://github.com/', '');
-
-  return `
-    <div class="card app-card" id="card-${app.id}">
-      <div class="app-card-top">
-        <div class="app-card-identity">
-          <div class="app-type-icon">${typeIcon[app.app_type] || typeIcon.unknown}</div>
-          <div>
-            <div class="app-name">${app.name}</div>
-            <div class="app-type-label">${app.app_type || 'unknown'}</div>
-          </div>
-        </div>
-        ${badge(app.status)}
-      </div>
-
-      <div class="app-card-meta">
-        ${app.domain ? `<div class="app-meta-row">${icon.globe}<span>${app.domain}</span></div>` : ''}
-        ${renderPortRows(app)}
-        <div class="app-meta-row">${icon.link}<span>${repoShort}</span></div>
-      </div>
-
-      <div class="app-card-actions">
-        ${primaryBtn}
-        <button class="btn btn-secondary btn-sm btn-icon btn-restart" data-perm="apps.restart" ${busy ? 'disabled' : ''} title="Restart">${icon.restart}</button>
-      </div>
-    </div>`;
-}
-
-/* ─── Quick actions ─────────────────────────────────────────────────────── */
-async function appAction(app, action, card) {
-  const btnEl = card.querySelector(`.btn-${action === 'start' ? 'start' : action === 'stop' ? 'stop' : 'restart'}`);
-  if (btnEl) btnEl.disabled = true;
-
-  try {
-    const fns = { start: api.start, stop: api.stop, restart: api.restart };
-    const res = await fns[action](app.id);
-
-    if (res?.command_id) {
-      const b = card.querySelector('.app-card-top > span:last-child');
-      if (b) b.textContent = 'pending…';
-    }
-
-    await loadApps();
-    toast(`${action.charAt(0).toUpperCase() + action.slice(1)} successful`);
-  } catch (e) {
-    toast(e.message, 'error');
-    if (btnEl) btnEl.disabled = false;
-  }
 }
 
 function _waitForCommand(commandId, nodeId) {

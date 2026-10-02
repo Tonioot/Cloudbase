@@ -35,12 +35,23 @@ window.addEventListener('cloudbase-role-ready', (evt) => {
   else _enableSettingsForEditor();
 });
 
-function _updateNoWebVisibility(noWeb) {
+// Show only the controls that apply to this app's type:
+// - background workers: no web/nginx features at all
+// - static sites: served by nginx on a fixed port; no server process, so no
+//   start command (it holds the publish directory), no internal port, and no
+//   read-only root (nginx needs to write its cache/pid files)
+function _updateAppTypeVisibility(app) {
+  const noWeb = !!app.no_web;
+  const isStatic = app.app_type === 'static';
   const hide = noWeb ? 'none' : '';
   const el = id => document.getElementById(id);
 
   // Settings panel
-  if (el('cfg-port-field'))          el('cfg-port-field').style.display = hide;
+  if (el('cfg-port-field'))          el('cfg-port-field').style.display = (noWeb || isStatic) ? 'none' : '';
+  if (el('cfg-docker-readonly-field')) el('cfg-docker-readonly-field').style.display = isStatic ? 'none' : '';
+  if (el('cfg-env-static-hint'))     el('cfg-env-static-hint').style.display = isStatic ? '' : 'none';
+  if (el('cfg-cmd-label'))           el('cfg-cmd-label').textContent = isStatic ? 'Publish Directory' : 'Start Command';
+  if (el('cfg-cmd'))                 el('cfg-cmd').placeholder = isStatic ? 'auto-detect (root, dist, build, …)' : 'npm start';
   // Network section: parent settings-group of cfg-domains-rows
   const networkSection = el('cfg-domains-rows')?.closest('.settings-group');
   if (networkSection)                networkSection.style.display = hide;
@@ -142,7 +153,7 @@ function renderHeader() {
 
   const typeLabelEl = document.getElementById('app-service-type-badge');
   if (typeLabelEl) {
-    typeLabelEl.textContent = app.no_web ? 'Background Worker' : 'Web Service';
+    typeLabelEl.textContent = app.no_web ? 'Background Worker' : app.app_type === 'static' ? 'Static Site' : 'Web Service';
     typeLabelEl.className = 'service-type-badge' + (app.no_web ? ' service-type-badge--worker' : '');
   }
 
@@ -161,6 +172,9 @@ function renderHeader() {
   document.getElementById('btn-maintenance-mode').addEventListener('click', () => toggleMode('maintenance'));
   document.getElementById('btn-update-mode').addEventListener('click',      () => toggleMode('update'));
   _syncZeroDowntimeButton();
+  // Hide web-only controls (downtime/update mode buttons etc.) right away for
+  // background workers, not only once the Settings tab has been opened.
+  _updateAppTypeVisibility(app);
 }
 
 function _syncZeroDowntimeButton() {
@@ -250,13 +264,13 @@ function _updateHeaderStatus_legacy() {
   const btnMaint  = document.getElementById('btn-maintenance-mode');
   const btnUpdate = document.getElementById('btn-update-mode');
   if (btnMaint && btnUpdate) {
-    const hasNginx = !!app.nginx_enabled;
-    btnMaint.disabled  = !hasNginx;
-    btnUpdate.disabled = !hasNginx;
-    btnMaint.title  = hasNginx ? 'Toggle maintenance mode — serves the custom downtime page via nginx'
-                               : 'Requires a configured nginx domain';
-    btnUpdate.title = hasNginx ? 'Toggle update mode — serves the custom update page via nginx'
-                               : 'Requires a configured nginx domain';
+    const canToggle = canToggleMaintenanceMode();
+    btnMaint.disabled  = !canToggle;
+    btnUpdate.disabled = !canToggle;
+    btnMaint.title  = canToggle ? 'Toggle maintenance mode — serves the custom downtime page via nginx'
+                                : getMaintenanceToggleDisabledReason();
+    btnUpdate.title = canToggle ? 'Toggle update mode — serves the custom update page via nginx'
+                                : getMaintenanceToggleDisabledReason();
     btnMaint.classList.toggle('active-maintenance', !!app.maintenance_mode);
     btnUpdate.classList.toggle('active-update',      !!app.update_mode);
   }
@@ -1267,13 +1281,6 @@ function initSettings() {
   document.getElementById('cfg-cmd').value          = app.start_command  || '';
   document.getElementById('cfg-build').value        = app.build_command  || '';
   document.getElementById('cfg-port').value         = app.port           || '';
-
-  // Static sites: start_command holds the publish directory; nginx always uses port 80
-  const isStatic = app.app_type === 'static';
-  document.getElementById('cfg-cmd-label').textContent = isStatic ? 'Publish Directory' : 'Start Command';
-  document.getElementById('cfg-cmd').placeholder = isStatic ? 'auto-detect (root, dist, build, …)' : 'npm start';
-  if (isStatic) document.getElementById('cfg-port-field').style.display = 'none';
-
   // Domains list (primary first, then extras)
   const domainsContainer = document.getElementById('cfg-domains-rows');
   domainsContainer.innerHTML = '';
@@ -1288,7 +1295,7 @@ function initSettings() {
   (app.redirect_domains || []).forEach(d => addDomainRow(redirectContainer, d));
   document.getElementById('cfg-add-redirect-domain').onclick = () => addDomainRow(redirectContainer, '');
 
-  _updateNoWebVisibility(!!app.no_web);
+  _updateAppTypeVisibility(app);
   document.getElementById('cfg-autostart').checked  = !!app.auto_start;
   document.getElementById('cfg-restart-policy').value = app.restart_policy || 'no';
   document.getElementById('cfg-docker-cpu').value = app.docker_cpu_limit || '';
@@ -1566,29 +1573,28 @@ function _enableSettingsForEditor() {
 let _maintModalType = 'downtime'; // currently open card type
 let _maintLogoData  = null;       // base64 data-URL or null (no logo)
 
-function hasMaintenanceDomain() {
-  return !!(app.domain && app.port);
-}
-
-function isRemoteAppNode() {
-  return (app.replicas || []).some(r => r.node_id && !r.node_is_local);
-}
-
+// Maintenance pages are served by Cloudbase's nginx on the app's domain, so
+// they need one: a custom domain, or the automatic subdomain from the base
+// domain (app_url without app.domain). Mirrors _has_public_nginx_domain()
+// in the backend.
 function canToggleMaintenanceMode() {
-  if (isRemoteAppNode()) return hasMaintenanceDomain();
-  return !!app.nginx_enabled;
+  if (app.no_web) return false;
+  const customDomain = !!(app.nginx_enabled && app.domain);
+  const baseDomainRoute = !!(app.app_url && !app.domain);
+  return customDomain || baseDomainRoute;
 }
 
 function getMaintenanceToggleDisabledReason() {
-  if (!hasMaintenanceDomain()) return 'Requires a configured nginx domain';
-  if (!isRemoteAppNode() && !app.nginx_enabled) return 'Requires nginx to be configured for this app';
-  return 'Maintenance mode is unavailable';
+  if (app.domain && !app.nginx_enabled) return 'The nginx config for this domain is not active (writing it may have failed) — save the Network settings to retry';
+  return 'Requires a domain: add one under Network, or set a base domain in system settings';
 }
 
 function refreshMaintenanceUiState() {
   const canServeMaintenance = canToggleMaintenanceMode();
   const noNginxWarn = document.getElementById('maint-no-nginx-warn');
   if (noNginxWarn) noNginxWarn.style.display = canServeMaintenance ? 'none' : '';
+  const noNginxText = document.getElementById('maint-no-nginx-text');
+  if (noNginxText && !canServeMaintenance) noNginxText.textContent = getMaintenanceToggleDisabledReason();
 
   const openButtons = [
     ['btn-open-downtime-modal', 'Edit Downtime Page'],

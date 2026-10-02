@@ -1,59 +1,142 @@
-:root {
-  /* Backgrounds */
-  --bg-base:      #0a0a0a;
-  --bg-surface:   #111111;
-  --bg-elevated:  #1a1a1a;
-  --bg-muted:     #222222;
+/* ─── Cloudbase design tokens ────────────────────────────────────────────────
+   Theme: dark by default, light via [data-theme="light"] or the OS setting
+   (js/theme.js sets data-theme from the user's choice before first paint).
 
-  /* Borders */
-  --border:       #2e2e2e;
-  --border-muted: #1f1f1f;
+   New code uses the short tokens (--bg, --line, --text-2 …). The older names
+   further down are aliases so existing markup picks up the new palette.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --bg:          #08090a;
+  --surface:     #0d0e10;   /* panels that must sit apart from the page   */
+  --pop:         #121417;   /* menus, dialogs, tooltips                  */
+  --hover:       #16181b;
+  --field:       #0f1012;   /* inputs, segmented controls                */
+  --code:        #0b0c0e;
+
+  /* Lines */
+  --line:        #17191c;   /* dividers between rows / sections          */
+  --line-strong: #24272b;   /* control borders                           */
 
   /* Text */
-  --text-primary:   #f0f0f0;
-  --text-secondary: #a0a0a0;
-  --text-muted:     #606060;
+  --text:        #edeef0;
+  --text-2:      #a9aeb6;
+  --muted:       #7a7f88;
+  --faint:       #5a5f67;
 
-  /* Accent */
-  --accent:       #c8c8c8;
-  --accent-dark:  #3a3a3a;
-  --accent-bg:    rgba(200, 200, 200, 0.08);
-  --accent-border: rgba(200, 200, 200, 0.18);
-  --control-bg:   #1f1f1f;
-  --control-hover:#2a2a2a;
-  --control-soft: rgba(240, 240, 240, 0.04);
+  /* Accent — charts, links, focus */
+  --accent:        #8e9bff;
+  --accent-fill:   rgba(142, 155, 255, 0.08);
+  --accent-border: rgba(142, 155, 255, 0.28);
+  --focus:         rgba(142, 155, 255, 0.45);
+
+  /* Primary button: inverted text/background */
+  --primary-bg:    #edeef0;
+  --primary-text:  #08090a;
+  --primary-hover: #ffffff;
 
   /* Status */
-  --green:        #34d399;
-  --green-bg:     rgba(52, 211, 153, 0.10);
-  --green-border: rgba(52, 211, 153, 0.25);
+  --green:  #4ade9a;  --green-bg:  rgba(74, 222, 154, 0.10);  --green-border:  rgba(74, 222, 154, 0.24);  --green-halo:  rgba(74, 222, 154, 0.14);
+  --red:    #ff7a72;  --red-bg:    rgba(255, 122, 114, 0.10); --red-border:    rgba(255, 122, 114, 0.26); --red-halo:    rgba(255, 122, 114, 0.14);
+  --yellow: #f5b94e;  --yellow-bg: rgba(245, 185, 78, 0.10);  --yellow-border: rgba(245, 185, 78, 0.26);  --yellow-halo: rgba(245, 185, 78, 0.14);
+  --purple: #b9a4ff;  --purple-bg: rgba(185, 164, 255, 0.10); --purple-border: rgba(185, 164, 255, 0.24);
+  --orange: #ff9f5a;  --orange-bg: rgba(255, 159, 90, 0.10);
 
-  --red:          #f87171;
-  --red-bg:       rgba(248, 113, 113, 0.10);
-  --red-border:   rgba(248, 113, 113, 0.25);
+  /* Overlays */
+  --scrim:     rgba(0, 0, 0, 0.62);
+  --shadow:    0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.6);
 
-  --yellow:       #fbbf24;
-  --yellow-bg:    rgba(251, 191, 36, 0.10);
-  --yellow-border: rgba(251, 191, 36, 0.25);
-
-  --purple:       #a78bfa;
-  --purple-bg:    rgba(167, 139, 250, 0.10);
-
-  --orange:       #fb923c;
-  --orange-bg:    rgba(251, 146, 60, 0.10);
-
-  --blue:         #c8c8c8;
+  /* Type */
+  --font-sans: 'Geist', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 
   /* Sizing */
-  --sidebar-width: 252px;
-  --radius-sm:  8px;
-  --radius:     14px;
-  --radius-lg:  18px;
+  --rail-width:  60px;
+  --content-max: 1180px;
+  --radius-xs:   4px;
+  --radius-sm:   6px;
+  --radius:      10px;
+  --radius-lg:   12px;
 
-  /* Shadows */
-  --shadow:     0 12px 30px rgba(0, 0, 0, 0.5);
-  --shadow-lg:  0 24px 60px rgba(0, 0, 0, 0.7);
+  --transition: 140ms ease;
 
-  /* Transitions */
-  --transition: 180ms ease;
+  /* ── Aliases for existing markup ─────────────────────────────────────── */
+  --bg-base:       var(--bg);
+  --bg-surface:    var(--surface);
+  --bg-elevated:   var(--pop);
+  --bg-muted:      var(--hover);
+  --border:        var(--line-strong);
+  --border-muted:  var(--line);
+  --text-primary:  var(--text);
+  --text-secondary:var(--text-2);
+  --text-muted:    var(--muted);
+  --accent-bg:     var(--accent-fill);
+  --accent-dark:   var(--hover);
+  --control-bg:    var(--field);
+  --control-hover: var(--hover);
+  --control-soft:  var(--hover);
+  --blue:          var(--accent);
+  --sidebar-width: var(--rail-width);
+}
+
+/* Light theme — shared by the explicit choice and the OS preference */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --bg:          #fbfbfa;
+  --surface:     #ffffff;
+  --pop:         #ffffff;
+  --hover:       #f0f0ee;
+  --field:       #f4f4f2;
+  --code:        #f5f5f3;
+
+  --line:        #eaeae8;
+  --line-strong: #dcdcd9;
+
+  --text:        #111214;
+  --text-2:      #4a4f57;
+  --muted:       #6b7079;
+  --faint:       #8f949c;
+
+  --accent:        #4f5bd5;
+  --accent-fill:   rgba(79, 91, 213, 0.07);
+  --accent-border: rgba(79, 91, 213, 0.28);
+  --focus:         rgba(79, 91, 213, 0.35);
+
+  --primary-bg:    #111214;
+  --primary-text:  #fbfbfa;
+  --primary-hover: #2a2c30;
+
+  --green:  #1e8a55;  --green-bg:  rgba(30, 138, 85, 0.09);  --green-border:  rgba(30, 138, 85, 0.24);  --green-halo:  rgba(30, 138, 85, 0.14);
+  --red:    #c93b34;  --red-bg:    rgba(201, 59, 52, 0.08);  --red-border:    rgba(201, 59, 52, 0.24);  --red-halo:    rgba(201, 59, 52, 0.13);
+  --yellow: #b25f00;  --yellow-bg: rgba(178, 95, 0, 0.09);   --yellow-border: rgba(178, 95, 0, 0.24);   --yellow-halo: rgba(178, 95, 0, 0.14);
+  --purple: #6b4fd1;  --purple-bg: rgba(107, 79, 209, 0.08); --purple-border: rgba(107, 79, 209, 0.22);
+  --orange: #c25a12;  --orange-bg: rgba(194, 90, 18, 0.08);
+
+  --scrim:     rgba(17, 18, 20, 0.28);
+  --shadow:    0 8px 24px rgba(17, 18, 20, 0.08), 0 1px 2px rgba(17, 18, 20, 0.06);
+  --shadow-lg: 0 24px 64px rgba(17, 18, 20, 0.14), 0 2px 6px rgba(17, 18, 20, 0.06);
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]):not([data-theme="light"]) {
+    color-scheme: light;
+    --bg: #fbfbfa; --surface: #ffffff; --pop: #ffffff; --hover: #f0f0ee; --field: #f4f4f2; --code: #f5f5f3;
+    --line: #eaeae8; --line-strong: #dcdcd9;
+    --text: #111214; --text-2: #4a4f57; --muted: #6b7079; --faint: #8f949c;
+    --accent: #4f5bd5; --accent-fill: rgba(79, 91, 213, 0.07); --accent-border: rgba(79, 91, 213, 0.28); --focus: rgba(79, 91, 213, 0.35);
+    --primary-bg: #111214; --primary-text: #fbfbfa; --primary-hover: #2a2c30;
+    --green: #1e8a55; --green-bg: rgba(30, 138, 85, 0.09); --green-border: rgba(30, 138, 85, 0.24); --green-halo: rgba(30, 138, 85, 0.14);
+    --red: #c93b34; --red-bg: rgba(201, 59, 52, 0.08); --red-border: rgba(201, 59, 52, 0.24); --red-halo: rgba(201, 59, 52, 0.13);
+    --yellow: #b25f00; --yellow-bg: rgba(178, 95, 0, 0.09); --yellow-border: rgba(178, 95, 0, 0.24); --yellow-halo: rgba(178, 95, 0, 0.14);
+    --purple: #6b4fd1; --purple-bg: rgba(107, 79, 209, 0.08); --purple-border: rgba(107, 79, 209, 0.22);
+    --orange: #c25a12; --orange-bg: rgba(194, 90, 18, 0.08);
+    --scrim: rgba(17, 18, 20, 0.28);
+    --shadow: 0 8px 24px rgba(17, 18, 20, 0.08), 0 1px 2px rgba(17, 18, 20, 0.06);
+    --shadow-lg: 0 24px 64px rgba(17, 18, 20, 0.14), 0 2px 6px rgba(17, 18, 20, 0.06);
+  }
 }

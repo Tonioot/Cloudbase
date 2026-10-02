@@ -15,116 +15,6 @@
 
 .page-body { padding: 0 30px 30px; }
 
-/* ─── Dashboard — stat strip ────────────────────────────────────────────── */
-.stat-strip {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
-  margin-bottom: 24px;
-}
-
-.stat-card {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 18px 20px;
-  border-radius: var(--radius-lg);
-}
-
-.stat-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.stat-icon.blue   { background: var(--accent-bg);  color: var(--accent); }
-.stat-icon.green  { background: var(--green-bg);   color: var(--green); }
-.stat-icon.gray   { background: var(--bg-muted);   color: var(--text-secondary); }
-.stat-icon.red    { background: var(--red-bg);     color: var(--red); }
-
-.stat-value { font-size: 26px; font-weight: 700; color: var(--text-primary); line-height: 1; }
-.stat-label { font-size: 12px; color: var(--text-secondary); margin-top: 3px; }
-
-/* ─── Nodes grid ────────────────────────────────────────────────────────── */
-.nodes-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
-  margin-bottom: 0;
-}
-
-.node-card {
-  padding: 18px 20px;
-  cursor: pointer;
-  border-radius: var(--radius-lg);
-  transition: border-color var(--transition), transform var(--transition), box-shadow var(--transition), background var(--transition);
-}
-
-.node-card:hover {
-  border-color: rgba(200, 200, 200, .2);
-  transform: translateY(-2px);
-  box-shadow: 0 12px 24px rgba(0, 0, 0, .35);
-  background: linear-gradient(180deg, rgba(24, 24, 24, .96), rgba(14, 14, 14, .95));
-}
-
-.node-card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-
-.node-card-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 160px;
-}
-
-.node-card-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.node-meta-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.node-card-actions {
-  display: flex;
-  gap: 6px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border-muted);
-}
-
-.node-card-action-btn {
-  pointer-events: all;
-}
-
-.conn-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-  flex-shrink: 0;
-}
-.conn-dot.green  { background: var(--green); }
-.conn-dot.yellow { background: var(--yellow); }
-.conn-dot.muted  { background: var(--text-muted); }
-
 /* ─── Node spinner (waiting state) ─────────────────────────────────────── */
 .node-spinner {
   width: 16px;
@@ -183,13 +73,6 @@
 
 @keyframes node-draw-check {
   to { stroke-dashoffset: 0; }
-}
-
-/* ─── App grid ──────────────────────────────────────────────────────────── */
-.apps-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 14px;
 }
 
 /* ─── App card ──────────────────────────────────────────────────────────── */

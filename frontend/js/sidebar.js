@@ -1,4 +1,5 @@
 import { api, PermissionError } from './api.js';
+import { updateIndex } from './shell.js';
 import { toast, confirm } from './utils.js';
 
 // Global handler: show a clear toast for any unhandled 403 PermissionError
@@ -8,15 +9,6 @@ window.addEventListener('unhandledrejection', e => {
     toast(`Geen toegang: ${e.reason.message}`, 'error');
   }
 });
-
-const STATUS_DOT = {
-  running:  'var(--green)',
-  stopped:  'var(--text-muted)',
-  error:    'var(--red)',
-  deploying:'var(--yellow)',
-  starting: 'var(--yellow)',
-  stopping: 'var(--yellow)',
-};
 
 function esc(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -48,85 +40,15 @@ export async function initSidebar() {
 }
 
 async function loadSidebarTree() {
-  const container = document.getElementById('sidebar-nodes');
-  if (!container) return;
-
   // Load nodes and apps independently — a 403 on one must not break the other
   const [nodesResult, appsResult] = await Promise.allSettled([
     api.listNodes(),
     api.listApps(),
   ]);
-
   const nodes = nodesResult.status === 'fulfilled' ? nodesResult.value : [];
   const apps  = appsResult.status  === 'fulfilled' ? appsResult.value  : [];
-  const canSeeNodes = nodesResult.status === 'fulfilled';
-  const canSeeApps  = appsResult.status  === 'fulfilled';
-
-  const nodeMap = new Map(nodes.map(n => [n.id, n]));
-
-  const onAppPage     = location.pathname.startsWith('/app');
-  const onNodePage    = location.pathname.startsWith('/node');
-  const currentAppId  = onAppPage  ? parseInt(new URLSearchParams(location.search).get('id')) : NaN;
-  const currentNodeId = onNodePage ? parseInt(new URLSearchParams(location.search).get('id')) : NaN;
-
-  // ── Nodes section (only when multi-node and user can see nodes) ───────
-  let nodesHtml = '';
-  const remoteNodes = canSeeNodes ? nodes.filter(n => !n.is_local) : [];
-  const showNodeSection = canSeeNodes && remoteNodes.length;
-  if (showNodeSection) {
-    nodesHtml = `
-      <div class="sidebar-section-label" style="margin-top:10px">Nodes</div>
-      ${nodes.map(n => {
-        const dot = n.status === 'online' ? 'var(--green)' : n.status === 'offline' ? 'var(--red)' : 'var(--yellow)';
-        const active = n.id === currentNodeId ? ' active' : '';
-        const label = n.is_local ? 'Primary Node' : n.name;
-        return `<a href="/node?id=${n.id}" class="sidebar-app-item${active}">
-          <span class="sidebar-app-dot" style="background:${dot}"></span>
-          <span class="sidebar-app-name">${label}</span>
-        </a>`;
-      }).join('')}`;
-  }
-
-  // ── Apps section label + list ─────────────────────────────────────────
-  let appsHtml = '';
-  if (canSeeApps) {
-    // Only show the "Apps" section label when nodes are also visible (otherwise it's the only section, label is redundant)
-    const appsLabel = showNodeSection
-      ? `<div class="sidebar-section-label" style="margin-top:10px">Apps</div>`
-      : '';
-    const appsList = apps.length
-      ? apps.map(app => {
-          const appDot = STATUS_DOT[app.status] || 'var(--text-muted)';
-          const active = app.id === currentAppId ? ' active' : '';
-          const replicas = app.replicas || [];
-          const instanceLabel = remoteNodes.length && replicas.length
-            ? (() => {
-                const nodeIds = [...new Set(replicas.map(r => r.node_id).filter(Boolean))];
-                const names = nodeIds.map(id => {
-                  const n = nodeMap.get(id);
-                  return n ? (n.is_local ? 'local' : n.name) : 'local';
-                });
-                const label = names.length ? names.join(', ') : 'local';
-                return `<span style="font-size:10px;color:var(--text-muted);margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:60px" title="${label}">${label}</span>`;
-              })()
-            : '';
-          return `<a href="/app?id=${app.id}" class="sidebar-app-item${active}">
-            <span class="sidebar-app-dot" style="background:${appDot}"></span>
-            <span class="sidebar-app-name">${app.name}</span>
-            ${instanceLabel}
-          </a>`;
-        }).join('')
-      : `<div class="sidebar-apps-empty">No apps yet</div>`;
-    appsHtml = appsLabel + appsList;
-  }
-
-  container.innerHTML = nodesHtml + appsHtml;
-
-  const appsContainer = document.getElementById('sidebar-apps');
-  if (appsContainer) {
-    appsContainer.innerHTML = '';
-    appsContainer.style.display = 'none';
-  }
+  // Feeds the rail's Apps / Nodes menus and the command palette
+  updateIndex(apps, nodes);
 }
 
 function wireNodesButton() {
@@ -495,7 +417,7 @@ export async function pickGitHubToken(tokenInput, tokenIdInput) {
   tokens.forEach(t => {
     const row = document.createElement('div');
     row.style.cssText = 'padding:8px 12px;cursor:pointer;color:#f0f0f0;display:flex;justify-content:space-between;gap:12px;';
-    row.innerHTML = `<span style="font-weight:500">${esc(t.label)}</span><span style="color:#a0a0a0;font-family:monospace">••••${esc(t.token_hint)}</span>`;
+    row.innerHTML = `<span style="font-weight:500">${esc(t.label)}</span><span style="color:var(--text-2);font-family:var(--font-mono)">••••${esc(t.token_hint)}</span>`;
     row.addEventListener('mouseenter', () => row.style.background = '#222222');
     row.addEventListener('mouseleave', () => row.style.background = '');
     row.addEventListener('click', () => {
@@ -863,7 +785,7 @@ async function initRoleBasedUI() {
     const isRoot = !!(data.is_root || data.is_superadmin);
     document.body.dataset.role = data.role;
     document.body.dataset.permissions = JSON.stringify(data.permissions || []);
-    window.dispatchEvent(new CustomEvent('cloudbase-role-ready', { detail: { role: data.role, permissions: data.permissions || [] } }));
+    window.dispatchEvent(new CustomEvent('cloudbase-role-ready', { detail: { role: data.role, username: data.username, permissions: data.permissions || [] } }));
 
     const perms = new Set(data.permissions || []);
 
