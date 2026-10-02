@@ -21,31 +21,28 @@
 
   <!-- ─── Main ─────────────────────────────────────────────────────────── -->
   <main class="main-content">
+    <div class="page">
 
-    <div class="page-header">
-      <div class="page-header-row">
-        <div>
-          <div class="page-title">Audit Logs</div>
-          <div class="page-sub">All events across all apps and users</div>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <input class="input" id="filter-actor" placeholder="Filter by user" style="width:150px;height:36px" />
-          <select class="input" id="filter-action" style="width:200px;height:36px">
+      <div class="page-title-row">
+        <h1>Audit log</h1>
+        <span class="page-title-meta">Every action across apps, nodes and users</span>
+        <div class="page-title-actions">
+          <div class="input-icon-wrap">
+            <span class="icon"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+            <input class="input" id="filter-actor" placeholder="Filter by user" aria-label="Filter by user" style="width:180px" />
+          </div>
+          <select class="input" id="filter-action" aria-label="Filter by action" style="width:200px">
             <option value="">All actions</option>
           </select>
         </div>
       </div>
-    </div>
 
-    <div class="page-body">
-      <div class="card" style="padding:0;overflow:hidden">
-        <div id="audit-log-wrap" style="color:var(--text-muted);font-size:13px;padding:20px">Loading…</div>
+      <div id="audit-log-wrap"><div class="apps-empty">Loading…</div></div>
+      <div style="text-align:center;padding:24px 0 0">
+        <button class="btn" id="btn-load-more" style="display:none">Load more</button>
       </div>
-      <div style="text-align:center;padding:16px">
-        <button class="btn btn-secondary" id="btn-load-more" style="display:none">Load more</button>
-      </div>
-    </div>
 
+    </div>
   </main>
 
 </div>

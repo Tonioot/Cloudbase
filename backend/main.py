@@ -723,15 +723,9 @@ async def _crash_monitor():
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
-    pm.set_main_loop(asyncio.get_event_loop())
-
-    # Keep DB-backed global system settings in memory (with one-time config.yaml bootstrap).
-    async with AsyncSessionLocal() as _db:
-        await _syscfg.bootstrap_from_config_if_needed(_db)
-        await _syscfg.load_cache(_db)
-
-    # First-run: generate a password if none exists
+    # First-run: generate a password if none exists. This must happen before
+    # init_db(), which seeds the admin user from the credentials file —
+    # otherwise the printed password only works after a second start.
     if not auth.load_hashed_password():
         import secrets
         import string
@@ -743,6 +737,14 @@ async def lifespan(app: FastAPI):
         print(f"  Admin password: {password}")
         print("  Save this — it will not be shown again.")
         print("=" * 60 + "\n")
+
+    await init_db()
+    pm.set_main_loop(asyncio.get_event_loop())
+
+    # Keep DB-backed global system settings in memory (with one-time config.yaml bootstrap).
+    async with AsyncSessionLocal() as _db:
+        await _syscfg.bootstrap_from_config_if_needed(_db)
+        await _syscfg.load_cache(_db)
 
     # Ensure internal agent token exists (used by node_agent.py)
     auth.get_or_create_agent_token()

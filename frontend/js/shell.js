@@ -52,7 +52,7 @@ function currentSection() {
 }
 
 const DEFAULT_CRUMBS = {
-  overview: ['Overview'],
+  overview: [location.host],
   apps: ['Apps'],
   nodes: ['Nodes'],
   audit: ['Audit log'],
@@ -346,9 +346,29 @@ function mount() {
     if (e.target.closest('.flyout .menu-item')) closeFlyouts();
   });
   document.addEventListener('click', e => { if (openPanel && !e.target.closest('.flyout')) closeFlyouts(); });
+
+  // In-page dropdowns: <div class="menu-wrap"><button data-dropdown>…</button><div class="dropdown">…</div></div>
+  document.addEventListener('click', e => {
+    const trigger = e.target.closest('[data-dropdown]');
+    const openMenus = document.querySelectorAll('.menu-wrap.open');
+    if (trigger) {
+      const wrap = trigger.closest('.menu-wrap');
+      const wasOpen = wrap.classList.contains('open');
+      openMenus.forEach(w => { w.classList.remove('open'); w.querySelector('[data-dropdown]')?.setAttribute('aria-expanded', 'false'); });
+      if (!wasOpen) { wrap.classList.add('open'); trigger.setAttribute('aria-expanded', 'true'); }
+      return;
+    }
+    // Clicking an item, or anywhere outside, closes open dropdowns
+    if (!e.target.closest('.dropdown') || e.target.closest('.dropdown .menu-item')) {
+      openMenus.forEach(w => { w.classList.remove('open'); w.querySelector('[data-dropdown]')?.setAttribute('aria-expanded', 'false'); });
+    }
+  });
   document.addEventListener('keydown', e => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); }
-    else if (e.key === 'Escape' && openPanel) closeFlyouts();
+    else if (e.key === 'Escape') {
+      if (openPanel) closeFlyouts();
+      document.querySelectorAll('.menu-wrap.open').forEach(w => w.classList.remove('open'));
+    }
   });
   window.addEventListener('resize', closeFlyouts);
   document.getElementById('btn-search')?.addEventListener('click', openPalette);

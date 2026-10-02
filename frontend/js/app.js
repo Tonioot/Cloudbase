@@ -1,6 +1,7 @@
 import { api, wsLogs, wsStats, wsNodeEvents, PermissionError } from './api.js';
-import { icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, setBtn, parseDotEnv, pickTextFile, mergeEnvIntoRows } from './utils.js';
+import { auditTableHTML, cssVar, icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, setBtn, parseDotEnv, pickTextFile, mergeEnvIntoRows } from './utils.js';
 import { pickGitHubToken } from './sidebar.js';
+import { setCrumbs } from './shell.js';
 
 const params = new URLSearchParams(location.search);
 const APP_ID = parseInt(params.get('id'));
@@ -60,12 +61,9 @@ function _updateAppTypeVisibility(app) {
   // Actions: nginx config editor is not applicable for no-web apps
   if (el('tile-nginx'))               el('tile-nginx').style.display = hide;
 
-  // Header action buttons
-  if (el('btn-maintenance-mode'))    el('btn-maintenance-mode').style.display = noWeb ? 'none' : '';
-  if (el('btn-update-mode'))         el('btn-update-mode').style.display = noWeb ? 'none' : '';
-  // separator between action buttons and mode buttons (hide when both mode buttons hidden)
-  const sep = document.querySelector('.detail-actions-sep[data-perm]');
-  if (sep) sep.style.display = noWeb ? 'none' : '';
+  // Header: the ⋯ menu only holds downtime/update mode, which need nginx
+  const moreMenu = el('btn-more-menu')?.closest('.menu-wrap');
+  if (moreMenu) moreMenu.style.display = hide;
 }
 
 // cfg-no-web checkbox removed — no_web is set at app creation via app type selector
@@ -81,10 +79,10 @@ export async function initApp() {
     app = await api.getApp(APP_ID);
   } catch (err) {
     document.body.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:#a0a0a0">
-        <div style="font-size:18px;color:#f85149">Failed to load application</div>
+      <div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:var(--muted)">
+        <div style="font-size:18px;color:var(--red)">Failed to load application</div>
         <div style="font-size:13px">${err.message}</div>
-        <a href="/" style="color:#c8c8c8;font-size:13px;margin-top:8px">← Back to dashboard</a>
+        <a href="/" style="color:var(--text-2);font-size:13px;margin-top:8px">← Back to dashboard</a>
       </div>`;
     return;
   }
@@ -134,10 +132,11 @@ function formatPortSummary(app) {
 
 function renderHeader() {
   document.getElementById('app-name').textContent = app.name;
-  document.getElementById('app-name-crumb').textContent = app.name;
+  setCrumbs([{ label: 'Apps', href: '/' }, app.name]);
   document.title = `${app.name} — Cloudbase`;
-  document.getElementById('app-meta').textContent =
-    `${app.app_type || 'unknown'} · ${formatPortSummary(app)}`;
+  document.getElementById('app-meta').textContent = formatPortSummary(app);
+  const repoEl = document.getElementById('app-repo-text');
+  if (repoEl) repoEl.textContent = (app.repo_url || '').replace(/^https?:\/\/(www\.)?github\.com\//, '');
 
   // App URL link (custom domain or auto-subdomain)
   const urlLink = document.getElementById('app-url-link');
@@ -171,6 +170,9 @@ function renderHeader() {
 
   document.getElementById('btn-maintenance-mode').addEventListener('click', () => toggleMode('maintenance'));
   document.getElementById('btn-update-mode').addEventListener('click',      () => toggleMode('update'));
+  // Deploy menu: the pull / rebuild flows live on the Settings → Actions tiles
+  document.getElementById('menu-pull-rebuild')?.addEventListener('click', () => tileAction('pull', 'Pull'));
+  document.getElementById('menu-rebuild')?.addEventListener('click', () => tileAction('rebuild', 'Rebuild'));
   _syncZeroDowntimeButton();
   // Hide web-only controls (downtime/update mode buttons etc.) right away for
   // background workers, not only once the Settings tab has been opened.
@@ -302,7 +304,14 @@ async function _toggleMode_legacy(type) {
 
 function updateHeaderStatus() {
   const badgeEl = document.getElementById('app-badge');
-  badgeEl.innerHTML = badge(app.status);
+  // Traffic mode is shown next to the status — it is otherwise only visible in the ⋯ menu
+  const modeChip = app.maintenance_mode
+    ? ' <span class="pill" style="color:var(--red);border-color:var(--red-border)">Downtime mode</span>'
+    : app.update_mode
+      ? ' <span class="pill" style="color:var(--yellow);border-color:var(--yellow-border)">Update mode</span>'
+      : '';
+  badgeEl.innerHTML = badge(app.status) + modeChip;
+  document.getElementById('app-meta').textContent = formatPortSummary(app);
 
   const s = app.status;
   const busy = (s === 'deploying');
@@ -314,9 +323,6 @@ function updateHeaderStatus() {
   btnStart.disabled   = (s === 'running') || busy;
   btnStop.disabled    = (s === 'stopped') || busy;
   btnRestart.disabled = busy;
-
-  btnStart.style.opacity = (s === 'running') ? '0.4' : '1';
-  btnStop.style.opacity  = (s === 'stopped') ? '0.4' : '1';
 
   const btnMaint  = document.getElementById('btn-maintenance-mode');
   const btnUpdate = document.getElementById('btn-update-mode');
@@ -612,7 +618,7 @@ function _logAction(action, phase) {
   if (terminal.querySelector('.log-empty')) terminal.innerHTML = '';
 
   const ts = new Date().toLocaleTimeString('nl', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  const colors = { start: '#3fb950', stop: '#f85149', restart: '#d29922' };
+  const colors = { start: 'var(--green)', stop: 'var(--red)', restart: 'var(--yellow)' };
   const color  = colors[action] || 'var(--accent)';
 
   const labels = {
@@ -799,10 +805,10 @@ function _removeStatsLoading() {
 }
 
 function initCharts() {
-  chartCpu  = createChart('chart-cpu',  '#c8c8c8', '%',   { maxLabels: 4 });
-  chartMem  = createChart('chart-mem',  '#a78bfa', ' MB', { maxLabels: 4 });
-  chartNet  = createChart('chart-net',  '#34d399', ' MB', { maxLabels: 4 });
-  chartDisk = createChart('chart-disk', '#fbbf24', ' MB', { maxLabels: 4 });
+  chartCpu  = createChart('chart-cpu',  '--accent', '%',   { maxLabels: 4 });
+  chartMem  = createChart('chart-mem',  '--purple', ' MB', { maxLabels: 4 });
+  chartNet  = createChart('chart-net',  '--green', ' MB', { maxLabels: 4 });
+  chartDisk = createChart('chart-disk', '--yellow', ' MB', { maxLabels: 4 });
 }
 
 let chartCpuHistory = null;
@@ -848,10 +854,10 @@ async function loadStatsHistory(hours) {
     const netPoints  = sampled.map(r => ({ t: _fmtHistoryTime(r.timestamp, hours), v: r.net_mb || 0 }));
     const diskPoints = sampled.map(r => ({ t: _fmtHistoryTime(r.timestamp, hours), v: r.disk_mb || 0 }));
     historySeriesCache = { hours, rows: data, cpuPoints, memPoints, netPoints, diskPoints };
-    if (!chartCpuHistory) chartCpuHistory = createChart('chart-cpu-history', '#c8c8c8', '%');
-    if (!chartMemHistory) chartMemHistory = createChart('chart-mem-history', '#a78bfa', ' MB');
-    if (!chartNetHistory) chartNetHistory = createChart('chart-net-history', '#34d399', ' MB');
-    if (!chartDiskHistory) chartDiskHistory = createChart('chart-disk-history', '#fbbf24', ' MB');
+    if (!chartCpuHistory) chartCpuHistory = createChart('chart-cpu-history', '--accent', '%');
+    if (!chartMemHistory) chartMemHistory = createChart('chart-mem-history', '--purple', ' MB');
+    if (!chartNetHistory) chartNetHistory = createChart('chart-net-history', '--green', ' MB');
+    if (!chartDiskHistory) chartDiskHistory = createChart('chart-disk-history', '--yellow', ' MB');
     updateChart(chartCpuHistory, cpuPoints);
     updateChart(chartMemHistory, memPoints);
     updateChart(chartNetHistory, netPoints);
@@ -906,10 +912,10 @@ async function exportStatsCsv(hours) {
 
 function openLargeHistoryChart(kind) {
   const map = {
-    cpu: { title: 'CPU History', subtitle: 'Averaged per 30s interval', color: '#c8c8c8', unit: '%', points: historySeriesCache.cpuPoints },
-    memory: { title: 'Memory History', subtitle: 'Averaged per 30s interval', color: '#a78bfa', unit: ' MB', points: historySeriesCache.memPoints },
-    network: { title: 'Traffic History', subtitle: 'Cumulative RX+TX per 30s', color: '#34d399', unit: ' MB', points: historySeriesCache.netPoints },
-    disk: { title: 'Disk I/O History', subtitle: 'Cumulative Read+Write per 30s', color: '#fbbf24', unit: ' MB', points: historySeriesCache.diskPoints },
+    cpu: { title: 'CPU History', subtitle: 'Averaged per 30s interval', color: '--accent', unit: '%', points: historySeriesCache.cpuPoints },
+    memory: { title: 'Memory History', subtitle: 'Averaged per 30s interval', color: '--purple', unit: ' MB', points: historySeriesCache.memPoints },
+    network: { title: 'Traffic History', subtitle: 'Cumulative RX+TX per 30s', color: '--green', unit: ' MB', points: historySeriesCache.netPoints },
+    disk: { title: 'Disk I/O History', subtitle: 'Cumulative Read+Write per 30s', color: '--yellow', unit: ' MB', points: historySeriesCache.diskPoints },
   };
 
   const cfg = map[kind] || map.cpu;
@@ -971,6 +977,10 @@ function updateChart(chart, data) {
 }
 
 function drawSparkline(ctx, canvas, data, color, unit, opts = {}) {
+  // Colours may be design tokens ('--accent') so charts follow the theme
+  if (color.startsWith('--')) color = cssVar(color);
+  const gridColor  = cssVar('--line');
+  const labelColor = cssVar('--faint');
   const W = canvas.width, H = canvas.height;
   const dpr = devicePixelRatio;
 
@@ -996,7 +1006,7 @@ function drawSparkline(ctx, canvas, data, color, unit, opts = {}) {
   const yS   = v => pT + cH - Math.min(Math.max(v, 0) / yMax, 1) * cH;
 
   // Grid lines + Y-axis labels (0 / 25 / 50 / 75 / 100 % of max)
-  ctx.font = `${10 * dpr}px Inter, sans-serif`;
+  ctx.font = `${10 * dpr}px Geist, sans-serif`;
   ctx.textAlign = 'right';
   ctx.textBaseline = 'middle';
   for (let i = 0; i <= 4; i++) {
@@ -1004,14 +1014,14 @@ function drawSparkline(ctx, canvas, data, color, unit, opts = {}) {
     const y    = pT + cH - frac * cH;
     const val  = yMax * frac;
 
-    ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+    ctx.strokeStyle = gridColor;
     ctx.lineWidth   = dpr;
     ctx.beginPath(); ctx.moveTo(pL, y); ctx.lineTo(W - pR, y); ctx.stroke();
 
     const lbl = unit === ' MB'
       ? (val >= 1000 ? (val / 1024).toFixed(1) + 'G' : val.toFixed(0) + 'M')
       : val.toFixed(0) + '%';
-    ctx.fillStyle = 'rgba(130,145,165,0.65)';
+    ctx.fillStyle = labelColor;
     ctx.fillText(lbl, pL - 5 * dpr, y);
   }
 
@@ -1023,8 +1033,8 @@ function drawSparkline(ctx, canvas, data, color, unit, opts = {}) {
   const hardMax    = (opts && opts.maxLabels) ? opts.maxLabels : fittingMax;
   const labelCount = Math.min(hardMax, fittingMax, data.length);
   const step = Math.max(1, Math.floor((data.length - 1) / (labelCount - 1)));
-  ctx.fillStyle = 'rgba(130,145,165,0.5)';
-  ctx.font = `${9.5 * dpr}px Inter, sans-serif`;
+  ctx.fillStyle = labelColor;
+  ctx.font = `${9.5 * dpr}px Geist, sans-serif`;
   ctx.textBaseline = 'top';
   const drawnX = new Set();
   for (let i = 0; i < data.length; i += step) {
@@ -1048,7 +1058,7 @@ function drawSparkline(ctx, canvas, data, color, unit, opts = {}) {
 
   // Gradient fill
   const grad = ctx.createLinearGradient(0, pT, 0, pT + cH);
-  grad.addColorStop(0, color + '20');
+  grad.addColorStop(0, color + '1c');
   grad.addColorStop(1, color + '00');
   ctx.beginPath();
   ctx.moveTo(pL, yS(vals[0]));
@@ -1074,7 +1084,7 @@ function drawSparkline(ctx, canvas, data, color, unit, opts = {}) {
   const curLbl = unit === ' MB'
     ? (cur >= 100 ? `${cur.toFixed(0)} MB` : `${cur.toFixed(1)} MB`)
     : `${cur.toFixed(1)}%`;
-  ctx.font         = `600 ${12 * dpr}px Inter, sans-serif`;
+  ctx.font         = `600 ${12 * dpr}px Geist, sans-serif`;
   ctx.textAlign    = 'right';
   ctx.textBaseline = 'top';
   ctx.fillStyle    = color;
@@ -1193,13 +1203,13 @@ async function openFile(entry, el) {
 
   const picker = document.createElement('div');
   picker.className = 'cert-picker';
-  picker.style.cssText = 'position:absolute;z-index:9999;background:#141414;border:1px solid #2e2e2e;border-radius:6px;max-height:200px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.6);font-size:12px;';
+  picker.style.cssText = 'position:absolute;z-index:9999;background:var(--pop);border:1px solid var(--line-strong);border-radius:8px;max-height:200px;overflow-y:auto;box-shadow:var(--shadow-lg);font-size:12px;padding:4px;';
 
   items.forEach(path => {
     const row = document.createElement('div');
     row.textContent = path;
-    row.style.cssText = 'padding:8px 12px;cursor:pointer;color:#f0f0f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-    row.addEventListener('mouseenter', () => row.style.background = '#222222');
+    row.style.cssText = 'padding:7px 10px;border-radius:6px;cursor:pointer;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    row.addEventListener('mouseenter', () => row.style.background = 'var(--hover)');
     row.addEventListener('mouseleave', () => row.style.background = '');
     row.addEventListener('click', () => {
       inputEl.value = path;
@@ -1225,43 +1235,10 @@ async function initActivity() {
   try {
     const entries = await api.getAuditLog(APP_ID, 100);
     if (!entries || !entries.length) {
-      wrap.innerHTML = '<div style="padding:20px;color:var(--text-muted);font-size:13px">No activity recorded yet.</div>';
+      wrap.innerHTML = '<div class="apps-empty">No activity recorded yet.</div>';
       return;
     }
-    const badgeColor = {
-      'app.start':         'var(--green)',
-      'app.stop':          'var(--red)',
-      'app.restart':       'var(--yellow)',
-      'app.deploy':        'var(--blue)',
-      'app.pull':          '#bc8cff',
-      'app.rebuild':       'var(--blue)',
-      'app.config_update': 'var(--text-muted)',
-      'app.delete':        'var(--red)',
-      'app.zero_downtime_deploy': 'var(--green)',
-      'app.rolling_deploy':       'var(--green)',
-      'auth.login':        'var(--text-muted)',
-      'auth.logout':       'var(--text-muted)',
-      'auth.change_password': 'var(--yellow)',
-    };
-    const rows = entries.map(e => {
-      const color = badgeColor[e.action] || 'var(--text-muted)';
-      const detail = e.detail ? Object.entries(e.detail).filter(([k]) => k !== 'name').map(([k,v]) => `${k}: ${v}`).join(' · ') : '';
-      return `<tr>
-        <td style="white-space:nowrap;font-size:11px;color:var(--text-muted);padding:6px 10px">${new Date(e.timestamp).toLocaleString()}</td>
-        <td style="padding:6px 10px"><span style="font-size:11px;font-weight:600;color:${color};font-family:monospace">${e.action}</span></td>
-        <td style="font-size:11px;color:var(--text-muted);padding:6px 10px">${detail}</td>
-        <td style="font-size:11px;color:var(--text-muted);padding:6px 10px;font-family:monospace">${e.actor || ''}</td>
-      </tr>`;
-    }).join('');
-    wrap.innerHTML = `<table style="width:100%;border-collapse:collapse">
-      <thead><tr style="font-size:11px;color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border)">
-        <th style="padding:6px 10px;font-weight:500">Time</th>
-        <th style="padding:6px 10px;font-weight:500">Action</th>
-        <th style="padding:6px 10px;font-weight:500">Detail</th>
-        <th style="padding:6px 10px;font-weight:500">User</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>`;
+    wrap.innerHTML = auditTableHTML(entries);
   } catch (e) {
     wrap.innerHTML = `<div style="color:var(--red);padding:20px;font-size:13px">${e.message}</div>`;
   }
@@ -2018,35 +1995,17 @@ async function initInstances() {
 
       // Live metrics
       const snap = instStats[String(inst.id)];
-      let metricsHtml = '';
+      let usageText = '—';
       if (snap && isRunning) {
-        const cpu = snap.cpu_percent != null ? snap.cpu_percent : null;
-        const mem = snap.memory_mb   != null ? Math.round(snap.memory_mb) : null;
-        const cpuColor = cpu > 80 ? 'var(--red)' : cpu > 60 ? 'var(--yellow)' : 'var(--green)';
-        const memPct = inst.docker_memory_limit_mb && mem ? Math.min((mem / inst.docker_memory_limit_mb) * 100, 100) : null;
-        const memColor = memPct > 80 ? 'var(--red)' : memPct > 60 ? 'var(--yellow)' : 'var(--accent)';
-
-        metricsHtml = `
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px;padding-top:8px;border-top:1px solid var(--border-muted)">
-            ${cpu != null ? `<div>
-              <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-bottom:2px">
-                <span>CPU</span><span style="color:${cpuColor};font-weight:600">${cpu.toFixed(1)}%</span>
-              </div>
-              <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden">
-                <div style="height:100%;width:${Math.min(cpu,100)}%;background:${cpuColor};border-radius:2px;transition:width .5s"></div>
-              </div>
-            </div>` : ''}
-            ${mem != null ? `<div>
-              <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted);margin-bottom:2px">
-                <span>Mem</span><span style="font-weight:600;color:var(--text-secondary)">${mem >= 1024 ? (mem/1024).toFixed(1)+'GB' : mem+'MB'}</span>
-              </div>
-              <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden">
-                <div style="height:100%;width:${memPct ?? 0}%;background:${memColor};border-radius:2px;transition:width .5s"></div>
-              </div>
-            </div>` : ''}
-          </div>`;
+        const parts = [];
+        if (snap.cpu_percent != null) parts.push(`${snap.cpu_percent.toFixed(1)}%`);
+        if (snap.memory_mb != null) {
+          const mem = Math.round(snap.memory_mb);
+          parts.push(mem >= 1024 ? `${(mem / 1024).toFixed(1)} GB` : `${mem} MB`);
+        }
+        usageText = parts.join(' · ') || '—';
       } else if (isRunning) {
-        metricsHtml = `<div style="margin-top:8px;padding-top:7px;border-top:1px solid var(--border-muted);font-size:10px;color:var(--text-muted)">Collecting metrics…</div>`;
+        usageText = 'collecting…';
       }
 
       const cpuLimit = inst.docker_cpu_limit != null ? `${inst.docker_cpu_limit} CPU` : null;
@@ -2055,51 +2014,33 @@ async function initInstances() {
       const containerShort = inst.container_id ? inst.container_id.slice(0, 12) : null;
 
       return `
-      <div class="card" style="padding:0;overflow:hidden"${isStarting ? ' data-starting="1"' : ''}>
-        <div style="padding:8px 12px;display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid var(--border-muted)">
-          <div style="display:flex;align-items:center;gap:7px;min-width:0">
-            <div style="width:6px;height:6px;border-radius:50%;background:${statusDot};flex-shrink:0"></div>
-            <span style="font-size:12px;font-weight:600;color:var(--text-primary)">Instance ${idx + 1}</span>
-            <span style="font-size:11px;color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${nodeName}</span>
-          </div>
-          <span style="padding:1px 7px;border-radius:999px;font-size:10px;font-weight:600;background:${statusBg};color:${statusColor};white-space:nowrap;flex-shrink:0">${inst.status}</span>
+      <div class="inst-row"${isStarting ? ' data-starting="1"' : ''}>
+        <div class="inst-main">
+          <span class="inst-id">#${inst.id}</span>
+          <span class="inst-status" style="color:${statusColor}"><span class="dot" style="background:${statusDot}"></span>${inst.status}</span>
+          <span class="inst-node">${escHtml(nodeName)}</span>
+          <span class="inst-port">:${inst.external_port || '—'}</span>
+          <span class="inst-conn">${connHtml}</span>
+          <span class="inst-usage">${usageText}</span>
+          <span class="inst-uptime">${uptimeStr}</span>
+          <span class="inst-actions">
+            <button class="btn btn-sm inst-restart-btn" data-perm="apps.restart" data-id="${inst.id}" ${removePending ? 'disabled' : ''}>Restart</button>
+            <button class="btn btn-sm btn-danger inst-remove-btn" data-perm="apps.scale" data-id="${inst.id}" ${removePending ? 'disabled' : ''}>${removePending ? `${spinner} Removing…` : 'Remove'}</button>
+          </span>
         </div>
-        <div style="padding:9px 12px">
-          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
-            <div>
-              <div style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin-bottom:2px">Port</div>
-              <div style="font-size:12px;font-weight:600;font-family:var(--font-mono);color:var(--text-primary)">:${inst.external_port || '—'}</div>
-            </div>
-            <div>
-              <div style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin-bottom:2px">Uptime</div>
-              <div style="font-size:12px;font-weight:600;color:var(--text-primary)">${uptimeStr}</div>
-            </div>
-            <div>
-              <div style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin-bottom:2px">Connection</div>
-              <div>${connHtml}</div>
-            </div>
-          </div>
-
-          ${startupHtml}
-          ${metricsHtml}
-
-          ${inst.last_error ? `<div style="margin-top:7px;padding:5px 7px;background:var(--red-bg);border:1px solid var(--red-border);border-radius:4px;font-size:10px;color:var(--red);font-family:var(--font-mono);word-break:break-all">${escHtml(inst.last_error)}</div>` : ''}
-
-          <div style="margin-top:8px;padding-top:7px;border-top:1px solid var(--border-muted);display:flex;align-items:center;justify-content:space-between;gap:6px">
-            <div style="font-size:10px;color:var(--text-muted);display:flex;gap:7px;align-items:center;min-width:0;overflow:hidden">
-              ${limitsText ? `<span>${limitsText}</span>` : ''}
-              ${containerShort ? `<span style="font-family:var(--font-mono)" title="${escHtml(inst.container_id || '')}">${containerShort}</span>` : ''}
-            </div>
-            <div style="display:flex;gap:4px;flex-shrink:0">
-              <button class="btn btn-secondary btn-sm inst-restart-btn" data-perm="apps.restart" data-id="${inst.id}" style="font-size:10px;padding:2px 8px" ${removePending ? 'disabled' : ''}>Restart</button>
-              <button class="btn btn-danger btn-sm inst-remove-btn" data-perm="apps.scale" data-id="${inst.id}" style="font-size:10px;padding:2px 8px" ${removePending ? 'disabled' : ''}>${removePending ? `${spinner} Removing…` : 'Remove'}</button>
-            </div>
-          </div>
-        </div>
+        ${limitsText || containerShort ? `<div class="inst-meta">${limitsText ? `<span>${limitsText}</span>` : ''}${containerShort ? `<span class="mono" title="${escHtml(inst.container_id || '')}">${containerShort}</span>` : ''}</div>` : ''}
+        ${startupHtml}
+        ${inst.last_error ? `<div class="inst-error">${escHtml(inst.last_error)}</div>` : ''}
       </div>`;
     }).join('');
 
-    wrap.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px">${cards}</div>`;
+    wrap.innerHTML = `
+      <div class="inst-list">
+        <div class="inst-main inst-head" aria-hidden="true">
+          <span>Instance</span><span>Status</span><span>Node</span><span>Port</span><span>Connection</span><span>CPU · Memory</span><span>Uptime</span><span></span>
+        </div>
+        ${cards}
+      </div>`;
     if (window._applyPermVisibility) window._applyPermVisibility(wrap);
     _rescheduleInstancesTimer();
 
@@ -2180,7 +2121,7 @@ async function initInstances() {
         `<div style="margin-bottom:10px">
           <div style="font-size:12px;font-weight:500;color:var(--text-secondary);margin-bottom:4px">${label}</div>
           <input id="${id}" type="${type}" placeholder="${placeholder}"
-            style="width:100%;padding:7px 10px;background:#111111;color:#f0f0f0;border:1px solid #2e2e2e;border-radius:6px;font-size:13px;box-sizing:border-box" />
+            class="input" />
           ${hint ? `<div style="font-size:11px;color:var(--text-muted);margin-top:3px">${hint}</div>` : ''}
         </div>`;
 
@@ -2192,7 +2133,7 @@ async function initInstances() {
             <div class="dialog-title">Add Instance</div>
             <div class="dialog-body" style="color:var(--text-secondary);font-size:13px;line-height:1.5">
               <div style="margin-bottom:12px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Node</div>
-              <select id="inst-node-select" style="width:100%;padding:7px 10px;background:#111111;color:#f0f0f0;border:1px solid #2e2e2e;border-radius:6px;font-size:13px;margin-bottom:16px">
+              <select id="inst-node-select" class="input" style="margin-bottom:16px">
                 <option value="">Primary node</option>
                 ${available.filter(n => !n.is_local).map(n => `<option value="${n.id}">${n.name} (${n.public_host || n.status})</option>`).join('')}
               </select>
@@ -2203,15 +2144,15 @@ async function initInstances() {
               </div>
               <div style="display:flex;align-items:center;gap:16px;margin-top:4px">
                 <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-                  <input type="checkbox" id="inst-readonly" ${app.docker_read_only_root ? 'checked' : ''} style="accent-color:#c8c8c8" />
+                  <input type="checkbox" id="inst-readonly" ${app.docker_read_only_root ? 'checked' : ''} style="accent-color:var(--accent)" />
                   Read-only root fs
                 </label>
                 <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-                  <input type="checkbox" id="inst-tmpfs" ${app.docker_tmpfs_enabled ? 'checked' : ''} style="accent-color:#c8c8c8" />
+                  <input type="checkbox" id="inst-tmpfs" ${app.docker_tmpfs_enabled ? 'checked' : ''} style="accent-color:var(--accent)" />
                   Tmpfs /tmp
                 </label>
                 <input id="inst-tmpfs-size" type="number" placeholder="${app.docker_tmpfs_size_mb || 64}"
-                  style="width:70px;padding:5px 8px;background:#111111;color:#f0f0f0;border:1px solid #2e2e2e;border-radius:6px;font-size:12px" />
+                  class="input" style="width:80px;height:28px" />
                 <span style="font-size:11px;color:var(--text-muted)">MB</span>
               </div>
             </div>

@@ -410,15 +410,15 @@ export async function pickGitHubToken(tokenInput, tokenIdInput) {
 
   const picker = document.createElement('div');
   picker.className = 'gh-token-picker cert-picker';
-  picker.style.cssText = `position:absolute;z-index:9999;background:#141414;border:1px solid #2e2e2e;
+  picker.style.cssText = `position:absolute;z-index:9999;background:var(--pop);border:1px solid var(--line-strong);
     border-radius:6px;max-height:200px;overflow-y:auto;min-width:260px;
-    box-shadow:0 8px 24px rgba(0,0,0,.6);font-size:12px;`;
+    box-shadow:var(--shadow-lg);font-size:12px;`;
 
   tokens.forEach(t => {
     const row = document.createElement('div');
-    row.style.cssText = 'padding:8px 12px;cursor:pointer;color:#f0f0f0;display:flex;justify-content:space-between;gap:12px;';
+    row.style.cssText = 'padding:8px 12px;cursor:pointer;color:var(--text);border-radius:6px;display:flex;justify-content:space-between;gap:12px;';
     row.innerHTML = `<span style="font-weight:500">${esc(t.label)}</span><span style="color:var(--text-2);font-family:var(--font-mono)">••••${esc(t.token_hint)}</span>`;
-    row.addEventListener('mouseenter', () => row.style.background = '#222222');
+    row.addEventListener('mouseenter', () => row.style.background = 'var(--hover)');
     row.addEventListener('mouseleave', () => row.style.background = '');
     row.addEventListener('click', () => {
       picker.remove();

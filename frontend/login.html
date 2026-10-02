@@ -3,192 +3,92 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Cloudbase — Login</title>
+  <title>Sign in — Cloudbase</title>
   <link rel="icon" type="image/png" href="/cloudbase.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <script src="/js/theme.js"></script>
   <link rel="stylesheet" href="css/variables.css" />
   <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/components.css" />
   <style>
     body {
       min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
-      background:
-        radial-gradient(700px 380px at 80% -20%, rgba(80, 80, 80, 0.06), transparent 60%),
-        radial-gradient(600px 320px at 10% 115%, rgba(60, 60, 60, 0.04), transparent 55%),
-        var(--bg-base);
+      padding: 24px 16px;
     }
-
-    .login-card {
+    .login {
       width: 100%;
-      max-width: 390px;
-      background: linear-gradient(180deg, rgba(20, 20, 20, 0.97), rgba(10, 10, 10, 0.96));
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      padding: 36px 32px 32px;
-      box-shadow: var(--shadow-lg);
-    }
-
-    .login-logo {
+      max-width: 340px;
       display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 28px;
+      flex-direction: column;
     }
-
-    .login-logo-icon {
-      width: 40px;
-      height: 40px;
-      background: linear-gradient(135deg, #2a2a2a, #1a1a1a);
+    .login-mark {
+      width: 36px;
+      height: 36px;
+      margin-bottom: 28px;
       border-radius: 10px;
+      background: var(--text);
+      color: var(--bg);
       display: flex;
       align-items: center;
       justify-content: center;
-      flex-shrink: 0;
     }
-
-    .login-logo-text .title {
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--text-primary);
-    }
-
-    .login-logo-text .sub {
-      font-size: 12px;
-      color: var(--text-secondary);
-    }
-
-    .login-heading {
-      font-size: 20px;
-      font-weight: 600;
-      color: var(--text-primary);
-      margin: 0 0 4px;
-    }
-
-    .login-subtext {
-      font-size: 13px;
-      color: var(--text-secondary);
-      margin: 0 0 24px;
-    }
-
-    .form-group {
-      margin-bottom: 16px;
-    }
-
-    .form-label {
-      display: block;
-      font-size: 12px;
-      font-weight: 500;
-      color: var(--text-secondary);
+    .login h1 {
+      font-size: 26px;
+      font-weight: 400;
+      letter-spacing: -0.03em;
       margin-bottom: 6px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
     }
-
-    .form-input {
-      width: 100%;
-      padding: 9px 12px;
-      background: var(--bg-muted);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      color: var(--text-primary);
-      font-size: 14px;
-      font-family: 'JetBrains Mono', monospace;
-      outline: none;
-      box-sizing: border-box;
-      transition: border-color 0.15s;
+    .login-host {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 32px;
     }
-
-    .form-input:focus {
-      border-color: var(--accent);
-    }
-
-    .btn-login {
-      width: 100%;
-      padding: 10px;
-      background: var(--accent-dark);
-      border: none;
-      border-radius: 6px;
-      color: #fff;
-      font-size: 14px;
-      font-weight: 500;
-      cursor: pointer;
-      margin-top: 8px;
-      transition: background 0.15s, opacity 0.15s;
-    }
-
-    .btn-login:hover {
-      background: var(--accent);
-    }
-
-    .btn-login:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
+    .login .field { margin-bottom: 14px; }
+    .login .input { height: 38px; }
+    .login .btn-primary { width: 100%; height: 38px; margin-top: 8px; }
     .login-error {
       display: none;
       margin-top: 14px;
       padding: 10px 12px;
+      border-radius: var(--radius-sm);
       background: var(--red-bg);
       border: 1px solid var(--red-border);
-      border-radius: 6px;
       color: var(--red);
       font-size: 13px;
     }
-
-    .login-error.visible {
-      display: block;
-    }
+    .login-error.visible { display: block; }
+    .login-foot { margin-top: 40px; font-size: 12px; color: var(--faint); }
   </style>
 </head>
 <body>
 
-<div class="login-card">
-  <div class="login-logo">
-    <div class="login-logo-icon" style="background:none;padding:0;overflow:hidden">
-      <img src="/cloudbase.png" alt="Cloudbase" style="width:40px;height:40px;object-fit:contain;display:block" />
-    </div>
-    <div class="login-logo-text">
-      <div class="title">Cloudbase</div>
-      <div class="sub">Deployment Panel</div>
-    </div>
+<main class="login">
+  <div class="login-mark" aria-hidden="true">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 8.5a4 4 0 0 1-.5 9.5z"/></svg>
   </div>
+  <h1>Sign in to Cloudbase</h1>
+  <div class="login-host" id="login-host"></div>
 
-  <h1 class="login-heading">Sign in</h1>
-  <p class="login-subtext">Enter your credentials to continue.</p>
-
-  <form id="login-form" autocomplete="off">
-    <div class="form-group">
-      <label class="form-label" for="username">Username</label>
-      <input
-        id="username"
-        class="form-input"
-        type="text"
-        autocomplete="username"
-        placeholder="admin"
-        required
-        autofocus
-      />
+  <form id="login-form" autocomplete="on">
+    <div class="field">
+      <label class="field-label" for="username">Username</label>
+      <input id="username" class="input" type="text" autocomplete="username" placeholder="admin" required autofocus />
     </div>
-    <div class="form-group">
-      <label class="form-label" for="password">Password</label>
-      <input
-        id="password"
-        class="form-input"
-        type="password"
-        autocomplete="current-password"
-        placeholder="••••••••••••••••"
-        required
-      />
+    <div class="field">
+      <label class="field-label" for="password">Password</label>
+      <input id="password" class="input" type="password" autocomplete="current-password" required />
     </div>
-    <button class="btn-login" type="submit" id="login-btn">Sign in</button>
-    <div class="login-error" id="login-error"></div>
+    <button class="btn btn-primary" type="submit" id="login-btn">Sign in</button>
+    <div class="login-error" id="login-error" role="alert"></div>
   </form>
-</div>
+
+  <div class="login-foot">Self-hosted deployment panel</div>
+</main>
 
 <script>
   const form   = document.getElementById('login-form');
@@ -197,9 +97,17 @@
   const pwdEl  = document.getElementById('password');
   const userEl = document.getElementById('username');
 
+  document.getElementById('login-host').textContent = location.host;
+
   function showError(msg) {
     errEl.textContent = msg;
     errEl.classList.add('visible');
+  }
+
+  // Only follow ?next= to a path on this server — never to another site.
+  function safeNext() {
+    const next = new URLSearchParams(location.search).get('next') || '/';
+    return next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/\\') ? next : '/';
   }
 
   form.addEventListener('submit', async (e) => {
@@ -217,8 +125,7 @@
       });
 
       if (res.ok) {
-        const redirect = new URLSearchParams(location.search).get('next') || '/';
-        location.href = redirect;
+        location.href = safeNext();
         return;
       }
 

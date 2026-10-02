@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="css/base.css" />
   <link rel="stylesheet" href="css/components.css" />
   <link rel="stylesheet" href="css/pages.css" />
+  <link rel="stylesheet" href="css/detail.css" />
 </head>
 <body>
 
@@ -20,116 +21,80 @@
   <aside class="rail" id="rail"></aside>
 
   <!-- ─── Main ─────────────────────────────────────────────────────────── -->
-  <main class="main-content" style="display:flex;flex-direction:column">
+  <main class="main-content">
+    <div class="page page--detail">
 
     <!-- Header -->
-    <div class="detail-header">
-      <div class="breadcrumb">
-        <a href="/">Dashboard</a>
-        <span class="sep">/</span>
-        <span>Nodes</span>
-        <span class="sep">/</span>
-        <span class="current" id="node-name-crumb">Loading…</span>
+    <section class="detail-head" aria-label="Node">
+      <div class="detail-status-line">
+        <span id="node-status-badge"></span>
+        <button type="button" id="node-ping-badge" class="pill" style="display:none" title="Click to ping again">
+          <span id="node-ping-val">—</span>
+        </button>
       </div>
-
-      <div class="detail-hero">
-        <div class="detail-identity">
-          <div class="detail-type-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+      <div class="detail-head-row">
+        <div class="detail-head-id">
+          <div class="detail-title-row">
+            <h1 class="detail-name" id="node-name">Loading…</h1>
           </div>
-          <div>
-            <div class="detail-name-row">
-              <div class="detail-name" id="node-name">Loading…</div>
-              <div id="node-status-badge"></div>
-              <div id="node-ping-badge" style="display:none;align-items:center;gap:5px;font-size:11px;padding:2px 10px;border-radius:999px;background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-muted);cursor:pointer;user-select:none" title="Click to ping again">
-                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg>
-                <span id="node-ping-val">—</span>
-              </div>
-            </div>
-            <div class="detail-meta" id="node-meta">—</div>
-          </div>
+          <div class="detail-links"><span class="detail-repo" id="node-meta">—</span></div>
         </div>
-
         <div class="detail-actions">
-          <button class="btn btn-secondary" id="btn-rename" data-perm="nodes.configure">Rename Node</button>
-          <button class="btn btn-secondary" id="btn-toggle-enable" data-perm="nodes.configure">Enable Node</button>
-          <button class="btn btn-danger" id="btn-delete" data-perm="nodes.delete">Remove Node</button>
+          <button class="btn" id="btn-rename" data-perm="nodes.configure">Rename</button>
+          <button class="btn" id="btn-toggle-enable" data-perm="nodes.configure">Enable</button>
+          <button class="btn btn-danger" id="btn-delete" data-perm="nodes.delete">Remove</button>
         </div>
       </div>
+    </section>
 
-    </div>
-
-    <div class="detail-body" style="flex:1;overflow-y:auto;padding:24px 28px">
-
-      <!-- Overview content -->
-      <div>
-
-        <!-- Resources row (full width) -->
-        <div class="stats-layout" style="margin-bottom:18px">
-          <!-- Left 1/3: compact metrics + details -->
-          <div class="card node-overview-panel">
-            <div class="node-summary-grid">
-              <div class="node-summary-card">
-                <span class="node-summary-label">CPU</span>
-                <span class="node-summary-value" id="n-cpu">—</span>
-              </div>
-              <div class="node-summary-card">
-                <span class="node-summary-label">Memory</span>
-                <span class="node-summary-value" id="n-mem">—</span>
-              </div>
-              <div class="node-summary-card">
-                <span class="node-summary-label">Disk</span>
-                <span class="node-summary-value" id="n-disk">—</span>
-              </div>
-            </div>
-            <div class="node-details-grid" id="node-info-grid"></div>
+    <!-- Resources -->
+    <section class="section" aria-label="Resources" style="border-top:1px solid var(--line)">
+      <div class="stats-layout">
+        <div class="card node-overview-panel">
+          <div class="node-summary-grid">
+            <div class="node-summary-card"><span class="node-summary-label">CPU</span><span class="node-summary-value" id="n-cpu">—</span></div>
+            <div class="node-summary-card"><span class="node-summary-label">Memory</span><span class="node-summary-value" id="n-mem">—</span></div>
+            <div class="node-summary-card"><span class="node-summary-label">Disk</span><span class="node-summary-value" id="n-disk">—</span></div>
           </div>
-          <!-- Right 2/3: 3 live charts stacked with gap -->
-          <div style="display:flex;flex-direction:column;gap:12px">
-            <div class="card chart-card" style="position:relative">
-              <div class="chart-hdr"><div><div class="chart-title">CPU</div><div class="chart-subtitle">Live · 2s interval</div></div><span class="chart-badge">%</span></div>
-              <canvas id="node-chart-cpu" style="width:100%;height:120px;display:block"></canvas>
-              <div id="node-chart-cpu-empty" class="chart-offline-overlay" style="display:none"></div>
-            </div>
-            <div class="card chart-card" style="position:relative">
-              <div class="chart-hdr"><div><div class="chart-title">Memory</div><div class="chart-subtitle">Live · 2s interval</div></div><span class="chart-badge">%</span></div>
-              <canvas id="node-chart-mem" style="width:100%;height:120px;display:block"></canvas>
-              <div id="node-chart-mem-empty" class="chart-offline-overlay" style="display:none"></div>
-            </div>
-            <div class="card chart-card" style="position:relative">
-              <div class="chart-hdr"><div><div class="chart-title">Disk</div><div class="chart-subtitle">Usage · %</div></div><span class="chart-badge">%</span></div>
-              <canvas id="node-chart-disk" style="width:100%;height:120px;display:block"></canvas>
-              <div id="node-chart-disk-empty" class="chart-offline-overlay" style="display:none"></div>
-            </div>
+          <div class="node-details-grid" id="node-info-grid"></div>
+        </div>
+        <div class="node-chart-stack">
+          <div class="card chart-card">
+            <div class="chart-hdr"><div><div class="chart-title">CPU</div><div class="chart-subtitle">Live · every 2 s</div></div><span class="chart-badge">%</span></div>
+            <canvas id="node-chart-cpu" style="width:100%;height:110px;display:block"></canvas>
+            <div id="node-chart-cpu-empty" class="chart-offline-overlay" style="display:none"></div>
           </div>
-        </div><!-- /resources row -->
-
-      </div><!-- /overview content -->
-
-      <!-- Logs & History -->
-      <div style="margin-top:18px;display:grid;grid-template-columns:1fr 1fr;gap:16px">
-
-        <!-- Agent logs -->
-        <div class="card" style="padding:0;overflow:hidden;display:flex;flex-direction:column;height:460px">
-          <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
-            <span style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase">Agent Logs</span>
-            <button class="btn btn-secondary btn-sm" id="btn-refresh-logs">Refresh</button>
+          <div class="card chart-card">
+            <div class="chart-hdr"><div><div class="chart-title">Memory</div><div class="chart-subtitle">Live · every 2 s</div></div><span class="chart-badge">%</span></div>
+            <canvas id="node-chart-mem" style="width:100%;height:110px;display:block"></canvas>
+            <div id="node-chart-mem-empty" class="chart-offline-overlay" style="display:none"></div>
           </div>
-          <div style="position:relative;flex:1;min-height:0;display:flex;flex-direction:column">
-            <pre id="node-logs-content" class="node-log-view" style="flex:1;min-height:0"></pre>
-            <div id="node-logs-empty" class="chart-offline-overlay" style="display:none"></div>
+          <div class="card chart-card">
+            <div class="chart-hdr"><div><div class="chart-title">Disk</div><div class="chart-subtitle">Usage</div></div><span class="chart-badge">%</span></div>
+            <canvas id="node-chart-disk" style="width:100%;height:110px;display:block"></canvas>
+            <div id="node-chart-disk-empty" class="chart-offline-overlay" style="display:none"></div>
           </div>
         </div>
+      </div>
+    </section>
 
-        <!-- Command history -->
-        <div class="card" style="padding:0;overflow:hidden;display:flex;flex-direction:column;height:460px">
-          <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;flex-shrink:0">
-            <span style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase">Command History</span>
-          </div>
-          <div id="node-history-list" style="display:flex;flex-direction:column;gap:8px;padding:12px;flex:1;min-height:0;overflow-y:auto"></div>
+    <!-- Logs & commands -->
+    <section class="section node-bottom" aria-label="Agent logs and command history">
+      <div class="node-panel">
+        <div class="section-head">
+          <h2>Agent logs</h2>
+          <button class="btn btn-sm" id="btn-refresh-logs">Refresh</button>
         </div>
-
-      </div><!-- /logs & history -->
+        <div class="node-log-frame">
+          <pre id="node-logs-content" class="node-log-view"></pre>
+          <div id="node-logs-empty" class="chart-offline-overlay" style="display:none"></div>
+        </div>
+      </div>
+      <div class="node-panel">
+        <div class="section-head"><h2>Command history</h2></div>
+        <div id="node-history-list" class="cmd-list"></div>
+      </div>
+    </section>
 
     </div>
   </main>

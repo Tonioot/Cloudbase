@@ -3,8 +3,8 @@
 /* Key numbers */
 .kpis {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 32px;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 28px 32px;
   padding-bottom: 36px;
 }
 .kpi { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
@@ -103,8 +103,6 @@
 .app-cell-name { font-weight: 500; color: var(--text); }
 .app-cell-sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 340px; }
 .app-cell-sub.error { color: var(--red); }
-.cell-muted { color: var(--text-2); }
-.cell-mono { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
 
 .row-actions { display: flex; justify-content: flex-end; gap: 2px; opacity: 0; transition: opacity var(--transition); }
 .apps-table tr:hover .row-actions, .row-actions:focus-within { opacity: 1; }
@@ -120,8 +118,6 @@
 .row-action:hover:not(:disabled) { background: var(--hover); color: var(--text); }
 .row-action:disabled { opacity: .35; cursor: not-allowed; }
 
-.apps-empty { padding: 56px 0; text-align: center; color: var(--muted); }
-.apps-empty strong { display: block; color: var(--text); font-weight: 500; margin-bottom: 6px; font-size: 15px; }
 
 @media (max-width: 900px) {
   .node-row { grid-template-columns: 1fr; }

@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="css/base.css" />
   <link rel="stylesheet" href="css/components.css" />
   <link rel="stylesheet" href="css/pages.css" />
+  <link rel="stylesheet" href="css/detail.css" />
 </head>
 <body>
 
@@ -20,95 +21,90 @@
   <aside class="rail" id="rail"></aside>
 
   <!-- ─── Main ─────────────────────────────────────────────────────────── -->
-  <main class="main-content" style="display:flex;flex-direction:column">
+  <main class="main-content">
+    <div class="page page--detail">
 
     <!-- Header -->
-    <div class="detail-header">
-      <div class="breadcrumb">
-        <a href="/">Dashboard</a>
-        <span class="sep">/</span>
-        <span class="current" id="app-name-crumb">Loading…</span>
+    <section class="detail-head" aria-label="Application">
+      <div class="detail-status-line">
+        <span id="app-badge"></span>
+        <span class="detail-status-meta" id="app-meta">—</span>
       </div>
 
-      <div class="detail-hero">
-        <div class="detail-identity">
-          <div class="detail-type-icon" id="app-type-icon"></div>
-          <div>
-            <div class="detail-name-row">
-              <div class="detail-name" id="app-name">Loading…</div>
-              <div id="app-service-type-badge" class="service-type-badge"></div>
-              <div id="app-badge"></div>
-            </div>
-            <div class="detail-meta" id="app-meta">—</div>
-            <a id="app-url-link" href="#" target="_blank" rel="noopener noreferrer"
-               style="display:none;align-items:center;gap:4px;font-size:12px;color:var(--text-muted);text-decoration:none;margin-top:2px;transition:color .15s">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-              <span id="app-url-text"></span>
+      <div class="detail-head-row">
+        <div class="detail-head-id">
+          <div class="detail-title-row">
+            <span class="detail-type-icon" id="app-type-icon" aria-hidden="true"></span>
+            <h1 class="detail-name" id="app-name">Loading…</h1>
+            <span id="app-service-type-badge" class="service-type-badge"></span>
+          </div>
+          <div class="detail-links">
+            <a id="app-url-link" href="#" target="_blank" rel="noopener noreferrer" class="detail-url" style="display:none">
+              <span id="app-url-text"></span> ↗
             </a>
+            <span class="detail-repo" id="app-repo-text"></span>
           </div>
         </div>
 
         <div class="detail-actions">
-          <button class="btn btn-success" id="btn-start" data-perm="apps.start">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+          <button class="btn" id="btn-start" data-perm="apps.start">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"/></svg>
             Start
           </button>
-          <button class="btn btn-danger" id="btn-stop" data-perm="apps.stop">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
-            Stop
-          </button>
-          <button class="btn btn-secondary" id="btn-restart" data-perm="apps.restart">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-            Restart
-          </button>
-          <button class="btn btn-primary" id="btn-rolling-deploy" data-perm="apps.pull" style="display:none" title="Replaces each replica one at a time with a freshly built image — traffic stays live throughout">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
-            Rolling Deploy
-          </button>
-          <button class="btn btn-primary" id="btn-zero-downtime" data-perm="apps.pull" style="display:none" title="Builds new image for all instances simultaneously, health checks, then atomically swaps nginx — no downtime">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-            Blue/Green Deploy
-          </button>
-          <div class="detail-actions-sep" data-perm="apps.configure"></div>
-          <button class="btn btn-mode" id="btn-maintenance-mode" data-perm="apps.configure" title="Toggle downtime mode — serves the custom downtime page via nginx">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-            Downtime
-          </button>
-          <button class="btn btn-mode" id="btn-update-mode" data-perm="apps.configure" title="Toggle update mode — serves the custom update page via nginx">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/></svg>
-            Update Mode
-          </button>
+          <button class="btn" id="btn-stop" data-perm="apps.stop">Stop</button>
+          <button class="btn" id="btn-restart" data-perm="apps.restart">Restart</button>
+
+          <div class="menu-wrap" data-perm="apps.pull">
+            <button class="btn btn-primary" type="button" data-dropdown aria-haspopup="menu" aria-expanded="false" id="btn-deploy-menu">
+              Deploy
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <div class="dropdown" role="menu" aria-label="Deploy">
+              <button type="button" class="menu-item" id="menu-pull-rebuild" role="menuitem">
+                <span class="menu-item-text"><span>Pull &amp; rebuild</span><small>Pick a commit, sync code and build a new image</small></span>
+              </button>
+              <button type="button" class="menu-item" id="menu-rebuild" role="menuitem">
+                <span class="menu-item-text"><span>Rebuild image</span><small>Build again from the current code</small></span>
+              </button>
+              <div class="menu-sep" role="separator"></div>
+              <button type="button" class="menu-item" id="btn-rolling-deploy" role="menuitem" style="display:none">
+                <span class="menu-item-text"><span>Rolling deploy</span><small>Replace instances one at a time — no downtime</small></span>
+              </button>
+              <button type="button" class="menu-item" id="btn-zero-downtime" role="menuitem" style="display:none">
+                <span class="menu-item-text"><span>Blue/green deploy</span><small>Start new instances, health check, then switch</small></span>
+              </button>
+            </div>
+          </div>
+
+          <div class="menu-wrap" data-perm="apps.configure">
+            <button class="btn btn-icon" type="button" data-dropdown aria-haspopup="menu" aria-expanded="false" aria-label="More actions" id="btn-more-menu">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+            </button>
+            <div class="dropdown" role="menu" aria-label="More actions">
+              <div class="dropdown-label">Traffic</div>
+              <button type="button" class="menu-item btn-mode" id="btn-maintenance-mode" role="menuitemcheckbox">
+                <span class="menu-item-text"><span>Downtime mode</span><small>Serve the downtime page instead of the app</small></span>
+                <span class="menu-check" aria-hidden="true"></span>
+              </button>
+              <button type="button" class="menu-item btn-mode" id="btn-update-mode" role="menuitemcheckbox">
+                <span class="menu-item-text"><span>Update mode</span><small>Serve the update page instead of the app</small></span>
+                <span class="menu-check" aria-hidden="true"></span>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
       <!-- Tabs -->
-      <div class="tabs">
-        <button class="tab-btn" id="tab-logs">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4,17 10,11 4,5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-          Logs
-        </button>
-        <button class="tab-btn" id="tab-instances">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>
-          Instances
-        </button>
-        <button class="tab-btn" id="tab-stats">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg>
-          Stats
-        </button>
-        <button class="tab-btn" id="tab-files">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-          Files
-        </button>
-        <button class="tab-btn" id="tab-settings">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-          Settings
-        </button>
-        <button class="tab-btn" id="tab-activity">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-          Activity
-        </button>
-      </div>
-    </div>
+      <nav class="tabs" aria-label="Application sections">
+        <button class="tab-btn" id="tab-logs">Logs</button>
+        <button class="tab-btn" id="tab-instances">Instances</button>
+        <button class="tab-btn" id="tab-stats">Metrics</button>
+        <button class="tab-btn" id="tab-files">Files</button>
+        <button class="tab-btn" id="tab-settings">Settings</button>
+        <button class="tab-btn" id="tab-activity">Activity</button>
+      </nav>
+    </section>
 
     <!-- Tab panels -->
     <div class="detail-body">
@@ -623,18 +619,18 @@
           <div class="settings-bar">
             <span class="settings-bar-title">Instances</span>
             <div style="display:flex;gap:8px;align-items:center">
-              <button class="btn btn-secondary btn-sm" id="btn-instances-refresh">
+              <button class="btn btn-sm" id="btn-instances-refresh">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
                 Refresh
               </button>
-              <button class="btn btn-primary btn-sm" id="btn-add-instance" data-perm="apps.scale">
+              <button class="btn btn-sm" id="btn-add-instance" data-perm="apps.scale">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                 Add Instance
               </button>
             </div>
           </div>
-          <div class="settings-content" style="padding:0 28px 60px;max-width:none;align-self:stretch">
-            <div id="instances-table-wrap" style="padding:16px 0">
+          <div class="settings-content">
+            <div id="instances-table-wrap" style="padding:4px 0 0">
               <div style="color:var(--text-muted);font-size:13px;padding:20px">Loading…</div>
             </div>
           </div>
@@ -691,15 +687,15 @@
               <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:8px">How load balancing works</div>
               <div style="display:flex;flex-direction:column;gap:8px">
                 <div style="display:flex;gap:10px;align-items:flex-start">
-                  <div style="width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px">1</div>
+                  <div style="width:20px;height:20px;border-radius:50%;background:var(--hover);color:var(--text);border:1px solid var(--line-strong);font-size:10px;font-weight:500;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px">1</div>
                   <p style="margin:0;font-size:13px;color:var(--text-secondary)">Your domain points to this server's IP. Nginx acts as the entry point.</p>
                 </div>
                 <div style="display:flex;gap:10px;align-items:flex-start">
-                  <div style="width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px">2</div>
+                  <div style="width:20px;height:20px;border-radius:50%;background:var(--hover);color:var(--text);border:1px solid var(--line-strong);font-size:10px;font-weight:500;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px">2</div>
                   <p style="margin:0;font-size:13px;color:var(--text-secondary)">Each running instance — whether on this node or a remote node connected via tunnel — is added to an nginx upstream pool.</p>
                 </div>
                 <div style="display:flex;gap:10px;align-items:flex-start">
-                  <div style="width:20px;height:20px;border-radius:50%;background:var(--accent);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px">3</div>
+                  <div style="width:20px;height:20px;border-radius:50%;background:var(--hover);color:var(--text);border:1px solid var(--line-strong);font-size:10px;font-weight:500;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px">3</div>
                   <p style="margin:0;font-size:13px;color:var(--text-secondary)">Nginx distributes incoming requests across all healthy instances automatically. Adding more instances immediately increases capacity — no DNS changes needed.</p>
                 </div>
               </div>
@@ -738,6 +734,7 @@
         </div>
       </div>
 
+    </div>
     </div>
   </main>
 </div>

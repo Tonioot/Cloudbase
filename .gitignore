@@ -5,3 +5,5 @@ __pycache__/
 *.crt
 *.key
 *.env
+# Local development data (scripts/dev.ps1, scripts/dev.sh)
+.dev/

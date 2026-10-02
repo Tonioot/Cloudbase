@@ -26,16 +26,16 @@ function showPicker(inputEl, items, label) {
   const picker = document.createElement('div');
   picker.className = 'cert-picker';
   picker.style.cssText = `
-    position:absolute; z-index:9999; background:#141414; border:1px solid #2e2e2e;
+    position:absolute; z-index:9999; background:var(--pop); border:1px solid var(--line-strong);
     border-radius:6px; max-height:200px; overflow-y:auto; min-width:320px;
-    box-shadow:0 8px 24px rgba(0,0,0,.6); font-size:12px;`;
+    box-shadow:var(--shadow-lg); font-size:12px;`;
 
   items.forEach(path => {
     const row = document.createElement('div');
     row.className = 'cert-picker-row';
     row.textContent = path;
-    row.style.cssText = 'padding:8px 12px; cursor:pointer; color:#f0f0f0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
-    row.addEventListener('mouseenter', () => row.style.background = '#222222');
+    row.style.cssText = 'padding:8px 12px; cursor:pointer; color:var(--text); border-radius:6px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+    row.addEventListener('mouseenter', () => row.style.background = 'var(--hover)');
     row.addEventListener('mouseleave', () => row.style.background = '');
     row.addEventListener('click', () => {
       inputEl.value = path;

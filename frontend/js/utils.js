@@ -283,3 +283,45 @@ export function setBtn(btn, loading, label, iconHtml) {
     btn.innerHTML = `${iconHtml} ${label}`;
   }
 }
+
+/* ─── Design tokens from CSS ────────────────────────────────────────────── */
+/** Current value of a CSS custom property, e.g. cssVar('--accent') → '#8e9bff'. */
+export function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+/* ─── Audit log table (app Activity tab + Audit log page) ───────────────── */
+const AUDIT_TONE = {
+  'app.start': 'var(--green)', 'app.stop': 'var(--red)', 'app.restart': 'var(--yellow)',
+  'app.deploy': 'var(--accent)', 'app.pull': 'var(--accent)', 'app.rebuild': 'var(--accent)',
+  'app.zero_downtime_deploy': 'var(--green)', 'app.rolling_deploy': 'var(--green)',
+  'app.delete': 'var(--red)', 'auth.change_password': 'var(--yellow)',
+  'user.create': 'var(--green)', 'user.delete': 'var(--red)',
+  'node.connect': 'var(--green)', 'node.enable': 'var(--green)', 'node.disable': 'var(--yellow)', 'node.delete': 'var(--red)',
+};
+
+function _escAudit(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/** Render audit entries as a .table; showApp adds the app name column. */
+export function auditTableHTML(entries, { showApp = false } = {}) {
+  const rows = entries.map(e => {
+    const tone = AUDIT_TONE[e.action] || 'var(--faint)';
+    const detail = e.detail
+      ? Object.entries(e.detail).filter(([k]) => k !== 'name').map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · ')
+      : '';
+    const when = new Date(e.timestamp);
+    return `<tr>
+      <td class="audit-time" title="${_escAudit(when.toLocaleString())}">${_escAudit(when.toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))}</td>
+      <td><span class="audit-action"><span class="dot" style="background:${tone}"></span>${_escAudit(e.action)}</span></td>
+      ${showApp ? `<td class="cell-muted">${_escAudit(e.detail?.name || '')}</td>` : ''}
+      <td class="audit-detail" title="${_escAudit(detail)}">${_escAudit(detail)}</td>
+      <td class="cell-mono">${_escAudit(e.actor || '')}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="audit-table-wrap"><table class="table audit-table">
+    <thead><tr><th>Time</th><th>Action</th>${showApp ? '<th>App</th>' : ''}<th>Detail</th><th>User</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div>`;
+}

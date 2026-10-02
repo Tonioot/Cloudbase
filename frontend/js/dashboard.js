@@ -8,6 +8,8 @@ let nodesData = [];
 let _noAppsPermission  = false;
 let _noNodesPermission = false;
 let _appFilter = 'all';
+let _appsLoaded = false;
+let _nodesLoaded = false;
 const _appStats = new Map();      // app id → { cpu, mem }
 const _nodePing = new Map();      // node id → latency text
 const _pingIntervals = new Map();
@@ -52,6 +54,7 @@ export async function initDashboard() {
 async function loadApps() {
   try {
     appsData = await api.listApps();
+    _appsLoaded = true;
     renderKpis();
     renderApps();
     if (nodesData.length) renderNodes();
@@ -69,6 +72,7 @@ async function loadApps() {
 async function loadNodes() {
   try {
     nodesData = await api.listNodes();
+    _nodesLoaded = true;
     renderNodes();
     renderKpis();
   } catch (e) {
@@ -141,7 +145,8 @@ function pushHistory(key, value) {
 function sparkPoints(values, w = 96, h = 18, pad = 2) {
   if (values.length < 2) return '';
   const max = Math.max(...values), min = Math.min(...values);
-  const span = max - min || 1;
+  if (max === min) return '';  // no variation yet: a flat line carries no information
+  const span = max - min;
   return values.map((v, i) =>
     `${(i * w / (values.length - 1)).toFixed(1)},${(h - pad - ((v - min) / span) * (h - pad * 2)).toFixed(1)}`).join(' ');
 }
@@ -170,11 +175,17 @@ function renderKpis() {
     if (total && pct != null) { memTotal += total; memUsed += total * pct / 100; }
   }
 
-  pushHistory('apps', running);
-  pushHistory('instances', instances);
-  if (cpu != null) pushHistory('cpu', cpu);
-  if (memTotal) pushHistory('mem', memUsed);
-  pushHistory('nodes', online.length);
+  // Only record samples from data that has actually loaded, otherwise the
+  // first render (apps before nodes) would log a fake 0.
+  if (_appsLoaded) {
+    pushHistory('apps', running);
+    pushHistory('instances', instances);
+  }
+  if (_nodesLoaded) {
+    if (cpu != null) pushHistory('cpu', cpu);
+    if (memTotal) pushHistory('mem', memUsed);
+    pushHistory('nodes', online.length);
+  }
 
   setKpi('kpi-apps', String(running), `of ${appsData.length}`, 'apps');
   setKpi('kpi-instances', String(instances), null, 'instances');

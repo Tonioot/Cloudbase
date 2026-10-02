@@ -1,5 +1,6 @@
 import { api, wsNodeEvents, wsNodeCommands, wsSystemStats } from './api.js';
-import { badge, toast, confirm, prompt, spinner, fmtDate, timeAgo, fmtUptime, icon } from './utils.js';
+import { badge, toast, confirm, prompt, spinner, fmtDate, timeAgo, fmtUptime, icon, cssVar } from './utils.js';
+import { setCrumbs } from './shell.js';
 
 const params  = new URLSearchParams(location.search);
 const NODE_ID = parseInt(params.get('id'));
@@ -83,12 +84,12 @@ async function autoPing() {
 
 function renderHeader() {
     document.getElementById('node-name').textContent       = node.name;
-    document.getElementById('node-name-crumb').textContent = node.name;
+    setCrumbs([{ label: 'Nodes', href: '/#nodes-section' }, node.name]);
     document.title = `${node.name} — Node — Cloudbase`;
 
     const online = node.status === 'online';
     document.getElementById('node-status-badge').innerHTML =
-        `<span style="font-size:11px;padding:2px 9px;border-radius:999px;background:${online ? 'var(--green-bg)' : 'var(--red-bg)'};color:${online ? 'var(--green)' : 'var(--red)'}">${node.status}</span>`;
+        `<span class="badge ${online ? 'badge-running' : 'badge-error'}">${online ? 'Online' : escHtml(node.status || 'offline')}</span>`;
 
     const roleLabel = node.is_local ? 'Primary Node' : node.role === 'hybrid' ? 'Hybrid' : 'Node';
     const connType  = node.is_local ? 'local' : node.websocket_connected ? 'WebSocket' : 'Connecting';
@@ -198,9 +199,9 @@ function _metricBar(label, pct) {
 
 // ── Node sparkline charts ─────────────────────────────────────────────────────
 function _initNodeCharts() {
-    nChartCpu  = _nodeChart('node-chart-cpu',  '#c8c8c8');
-    nChartMem  = _nodeChart('node-chart-mem',  '#a78bfa');
-    nChartDisk = _nodeChart('node-chart-disk', '#fbbf24');
+    nChartCpu  = _nodeChart('node-chart-cpu',  '--accent');
+    nChartMem  = _nodeChart('node-chart-mem',  '--purple');
+    nChartDisk = _nodeChart('node-chart-disk', '--yellow');
 
     const offline = node.status !== 'online';
     _setChartsOfflineState(offline);
@@ -251,7 +252,9 @@ function _nodeChart(id, color) {
 
 function _updateNodeChart(chart, data) {
     if (!chart) return;
-    const { canvas, ctx, color } = chart;
+    const { canvas, ctx } = chart;
+    // Colours are design tokens so the charts follow the theme
+    const color = chart.color.startsWith('--') ? cssVar(chart.color) : chart.color;
     canvas.width  = canvas.offsetWidth  * devicePixelRatio;
     canvas.height = canvas.offsetHeight * devicePixelRatio;
     const W = canvas.width, H = canvas.height, dpr = devicePixelRatio;
@@ -273,22 +276,22 @@ function _updateNodeChart(chart, data) {
     const yS   = v => pT + cH - Math.min(Math.max(v, 0) / yMax, 1) * cH;
 
     // Grid lines + Y labels: 0 / 50 / 100 % of max
-    ctx.font = `${9 * dpr}px Inter, sans-serif`;
+    ctx.font = `${9 * dpr}px Geist, sans-serif`;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     for (let i = 0; i <= 2; i++) {
         const frac = i / 2;
         const y    = pT + cH - frac * cH;
-        ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+        ctx.strokeStyle = cssVar('--line');
         ctx.lineWidth   = dpr;
         ctx.beginPath(); ctx.moveTo(pL, y); ctx.lineTo(W - pR, y); ctx.stroke();
-        ctx.fillStyle = 'rgba(130,145,165,0.6)';
+        ctx.fillStyle = cssVar('--faint');
         ctx.fillText((yMax * frac).toFixed(0), pL - 4 * dpr, y);
     }
 
     // Gradient fill
     const grad = ctx.createLinearGradient(0, pT, 0, pT + cH);
-    grad.addColorStop(0, color + '22');
+    grad.addColorStop(0, color + '1c');
     grad.addColorStop(1, color + '00');
     ctx.beginPath();
     ctx.moveTo(pL, yS(vals[0]));
@@ -310,7 +313,7 @@ function _updateNodeChart(chart, data) {
 
     // Current value — top right
     const cur = vals[vals.length - 1];
-    ctx.font         = `600 ${10 * dpr}px Inter, sans-serif`;
+    ctx.font         = `600 ${10 * dpr}px Geist, sans-serif`;
     ctx.textAlign    = 'right';
     ctx.textBaseline = 'top';
     ctx.fillStyle    = color;
@@ -405,18 +408,20 @@ async function loadHistory() {
         }
         list.style.alignItems = '';
         list.style.justifyContent = '';
-        list.innerHTML = history.slice(0, 50).map(c => `
-            <div class="card" style="padding:12px 16px">
-                <div style="display:flex;justify-content:space-between">
-                    <span style="font-weight:600;font-size:13px;color:var(--text-primary)">${c.command_type}</span>
-                    <span style="font-size:12px;font-weight:600;color:${c.status === 'done' ? 'var(--green)' : 'var(--red)'}">${c.status}</span>
-                </div>
-                <div style="font-size:12px;color:var(--text-muted);margin-top:3px">
-                    ${fmtDate(c.created_at)}${c.app_id ? ' · App #' + c.app_id : ''}
-                </div>
-                ${c.error_message ? `<div style="font-size:11px;color:var(--red);margin-top:5px">${c.error_message}</div>` : ''}
-            </div>
-        `).join('');
+        list.innerHTML = history.slice(0, 50).map(c => {
+            const ok = c.status === 'done';
+            const tone = ok ? 'var(--green)' : (c.status === 'failed' ? 'var(--red)' : 'var(--yellow)');
+            return `
+            <div class="cmd-row">
+                <span class="dot" style="background:${tone}"></span>
+                <span class="cmd-row-main">
+                    <span class="cmd-row-type">${escHtml(c.command_type)}</span>
+                    <span class="cmd-row-meta">${fmtDate(c.created_at)}${c.app_id ? ' · app #' + c.app_id : ''}</span>
+                    ${c.error_message ? `<span class="cmd-row-error">${escHtml(c.error_message)}</span>` : ''}
+                </span>
+                <span class="cmd-row-status" style="color:${tone}">${escHtml(c.status)}</span>
+            </div>`;
+        }).join('');
     } catch (e) {
         list.innerHTML = `<div style="color:var(--red);font-size:12px">${e.message}</div>`;
     }
@@ -431,7 +436,7 @@ async function renameNode() {
         const updated = await api.updateNode(NODE_ID, { name: newName.trim() });
         node.name = updated.name;
         document.getElementById('node-name').textContent = updated.name;
-        document.getElementById('node-name-crumb').textContent = updated.name;
+        setCrumbs([{ label: 'Nodes', href: '/#nodes-section' }, updated.name]);
         document.title = `${updated.name} — Node — Cloudbase`;
         toast('Node name updated');
     } catch (e) {
@@ -467,3 +472,7 @@ async function deleteNode() {
     }
 }
 
+
+function escHtml(v) {
+    return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}

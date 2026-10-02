@@ -1,0 +1,515 @@
+﻿[dev] creating virtual environment in .dev\venv
+[dev] installing backend dependencies
+[dev] admin password set to: cloudbase-dev
+[dev] added 4 demo apps (stopped — no containers run in dev)
+
+  Cloudbase dev server:  http://127.0.0.1:7900
+  Login:                 admin / cloudbase-dev
+  Stop with Ctrl+C
+
+powershell : INFO:     Will watch for changes in these directories: 
+['C:\\Users\\tvane\\OneDrive\\Documents\\Code\\Cloudbase\\backend']
+At line:1 char:302
++ ... tch {} } }; powershell -NoProfile -ExecutionPolicy Bypass -File scrip ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (INFO:     Will ...base\\backend']:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+INFO:     Uvicorn running on http://127.0.0.1:7900 (Press CTRL+C to quit)
+INFO:     Started reloader process [14852] using WatchFiles
+INFO:     Started server process [30356]
+INFO:     Waiting for application startup.
+2026-10-02 18:53:48,182 [INFO] [ensure-files] app_id=1 page_meta downtime={'has_logo': False, 'logo_len': 0, 
+'has_custom_html': False, 'custom_html_len': 0, 'has_status_url': False} update={'has_logo': False, 'logo_len': 0, 
+'has_custom_html': False, 'custom_html_len': 0, 'has_status_url': False} restart={'has_logo': False, 'logo_len': 0, 
+'has_custom_html': False, 'custom_html_len': 0, 'has_status_url': False} starting={'has_logo': False, 'logo_len': 0, 
+'has_custom_html': False, 'custom_html_len': 0, 'has_status_url': False}
+2026-10-02 18:53:48,182 [INFO] [maint-files] writing to /var/www/cloudbase/maintenance\1
+2026-10-02 18:53:48,209 [INFO] [maint-files] mkdir rc=2147942405 stderr='Sudo is disabled on this machine. To enable 
+it, go to the \x1b]8;;ms-settings:developers\x1b\\Developer Settings page\x1b]8;;\x1b\\ in the Settings app\n'
+2026-10-02 18:53:48,209 [INFO] [ensure-files] write result ok=False msg='Sudo is disabled on this machine. To enable 
+it, go to the \x1b]8;;ms-settings:developers\x1b\\Developer Settings page\x1b]8;;\x1b\\ in the Settings app\n'
+2026-10-02 18:53:48,209 [INFO] [ensure-files] app_id=2 page_meta downtime={'has_logo': False, 'logo_len': 0, 
+'has_custom_html': False, 'custom_html_len': 0, 'has_status_url': False} update={'has_logo': False, 'logo_len': 0, 
+'has_custom_html': False, 'custom_html_len': 0, 'has_status_url': False} restart={'has_logo': False, 'logo_len': 0, 
+'has_custom_html': False, 'custom_html_len': 0, 'has_status_url': False} starting={'has_logo': False, 'logo_len': 0, 
+'has_custom_html': False, 'custom_html_len': 0, 'has_status_url': False}
+2026-10-02 18:53:48,209 [INFO] [maint-files] writing to /var/www/cloudbase/maintenance\2
+2026-10-02 18:53:48,218 [INFO] [maint-files] mkdir rc=2147942405 stderr='Sudo is disabled on this machine. To enable 
+it, go to the \x1b]8;;ms-settings:developers\x1b\\Developer Settings page\x1b]8;;\x1b\\ in the Settings app\n'
+2026-10-02 18:53:48,218 [INFO] [ensure-files] write result ok=False msg='Sudo is disabled on this machine. To enable 
+it, go to the \x1b]8;;ms-settings:developers\x1b\\Developer Settings page\x1b]8;;\x1b\\ in the Settings app\n'
+INFO:     Application startup complete.
+INFO:     127.0.0.1:63070 - "GET /login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63078 - "POST /api/auth/login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52820 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52820 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52232 - "GET /css/overview.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49835 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57422 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61468 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63348 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57422 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63348 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49835 - "GET /js/nodes.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61468 - "GET /js/dashboard.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49835 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61468 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57422 - "GET /js/modal.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57422 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49835 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63348 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49835 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57422 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61468 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57422 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49835 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50500 - "GET /app?id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53244 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54786 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50500 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57095 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54125 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50500 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54125 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57095 - "GET /js/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57095 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50500 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50500 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54125 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54786 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50500 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54786 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57095 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50500 - "GET /api/apps/1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58499 - "WebSocket /ws/apps/1/logs" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:50500 - "GET /api/apps/1/instances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51210 - "WebSocket /ws/apps/1/stats" [accepted]
+INFO:     connection open
+2026-10-02 18:55:48,234 [WARNING] [orphan-cleanup] error: Error while fetching server API version: (2, 'CreateFile', 
+'Het systeem kan het opgegeven bestand niet vinden.')
+INFO:     127.0.0.1:62420 - "GET /app?id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56254 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62420 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50992 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61050 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57422 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50821 - "GET /css/detail.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57422 - "GET /js/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61050 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50821 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61050 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50821 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50821 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57422 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57422 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50992 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61050 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50821 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50992 - "GET /api/apps/1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61681 - "WebSocket /ws/apps/1/logs" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:50992 - "GET /api/apps/1/instances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62180 - "WebSocket /ws/apps/1/stats" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:58842 - "GET /app?id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52232 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58842 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58898 - "GET /css/detail.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50061 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64126 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50199 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64126 - "GET /js/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50199 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50061 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50199 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64126 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64126 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50061 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58898 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58898 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50199 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64126 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50061 - "GET /api/apps/1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63903 - "WebSocket /ws/apps/1/logs" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:50061 - "GET /api/apps/1/instances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60217 - "WebSocket /ws/apps/1/stats" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:57987 - "GET /api/apps/1/instances/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62154 - "GET /api/apps/1/instances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55262 - "GET /app?id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55262 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55782 - "GET /css/detail.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57985 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55320 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52536 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60091 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52536 - "GET /js/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55320 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60091 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55320 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52536 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52536 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60091 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60091 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57985 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55320 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52536 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55320 - "GET /api/apps/1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58314 - "WebSocket /ws/apps/1/logs" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:55320 - "GET /api/apps/1/instances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64671 - "WebSocket /ws/apps/1/stats" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:64347 - "GET /app?id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61509 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64347 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57871 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50113 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52236 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56028 - "GET /css/detail.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50113 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56028 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52236 - "GET /js/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56028 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50113 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50113 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52236 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52236 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57871 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56028 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50113 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57871 - "GET /api/apps/1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52237 - "WebSocket /ws/apps/1/logs" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:61178 - "WebSocket /ws/apps/1/stats" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:57871 - "GET /api/apps/1/instances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51733 - "GET /api/audit-log?limit=100&offset=0&app_id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51771 - "GET /app?id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52237 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51771 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56061 - "GET /css/detail.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64575 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62158 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63622 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64575 - "GET /js/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63622 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62158 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62158 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64575 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64575 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63622 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63622 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56061 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64575 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62158 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56061 - "GET /api/apps/1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59436 - "WebSocket /ws/apps/1/logs" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:56061 - "GET /api/apps/1/instances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63616 - "WebSocket /ws/apps/1/stats" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:54640 - "GET /app?id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55657 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63602 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54640 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57287 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60498 - "GET /css/detail.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52553 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52553 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57287 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60498 - "GET /js/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60498 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57287 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57287 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52553 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54640 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54640 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60498 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57287 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52553 - "GET /api/apps/1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56391 - "WebSocket /ws/apps/1/logs" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:52553 - "GET /api/apps/1/instances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49851 - "WebSocket /ws/apps/1/stats" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:62270 - "GET /api/apps/1/instances/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62337 - "GET /api/apps/1/instances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60650 - "GET /app?id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65513 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60650 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53467 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58638 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52507 - "GET /css/detail.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54692 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52507 - "GET /js/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58638 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54692 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52507 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58638 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58638 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54692 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52507 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53467 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58638 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53467 - "GET /api/apps/1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52425 - "WebSocket /ws/apps/1/logs" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:53467 - "GET /api/apps/1/instances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55674 - "WebSocket /ws/apps/1/stats" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:53467 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56794 - "GET /api/apps/1/stats/history?hours=24 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58356 - "GET /node?id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52234 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58356 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58020 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58357 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57276 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64179 - "GET /css/detail.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64179 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58357 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57276 - "GET /js/node_detail.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58357 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57276 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57276 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64179 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58356 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58357 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58020 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57276 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58020 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65425 - "WebSocket /ws/system/stats" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:57276 - "GET /api/nodes/1/commands HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58020 - "GET /api/nodes/1/agent-logs?limit=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55187 - "GET /audit HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55187 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51512 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51583 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60889 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55491 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51583 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60889 - "GET /js/audit.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55491 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51583 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55491 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55491 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60889 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55187 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55491 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51512 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51583 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51583 - "GET /api/audit-log?limit=100&offset=0 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65360 - "GET /login HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56269 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:65360 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49195 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51709 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51709 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52714 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50396 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52714 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60892 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61296 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61247 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55603 - "GET /css/overview.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60892 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52714 - "GET /js/nodes.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55603 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61247 - "GET /js/dashboard.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55603 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60892 - "GET /js/modal.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61247 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61247 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55603 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52714 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55603 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61247 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60892 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61247 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55603 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62550 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58309 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:62550 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54864 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49909 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56753 - "GET /css/overview.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51289 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49909 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51289 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54864 - "GET /js/nodes.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56753 - "GET /js/dashboard.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49909 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54864 - "GET /js/modal.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56753 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56753 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49909 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56753 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56753 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51289 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54864 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56753 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51289 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61746 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61746 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55971 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58432 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53210 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49305 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49762 - "GET /css/overview.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49305 - "GET /js/dashboard.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58432 - "GET /js/nodes.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49762 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53210 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49762 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49305 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58432 - "GET /js/modal.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58432 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49762 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58432 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58432 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53210 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49305 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49305 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58432 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52972 - "GET /app?id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57213 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52972 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60549 - "GET /css/detail.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60590 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52232 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60436 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60590 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52232 - "GET /js/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60436 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52232 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60590 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60590 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60436 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52232 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60436 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60549 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60590 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60590 - "GET /api/apps/1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64458 - "WebSocket /ws/apps/1/logs" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:60590 - "GET /api/apps/1/instances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54361 - "WebSocket /ws/apps/1/stats" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:60150 - "GET /node?id=1 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57984 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60150 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54029 - "GET /css/detail.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58028 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55579 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63445 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63445 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58028 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55579 - "GET /js/node_detail.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55579 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58028 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58028 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63445 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63445 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55579 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54029 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58028 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54029 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56704 - "WebSocket /ws/system/stats" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:54029 - "GET /api/nodes/1/agent-logs?limit=500 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58028 - "GET /api/nodes/1/commands HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63665 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63665 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60625 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51202 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59599 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56295 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52358 - "GET /css/overview.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52358 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51202 - "GET /js/nodes.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59599 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56295 - "GET /js/dashboard.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51202 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56295 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59599 - "GET /js/modal.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59599 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51202 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56295 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52358 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56295 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59599 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59599 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52358 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56131 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56131 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52592 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56767 - "GET /css/overview.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49993 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56310 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59253 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59253 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49993 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56310 - "GET /js/dashboard.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56767 - "GET /js/nodes.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56767 - "GET /js/modal.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56310 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49993 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49993 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56767 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59253 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52592 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56310 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49993 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49993 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56310 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64879 - "GET /app?id=4 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64879 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55561 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57492 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64256 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61903 - "GET /css/detail.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58343 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61903 - "GET /js/app.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64256 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58343 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58343 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61903 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61903 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64256 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:64256 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57492 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:61903 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58343 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57492 - "GET /api/apps/4 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55338 - "WebSocket /ws/apps/4/logs" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:57492 - "GET /api/apps/4/instances HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59413 - "WebSocket /ws/apps/4/stats" [accepted]
+INFO:     connection open
+INFO:     127.0.0.1:63330 - "GET / HTTP/1.1" 200 OK
+INFO:     127.0.0.1:63330 - "GET /js/theme.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50909 - "GET /css/variables.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56165 - "GET /css/base.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51384 - "GET /css/pages.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56639 - "GET /css/overview.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52233 - "GET /css/components.css HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51384 - "GET /js/sidebar.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52233 - "GET /js/api.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56165 - "GET /js/nodes.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56639 - "GET /js/dashboard.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56639 - "GET /js/utils.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56165 - "GET /js/shell.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51384 - "GET /js/modal.js HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51384 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56165 - "GET /cloudbase.png HTTP/1.1" 200 OK
+INFO:     127.0.0.1:52233 - "GET /api/auth/session HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50909 - "GET /api/auth/check HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51384 - "GET /api/nodes HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56639 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56639 - "GET /api/apps HTTP/1.1" 200 OK
+INFO:     127.0.0.1:51384 - "GET /api/nodes HTTP/1.1" 200 OK
