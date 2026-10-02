@@ -72,6 +72,7 @@ async def _node_health_monitor():
             async with AsyncSessionLocal() as db:
                 await nodes.ensure_local_node(db)
                 await nodes.mark_stale_nodes_offline(db)
+                await nodes.recover_stranded_replicas(db)
         except asyncio.CancelledError:
             return
         except Exception:

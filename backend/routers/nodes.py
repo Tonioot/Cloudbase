@@ -930,7 +930,7 @@ async def agent_ws(websocket: WebSocket):
         _get_node_event(node_id).set()
 
         if was_offline:
-            asyncio.create_task(recover_node_replicas(node_id))
+            asyncio.create_task(_recover_node_replicas_once(node_id))
 
         log.info("WS agent authenticated: node '%s' (id=%d) from %s", node.name, node_id, client_addr)
 
@@ -1105,6 +1105,19 @@ async def agent_ws(websocket: WebSocket):
                         if offline_node.offline_since is None:
                             offline_node.offline_since = _utcnow()
                         offline_node.connection_type = None
+                        from models import ApplicationReplica
+                        rep_res = await db.execute(
+                            select(ApplicationReplica).where(
+                                and_(
+                                    ApplicationReplica.node_id == node_id,
+                                    ApplicationReplica.status.in_(["running", "starting"]),
+                                )
+                            )
+                        )
+                        for _r in rep_res.scalars().all():
+                            _r.status = "node_offline"
+                            _r.substatus = None
+                            _r.tunnel_port = None
                         await db.commit()
                         log.info("Node id=%d marked offline after WS disconnect", node_id)
                 _push_node_event(node_id, {"type": "node_offline", "node_id": node_id})
@@ -1299,9 +1312,12 @@ async def recover_node_replicas(node_id: int) -> None:
                 await db.commit()
                 continue
 
-            # Skip recovery if the app is not configured to auto-start or restart
+            # Not configured to auto-start or restart: settle it as stopped instead
+            # of leaving it in node_offline forever.
             if not app.auto_start and app.restart_policy in (None, "no"):
-                log.info("recover_node_replicas: skipping replica %d (app %d has auto_start=False, restart_policy=%r)", replica.id, app.id, app.restart_policy)
+                log.info("recover_node_replicas: not restarting replica %d (app %d has auto_start=False, restart_policy=%r)", replica.id, app.id, app.restart_policy)
+                replica.status = "stopped"
+                await db.commit()
                 continue
 
             try:
@@ -1336,6 +1352,48 @@ async def recover_node_replicas(node_id: int) -> None:
             )
             pm._push_line(app.id, f"⟳ Node came back online — recovering instance {replica.id}…")
             await db.commit()
+
+
+_recovering_nodes: set[int] = set()
+
+
+async def _recover_node_replicas_once(node_id: int) -> None:
+    if node_id in _recovering_nodes:
+        return
+    _recovering_nodes.add(node_id)
+    try:
+        await recover_node_replicas(node_id)
+    except Exception as e:
+        log.error("Replica recovery failed for node id=%d: %s", node_id, e)
+    finally:
+        _recovering_nodes.discard(node_id)
+
+
+async def recover_stranded_replicas(db: AsyncSession) -> None:
+    """Recover node_offline replicas on nodes that are connected again.
+
+    Recovery on reconnect only fires when the node was marked offline at that
+    moment. A node can also come back through a heartbeat on its existing
+    websocket (e.g. after being marked stale during a long build), which left
+    its replicas stuck in node_offline. This sweep catches every such case.
+    """
+    from models import ApplicationReplica
+    result = await db.execute(
+        select(ApplicationReplica.node_id)
+        .join(Node, Node.id == ApplicationReplica.node_id)
+        .where(
+            and_(
+                ApplicationReplica.status == "node_offline",
+                Node.status == "online",
+                Node.enabled == True,
+                Node.is_local == False,
+            )
+        )
+        .distinct()
+    )
+    for (node_id,) in result.all():
+        if node_id in _node_ws_connections and node_id not in _recovering_nodes:
+            asyncio.create_task(_recover_node_replicas_once(node_id))
 
 
 async def mark_stale_nodes_offline(db: AsyncSession) -> None:

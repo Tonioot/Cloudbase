@@ -389,6 +389,20 @@ async def _stop_tunnel_task(replica_id: int) -> None:
 
 # ─── Orphan cleanup ───────────────────────────────────────────────────────────
 
+_ORPHAN_MIN_AGE_SECONDS = 120
+# Replica IDs found orphaned on the previous check; removed only if still orphaned now.
+_orphan_suspects: set[int] = set()
+
+
+def _parse_docker_created(value: str) -> Optional[float]:
+    """Parse docker's CreatedAt ('2026-10-02 20:43:30 +0200 CEST') to a timestamp."""
+    from datetime import datetime
+    try:
+        return datetime.strptime(value.strip()[:25], "%Y-%m-%d %H:%M:%S %z").timestamp()
+    except Exception:
+        return None
+
+
 async def _cleanup_orphaned_replica_containers(client: httpx.AsyncClient, state: AgentState) -> None:
     """Stop any local Docker containers whose replica_id no longer exists on the primary.
 
@@ -408,26 +422,42 @@ async def _cleanup_orphaned_replica_containers(client: httpx.AsyncClient, state:
         live_ids: set[int] = {r["id"] for r in resp.json().get("replicas", [])}
 
         # Enumerate local Docker containers whose name matches the replica pattern
-        import subprocess, json as _json
-        result = subprocess.run(
-            ["docker", "ps", "-a", "--format", "{{.Names}}", "--filter", "name=cloudbase-app-"],
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["docker", "ps", "-a", "--format", "{{.Names}}\t{{.CreatedAt}}", "--filter", "name=cloudbase-app-"],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode != 0:
             return
 
-        pattern = re.compile(r"^cloudbase-app-(\d+)-replica-(\d+)$")
-        for cname in result.stdout.splitlines():
-            m = pattern.match(cname.strip())
+        pattern = re.compile(r"^cloudbase-app-(\d+)-replica-(\d+)\t(.*)$")
+        seen_missing: set[int] = set()
+        now = time.time()
+        for line in result.stdout.splitlines():
+            m = pattern.match(line.strip())
             if not m:
                 continue
+            cname = f"cloudbase-app-{m.group(1)}-replica-{m.group(2)}"
             replica_id = int(m.group(2))
-            if replica_id not in live_ids:
+            if replica_id in live_ids:
+                continue
+            # A restart briefly reports the replica as stopped on the primary;
+            # never touch a container that was just created.
+            created = _parse_docker_created(m.group(3))
+            if created is not None and now - created < _ORPHAN_MIN_AGE_SECONDS:
+                continue
+            seen_missing.add(replica_id)
+            # Only remove after two consecutive checks agree it is orphaned.
+            if replica_id in _orphan_suspects:
                 _agent_log(f"[cleanup] Stopping orphan replica container '{cname}' (replica_id={replica_id} no longer exists)")
                 try:
-                    subprocess.run(["docker", "rm", "-f", cname], capture_output=True, timeout=15)
+                    await asyncio.to_thread(subprocess.run, ["docker", "rm", "-f", cname], capture_output=True, timeout=15)
                 except Exception as e:
                     _agent_log(f"[cleanup] Failed to remove '{cname}': {e}")
+            else:
+                _agent_log(f"[cleanup] Replica container '{cname}' not known to primary — will remove if still unknown next check")
+        _orphan_suspects.clear()
+        _orphan_suspects.update(seen_missing)
     except Exception as e:
         _agent_log(f"[cleanup] Replica container orphan check failed: {e}")
 
