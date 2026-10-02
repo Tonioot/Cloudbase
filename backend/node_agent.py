@@ -620,6 +620,9 @@ async def _build_image_local(local_id: int, app_name: str, app_dir: str, payload
         app_type, start_cmd, port,
         build_command=payload.get("build_command") or "",
         build_env=payload.get("env_vars") or {},
+        # Label the image so the next start sees it is current and skips the
+        # download + rebuild (_ensure_replica_app_deployed compares this label).
+        source_revision=payload.get("source_revision") or None,
     )
     _agent_log(f"[build] Image {img} ready")
     return img

@@ -140,6 +140,19 @@ async def _open_remote_stream(node: Node, app_id: int, app_name: str, out_q: asy
     return asyncio.create_task(_run())
 
 
+async def _stream_local_container_stats(websocket: WebSocket, app_id: int) -> None:
+    """Every 2s send aggregated stats of this host's replica containers of app_id."""
+    from routers.applications import local_app_aggregate_stats
+    try:
+        while True:
+            frame = await local_app_aggregate_stats(app_id)
+            frame["timestamp"] = int(_time.time() * 1000)
+            await websocket.send_json(frame)
+            await asyncio.sleep(2)
+    except (WebSocketDisconnect, Exception):
+        pass
+
+
 @router.websocket("/ws/apps/{app_id}/stats")
 async def stream_stats(app_id: int, websocket: WebSocket):
     if not await auth.authorize_websocket(websocket, "apps.view"):
@@ -150,8 +163,9 @@ async def stream_stats(app_id: int, websocket: WebSocket):
         result = await db.execute(select(Application).where(Application.id == app_id))
         app = result.scalar_one_or_none()
         if not app:
-            await websocket.send_json({"status": "stopped", "error": "App not found"})
-            await websocket.close()
+            # On a node, the local DB has no app rows — the primary owns them.
+            # Stream the containers that run here instead (agent stats relay).
+            await _stream_local_container_stats(websocket, app_id)
             return
         local_node = await ensure_local_node(db)
 

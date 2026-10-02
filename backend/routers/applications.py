@@ -2259,11 +2259,12 @@ async def update_replica_substatus(
     return {"ok": True}
 
 
-@router.get("/{app_id}/replicas/aggregate-stats")
-async def get_replica_aggregate_stats(app_id: int, _node: None = Depends(_require_node_agent_for_app())):
-    """Internal endpoint called by the node agent to collect stats across all local
-    replica containers for app_id.  Returns aggregated cpu/memory/net/disk numbers
-    plus status=running when at least one container is up."""
+async def local_app_aggregate_stats(app_id: int) -> dict:
+    """Aggregate docker stats over this host's replica containers of app_id.
+
+    Works without a DB row for the app, so node agents (whose own DB knows
+    nothing about apps) can use it too.
+    """
     import re as _re
     client = dm._get_client()
     pattern = _re.compile(rf"^cloudbase-app-{app_id}-replica-(\d+)$")
@@ -2308,6 +2309,14 @@ async def get_replica_aggregate_stats(app_id: int, _node: None = Depends(_requir
         "disk_write_mb":  _sum("disk_write_mb"),
         "uptime_seconds": _max("uptime_seconds"),
     }
+
+
+@router.get("/{app_id}/replicas/aggregate-stats")
+async def get_replica_aggregate_stats(app_id: int, _node: None = Depends(_require_node_agent_for_app())):
+    """Internal endpoint called by the node agent to collect stats across all local
+    replica containers for app_id.  Returns aggregated cpu/memory/net/disk numbers
+    plus status=running when at least one container is up."""
+    return await local_app_aggregate_stats(app_id)
 
 
 @router.get("/{app_id}/replicas/{replica_id}/stats-remote")

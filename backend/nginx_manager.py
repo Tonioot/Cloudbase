@@ -92,237 +92,93 @@ def generate_maintenance_html(
     return _update_template(safe_title, safe_message, safe_color, safe_status_url, safe_logo_data)
 
 
-def generate_cloudbase_unavailable_html(domain: str | None = None) -> str:
-    """Return a branded Cloudbase unavailable page as a single clean card."""
-    safe_domain = (domain or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    domain_line = f"Primary domain: {safe_domain}" if safe_domain else "Cloudbase endpoint is temporarily unavailable"
+def _cloudbase_status_page(title: str, message: str, meta: str, tone: str, refresh_seconds: int | None = None) -> str:
+    """Minimal Cloudbase-branded status page (light/dark via prefers-color-scheme).
 
+    Served by nginx as a static file, so everything is inline: no fonts,
+    scripts or images are fetched.
+    """
+    refresh = f'<meta http-equiv="refresh" content="{refresh_seconds}">' if refresh_seconds else ""
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="refresh" content="8">
-  <title>Cloudbase Unavailable</title>
+  {refresh}
+  <title>{title} — Cloudbase</title>
   <style>
     :root {{
-      --bg-base: #0a0a0a;
-      --bg-surface: #111111;
-      --bg-elevated: #1a1a1a;
-      --bg-muted: #222222;
-      --border: #2e2e2e;
-      --text-primary: #f0f0f0;
-      --text-secondary: #a0a0a0;
-      --text-muted: #606060;
-      --accent: #c8c8c8;
-      --accent-bg: rgba(200, 200, 200, 0.08);
-      --accent-border: rgba(200, 200, 200, 0.18);
-      --red: #f87171;
-      --red-bg: rgba(248, 113, 113, 0.1);
-      --red-border: rgba(248, 113, 113, 0.25);
+      color-scheme: dark;
+      --bg: #08090a; --text: #edeef0; --text-2: #a9aeb6; --muted: #7a7f88; --line: #17191c;
+      --tone: {tone}; --halo: color-mix(in srgb, {tone} 18%, transparent);
     }}
-
+    @media (prefers-color-scheme: light) {{
+      :root {{ color-scheme: light; --bg: #fbfbfa; --text: #111214; --text-2: #4a4f57; --muted: #6b7079; --line: #eaeae8; }}
+    }}
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-
     body {{
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
-      background:
-        radial-gradient(120% 80% at 0% 0%, rgba(200,200,200,0.08), transparent 52%),
-        radial-gradient(120% 80% at 100% 100%, rgba(200,200,200,0.05), transparent 58%),
-        var(--bg-base);
-      color: var(--text-primary);
       min-height: 100vh;
-      display: grid;
-      place-items: center;
-      padding: 24px;
-    }}
-
-    .card {{
-      width: min(460px, 100%);
-      background: linear-gradient(180deg, rgba(20,20,20,0.96), rgba(12,12,12,0.94));
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      box-shadow: 0 24px 60px rgba(0,0,0,0.7);
-      padding: 30px 28px 24px;
-    }}
-
-    .brand-row {{
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 10px;
-      margin-bottom: 18px;
+      justify-content: center;
+      padding: 24px 16px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      -webkit-font-smoothing: antialiased;
     }}
-
-    .brand {{
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 15px;
-      font-weight: 700;
-      letter-spacing: .01em;
-      color: var(--text-primary);
+    main {{ width: 100%; max-width: 420px; }}
+    .mark {{
+      width: 36px; height: 36px; margin-bottom: 32px;
+      border-radius: 10px; background: var(--text); color: var(--bg);
+      display: flex; align-items: center; justify-content: center;
     }}
-
-    .brand-dot {{
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--red);
-      box-shadow: 0 0 0 3px var(--red-bg);
-    }}
-
-    .badge {{
-      padding: 4px 10px;
-      border-radius: 999px;
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--red);
-      background: var(--red-bg);
-      border: 1px solid var(--red-border);
-      white-space: nowrap;
-    }}
-
-    h1 {{
-      font-size: 22px;
-      line-height: 1.2;
-      margin-bottom: 9px;
-      letter-spacing: -0.02em;
-    }}
-
-    p {{
-      color: var(--text-secondary);
-      line-height: 1.6;
-      font-size: 14px;
-    }}
-
-    .meta-line {{
-      margin-top: 14px;
-      padding: 9px 10px;
-      border-radius: 10px;
-      border: 1px solid var(--accent-border);
-      background: var(--accent-bg);
-      color: var(--text-secondary);
-      font-size: 12px;
-      line-height: 1.45;
-    }}
-
-    .actions {{
-      margin-top: 16px;
-      display: flex;
-      gap: 8px;
-    }}
-
-    .btn {{
-      border: 1px solid var(--border);
-      background: var(--bg-elevated);
-      color: var(--text-primary);
-      text-decoration: none;
-      padding: 8px 12px;
-      border-radius: 10px;
-      font-size: 13px;
-      transition: 160ms ease;
-    }}
-
-    .btn:hover {{
-      background: var(--bg-muted);
-      border-color: #444;
-    }}
-
-    @media (max-width: 540px) {{
-      .card {{
-        padding: 24px 18px 18px;
-      }}
-
-      h1 {{
-        font-size: 20px;
-      }}
+    .status {{ display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font-size: 13px; color: var(--text-2); }}
+    .dot {{ width: 7px; height: 7px; border-radius: 50%; background: var(--tone); box-shadow: 0 0 0 4px var(--halo); }}
+    h1 {{ font-size: 28px; font-weight: 400; line-height: 1.15; letter-spacing: -0.03em; margin-bottom: 12px; }}
+    p {{ font-size: 14px; line-height: 1.6; color: var(--text-2); }}
+    .meta {{
+      margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--line);
+      font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; font-size: 12px; color: var(--muted);
     }}
   </style>
 </head>
 <body>
-  <section class="card">
-    <div class="brand-row">
-      <div class="brand"><span class="brand-dot"></span><span>Cloudbase</span></div>
+  <main>
+    <div class="mark" aria-hidden="true">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 8.5a4 4 0 0 1-.5 9.5z"/></svg>
     </div>
-    <h1>Cloudbase is restarting or temporarily offline</h1>
-    <p>The dashboard is currently unavailable while services are recovering. This page refreshes automatically every few seconds.</p>
-    <div class="meta-line">{domain_line}</div>
-  </section>
+    <div class="status"><span class="dot"></span>{meta}</div>
+    <h1>{title}</h1>
+    <p>{message}</p>
+  </main>
 </body>
 </html>
 """
+
+
+def generate_cloudbase_unavailable_html(domain: str | None = None) -> str:
+    """Shown by nginx while the Cloudbase panel itself is restarting or offline."""
+    safe_domain = (domain or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    return _cloudbase_status_page(
+        title="Cloudbase is restarting",
+        message="The panel is temporarily unavailable while its services come back up. "
+                "This page refreshes automatically — your apps keep running.",
+        meta=f"Panel offline{f' · {safe_domain}' if safe_domain else ''}",
+        tone="#f5b94e",
+        refresh_seconds=8,
+    )
 
 
 def generate_cloudbase_unknown_host_html(domain: str | None = None) -> str:
-    """Return a branded page for unknown/unconfigured hostnames."""
+    """Shown for hostnames that point at this server but are not linked to an app."""
     safe_domain = (domain or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    hint = (
-        f"Use the configured Cloudbase panel domain: {safe_domain}"
-        if safe_domain else
-        "This hostname is not configured in Cloudbase"
+    return _cloudbase_status_page(
+        title="Nothing is deployed here",
+        message="This hostname points to a Cloudbase server, but it is not linked to any app.",
+        meta=f"Unknown host{f' · panel at {safe_domain}' if safe_domain else ''}",
+        tone="#7a7f88",
     )
-
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>App Not Found</title>
-  <style>
-    :root {{
-      --bg-base: #0a0a0a;
-      --bg-surface: #111111;
-      --border: #2e2e2e;
-      --text-primary: #f0f0f0;
-      --text-secondary: #a0a0a0;
-      --accent: #c8c8c8;
-      --accent-bg: rgba(200, 200, 200, 0.08);
-      --accent-border: rgba(200, 200, 200, 0.2);
-    }}
-    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
-      background: radial-gradient(120% 80% at 0% 0%, rgba(200,200,200,0.08), transparent 52%), var(--bg-base);
-      color: var(--text-primary);
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      padding: 24px;
-    }}
-    .card {{
-      width: min(500px, 100%);
-      background: linear-gradient(180deg, rgba(20,20,20,0.96), rgba(12,12,12,0.94));
-      border: 1px solid var(--border);
-      border-radius: 18px;
-      box-shadow: 0 24px 60px rgba(0,0,0,0.7);
-      padding: 30px 28px 24px;
-    }}
-    .brand {{ display: inline-flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; margin-bottom: 16px; }}
-    .dot {{ width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }}
-    h1 {{ font-size: 22px; line-height: 1.25; margin-bottom: 9px; }}
-    p {{ color: var(--text-secondary); line-height: 1.6; font-size: 14px; }}
-    .hint {{
-      margin-top: 14px;
-      padding: 9px 10px;
-      border-radius: 10px;
-      border: 1px solid var(--accent-border);
-      background: var(--accent-bg);
-      color: var(--text-secondary);
-      font-size: 12px;
-      line-height: 1.45;
-    }}
-  </style>
-</head>
-<body>
-  <section class="card">
-    <div class="brand"><span class="dot"></span><span>Cloudbase</span></div>
-    <h1>App does not exist on this domain</h1>
-    <p>The requested hostname is not linked to an app in Cloudbase.</p>
-  </section>
-</body>
-</html>
-"""
 
 
 def _render_visual_block(color: str, icon_svg: str, logo_data: str = None) -> str:

@@ -527,6 +527,20 @@ def ensure_dockerfile(
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 
+def _declared_build_args(dockerfile_path: str) -> set[str]:
+    """Names declared with `ARG NAME` / `ARG NAME=default` in a Dockerfile."""
+    names: set[str] = set()
+    try:
+        with open(dockerfile_path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                parts = line.strip().split(None, 1)
+                if len(parts) == 2 and parts[0].upper() == "ARG":
+                    names.add(parts[1].split("=", 1)[0].strip())
+    except OSError:
+        pass
+    return names
+
+
 def build_image(
     app_id: int,
     app_name: str,
@@ -537,11 +551,14 @@ def build_image(
     port: int = 8000,
     build_command: str = "",
     build_env: dict | None = None,
+    source_revision: str | None = None,
 ) -> str:
     """Build Docker image, streaming build output via push_line_fn. Returns image tag.
 
     build_command runs once inside the image build (e.g. `npm run build`);
     build_env is passed as build args so the build can read app env vars.
+    source_revision is stored as the `cloudbase.source_revision` label, which
+    node agents compare to decide whether an image is still current.
     """
     build_lock = _get_build_lock(app_id)
     if not build_lock.acquire(blocking=False):
@@ -559,6 +576,11 @@ def build_image(
         if has_custom_dockerfile(app_dir):
             push_line_fn(app_id, "[Docker] Using the Dockerfile from the repository.")
 
+        # Only pass build args the Dockerfile declares: Docker warns about (and
+        # prints the names of) every unused one, which leaks all env var names.
+        declared = _declared_build_args(os.path.join(app_dir, "Dockerfile"))
+        buildargs = {k: v for k, v in build_env.items() if k in declared}
+
         push_line_fn(app_id, f"[Docker] Building image {img} …")
         client = _get_client()
         # Use the low-level API here: it streams build output incrementally and
@@ -569,7 +591,8 @@ def build_image(
             rm=True,
             forcerm=True,
             decode=False,
-            buildargs=build_env or None,
+            buildargs=buildargs or None,
+            labels={"cloudbase.source_revision": source_revision} if source_revision else None,
         )
         for event in _iter_build_events(log_stream):
             _emit_build_event(app_id, event, push_line_fn)
