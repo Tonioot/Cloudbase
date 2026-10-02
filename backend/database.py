@@ -67,6 +67,7 @@ async def init_db():
             ("source_revision",   "VARCHAR(120)"),
             ("image_revision",    "VARCHAR(120)"),
             ("no_web",            "BOOLEAN NOT NULL DEFAULT 0"),
+            ("build_command",     "VARCHAR(500)"),
             ("autoscale_enabled",      "BOOLEAN NOT NULL DEFAULT 0"),
             ("autoscale_min_replicas", "INTEGER NOT NULL DEFAULT 1"),
             ("autoscale_max_replicas", "INTEGER NOT NULL DEFAULT 4"),

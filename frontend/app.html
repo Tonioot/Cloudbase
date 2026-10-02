@@ -375,6 +375,11 @@
                   <label class="field-label" id="cfg-cmd-label">Start Command</label>
                   <input class="input input-mono" id="cfg-cmd" placeholder="npm start" />
                 </div>
+                <div class="field" id="cfg-build-field">
+                  <label class="field-label">Build Command <span class="hint">optional</span></label>
+                  <input class="input input-mono" id="cfg-build" placeholder="npm run build" />
+                  <div class="field-hint" id="cfg-build-hint">Runs once during the image build, not on every start. Ignored when the repository has its own Dockerfile.</div>
+                </div>
                 <div class="field" id="cfg-port-field">
                   <label class="field-label">Internal Port</label>
                   <input class="input" id="cfg-port" type="number" placeholder="3000" style="max-width:140px" />
@@ -569,11 +574,18 @@
                   </div>
                 </div>
                 <div class="field-label" style="display:block;margin-bottom:10px">Environment Variables</div>
-                <div id="cfg-env-rows"></div>
-                <button class="add-env-btn" id="cfg-add-env">
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                  Add variable
-                </button>
+                <div id="cfg-env-rows" class="env-rows-scroll"></div>
+                <div class="env-actions">
+                  <button class="add-env-btn" id="cfg-add-env">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    Add variable
+                  </button>
+                  <button class="add-env-btn" id="cfg-import-env" title="Import variables from a .env file — existing keys are overwritten">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Import .env
+                  </button>
+                  <span class="env-count" id="cfg-env-count"></span>
+                </div>
               </div>
             </div>
 

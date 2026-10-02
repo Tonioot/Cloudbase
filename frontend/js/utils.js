@@ -5,6 +5,7 @@ export const icon = {
   play:      `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>`,
   stop:      `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>`,
   restart:   `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>`,
+  upload:    `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>`,
   plus:      `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>`,
   x:         `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`,
   chevron:   `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="9,18 15,12 9,6"/></svg>`,
@@ -128,8 +129,106 @@ export function prompt(title, label, initialValue = '') {
 /* ─── Spinner HTML ──────────────────────────────────────────────────────── */
 export const spinner = `<span class="spinner"></span>`;
 
+/* ─── .env import ───────────────────────────────────────────────────────── */
+
+/**
+ * Parse .env file text into an ordered { KEY: value } object.
+ * Supports comments, blank lines, `export KEY=...`, single/double quotes
+ * (double quotes understand \n, \t, \" and may span lines) and trailing
+ * ` # comments` on unquoted values. Invalid lines are skipped.
+ */
+export function parseDotEnv(text) {
+  const out = {};
+  const lines = String(text || '').replace(/^﻿/, '').split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=\s*(.*)$/);
+    if (!m) continue;
+    const key = m[1];
+    let raw = m[2];
+
+    if (raw.startsWith('"')) {
+      // Collect until the closing unescaped quote, possibly over several lines
+      let body = raw.slice(1);
+      let close = _closingQuote(body);
+      while (close < 0 && i + 1 < lines.length) {
+        body += '\n' + lines[++i];
+        close = _closingQuote(body);
+      }
+      if (close >= 0) body = body.slice(0, close);
+      out[key] = body.replace(/\\(.)/g, (_, c) => (c === 'n' ? '\n' : c === 't' ? '\t' : c));
+    } else if (raw.startsWith("'")) {
+      const close = raw.indexOf("'", 1);
+      out[key] = close < 0 ? raw.slice(1) : raw.slice(1, close);
+    } else {
+      out[key] = raw.replace(/\s+#.*$/, '').trim();
+    }
+  }
+  return out;
+}
+
+function _closingQuote(s) {
+  for (let j = 0; j < s.length; j++) {
+    if (s[j] === '\\') { j++; continue; }
+    if (s[j] === '"') return j;
+  }
+  return -1;
+}
+
+/** Let the user pick a local text file; resolves with its contents, or null when cancelled. */
+export function pickTextFile(accept = '') {
+  return new Promise(resolve => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    if (accept) input.accept = accept;
+    input.style.display = 'none';
+    input.addEventListener('change', async () => {
+      const file = input.files?.[0];
+      input.remove();
+      resolve(file ? await file.text() : null);
+    });
+    input.addEventListener('cancel', () => { input.remove(); resolve(null); });
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
+/**
+ * Merge parsed env vars into a list of `.env-row` elements: existing keys get
+ * the new value, unknown keys get a new row via addRow(key, value).
+ * Returns { added, updated }.
+ */
+export function mergeEnvIntoRows(container, vars, addRow) {
+  const byKey = new Map();
+  container.querySelectorAll('.env-row').forEach(row => {
+    const k = row.querySelector('[data-env-key]')?.value.trim();
+    if (k) byKey.set(k, row);
+  });
+  // Reuse a trailing blank row (e.g. the default empty one) before adding new rows
+  const blank = [...container.querySelectorAll('.env-row')].find(row =>
+    !row.querySelector('[data-env-key]')?.value.trim() && !row.querySelector('[data-env-val]')?.value);
+  let added = 0, updated = 0, blankUsed = false;
+  for (const [k, v] of Object.entries(vars)) {
+    const row = byKey.get(k);
+    if (row) {
+      row.querySelector('[data-env-val]').value = v;
+      updated++;
+    } else if (blank && !blankUsed) {
+      blank.querySelector('[data-env-key]').value = k;
+      blank.querySelector('[data-env-val]').value = v;
+      blankUsed = true;
+      added++;
+    } else {
+      addRow(k, v);
+      added++;
+    }
+  }
+  return { added, updated };
+}
+
 /* ─── Format helpers ────────────────────────────────────────────────────── */
 export function fmtUptime(secs) {
+  const d = Math.floor(secs / 86400);
+  if (d > 0) return `${d}d ${Math.floor((secs % 86400) / 3600)}h`;
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
   const s = secs % 60;

@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 import threading
 import time
 from collections import deque
@@ -179,26 +180,30 @@ def _is_loopback_bind_log(line: str, internal_port: Optional[int]) -> bool:
 
 # ── Dockerfile templates ──────────────────────────────────────────────────────
 
+# First line of every Dockerfile Cloudbase writes. A Dockerfile without it
+# belongs to the repository and is never overwritten.
+GENERATED_MARKER = "# cloudbase:generated - edits are overwritten; commit your own Dockerfile to take over\n"
+
 _DOCKERFILES: dict[str, str] = {
     "nodejs": """\
 FROM node:20-alpine
 WORKDIR /app
 {nodejs_copy_pkg}COPY . .
-EXPOSE {port}
+{build_step}EXPOSE {port}
 CMD {cmd_json}
 """,
     "python": """\
 FROM python:3.11-slim
 WORKDIR /app
 {python_copy_req}COPY . .
-EXPOSE {port}
+{build_step}EXPOSE {port}
 CMD {cmd_json}
 """,
     "ruby": """\
 FROM ruby:3.2-slim
 WORKDIR /app
 {ruby_copy_gemfile}COPY . .
-EXPOSE {port}
+{build_step}EXPOSE {port}
 CMD {cmd_json}
 """,
     "go": """\
@@ -217,7 +222,7 @@ CMD ["./app"]
 FROM php:8.2-cli
 WORKDIR /app
 COPY . .
-EXPOSE {port}
+{build_step}EXPOSE {port}
 CMD {cmd_json}
 """,
     "unknown": """\
@@ -225,7 +230,7 @@ FROM ubuntu:22.04
 WORKDIR /app
 RUN apt-get update && apt-get install -y curl wget && rm -rf /var/lib/apt/lists/*
 COPY . .
-EXPOSE {port}
+{build_step}EXPOSE {port}
 CMD {cmd_json}
 """,
 }
@@ -284,11 +289,13 @@ _STATIC_NGINX_CONF = (
 )
 
 
-def resolve_static_dir(app_dir: str, configured: str = "") -> str:
+def resolve_static_dir(app_dir: str, configured: str = "", built: bool = False) -> str:
     """Return the repo-relative directory to publish ("." for the repo root).
 
     An explicit value wins; otherwise use the root if it has an index.html,
-    else the first common build/output folder that does.
+    else the first common build/output folder that does. When a build command
+    produces the output (built=True) the folder does not exist yet, so fall
+    back to "dist" instead of publishing the whole repo.
     """
     cleaned = (configured or "").strip().replace("\\", "/").strip("/")
     if cleaned.startswith("./"):
@@ -297,29 +304,89 @@ def resolve_static_dir(app_dir: str, configured: str = "") -> str:
         if ".." in cleaned.split("/"):
             raise ValueError("Publish directory must stay inside the repository")
         return cleaned
-    if not app_dir or os.path.exists(os.path.join(app_dir, "index.html")):
+    if cleaned == ".":
+        return "."
+    if not built and (not app_dir or os.path.exists(os.path.join(app_dir, "index.html"))):
         return "."
     for candidate in _STATIC_DIR_CANDIDATES:
         if os.path.exists(os.path.join(app_dir, candidate, "index.html")):
             return candidate
-    return "."
+    return "dist" if built else "."
 
 
-def _generate_static_dockerfile(app_dir: str, publish_dir: str) -> str:
-    src = resolve_static_dir(app_dir, publish_dir)
+def _npm_install_cmd(has_file) -> str:
+    # Include devDependencies: frameworks like Next.js need typescript etc.
+    # for `next build` and next.config.ts.
+    if has_file("package-lock.json"):
+        return "npm ci --no-audit --no-fund || npm install --no-audit --no-fund"
+    return "npm install --no-audit --no-fund"
+
+
+_ARG_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _build_step(build_command: str, build_env_keys) -> str:
+    """Dockerfile lines that run the app's build once, at image build time.
+
+    App env vars are exposed to the build as ARGs (values are passed as build
+    args) because frameworks read some of them while building, e.g. Next.js
+    NEXT_PUBLIC_*. Only names end up in the Dockerfile.
+    """
+    cmd = (build_command or "").strip()
+    if not cmd:
+        return ""
+    keys = sorted(k for k in (build_env_keys or ()) if _ARG_NAME_RE.match(k))
+    arg_lines = "".join(f"ARG {k}\n" for k in keys)
+    return f"{arg_lines}RUN {cmd}\n"
+
+
+def _generate_static_dockerfile(app_dir: str, publish_dir: str, build_command: str = "", build_env_keys=()) -> str:
+    built = bool((build_command or "").strip())
+    src = resolve_static_dir(app_dir, publish_dir, built=built)
     conf_args = " ".join(f"'{line}'" for line in _STATIC_NGINX_CONF)
-    return (
+    nginx_stage = (
         "FROM nginx:alpine\n"
         f"RUN printf '%s\\n' {conf_args} > /etc/nginx/conf.d/default.conf\n"
-        f"COPY {src}/ /usr/share/nginx/html/\n"
-        f"EXPOSE {STATIC_INTERNAL_PORT}\n"
+    )
+    if not built:
+        return (
+            nginx_stage
+            + f"COPY {src}/ /usr/share/nginx/html/\n"
+            + f"EXPOSE {STATIC_INTERNAL_PORT}\n"
+        )
+
+    # Multi-stage: build with Node, ship only the output folder in nginx.
+    def _has_file(name: str) -> bool:
+        return bool(app_dir) and os.path.exists(os.path.join(app_dir, name))
+
+    install = (
+        f"COPY package*.json ./\nRUN {_npm_install_cmd(_has_file)}\n"
+        if _has_file("package.json") else ""
+    )
+    return (
+        "FROM node:20-alpine AS builder\n"
+        "WORKDIR /app\n"
+        f"{install}"
+        "COPY . .\n"
+        f"{_build_step(build_command, build_env_keys)}"
+        "\n"
+        + nginx_stage
+        + f"COPY --from=builder /app/{src}/ /usr/share/nginx/html/\n"
+        + f"EXPOSE {STATIC_INTERNAL_PORT}\n"
     )
 
 
-def generate_dockerfile(app_type: str, start_command: str, port: int, app_dir: str = "") -> str:
+def generate_dockerfile(
+    app_type: str,
+    start_command: str,
+    port: int,
+    app_dir: str = "",
+    build_command: str = "",
+    build_env_keys=(),
+) -> str:
     if app_type == "static":
         # For static sites start_command holds the publish directory.
-        return _generate_static_dockerfile(app_dir, start_command)
+        return GENERATED_MARKER + _generate_static_dockerfile(app_dir, start_command, build_command, build_env_keys)
 
     template = _DOCKERFILES.get(app_type, _DOCKERFILES["unknown"])
     port = port or 8000
@@ -331,14 +398,9 @@ def generate_dockerfile(app_type: str, start_command: str, port: int, app_dir: s
     go_mod_line = "COPY go.mod go.sum ./" if (_has_file("go.mod") and _has_file("go.sum")) else (
         "COPY go.mod ./" if _has_file("go.mod") else ""
     )
-    # Include devDependencies: frameworks like Next.js need typescript etc.
-    # at runtime (next.config.ts, `next dev`, `next build`).
-    npm_install = (
-        "npm ci --no-audit --no-fund || npm install --no-audit --no-fund"
-        if _has_file("package-lock.json") else
-        "npm install --no-audit --no-fund"
-    )
+    npm_install = _npm_install_cmd(_has_file)
     extras: dict[str, str] = {
+        "build_step": _build_step(build_command, build_env_keys),
         "nodejs_copy_pkg": (
             f"COPY package*.json ./\nRUN {npm_install}\n"
             if _has_file("package.json") else ""
@@ -356,7 +418,7 @@ def generate_dockerfile(app_type: str, start_command: str, port: int, app_dir: s
         ),
     }
 
-    return template.format(port=port, cmd_json=_cmd_to_json(start_command), **extras)
+    return GENERATED_MARKER + template.format(port=port, cmd_json=_cmd_to_json(start_command), **extras)
 
 
 _DEFAULT_DOCKERIGNORE = """\
@@ -388,11 +450,64 @@ def ensure_dockerignore(app_dir: str) -> None:
     log.info("[docker] Generated .dockerignore at %s", path)
 
 
-def ensure_dockerfile(app_dir: str, app_type: str, start_command: str, port: int) -> str:
-    """Write (or regenerate) the auto-managed Dockerfile in app_dir. Returns the path."""
+def _git_tracks(app_dir: str, rel_path: str) -> bool:
+    if not os.path.isdir(os.path.join(app_dir, ".git")):
+        return False
+    try:
+        res = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", rel_path],
+            cwd=app_dir, capture_output=True, text=True, timeout=10,
+        )
+        return res.returncode == 0
+    except Exception:
+        return False
+
+
+def has_custom_dockerfile(app_dir: str) -> bool:
+    """True when the repo ships its own Dockerfile, which Cloudbase must not touch.
+
+    Generated files carry GENERATED_MARKER. A Dockerfile without it is the
+    user's when git tracks it, or when there is no .git at all (remote nodes
+    receive source without .git; the primary already regenerated any stale
+    generated Dockerfile — with marker — before packaging the source).
+    Untracked files without the marker are legacy generated ones.
+    """
+    path = os.path.join(app_dir, "Dockerfile")
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            if f.read(len(GENERATED_MARKER)) == GENERATED_MARKER:
+                return False
+    except OSError:
+        return False
+    if not os.path.isdir(os.path.join(app_dir, ".git")):
+        return True
+    return _git_tracks(app_dir, "Dockerfile")
+
+
+def ensure_dockerfile(
+    app_dir: str,
+    app_type: str,
+    start_command: str,
+    port: int,
+    build_command: str = "",
+    build_env_keys=(),
+) -> str:
+    """Write (or regenerate) the auto-managed Dockerfile in app_dir. Returns the path.
+
+    A Dockerfile shipped in the repo is used as-is.
+    """
     ensure_dockerignore(app_dir)
     dockerfile_path = os.path.join(app_dir, "Dockerfile")
-    content = generate_dockerfile(app_type, start_command, port, app_dir=app_dir)
+    if has_custom_dockerfile(app_dir):
+        log.info("[docker] Using the repository's own Dockerfile at %s", dockerfile_path)
+        return dockerfile_path
+
+    content = generate_dockerfile(
+        app_type, start_command, port, app_dir=app_dir,
+        build_command=build_command, build_env_keys=build_env_keys,
+    )
 
     existing = ""
     if os.path.exists(dockerfile_path):
@@ -420,8 +535,14 @@ def build_image(
     app_type: str = "unknown",
     start_command: str = "",
     port: int = 8000,
+    build_command: str = "",
+    build_env: dict | None = None,
 ) -> str:
-    """Build Docker image, streaming build output via push_line_fn. Returns image tag."""
+    """Build Docker image, streaming build output via push_line_fn. Returns image tag.
+
+    build_command runs once inside the image build (e.g. `npm run build`);
+    build_env is passed as build args so the build can read app env vars.
+    """
     build_lock = _get_build_lock(app_id)
     if not build_lock.acquire(blocking=False):
         msg = "Docker build already in progress for this app"
@@ -429,8 +550,14 @@ def build_image(
         raise RuntimeError(msg)
 
     img = image_name(app_id, app_name)
+    build_env = {k: str(v) for k, v in (build_env or {}).items() if _ARG_NAME_RE.match(str(k))}
     try:
-        ensure_dockerfile(app_dir, app_type, start_command, port)
+        ensure_dockerfile(
+            app_dir, app_type, start_command, port,
+            build_command=build_command, build_env_keys=build_env.keys(),
+        )
+        if has_custom_dockerfile(app_dir):
+            push_line_fn(app_id, "[Docker] Using the Dockerfile from the repository.")
 
         push_line_fn(app_id, f"[Docker] Building image {img} …")
         client = _get_client()
@@ -442,6 +569,7 @@ def build_image(
             rm=True,
             forcerm=True,
             decode=False,
+            buildargs=build_env or None,
         )
         for event in _iter_build_events(log_stream):
             _emit_build_event(app_id, event, push_line_fn)

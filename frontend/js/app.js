@@ -1,5 +1,5 @@
 import { api, wsLogs, wsStats, wsNodeEvents, PermissionError } from './api.js';
-import { icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, setBtn } from './utils.js';
+import { icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, setBtn, parseDotEnv, pickTextFile, mergeEnvIntoRows } from './utils.js';
 import { pickGitHubToken } from './sidebar.js';
 
 const params = new URLSearchParams(location.search);
@@ -1265,6 +1265,7 @@ function initSettings() {
 
   // Form fields
   document.getElementById('cfg-cmd').value          = app.start_command  || '';
+  document.getElementById('cfg-build').value        = app.build_command  || '';
   document.getElementById('cfg-port').value         = app.port           || '';
 
   // Static sites: start_command holds the publish directory; nginx always uses port 80
@@ -1325,7 +1326,29 @@ function initSettings() {
   envContainer.innerHTML = '';
   Object.keys(app.env_vars || {}).forEach(k => addEnvRow(envContainer, k, ''));
 
-  document.getElementById('cfg-add-env').onclick = () => addEnvRow(envContainer, '', '');
+  const updateEnvCount = () => {
+    const n = envContainer.querySelectorAll('.env-row').length;
+    document.getElementById('cfg-env-count').textContent = n ? `${n} variable${n === 1 ? '' : 's'}` : '';
+  };
+  updateEnvCount();
+  envContainer.onclick = () => setTimeout(updateEnvCount);  // after row removal
+
+  document.getElementById('cfg-add-env').onclick = () => {
+    const row = addEnvRow(envContainer, '', '');
+    row.scrollIntoView({ block: 'nearest' });
+    row.querySelector('[data-env-key]').focus();
+    updateEnvCount();
+  };
+
+  document.getElementById('cfg-import-env').onclick = async () => {
+    const text = await pickTextFile('.env,.txt,text/plain');
+    if (text == null) return;
+    const vars = parseDotEnv(text);
+    if (!Object.keys(vars).length) { toast('No variables found in that file', 'warn'); return; }
+    const { added, updated } = mergeEnvIntoRows(envContainer, vars, (k, v) => addEnvRow(envContainer, k, v));
+    updateEnvCount();
+    toast(`Imported ${added + updated} variable(s): ${added} new, ${updated} updated. Click Save to apply.`, 'success');
+  };
 
   // Show current token hint (label for vault tokens, '****' for inline)
   const tokenCurrentEl = document.getElementById('cfg-token-current');
@@ -1854,11 +1877,15 @@ function addEnvRow(container, key = '', value = '') {
   // If key exists but value is empty, this is a write-only existing var — show placeholder hint
   const valuePlaceholder = key && value === '' ? '(unchanged — type to update)' : 'value';
   row.innerHTML = `
-    <input class="input input-mono" placeholder="KEY"   value="${escAttr(key)}"   data-env-key />
-    <input class="input input-mono" placeholder="${valuePlaceholder}" value="${escAttr(value)}" data-env-val />
+    <input class="input input-mono" placeholder="KEY" data-env-key />
+    <input class="input input-mono" placeholder="${valuePlaceholder}" data-env-val />
     <button type="button" class="btn-remove" title="Remove">${icon.trash}</button>`;
+  // Set via .value so &, quotes and newlines (e.g. from an imported .env) survive
+  row.querySelector('[data-env-key]').value = key;
+  row.querySelector('[data-env-val]').value = value;
   row.querySelector('.btn-remove').addEventListener('click', () => row.remove());
   container.appendChild(row);
+  return row;
 }
 
 function escAttr(s) {
@@ -2285,6 +2312,7 @@ async function saveSettings() {
                             .map(i => i.value.trim()).filter(Boolean);
   const payload = {
     start_command:  document.getElementById('cfg-cmd').value.trim()    || null,
+    build_command:  document.getElementById('cfg-build').value.trim(),  // "" clears it
     port:           parseInt(document.getElementById('cfg-port').value) || null,
     domain:         allDomainInputs[0] || null,
     extra_domains:  allDomainInputs.slice(1),

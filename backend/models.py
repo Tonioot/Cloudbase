@@ -56,6 +56,7 @@ class Application(Base):
     ssl_key_path = Column(String(500), nullable=True)
     app_type = Column(String(50), nullable=True)
     start_command = Column(String(500), nullable=True)
+    build_command = Column(String(500), nullable=True)  # runs once during `docker build` (e.g. npm run build)
     port          = Column(Integer, nullable=True)   # internal port (inside container)
     external_port = Column(Integer, nullable=True)   # host port (auto-assigned 8000–8999)
     status = Column(String(20), default="stopped")

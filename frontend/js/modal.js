@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { icon, spinner, toast } from './utils.js';
+import { icon, spinner, toast, parseDotEnv, pickTextFile, mergeEnvIntoRows } from './utils.js';
 import { pickGitHubToken } from './sidebar.js';
 
 // ── Cert picker helper ────────────────────────────────────────────────────────
@@ -151,7 +151,21 @@ export function openDeployModal(onSuccess) {
   });
 
   // ── Add env var row ────────────────────────────────────────────────────────
-  modal.querySelector('#add-env').addEventListener('click', () => addEnvRow(modal, ++envCount));
+  modal.querySelector('#add-env').addEventListener('click', () => {
+    addEnvRow(modal, ++envCount).scrollIntoView({ block: 'nearest' });
+  });
+
+  // ── Import .env file ───────────────────────────────────────────────────────
+  modal.querySelector('#import-env').addEventListener('click', async () => {
+    const text = await pickTextFile('.env,.txt,text/plain');
+    if (text == null) return;
+    const vars = parseDotEnv(text);
+    if (!Object.keys(vars).length) { toast('No variables found in that file', 'warn'); return; }
+    const { added, updated } = mergeEnvIntoRows(
+      modal.querySelector('#env-rows'), vars, (k, v) => addEnvRow(modal, ++envCount, k, v),
+    );
+    toast(`Imported ${added + updated} variable(s): ${added} new, ${updated} updated`, 'success');
+  });
 
   // ── Saved GitHub token picker ──────────────────────────────────────────────
   modal.querySelector('#f-token-pick').addEventListener('click', () => {
@@ -259,7 +273,12 @@ function modalHTML() {
               <div class="field deploy-field-span-2">
                 <label class="field-label" id="f-cmd-label">Start Command <span class="hint">auto-detected if empty</span></label>
                 <input class="input input-mono" id="f-cmd" placeholder="npm start" />
-                <div class="field-hint" id="f-cmd-hint" style="display:none">Folder in the repo that contains <code>index.html</code>. Empty = repo root, or the first of dist, build, out, public that has one.</div>
+                <div class="field-hint" id="f-cmd-hint" style="display:none">Folder that contains <code>index.html</code> (after the build, if any). Empty = auto-detect: repo root, or dist, build, out, public…</div>
+              </div>
+              <div class="field deploy-field-span-2" id="f-build-field">
+                <label class="field-label">Build Command <span class="hint">optional</span></label>
+                <input class="input input-mono" id="f-build" placeholder="npm run build" />
+                <div class="field-hint">Runs once while the image is built — not on every start. Put <code>npm run build</code> here and keep the start command to <code>npm start</code>. Environment variables are available during the build.</div>
               </div>
               <div class="field deploy-field-span-2" id="f-port-field">
                 <label class="field-label">Internal Port</label>
@@ -274,7 +293,10 @@ function modalHTML() {
             <div class="wizard-step-title">${icon.lock} Environment Variables</div>
             <div class="wizard-step-sub">Store secure variables before first boot. You can add more later.</div>
             <div id="env-rows"></div>
-            <button type="button" class="add-env-btn" id="add-env">${icon.plus} Add variable</button>
+            <div class="env-actions">
+              <button type="button" class="add-env-btn" id="add-env">${icon.plus} Add variable</button>
+              <button type="button" class="add-env-btn" id="import-env" title="Import variables from a .env file">${icon.upload} Import .env</button>
+            </div>
           </div>
 
           <!-- Step 5: Docker Runtime -->
@@ -333,7 +355,7 @@ function modalHTML() {
     </div>`;
 }
 
-function addEnvRow(modal, idx) {
+function addEnvRow(modal, idx, key = '', value = '') {
   const row = document.createElement('div');
   row.className = 'env-row';
   row.id = `env-row-${idx}`;
@@ -341,7 +363,11 @@ function addEnvRow(modal, idx) {
     <input class="input input-mono" placeholder="KEY" data-env-key />
     <input class="input input-mono" placeholder="value" data-env-val />
     <button type="button" class="btn-remove" onclick="this.closest('.env-row').remove()">${icon.trash}</button>`;
+  // Set via .value (not the attribute) so imported quotes/newlines stay intact
+  row.querySelector('[data-env-key]').value = key;
+  row.querySelector('[data-env-val]').value = value;
   modal.querySelector('#env-rows').appendChild(row);
+  return row;
 }
 
 async function handleDeploy(modal, form, onSuccess, close) {
@@ -373,7 +399,8 @@ async function handleDeploy(modal, form, onSuccess, close) {
     no_web:        modal.querySelector('.app-type-btn.active')?.dataset.type === 'worker',
     app_type:      modal.querySelector('.app-type-btn.active')?.dataset.type === 'static' ? 'static' : null,
     start_command: modal.querySelector('#f-cmd').value.trim() || null,
-    port:          parseInt(modal.querySelector('#f-port').value) || null,
+    build_command: modal.querySelector('#f-build').value.trim() || null,
+    port:         parseInt(modal.querySelector('#f-port').value) || null,
     docker_cpu_limit: Number.isFinite(dockerCpu) ? dockerCpu : null,
     docker_memory_limit_mb: Number.isInteger(dockerMemory) ? dockerMemory : null,
     docker_read_only_root: modal.querySelector('#f-docker-readonly').checked,

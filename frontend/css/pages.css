@@ -982,6 +982,29 @@
   padding-right: 4px;
 }
 
+/* Settings page: long env lists scroll inside the section instead of
+   stretching the page. */
+.env-rows-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 4px;
+  overscroll-behavior: contain;
+}
+
+.env-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.env-count {
+  margin-left: auto;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .add-env-btn {
   display: flex;
   align-items: center;

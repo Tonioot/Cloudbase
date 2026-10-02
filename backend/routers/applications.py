@@ -80,6 +80,7 @@ class DeployRequest(BaseModel):
     ssl_cert_path: Optional[str] = None
     ssl_key_path: Optional[str] = None
     start_command: Optional[str] = None
+    build_command: Optional[str] = None      # runs once during the image build
     port: Optional[int] = None               # internal port (inside container)
     external_port: Optional[int] = None      # host port — auto-assigned if omitted
     docker_cpu_limit: Optional[float] = None
@@ -104,6 +105,7 @@ class UpdateRequest(BaseModel):
     ssl_cert_path: Optional[str] = None
     ssl_key_path: Optional[str] = None
     start_command: Optional[str] = None
+    build_command: Optional[str] = None      # "" clears it
     port: Optional[int] = None               # internal port
     external_port: Optional[int] = None      # host port
     docker_cpu_limit: Optional[float] = None
@@ -540,6 +542,33 @@ async def _restore_nginx_after_transition(
         pm._push_line(app_id, f"Failed to restore nginx after {transition_label}: {msg}")
 
 
+def _image_build_kwargs(app: Application) -> dict:
+    """Extra dm.build_image kwargs: the app's build step and env vars for it."""
+    return {
+        "build_command": app.build_command or "",
+        "build_env": decrypt_env(app.env_vars or ""),
+    }
+
+
+def _dockerfile_build_kwargs(app: Application) -> dict:
+    """Extra dm.ensure_dockerfile kwargs, matching _image_build_kwargs."""
+    return {
+        "build_command": app.build_command or "",
+        "build_env_keys": list(decrypt_env(app.env_vars or "").keys()),
+    }
+
+
+def _node_build_payload(app: Application) -> dict:
+    """Fields a node agent needs to generate the Dockerfile and build the image."""
+    return {
+        "app_type": app.app_type or "unknown",
+        "start_command": app.start_command or "",
+        "build_command": app.build_command or "",
+        "internal_port": app.port or 8000,
+        "env_vars": decrypt_env(app.env_vars or ""),
+    }
+
+
 def _remote_replica_command_payload(app: Application, env_vars: dict, external_port: int, source_revision: Optional[str] = None) -> dict:
     if source_revision is None:
         source_revision = _refresh_app_source_revision(app)
@@ -551,6 +580,7 @@ def _remote_replica_command_payload(app: Application, env_vars: dict, external_p
         "github_token": _decrypt_github_token(app.github_token),
         "app_type": app_type or "unknown",
         "start_command": app.start_command,
+        "build_command": app.build_command or "",
         "internal_port": app.port or 8000,
         "external_port": external_port,
         "env_vars": env_vars,
@@ -851,6 +881,21 @@ async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db)):
     import tarfile
     import io
 
+    # Refresh the generated Dockerfile first so the node receives the current
+    # one (with marker). Nodes get no .git, so they treat an unmarked
+    # Dockerfile as the repository's own.
+    try:
+        await asyncio.to_thread(
+            dm.ensure_dockerfile,
+            app.working_dir,
+            app.app_type or "unknown",
+            app.start_command or "",
+            app.port or 8000,
+            **_dockerfile_build_kwargs(app),
+        )
+    except Exception as exc:
+        log.warning("[source-archive] Could not refresh Dockerfile for app=%s: %s", app.name, exc)
+
     def _make_archive() -> bytes:
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
@@ -941,6 +986,7 @@ async def _deploy_app(app: Application):
         app.app_type or "unknown",
         app.start_command or "",
         app.port or 8000,
+        **_dockerfile_build_kwargs(app),
     )
     log.info("[deploy] Deployment finished for app=%s", app.name)
 
@@ -1215,6 +1261,7 @@ async def deploy_app(
         ssl_cert_path=req.ssl_cert_path,
         ssl_key_path=req.ssl_key_path,
         start_command=req.start_command,
+        build_command=(req.build_command or "").strip() or None,
         port=dm.STATIC_INTERNAL_PORT if is_static else req.port,
         app_type="static" if is_static else None,
         external_port=external_port,
@@ -1334,6 +1381,11 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.start_command = req.start_command
         if app.app_type != "static":
             app.app_type = pm.detect_app_type_from_command(req.start_command)
+    if req.build_command is not None:
+        new_build = req.build_command.strip() or None
+        if new_build != app.build_command:
+            dockerfile_changed = True
+        app.build_command = new_build
     if req.port is not None:
         if req.port != app.port:
             dockerfile_changed = True
@@ -1358,7 +1410,12 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         if req.env_vars:
             # Merge in new/changed values
             existing.update(req.env_vars)
-        app.env_vars = encrypt_env(existing)
+        new_env = encrypt_env(existing)
+        # The build step reads env vars (e.g. NEXT_PUBLIC_*), so a change
+        # must produce a fresh image rather than reuse the cached one.
+        if app.build_command and existing != decrypt_env(app.env_vars or ""):
+            dockerfile_changed = True
+        app.env_vars = new_env
     resolved = _resolve_token(req.github_token, req.github_token_id)
     if resolved is not None:
         app.github_token = _encrypt_github_token(resolved)
@@ -1390,6 +1447,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
                 app.app_type or "unknown",
                 app.start_command or "",
                 app.port or 8000,
+                **_dockerfile_build_kwargs(app),
             )
         # Force image refresh on next start/restart so config changes are applied.
         app.image_revision = None
@@ -1514,7 +1572,9 @@ async def export_apps(req: ExportRequest, _user: dict = Depends(_auth.require_pe
             "redirect_domains": json.loads(app.redirect_domains or "[]"),
             "ssl_cert_path": app.ssl_cert_path,
             "ssl_key_path": app.ssl_key_path,
+            "app_type": app.app_type,
             "start_command": app.start_command,
+            "build_command": app.build_command,
             "port": app.port,
             "env_vars": {},
             "auto_start": app.auto_start,
@@ -1566,6 +1626,7 @@ async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, _us
             ssl_cert_path=None,
             ssl_key_path=None,
             start_command=app_data.get("start_command"),
+            build_command=app_data.get("build_command"),
             port=app_data.get("port"),
             app_type="static" if app_data.get("app_type") == "static" else None,
             external_port=import_external_port,
@@ -1659,6 +1720,7 @@ async def _start_instance_local(app: "Application", replica: "ApplicationReplica
             dm.build_image,
             app_id, app.name, app.working_dir, _push,
             app.app_type or "unknown", app.start_command or "", app.port or 8000,
+            **_image_build_kwargs(app),
         )
         app.docker_image = dm.image_name(app_id, app.name)
         built_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
@@ -2743,6 +2805,7 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
             app_id, app.name, app_dir, _push,
             app.app_type or "unknown", app.start_command or "",
             app.port or 8000,
+            **_image_build_kwargs(app),
         )
     except Exception as e:
         raise HTTPException(500, f"Failed to rebuild Docker image: {e}") from e
@@ -2768,6 +2831,7 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
                     "app_name": app.name,
                     "commit": commit_info,
                     "source_revision": source_revision,
+                    **_node_build_payload(app),
                 },
             )
             action_logs.append(f"[Remote] Queued source refresh on node '{r_node.name}'.")
@@ -2811,6 +2875,7 @@ async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), 
             dm.build_image,
             app_id, app.name, app.working_dir, _push,
             app.app_type or "unknown", app.start_command or "", app.port or 8000,
+            **_image_build_kwargs(app),
         )
         source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
         app.status = "running" if was_running else "stopped"
@@ -2925,6 +2990,7 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
                     dm.build_image,
                     app_id, app.name, app.working_dir, _push,
                     app.app_type or "unknown", app.start_command or "", app.port or 8000,
+                    **_image_build_kwargs(app),
                 )
             except Exception as e:
                 raise HTTPException(500, f"Failed to build image: {e}")
@@ -2943,6 +3009,7 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
                     "app_id": app_id,
                     "app_type": app.app_type or "unknown",
                     "start_command": app.start_command or "",
+                    "build_command": app.build_command or "",
                     "internal_port": app.port or 8000,
                     "env_vars": env_vars,
                     "docker_options": _docker_runtime_options(app),
@@ -3190,6 +3257,7 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
                     dm.build_image,
                     app_id, app.name, app.working_dir, _push,
                     app.app_type or "unknown", app.start_command or "", app.port or 8000,
+                    **_image_build_kwargs(app),
                 )
             except Exception as e:
                 raise HTTPException(500, f"Failed to build image: {e}")
@@ -3208,6 +3276,7 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
                     "app_id": app_id,
                     "app_type": app.app_type or "unknown",
                     "start_command": app.start_command or "",
+                    "build_command": app.build_command or "",
                     "internal_port": app.port or 8000,
                     "env_vars": env_vars,
                     "docker_options": _docker_runtime_options(app),
@@ -3533,6 +3602,7 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
                 app_id, app.name, app_dir, _docker_push,
                 app.app_type or "unknown", app.start_command or "",
                 app.port or 8000,
+                **_image_build_kwargs(app),
             )
             app.docker_image = dm.image_name(app_id, app.name)
             if source_revision:
@@ -3609,6 +3679,7 @@ async def rebuild_docker_image_stream(app_id: int, _user: dict = Depends(_auth.r
                 dm.build_image,
                 app_id, app.name, app.working_dir, _push,
                 app.app_type or "unknown", app.start_command or "", app.port or 8000,
+                **_image_build_kwargs(app),
             )
             source_revision = _refresh_app_source_revision(app)
             app.status = "running" if was_running else "stopped"
@@ -3826,6 +3897,7 @@ def _app_to_dict(
         "no_web": bool(app.no_web),
         "app_type": app.app_type,
         "start_command": app.start_command,
+        "build_command": app.build_command,
         "port": app.port,
         "status": app.status,
         "working_dir": app.working_dir,

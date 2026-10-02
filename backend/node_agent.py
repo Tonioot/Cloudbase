@@ -618,6 +618,8 @@ async def _build_image_local(local_id: int, app_name: str, app_dir: str, payload
         dm.build_image,
         local_id, app_name, app_dir, _push,
         app_type, start_cmd, port,
+        build_command=payload.get("build_command") or "",
+        build_env=payload.get("env_vars") or {},
     )
     _agent_log(f"[build] Image {img} ready")
     return img
