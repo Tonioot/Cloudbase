@@ -1612,9 +1612,6 @@ async def replica_tunnel_ws(replica_id: int, websocket: WebSocket):
     # Regenerate nginx to include the new backend
     await _regen_nginx_for_app(app_id)
 
-    # Capture node_id for later use in finally (node object may be detached)
-    _tunnel_node_id = node.id
-
     # Relay messages until the agent disconnects
     try:
         async for message in websocket.iter_text():
@@ -1642,11 +1639,17 @@ async def replica_tunnel_ws(replica_id: int, websocket: WebSocket):
                 if replica:
                     was_running = replica.status == "running"
                     replica.tunnel_port = None
-                    # If the node agent WS is no longer connected, the tunnel dropped
-                    # due to a node outage — mark the replica for automatic recovery.
-                    # If the agent is still connected, the container stopped on its own.
-                    agent_online = _tunnel_node_id in _node_ws_connections
-                    replica.status = "stopped" if agent_online else "node_offline"
+                    # An intentional stop sets "stopping" before the agent closes the
+                    # tunnel. Any other drop (agent restart, network blip, crash) is
+                    # handed to recovery: start_replica on the agent reattaches the
+                    # tunnel if the container still runs, or restarts it if it doesn't.
+                    # Judging by "agent WS still connected" raced with agent restarts
+                    # and left running containers marked stopped without a tunnel.
+                    if replica.status == "stopping":
+                        replica.status = "stopped"
+                    elif replica.status in ("running", "starting"):
+                        replica.status = "node_offline"
+                        replica.substatus = None
                     replica.updated_at = _utcnow()
                     await db.commit()
                     if was_running:
