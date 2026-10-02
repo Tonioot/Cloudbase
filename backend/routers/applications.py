@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 import math
@@ -36,7 +37,14 @@ RESTART_READY_TIMEOUT_SECONDS = 180
 RESTART_READY_POLL_SECONDS = 1
 TRANSITION_HOLD_MAX_SECONDS = 300
 RESTART_READY_MIN_HEALTHY_RATIO = 0.5
+# New instances during rolling / blue-green deploys. Generous because some start
+# commands build at boot (e.g. `next build && next start`), which takes minutes
+# on small nodes like a Raspberry Pi. A crashed container fails fast regardless.
+DEPLOY_HEALTH_TIMEOUT_SECONDS = 600
+DEPLOY_HEALTH_PROGRESS_SECONDS = 30
 _active_transition_modes: dict[int, tuple[str, float]] = {}
+# App ids with a rolling / blue-green deploy in progress (one at a time per app).
+_deploys_in_progress: set[int] = set()
 
 
 def _set_active_transition_mode(app_id: int, mode: str, started_at: Optional[float] = None) -> float:
@@ -84,6 +92,7 @@ class DeployRequest(BaseModel):
     auto_start: Optional[bool] = None
     restart_policy: Optional[str] = None   # no | always | on-failure
     no_web: Optional[bool] = None          # True = no web server, skip nginx + port assignment
+    app_type: Optional[str] = None         # "static" = serve files with nginx (start_command = publish dir)
     source_revision: Optional[str] = None
     image_revision: Optional[str] = None
 
@@ -924,7 +933,8 @@ async def _deploy_app(app: Application):
         app.working_dir = app_dir
         app.source_revision = _resolve_source_revision(app_dir)
         app.image_revision = None
-    app.app_type = pm.detect_app_type_from_command(app.start_command) if app.start_command else "unknown"
+    if app.app_type != "static":
+        app.app_type = pm.detect_app_type_from_command(app.start_command) if app.start_command else "unknown"
 
     dm.ensure_dockerfile(
         app_dir,
@@ -1182,8 +1192,15 @@ async def deploy_app(
         if not target_node:
             raise HTTPException(400, "Selected node is not available")
 
+    is_static = (req.app_type or "").strip().lower() == "static"
+    if is_static:
+        try:
+            dm.resolve_static_dir("", req.start_command or "")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
     # no_web apps (discord bots, background workers, etc.) don't need a port or nginx
-    is_no_web = bool(req.no_web)
+    is_no_web = bool(req.no_web) and not is_static
     node_id_for_port = target_node.id if target_node else local_node.id
     external_port = None if is_no_web else await _assign_external_port(req.external_port, node_id_for_port, None, db)
 
@@ -1198,7 +1215,8 @@ async def deploy_app(
         ssl_cert_path=req.ssl_cert_path,
         ssl_key_path=req.ssl_key_path,
         start_command=req.start_command,
-        port=req.port,
+        port=dm.STATIC_INTERNAL_PORT if is_static else req.port,
+        app_type="static" if is_static else None,
         external_port=external_port,
         env_vars=encrypt_env(req.env_vars or {}),
         auto_start=bool(req.auto_start) if req.auto_start is not None else False,
@@ -1308,8 +1326,14 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
     if req.start_command is not None:
         if req.start_command != app.start_command:
             dockerfile_changed = True
+        if app.app_type == "static":
+            try:
+                dm.resolve_static_dir("", req.start_command)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
         app.start_command = req.start_command
-        app.app_type = pm.detect_app_type_from_command(req.start_command)
+        if app.app_type != "static":
+            app.app_type = pm.detect_app_type_from_command(req.start_command)
     if req.port is not None:
         if req.port != app.port:
             dockerfile_changed = True
@@ -1543,6 +1567,7 @@ async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, _us
             ssl_key_path=None,
             start_command=app_data.get("start_command"),
             port=app_data.get("port"),
+            app_type="static" if app_data.get("app_type") == "static" else None,
             external_port=import_external_port,
             env_vars=encrypt_env(app_data.get("env_vars") or {}),
             auto_start=bool(app_data.get("auto_start")) if app_data.get("auto_start") is not None else False,
@@ -2826,8 +2851,29 @@ async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), 
         raise HTTPException(500, f"Failed to rebuild Docker image: {e}") from e
 
 
+@contextlib.contextmanager
+def _single_deploy(app_id: int):
+    """Reject a second rolling / blue-green deploy while one is running for this app.
+
+    These requests take minutes; without this a retry (or a second click after a
+    proxy timeout) starts a parallel deploy that races the first one.
+    """
+    if app_id in _deploys_in_progress:
+        raise HTTPException(409, "A deploy is already in progress for this app — wait for it to finish.")
+    _deploys_in_progress.add(app_id)
+    try:
+        yield
+    finally:
+        _deploys_in_progress.discard(app_id)
+
+
 @router.post("/{app_id}/deploy-rolling")
 async def deploy_rolling(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
+    with _single_deploy(app_id):
+        return await _do_rolling_deploy(app_id, db, actor)
+
+
+async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
     """Rolling deploy: replace each running replica one at a time with a freshly built image.
     While one replica is cycling, the others keep serving traffic — no downtime page is shown.
     Falls back to a normal ZD deploy when only one replica is running.
@@ -2972,19 +3018,13 @@ async def deploy_rolling(app_id: int, db: AsyncSession = Depends(get_db), _user:
                 raise HTTPException(500, f"Rolling deploy aborted: {e}")
 
             # Health check new instance
-            pm._push_line(app_id, f"[Rolling] Health checking new instance {new_replica.id} on port {new_ext_port} (max 60s)…")
-            deadline = asyncio.get_running_loop().time() + 60
-            healthy = False
-            while asyncio.get_running_loop().time() < deadline:
-                if await asyncio.to_thread(_local_http_service_ready, new_ext_port):
-                    healthy = True
-                    break
-                await asyncio.sleep(2)
+            pm._push_line(app_id, f"[Rolling] Health checking new instance {new_replica.id} on port {new_ext_port}…")
+            healthy, reason = await _wait_new_instance_healthy(app_id, new_replica.id, new_ext_port, is_local=True)
 
             if not healthy:
-                pm._push_line(app_id, f"[Rolling] New instance {new_replica.id} failed health check — aborting roll.")
+                pm._push_line(app_id, f"[Rolling] New instance {new_replica.id} failed health check ({reason}) — aborting roll.")
                 await _zd_rollback(app_id, local_node.id, [(tnode, new_replica.id)], db)
-                raise HTTPException(502, f"Rolling deploy aborted: instance {new_replica.id} failed health check after 60s")
+                raise HTTPException(502, f"Rolling deploy aborted: instance {new_replica.id} failed health check: {reason}")
 
             async with AsyncSessionLocal() as _upd:
                 r = await _upd.get(ApplicationReplica, new_replica.id)
@@ -3031,19 +3071,13 @@ async def deploy_rolling(app_id: int, db: AsyncSession = Depends(get_db), _user:
                 await _zd_rollback(app_id, local_node.id, [(tnode, new_replica.id)], db)
                 raise HTTPException(502, f"Rolling deploy aborted: tunnel for instance {new_replica.id} did not connect within 120s")
 
-            pm._push_line(app_id, f"[Rolling] Health checking remote instance {new_replica.id} on tunnel port {tunnel_port} (max 60s)…")
-            deadline = asyncio.get_running_loop().time() + 60
-            healthy = False
-            while asyncio.get_running_loop().time() < deadline:
-                if await asyncio.to_thread(_local_http_service_ready, tunnel_port):
-                    healthy = True
-                    break
-                await asyncio.sleep(2)
+            pm._push_line(app_id, f"[Rolling] Health checking remote instance {new_replica.id} on tunnel port {tunnel_port}…")
+            healthy, reason = await _wait_new_instance_healthy(app_id, new_replica.id, tunnel_port, is_local=False)
 
             if not healthy:
-                pm._push_line(app_id, f"[Rolling] Remote instance {new_replica.id} failed health check — aborting roll.")
+                pm._push_line(app_id, f"[Rolling] Remote instance {new_replica.id} failed health check ({reason}) — aborting roll.")
                 await _zd_rollback(app_id, local_node.id, [(tnode, new_replica.id)], db)
-                raise HTTPException(502, f"Rolling deploy aborted: remote instance {new_replica.id} failed health check after 60s")
+                raise HTTPException(502, f"Rolling deploy aborted: remote instance {new_replica.id} failed health check: {reason}")
 
             async with AsyncSessionLocal() as _upd:
                 r = await _upd.get(ApplicationReplica, new_replica.id)
@@ -3096,10 +3130,10 @@ async def deploy_rolling(app_id: int, db: AsyncSession = Depends(get_db), _user:
 
 @router.post("/{app_id}/deploy-blue-green")
 async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
-    from database import AsyncSessionLocal
-    app = await _get_or_404(app_id, db)
+    await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
-    return await _do_zero_downtime_deploy(app_id, db, local_node, actor)
+    with _single_deploy(app_id):
+        return await _do_zero_downtime_deploy(app_id, db, local_node, actor)
 
 
 async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: Node, actor: str):
@@ -3256,18 +3290,13 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
             check_port = tunnel_port
             label = f"tunnel port {check_port} (node '{tnode.name}')"
 
-        pm._push_line(app_id, f"[ZD] Health checking instance {new_rid} on {label} (max 60s)…")
-        deadline = asyncio.get_running_loop().time() + 60
-        healthy = False
-        while asyncio.get_running_loop().time() < deadline:
-            if await asyncio.to_thread(_local_http_service_ready, check_port):
-                healthy = True
-                break
-            await asyncio.sleep(2)
+        pm._push_line(app_id, f"[ZD] Health checking instance {new_rid} on {label}…")
+        healthy, reason = await _wait_new_instance_healthy(app_id, new_rid, check_port, is_local=tnode.is_local)
 
         if not healthy:
+            pm._push_line(app_id, f"[ZD] Instance {new_rid} failed health check ({reason}) — rolling back.")
             await _zd_rollback(app_id, local_node.id, new_entries, db)
-            raise HTTPException(502, f"Instance {new_rid} on {label} failed health check after 60s — rolled back")
+            raise HTTPException(502, f"Instance {new_rid} on {label} failed health check: {reason} — rolled back")
 
         pm._push_line(app_id, f"[ZD] Instance {new_rid} healthy.")
 
@@ -3344,6 +3373,36 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
 
     pm._push_line(app_id, f"[ZD] Zero-downtime deploy complete. New instance(s): {[nid for _, nid in new_entries]}.")
     return {"status": "ok", "image": app.docker_image, "instance_id": first_new_id}
+
+
+async def _wait_new_instance_healthy(app_id: int, replica_id: int, port: int, is_local: bool) -> tuple[bool, str]:
+    """Poll a freshly started deploy instance until it serves HTTP.
+
+    Returns (healthy, reason). Gives up early when the container has exited
+    (local) or the node reported the replica as failed (remote).
+    """
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    deadline = started + DEPLOY_HEALTH_TIMEOUT_SECONDS
+    next_progress = started + DEPLOY_HEALTH_PROGRESS_SECONDS
+    while loop.time() < deadline:
+        if await asyncio.to_thread(_local_http_service_ready, port):
+            return True, ""
+        if is_local:
+            if not await asyncio.to_thread(dm.is_replica_container_running, app_id, replica_id):
+                return False, "container is no longer running (check the instance logs)"
+        else:
+            async with AsyncSessionLocal() as _poll_db:
+                r = await _poll_db.get(ApplicationReplica, replica_id)
+            if r is None:
+                return False, "instance was removed"
+            if r.status == "error":
+                return False, f"node reported an error: {r.last_error or 'unknown'}"
+        if loop.time() >= next_progress:
+            pm._push_line(app_id, f"[Deploy] Instance {replica_id} not responding yet after {int(loop.time() - started)}s — still waiting (max {DEPLOY_HEALTH_TIMEOUT_SECONDS}s)…")
+            next_progress += DEPLOY_HEALTH_PROGRESS_SECONDS
+        await asyncio.sleep(2)
+    return False, f"no healthy HTTP response within {DEPLOY_HEALTH_TIMEOUT_SECONDS}s"
 
 
 async def _zd_rollback(app_id: int, local_node_id: int, new_entries: list[tuple["Node", int]], db: "AsyncSession") -> None:

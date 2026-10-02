@@ -99,10 +99,17 @@ export function openDeployModal(onSuccess) {
     modal.querySelector('#modal-submit').style.display = idx === STEPS.length - 1 ? '' : 'none';
     modal.querySelector('#modal-error').style.display = 'none';
 
-    // Hide port field on Process step when Background Worker is selected
+    // Process step: workers have no port; static sites get a publish directory
+    // instead of a start command, and always listen on nginx's port 80.
     if (idx === 2) {
-      const isWorker = modal.querySelector('.app-type-btn.active')?.dataset.type === 'worker';
-      modal.querySelector('#f-port-field').style.display = isWorker ? 'none' : '';
+      const type = modal.querySelector('.app-type-btn.active')?.dataset.type;
+      const isStatic = type === 'static';
+      modal.querySelector('#f-port-field').style.display = (type === 'worker' || isStatic) ? 'none' : '';
+      modal.querySelector('#f-cmd-label').innerHTML = isStatic
+        ? 'Publish Directory <span class="hint">auto-detected if empty</span>'
+        : 'Start Command <span class="hint">auto-detected if empty</span>';
+      modal.querySelector('#f-cmd').placeholder = isStatic ? 'dist' : 'npm start';
+      modal.querySelector('#f-cmd-hint').style.display = isStatic ? '' : 'none';
     }
   }
 
@@ -196,6 +203,13 @@ function modalHTML() {
                   <div class="app-type-desc">Serves HTTP traffic with a public URL, port assignment and nginx routing</div>
                 </div>
               </button>
+              <button type="button" class="app-type-btn" data-type="static">
+                <div class="app-type-icon">${icon.folder}</div>
+                <div class="app-type-info">
+                  <div class="app-type-name">Static Site</div>
+                  <div class="app-type-desc">HTML, CSS, JS and assets served directly by nginx — no server script needed</div>
+                </div>
+              </button>
               <button type="button" class="app-type-btn" data-type="worker">
                 <div class="app-type-icon">${icon.cpu}</div>
                 <div class="app-type-info">
@@ -243,8 +257,9 @@ function modalHTML() {
             <div class="wizard-step-title">${icon.settings} Process</div>
             <div class="deploy-grid">
               <div class="field deploy-field-span-2">
-                <label class="field-label">Start Command <span class="hint">auto-detected if empty</span></label>
+                <label class="field-label" id="f-cmd-label">Start Command <span class="hint">auto-detected if empty</span></label>
                 <input class="input input-mono" id="f-cmd" placeholder="npm start" />
+                <div class="field-hint" id="f-cmd-hint" style="display:none">Folder in the repo that contains <code>index.html</code>. Empty = repo root, or the first of dist, build, out, public that has one.</div>
               </div>
               <div class="field deploy-field-span-2" id="f-port-field">
                 <label class="field-label">Internal Port</label>
@@ -356,6 +371,7 @@ async function handleDeploy(modal, form, onSuccess, close) {
       ? { github_token_id: tokenId }
       : { github_token: modal.querySelector('#f-token').value.trim() || null }),
     no_web:        modal.querySelector('.app-type-btn.active')?.dataset.type === 'worker',
+    app_type:      modal.querySelector('.app-type-btn.active')?.dataset.type === 'static' ? 'static' : null,
     start_command: modal.querySelector('#f-cmd').value.trim() || null,
     port:          parseInt(modal.querySelector('#f-port').value) || null,
     docker_cpu_limit: Number.isFinite(dockerCpu) ? dockerCpu : null,

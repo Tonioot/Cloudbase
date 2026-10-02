@@ -1267,6 +1267,12 @@ function initSettings() {
   document.getElementById('cfg-cmd').value          = app.start_command  || '';
   document.getElementById('cfg-port').value         = app.port           || '';
 
+  // Static sites: start_command holds the publish directory; nginx always uses port 80
+  const isStatic = app.app_type === 'static';
+  document.getElementById('cfg-cmd-label').textContent = isStatic ? 'Publish Directory' : 'Start Command';
+  document.getElementById('cfg-cmd').placeholder = isStatic ? 'auto-detect (root, dist, build, …)' : 'npm start';
+  if (isStatic) document.getElementById('cfg-port-field').style.display = 'none';
+
   // Domains list (primary first, then extras)
   const domainsContainer = document.getElementById('cfg-domains-rows');
   domainsContainer.innerHTML = '';
@@ -1913,10 +1919,15 @@ async function initInstances() {
 
       const nodeName = inst.node_name || 'Primary Node';
 
-      // Uptime — DB timestamps are UTC without Z suffix; append Z so browser parses as UTC
+      // Uptime — only meaningful while running. Prefer the container's real
+      // start time from Docker stats; fall back to the row's updated_at.
+      // DB timestamps are UTC without Z suffix; append Z so browser parses as UTC.
       let uptimeStr = '—';
-      const uptimeSrc = isRunning ? (inst.updated_at || inst.created_at) : inst.created_at;
-      if (uptimeSrc) {
+      const statUptime = instStats[inst.id]?.uptime_seconds;
+      const uptimeSrc = isRunning ? (inst.updated_at || inst.created_at) : null;
+      if (isRunning && statUptime > 0) {
+        uptimeStr = fmtUptime(statUptime);
+      } else if (uptimeSrc) {
         const ts = uptimeSrc.endsWith('Z') || uptimeSrc.includes('+') ? uptimeSrc : uptimeSrc + 'Z';
         const diffMs = Date.now() - new Date(ts).getTime();
         if (diffMs > 0) uptimeStr = fmtUptime(Math.floor(diffMs / 1000));
