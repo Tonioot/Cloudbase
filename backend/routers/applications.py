@@ -2848,7 +2848,7 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
     else:
         action_logs.append("[Docker] Image rebuilt. Start the app to apply changes.")
     return {
-        "message": f"Updated and rebuilt Docker image from {target_commit or branch}",
+        "message": f"Updated to {commit_info} and rebuilt the Docker image",
         "output": (
             f"Latest commit: {commit_info}\n\nImage rebuilt. Running container was not stopped or restarted. "
             "Restart manually when you want to switch to the new image."
@@ -3525,6 +3525,41 @@ async def _queue_get_or_heartbeat(queue: asyncio.Queue):
 _SSE_PING = object()
 
 
+async def _sync_app_source(app: Application, app_dir: str, target_commit: Optional[str], log) -> tuple[str, Optional[str]]:
+    """Fetch and hard-reset the app's working tree to target_commit (or the
+    branch head). Updates app.source_revision; returns (commit_info, revision)."""
+    github_token = _decrypt_github_token(app.github_token)
+    if github_token:
+        url = _build_clone_url(app.repo_url, github_token)
+        await asyncio.to_thread(subprocess.run, ["git", "remote", "set-url", "origin", url], cwd=app_dir, capture_output=True)
+
+    branch = _current_branch(app_dir)
+    log(f"[Git] Fetching from origin ({branch})…")
+    await asyncio.to_thread(_fetch_origin, app_dir, branch)
+
+    target = target_commit or f"origin/{branch}"
+    log(f"[Git] Resetting to {target}…")
+    reset = await asyncio.to_thread(
+        subprocess.run, ["git", "reset", "--hard", target], cwd=app_dir, capture_output=True, text=True,
+    )
+    if reset.returncode != 0 and not target_commit:
+        reset = await asyncio.to_thread(
+            subprocess.run, ["git", "reset", "--hard", "@{u}"], cwd=app_dir, capture_output=True, text=True,
+        )
+    if reset.returncode != 0:
+        raise HTTPException(500, f"Git reset failed: {reset.stderr}")
+
+    log_res = await asyncio.to_thread(
+        subprocess.run, ["git", "log", "-1", "--format=%h - %s (%cr)"], cwd=app_dir, capture_output=True, text=True,
+    )
+    commit_info = log_res.stdout.strip() if log_res.returncode == 0 else "Unknown"
+    log(f"[Git] Updated to: {commit_info}")
+    source_revision = _resolve_source_revision(app_dir)
+    if source_revision:
+        app.source_revision = source_revision
+    return commit_info, source_revision
+
+
 @router.post("/{app_id}/pull/stream")
 async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(default=None), _user: dict = Depends(_auth.require_permission("apps.pull")), db: AsyncSession = Depends(get_db)):
     """Streaming SSE variant of git_pull. Each build log line is emitted as it happens."""
@@ -3554,47 +3589,7 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
 
     async def _do_pull() -> None:
         try:
-            github_token = _decrypt_github_token(app.github_token)
-            if github_token:
-                url = _build_clone_url(app.repo_url, github_token)
-                subprocess.run(["git", "remote", "set-url", "origin", url], cwd=app_dir, capture_output=True)
-
-            branch = _current_branch(app_dir)
-            _q(f"[Git] Fetching from origin ({branch})…")
-            await asyncio.to_thread(_fetch_origin, app_dir, branch)
-
-            target = target_commit or f"origin/{branch}"
-            _q(f"[Git] Resetting to {target}…")
-            reset = await asyncio.to_thread(
-                subprocess.run,
-                ["git", "reset", "--hard", target],
-                cwd=app_dir,
-                capture_output=True,
-                text=True,
-            )
-            if reset.returncode != 0 and not target_commit:
-                reset = await asyncio.to_thread(
-                    subprocess.run,
-                    ["git", "reset", "--hard", "@{u}"],
-                    cwd=app_dir,
-                    capture_output=True,
-                    text=True,
-                )
-            if reset.returncode != 0:
-                raise HTTPException(500, f"Git reset failed: {reset.stderr}")
-
-            log_res = await asyncio.to_thread(
-                subprocess.run,
-                ["git", "log", "-1", "--format=%h - %s (%cr)"],
-                cwd=app_dir,
-                capture_output=True,
-                text=True,
-            )
-            commit_info = log_res.stdout.strip() if log_res.returncode == 0 else "Unknown"
-            _q(f"[Git] Updated to: {commit_info}")
-            source_revision = _resolve_source_revision(app_dir)
-            if source_revision:
-                app.source_revision = source_revision
+            commit_info, source_revision = await _sync_app_source(app, app_dir, target_commit, _q)
 
             was_running = pm.is_docker_app_running(app_id)
             _q("[Docker] Rebuilding image…")
@@ -4317,3 +4312,117 @@ async def nginx_debug(app_id: int, db: AsyncSession = Depends(get_db), _user: di
             redirect_domains=json.loads(app.redirect_domains or "[]"),
         ),
     }
+
+
+# ── Pull & deploy (one streaming action) ──────────────────────────────────────
+
+class GitDeployRequest(BaseModel):
+    commit: Optional[str] = None          # None = latest on the current branch
+    strategy: str = "rebuild"             # rebuild | rolling | blue_green
+
+
+_DEPLOY_STREAM_DONE = object()
+
+
+@router.post("/{app_id}/deploy/stream")
+async def deploy_stream(
+    app_id: int,
+    payload: GitDeployRequest | None = Body(default=None),
+    _user: dict = Depends(_auth.require_permission("apps.pull")),
+    actor: str = Depends(_auth.get_current_actor),
+    db: AsyncSession = Depends(get_db),
+):
+    """Sync source to a commit, then build — and optionally roll it out.
+
+    strategy="rebuild"     build a new image; running instances are left alone
+    strategy="rolling"     replace instances one at a time with the new image
+    strategy="blue_green"  start new instances next to the old ones, then switch
+
+    Rolling and blue/green build the image themselves, so the code is only built
+    once. Progress lines (those starting with "[") are streamed as SSE.
+    """
+    payload = payload or GitDeployRequest()
+    strategy = payload.strategy
+    if strategy not in ("rebuild", "rolling", "blue_green"):
+        raise HTTPException(400, "strategy must be one of: rebuild, rolling, blue_green")
+    app = await _get_or_404(app_id, db)
+    if not app.working_dir or not os.path.exists(app.working_dir):
+        raise HTTPException(400, "No working directory — deploy the app first")
+    if strategy != "rebuild" and not _has_public_nginx_domain(app):
+        raise HTTPException(400, "Rolling and blue/green deploys need a custom domain or a base domain")
+    if app_id in _deploys_in_progress:
+        raise HTTPException(409, "A deploy is already in progress for this app — wait for it to finish.")
+
+    target_commit = (payload.commit or "").strip() or None
+    loop = asyncio.get_running_loop()
+    lines = pm.subscribe_logs(app_id)
+    result_holder: dict = {}
+
+    def log(line: str) -> None:
+        pm._push_line(app_id, str(line))
+
+    async def _run() -> None:
+        try:
+            with _single_deploy(app_id):
+                async with AsyncSessionLocal() as tdb:
+                    tapp = await _get_or_404(app_id, tdb)
+                    commit_info, source_revision = await _sync_app_source(tapp, tapp.working_dir, target_commit, log)
+                    await tdb.commit()
+
+                    if strategy == "rolling":
+                        log("[Deploy] Starting rolling deploy…")
+                        res = await _do_rolling_deploy(app_id, tdb, actor)
+                        message = f"Rolled out {commit_info}"
+                    elif strategy == "blue_green":
+                        log("[Deploy] Starting blue/green deploy…")
+                        local_node = await ensure_local_node(tdb)
+                        res = await _do_zero_downtime_deploy(app_id, tdb, local_node, actor)
+                        message = f"Switched to {commit_info}"
+                    else:
+                        log("[Docker] Rebuilding image…")
+                        await asyncio.to_thread(
+                            dm.build_image,
+                            app_id, tapp.name, tapp.working_dir, lambda _aid, line: log(line),
+                            tapp.app_type or "unknown", tapp.start_command or "", tapp.port or 8000,
+                            **_image_build_kwargs(tapp),
+                        )
+                        tapp.docker_image = dm.image_name(app_id, tapp.name)
+                        if source_revision:
+                            tapp.image_revision = source_revision
+                        await log_audit(tdb, "app.pull", actor=actor, app_id=app_id, detail={"name": tapp.name, "commit": commit_info})
+                        await tdb.commit()
+                        log("[Docker] Image rebuilt. Restart or deploy to put it live.")
+                        res = {}
+                        message = f"Built {commit_info}"
+                    result_holder["result"] = {"message": message, "commit": commit_info, "strategy": strategy, **(res or {})}
+        except HTTPException as exc:
+            result_holder["error"] = exc.detail
+        except Exception as exc:
+            result_holder["error"] = str(exc)
+        finally:
+            loop.call_soon_threadsafe(lines.put_nowait, _DEPLOY_STREAM_DONE)
+
+    asyncio.create_task(_run())
+
+    async def _generate():
+        try:
+            while True:
+                item = await _queue_get_or_heartbeat(lines)
+                if item is _SSE_PING:
+                    yield ": ping\n\n"
+                    continue
+                if item is _DEPLOY_STREAM_DONE:
+                    if "error" in result_holder:
+                        yield _sse_line(f"[Error] {result_holder['error']}")
+                        yield "data: __FAILED__\n\n"
+                    else:
+                        yield f"event: result\ndata: {json.dumps(result_holder.get('result', {}))}\n\n"
+                        yield "data: __DONE__\n\n"
+                    break
+                # Only deploy progress — container output stays in the Logs tab
+                if isinstance(item, str) and item.startswith("["):
+                    yield _sse_line(item)
+        finally:
+            pm.unsubscribe_logs(app_id, lines)
+
+    return StreamingResponse(_generate(), media_type="text/event-stream", headers=_SSE_HEADERS)

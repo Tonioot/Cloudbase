@@ -64,7 +64,7 @@ Write-Host ''
 
 Push-Location (Join-Path $Root 'backend')
 try {
-  & $Py -m uvicorn main:app --host 127.0.0.1 --port $Port --reload --reload-dir .
+  & $Py -m uvicorn main:app --host 127.0.0.1 --port $Port --reload --reload-dir . --timeout-graceful-shutdown 3
 } finally {
   Pop-Location
 }

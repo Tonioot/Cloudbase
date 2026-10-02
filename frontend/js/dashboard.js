@@ -8,14 +8,13 @@ let nodesData = [];
 let _noAppsPermission  = false;
 let _noNodesPermission = false;
 let _appFilter = 'all';
-let _appsLoaded = false;
-let _nodesLoaded = false;
 const _appStats = new Map();      // app id → { cpu, mem }
 const _nodePing = new Map();      // node id → latency text
 const _pingIntervals = new Map();
 
-// Rolling history for the sparklines (in-browser, while the page is open)
-const HISTORY_LEN = 30;
+// Sparkline series — sampled by the server in the background (/api/overview/history)
+// so they are complete the moment the dashboard opens.
+const HISTORY_LEN = 60;
 const _history = { apps: [], instances: [], cpu: [], mem: [], nodes: [] };
 
 /* ─── Init ──────────────────────────────────────────────────────────────── */
@@ -46,6 +45,8 @@ export async function initDashboard() {
   // Load independently — a 403 on one must not block the other
   await Promise.all([loadApps(), loadNodes()]);
   loadAppStats();
+  await loadOverviewHistory();
+  setInterval(loadOverviewHistory, 30000);
   if (!_noAppsPermission)  { setInterval(loadApps, 6000); setInterval(loadAppStats, 15000); }
   if (!_noNodesPermission) setInterval(loadNodes, 15000);
 }
@@ -54,7 +55,6 @@ export async function initDashboard() {
 async function loadApps() {
   try {
     appsData = await api.listApps();
-    _appsLoaded = true;
     renderKpis();
     renderApps();
     if (nodesData.length) renderNodes();
@@ -72,7 +72,6 @@ async function loadApps() {
 async function loadNodes() {
   try {
     nodesData = await api.listNodes();
-    _nodesLoaded = true;
     renderNodes();
     renderKpis();
   } catch (e) {
@@ -135,11 +134,18 @@ function fmtMem(mb) {
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
 }
 
-function pushHistory(key, value) {
-  if (value == null || Number.isNaN(value)) return;
-  const h = _history[key];
-  h.push(value);
-  if (h.length > HISTORY_LEN) h.shift();
+async function loadOverviewHistory() {
+  try {
+    const { samples = [] } = await api.getOverviewHistory();
+    const recent = samples.slice(-HISTORY_LEN);
+    const pick = key => recent.map(x => x[key]).filter(v => v != null);
+    _history.apps = pick('apps_running');
+    _history.instances = pick('instances');
+    _history.cpu = pick('cpu');
+    _history.mem = pick('mem_used_mb');
+    _history.nodes = pick('nodes_online');
+    renderKpis();
+  } catch { /* sparklines are optional */ }
 }
 
 function sparkPoints(values, w = 96, h = 18, pad = 2) {
@@ -173,18 +179,6 @@ function renderKpis() {
     const total = n.metadata?.ram_total_mb;
     const pct = n.node_metrics?.memory_percent;
     if (total && pct != null) { memTotal += total; memUsed += total * pct / 100; }
-  }
-
-  // Only record samples from data that has actually loaded, otherwise the
-  // first render (apps before nodes) would log a fake 0.
-  if (_appsLoaded) {
-    pushHistory('apps', running);
-    pushHistory('instances', instances);
-  }
-  if (_nodesLoaded) {
-    if (cpu != null) pushHistory('cpu', cpu);
-    if (memTotal) pushHistory('mem', memUsed);
-    pushHistory('nodes', online.length);
   }
 
   setKpi('kpi-apps', String(running), `of ${appsData.length}`, 'apps');

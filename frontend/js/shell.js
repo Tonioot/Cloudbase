@@ -52,50 +52,56 @@ function currentSection() {
 }
 
 const DEFAULT_CRUMBS = {
-  overview: [location.host],
+  overview: ['Overview'],
   apps: ['Apps'],
   nodes: ['Nodes'],
   audit: ['Audit log'],
 };
 
-/* ─── Rail ──────────────────────────────────────────────────────────────── */
+/* ─── Sidebar ───────────────────────────────────────────────────────────── */
 
 function railHTML(active) {
-  const item = (key, label, inner, attrs = '') =>
-    `<${inner.tag} class="rail-item${active === key ? ' active' : ''}" data-tip="${label}" aria-label="${label}" ${attrs}>${ICONS[key === 'overview' ? 'overview' : key]}</${inner.tag}>`;
+  const nav = (key, href, label, extra = '') =>
+    `<a class="sb-item${active === key ? ' active' : ''}" href="${href}" ${extra}>${ICONS[key]}<span>${label}</span></a>`;
+  const setting = (id, icon, label, extra = '') =>
+    `<button type="button" class="sb-item" id="${id}" ${extra}>${ICONS[icon]}<span>${label}</span></button>`;
   return `
-    <a href="/" class="rail-logo" aria-label="Cloudbase home">${ICONS.logo}</a>
-    <nav class="rail-nav" aria-label="Main">
-      ${item('overview', 'Overview', { tag: 'a' }, 'href="/"')}
-      ${item('apps', 'Apps', { tag: 'button' }, 'type="button" data-flyout="apps" aria-haspopup="menu"')}
-      ${item('nodes', 'Nodes', { tag: 'button' }, 'type="button" data-flyout="nodes" aria-haspopup="menu"')}
-      <a class="rail-item${active === 'audit' ? ' active' : ''}" href="/audit" data-tip="Audit log" aria-label="Audit log" data-perm="audit.view">${ICONS.audit}</a>
-      <span class="rail-item rail-item--soon" data-tip="Databases · coming soon" aria-label="Databases (coming soon)" aria-disabled="true">${ICONS.database}</span>
-      <span class="rail-sep" aria-hidden="true"></span>
-      <button type="button" class="rail-item" data-flyout="settings" data-tip="Settings" aria-label="Settings" aria-haspopup="menu">${ICONS.settings}</button>
+    <div class="sb-head">
+      <a href="/" class="rail-logo" aria-label="Cloudbase home">${ICONS.logo}</a>
+      <div class="sb-brand">
+        <span class="sb-brand-name">Cloudbase</span>
+        <span class="sb-brand-host">${esc(location.host)}</span>
+      </div>
+    </div>
+
+    <nav class="sb-nav" aria-label="Main">
+      ${nav('overview', '/', 'Overview')}
+      ${nav('audit', '/audit', 'Audit log', 'data-perm="audit.view"')}
+      <span class="sb-item sb-item--soon" aria-disabled="true">${ICONS.database}<span>Databases</span><span class="sb-tag">Soon</span></span>
+
+      <div class="sb-section"><span>Apps</span><span class="sb-count" id="rail-apps-count"></span></div>
+      <div class="sb-list" id="rail-apps-list"><div class="flyout-empty">Loading…</div></div>
+
+      <div class="sb-section"><span>Nodes</span><span class="sb-count" id="rail-nodes-count"></span></div>
+      <div class="sb-list" id="rail-nodes-list"><div class="flyout-empty">Loading…</div></div>
+
+      <div class="sb-section"><span>Settings</span></div>
+      ${setting('btn-pdm-nginx', 'globe', 'Domain &amp; SSL', 'data-perm="system.manage"')}
+      ${setting('btn-system-settings', 'sliders', 'System settings', 'data-perm="system.manage"')}
+      ${setting('btn-manage-users', 'users', 'Users &amp; roles', 'style="display:none"')}
+      ${setting('btn-github-tokens', 'key', 'GitHub tokens', 'data-perm="tokens.manage"')}
+      ${setting('btn-export-import', 'transfer', 'Export / import', 'data-perm="apps.configure"')}
     </nav>
-    <div class="rail-foot">
-      <button type="button" class="rail-item" id="btn-theme" data-tip="Theme" aria-label="Theme">${ICONS.monitor}</button>
-      <button type="button" class="rail-avatar" data-flyout="account" aria-label="Account" aria-haspopup="menu"><span id="rail-avatar-initials">··</span></button>
-    </div>
 
-    <div class="flyout" data-flyout-panel="apps" role="menu" aria-label="Apps">
-      <div class="flyout-head"><span>Apps</span><span class="flyout-count" id="rail-apps-count"></span></div>
-      <div class="flyout-scroll" id="rail-apps-list"><div class="flyout-empty">Loading…</div></div>
-    </div>
-
-    <div class="flyout" data-flyout-panel="nodes" role="menu" aria-label="Nodes">
-      <div class="flyout-head"><span>Nodes</span><span class="flyout-count" id="rail-nodes-count"></span></div>
-      <div class="flyout-scroll" id="rail-nodes-list"><div class="flyout-empty">Loading…</div></div>
-    </div>
-
-    <div class="flyout" data-flyout-panel="settings" role="menu" aria-label="Settings">
-      <div class="flyout-head"><span>Settings</span></div>
-      <button type="button" class="menu-item" id="btn-pdm-nginx" data-perm="system.manage">${ICONS.globe}<span>Domain &amp; SSL</span></button>
-      <button type="button" class="menu-item" id="btn-system-settings" data-perm="system.manage">${ICONS.sliders}<span>System settings</span></button>
-      <button type="button" class="menu-item" id="btn-manage-users" style="display:none">${ICONS.users}<span>Users &amp; roles</span></button>
-      <button type="button" class="menu-item" id="btn-github-tokens" data-perm="tokens.manage">${ICONS.key}<span>GitHub tokens</span></button>
-      <button type="button" class="menu-item" id="btn-export-import" data-perm="apps.configure">${ICONS.transfer}<span>Export / import apps</span></button>
+    <div class="sb-foot">
+      <button type="button" class="sb-user" data-flyout="account" aria-haspopup="menu" aria-label="Account">
+        <span class="rail-avatar" id="rail-avatar-initials">··</span>
+        <span class="sb-user-text">
+          <span class="sb-user-name" id="sb-user-name">Signed in</span>
+          <span class="sb-user-role" id="sb-user-role"></span>
+        </span>
+      </button>
+      <button type="button" class="sb-icon-btn" id="btn-theme" aria-label="Theme">${ICONS.monitor}</button>
     </div>
 
     <div class="flyout flyout--bottom" data-flyout-panel="account" role="menu" aria-label="Account">
@@ -129,7 +135,7 @@ function toggleFlyout(btn) {
   const rect = btn.getBoundingClientRect();
   if (panel.classList.contains('flyout--bottom')) {
     panel.style.top = '';
-    panel.style.bottom = `${Math.max(8, window.innerHeight - rect.bottom)}px`;
+    panel.style.bottom = `${Math.max(8, window.innerHeight - rect.top + 6)}px`;
   } else {
     panel.style.bottom = '';
     panel.style.top = `${Math.max(8, Math.min(rect.top - 6, window.innerHeight - 360))}px`;
@@ -145,7 +151,7 @@ function syncThemeButton() {
   const choice = window.cbTheme.get();
   btn.innerHTML = choice === 'light' ? ICONS.sun : choice === 'dark' ? ICONS.moon : ICONS.monitor;
   const label = `Theme: ${choice === 'system' ? 'system' : choice}`;
-  btn.dataset.tip = label;
+  btn.title = label;
   btn.setAttribute('aria-label', label);
 }
 
@@ -153,6 +159,9 @@ function syncThemeButton() {
 
 function topbarHTML() {
   return `
+    <button type="button" class="nav-toggle" id="btn-nav" aria-label="Open navigation" aria-controls="rail" aria-expanded="false">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
+    </button>
     <nav class="topbar-crumbs" id="topbar-crumbs" aria-label="Breadcrumb"></nav>
     <div class="topbar-actions" id="topbar-actions"></div>
     <button type="button" class="search-trigger" id="btn-search" aria-label="Search or run a command">
@@ -373,6 +382,17 @@ function mount() {
   window.addEventListener('resize', closeFlyouts);
   document.getElementById('btn-search')?.addEventListener('click', openPalette);
 
+  // Small screens: the sidebar slides in over the page
+  const navBtn = document.getElementById('btn-nav');
+  const setNav = open => {
+    document.body.classList.toggle('nav-open', open);
+    navBtn?.setAttribute('aria-expanded', String(open));
+  };
+  navBtn?.addEventListener('click', e => { e.stopPropagation(); setNav(!document.body.classList.contains('nav-open')); });
+  document.addEventListener('click', e => {
+    if (document.body.classList.contains('nav-open') && !e.target.closest('#rail')) setNav(false);
+  });
+
   const themeBtn = document.getElementById('btn-theme');
   themeBtn?.addEventListener('click', () => { window.cbTheme?.cycle(); syncThemeButton(); });
   syncThemeButton();
@@ -380,9 +400,13 @@ function mount() {
   window.addEventListener('cloudbase-role-ready', e => {
     const name = e.detail?.username || 'admin';
     document.getElementById('rail-user-name').textContent = name;
+    document.getElementById('sb-user-name').textContent = name;
     document.getElementById('rail-avatar-initials').textContent = name.slice(0, 2).toUpperCase();
     const role = e.detail?.role;
-    if (role) document.getElementById('rail-user-role').textContent = role;
+    if (role) {
+      document.getElementById('rail-user-role').textContent = role;
+      document.getElementById('sb-user-role').textContent = role;
+    }
   });
 }
 

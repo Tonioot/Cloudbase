@@ -55,8 +55,8 @@
   --font-mono: 'Geist Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 
   /* Sizing */
-  --rail-width:  60px;
-  --content-max: 1180px;
+  --rail-width:  240px;
+  --content-max: 1440px;
   --radius-xs:   4px;
   --radius-sm:   6px;
   --radius:      10px;

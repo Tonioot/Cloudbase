@@ -342,6 +342,7 @@ async def _remote_replica_stats_poller():
                             snap["timestamp"] = int(_time.time() * 1000)
                             for replica in replicas:
                                 pm.set_replica_stats(replica.id, {"replica_id": replica.id, **snap})
+                            app_frames.setdefault(app_id, []).append(dict(snap))
                             _rlog.info("poll stored stats for %d replicas on node=%d", len(replicas), node_id)
                         elif s.get("status") == "stopped":
                             _rlog.info("poll node=%d app=%d temporarily stopped during restart", node_id, app_id)
@@ -369,13 +370,97 @@ async def _remote_replica_stats_poller():
                     logging.getLogger("cloudbase.remote_stats").warning(
                         "remote stats poll failed node=%d app=%d: %s", node_id, app_id, _e)
 
+            app_frames: dict[int, list[dict]] = {}
             await asyncio.gather(*[_poll_group(nid, aid, reps) for (nid, aid), reps in groups.items()])
+
+            # The local stats collector skips apps on remote nodes, so without this
+            # their history (live charts on open + the DB history writer) would only
+            # fill while someone has the app's stats open. One frame per app,
+            # merged over all nodes it runs on.
+            from routers.stats import _aggregate_frames
+            for app_id, frames in app_frames.items():
+                merged = _aggregate_frames(frames)
+                merged.update({"status": "running", "docker": True, "timestamp": int(_time.time() * 1000)})
+                pm._stats_history.setdefault(app_id, deque(maxlen=60)).append(merged)
 
         except asyncio.CancelledError:
             return
         except Exception:
             pass
         await asyncio.sleep(15)
+
+
+# ── Cluster overview history (dashboard sparklines) ───────────────────────────
+# Sampled in the background so the dashboard can draw its sparklines the moment
+# it opens instead of building them up while the page is visible.
+_OVERVIEW_SAMPLE_SECONDS = 30
+_overview_history: deque = deque(maxlen=120)   # last hour
+_node_metrics_history: dict[int, deque] = {}   # node id → last hour of cpu/mem/disk
+
+
+async def _overview_sampler():
+    from models import ApplicationReplica as _AR, Node as _Node
+    await asyncio.sleep(5)
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                apps = (await db.execute(select(Application))).scalars().all()
+                replicas = (await db.execute(select(_AR))).scalars().all()
+                nodes = (await db.execute(select(_Node))).scalars().all()
+
+            online = [n for n in nodes if n.status == "online"]
+            now_ms = int(_time.time() * 1000)
+            # cpu_percent(interval=None) measures since the previous call — read it once per round
+            local_cpu = psutil.cpu_percent(interval=None)
+
+            # Per-node samples for the node page charts (primary and remote alike)
+            for n in online:
+                if n.is_local:
+                    sample = {
+                        "ts": now_ms,
+                        "cpu": local_cpu,
+                        "mem": psutil.virtual_memory().percent,
+                        "disk": psutil.disk_usage("/").percent,
+                    }
+                else:
+                    sample = {"ts": now_ms, "cpu": n.node_cpu_percent, "mem": n.node_memory_percent, "disk": n.node_disk_percent}
+                _node_metrics_history.setdefault(n.id, deque(maxlen=120)).append(sample)
+
+            cpu_vals: list[float] = []
+            mem_used = mem_total = 0.0
+            for n in online:
+                if n.is_local:
+                    vm = psutil.virtual_memory()
+                    cpu_vals.append(local_cpu)
+                    mem_total += vm.total / 1024 / 1024
+                    mem_used += vm.used / 1024 / 1024
+                    continue
+                if n.node_cpu_percent is not None:
+                    cpu_vals.append(n.node_cpu_percent)
+                try:
+                    total = (json.loads(n.metadata_json or "{}") or {}).get("ram_total_mb")
+                except Exception:
+                    total = None
+                if total and n.node_memory_percent is not None:
+                    mem_total += total
+                    mem_used += total * n.node_memory_percent / 100
+
+            _overview_history.append({
+                "ts": int(_time.time() * 1000),
+                "apps_running": sum(1 for a in apps if a.status == "running"),
+                "apps_total": len(apps),
+                "instances": sum(1 for r in replicas if r.status == "running"),
+                "cpu": round(sum(cpu_vals) / len(cpu_vals), 1) if cpu_vals else None,
+                "mem_used_mb": round(mem_used) if mem_total else None,
+                "mem_total_mb": round(mem_total) if mem_total else None,
+                "nodes_online": len(online),
+                "nodes_total": len(nodes),
+            })
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            log.debug(f"overview sampler failed: {exc}")
+        await asyncio.sleep(_OVERVIEW_SAMPLE_SECONDS)
 
 
 # ── Historical stats writer ───────────────────────────────────────────────────
@@ -846,6 +931,7 @@ async def lifespan(app: FastAPI):
     cleanup_task       = asyncio.create_task(_node_command_cleanup())
     autoscaler_task    = asyncio.create_task(_autoscaler())
     orphan_task        = asyncio.create_task(_orphan_replica_cleanup())
+    overview_task      = asyncio.create_task(_overview_sampler())
 
     # Start node agent if configured (as an integrated background task)
     agent_task = None
@@ -854,7 +940,7 @@ async def lifespan(app: FastAPI):
         agent_task = asyncio.create_task(node_agent.start_agent())
 
     yield
-    for task in (monitor_task, stats_task, node_task, history_task, remote_stats_task, cleanup_task, autoscaler_task, orphan_task, agent_task):
+    for task in (monitor_task, stats_task, node_task, history_task, remote_stats_task, cleanup_task, autoscaler_task, orphan_task, overview_task, agent_task):
         if not task: continue
         task.cancel()
         try:
@@ -1034,6 +1120,18 @@ app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+@app.get("/api/nodes/{node_id}/metrics/history")
+async def node_metrics_history(node_id: int, _user: dict = Depends(auth.require_permission("nodes.view"))):
+    """Recent cpu / memory / disk samples for one node (oldest first)."""
+    return {"interval_seconds": _OVERVIEW_SAMPLE_SECONDS, "samples": list(_node_metrics_history.get(node_id, []))}
+
+
+@app.get("/api/overview/history")
+async def overview_history(_user: dict = Depends(auth.require_permission("apps.view"))):
+    """Recent cluster samples for the dashboard sparklines (oldest first)."""
+    return {"interval_seconds": _OVERVIEW_SAMPLE_SECONDS, "samples": list(_overview_history)}
 
 
 @app.get("/api/health")

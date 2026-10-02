@@ -205,6 +205,27 @@ function _initNodeCharts() {
 
     const offline = node.status !== 'online';
     _setChartsOfflineState(offline);
+    _loadNodeHistory();
+}
+
+// The server samples every node in the background; prefill the charts with
+// that so they are not empty when the page opens. Live points append after.
+async function _loadNodeHistory() {
+    try {
+        const { samples = [] } = await api.getNodeMetricsHistory(NODE_ID);
+        const recent = samples.slice(-MAX_PTS);
+        const fill = (arr, key) => {
+            const pts = recent.filter(x => x[key] != null).map(x => ({ t: x.ts, v: x[key] }));
+            arr.splice(0, arr.length, ...pts, ...arr);   // history first, keep any live points
+            if (arr.length > MAX_PTS) arr.splice(0, arr.length - MAX_PTS);
+        };
+        fill(nCpuData, 'cpu');
+        fill(nMemData, 'mem');
+        fill(nDiskData, 'disk');
+        _updateNodeChart(nChartCpu,  nCpuData);
+        _updateNodeChart(nChartMem,  nMemData);
+        _updateNodeChart(nChartDisk, nDiskData);
+    } catch { /* history is optional */ }
 }
 
 function _setChartsOfflineState(offline) {

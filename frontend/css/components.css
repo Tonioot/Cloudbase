@@ -705,3 +705,74 @@ select.input { padding-right: 28px; }
 .audit-time { white-space: nowrap; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .audit-action { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 12px; color: var(--text); white-space: nowrap; }
 .audit-detail { max-width: 420px; color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ─── Form dialogs (e.g. Add instance) ──────────────────────────────────── */
+.form-dialog { width: 460px; }
+.form-dialog .dialog-body { display: flex; flex-direction: column; gap: 22px; color: var(--text-2); }
+.form-dialog-intro { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.form-dialog-intro strong { color: var(--text); font-weight: 500; }
+
+.form-block { border: 0; padding: 0; margin: 0; min-width: 0; }
+.form-block legend { padding: 0; margin-bottom: 10px; font-size: 13px; font-weight: 500; color: var(--text); }
+.form-block legend small { font-weight: 400; color: var(--faint); margin-left: 6px; }
+
+.choice-list { display: flex; flex-direction: column; border: 1px solid var(--line-strong); border-radius: var(--radius); overflow: hidden; }
+.choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--line);
+  transition: background var(--transition);
+}
+.choice:last-child { border-bottom: 0; }
+.choice:hover { background: var(--hover); }
+.choice input { position: absolute; opacity: 0; pointer-events: none; }
+.choice-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--line-strong);
+  flex-shrink: 0;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.choice input:checked + .choice-dot { border: 4px solid var(--text); }
+.choice input:focus-visible + .choice-dot { box-shadow: 0 0 0 3px var(--focus); }
+.choice-text { display: flex; flex-direction: column; min-width: 0; }
+.choice-text > span { color: var(--text); }
+.choice-text small { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+
+.form-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.unit-input { position: relative; display: block; }
+.unit-input .input { padding-right: 44px; }
+.unit-input .unit {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--faint);
+  pointer-events: none;
+}
+
+.form-advanced { border-top: 1px solid var(--line); padding-top: 14px; }
+.form-advanced summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.form-advanced summary::-webkit-details-marker { display: none; }
+.form-advanced summary::before { content: '›'; display: inline-block; transition: transform var(--transition); color: var(--muted); }
+.form-advanced[open] summary::before { transform: rotate(90deg); }
+.form-advanced summary:hover { color: var(--text); }
+/* <details> cannot be a flex container in every browser — space children with margins */
+.form-advanced > :not(summary) { margin-top: 16px; }
+.form-toggle .field-label { display: block; margin-bottom: 2px; color: var(--text); }
+.form-toggle .field-hint { margin-top: 0; }
+.form-tmpfs-size { width: 140px; }

@@ -59,19 +59,27 @@
               Deploy
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
-            <div class="dropdown" role="menu" aria-label="Deploy">
-              <button type="button" class="menu-item" id="menu-pull-rebuild" role="menuitem">
-                <span class="menu-item-text"><span>Pull &amp; rebuild</span><small>Pick a commit, sync code and build a new image</small></span>
+            <div class="dropdown dropdown--wide" role="menu" aria-label="Deploy">
+              <div class="dropdown-label">Latest code from Git</div>
+              <button type="button" class="menu-item needs-route" id="menu-pull-rolling" role="menuitem">
+                <span class="menu-item-text"><span>Pull &amp; rolling deploy</span><small>Pick a commit, build once, replace instances one at a time</small></span>
               </button>
-              <button type="button" class="menu-item" id="menu-rebuild" role="menuitem">
-                <span class="menu-item-text"><span>Rebuild image</span><small>Build again from the current code</small></span>
+              <button type="button" class="menu-item needs-route" id="menu-pull-bluegreen" role="menuitem">
+                <span class="menu-item-text"><span>Pull &amp; blue/green deploy</span><small>Start new instances next to the old ones, then switch</small></span>
+              </button>
+              <button type="button" class="menu-item" id="menu-pull-rebuild" role="menuitem">
+                <span class="menu-item-text"><span>Pull &amp; build only</span><small>Build a new image; running instances stay as they are</small></span>
               </button>
               <div class="menu-sep" role="separator"></div>
+              <div class="dropdown-label">Current code</div>
+              <button type="button" class="menu-item" id="menu-rebuild" role="menuitem">
+                <span class="menu-item-text"><span>Rebuild image</span><small>Build again without pulling</small></span>
+              </button>
               <button type="button" class="menu-item" id="btn-rolling-deploy" role="menuitem" style="display:none">
-                <span class="menu-item-text"><span>Rolling deploy</span><small>Replace instances one at a time — no downtime</small></span>
+                <span class="menu-item-text"><span>Rolling redeploy</span><small>Rebuild and replace instances one at a time</small></span>
               </button>
               <button type="button" class="menu-item" id="btn-zero-downtime" role="menuitem" style="display:none">
-                <span class="menu-item-text"><span>Blue/green deploy</span><small>Start new instances, health check, then switch</small></span>
+                <span class="menu-item-text"><span>Blue/green redeploy</span><small>Rebuild, start new instances, health check, switch</small></span>
               </button>
             </div>
           </div>
@@ -147,17 +155,17 @@
 
               <!-- Left 1/3: live metrics list, always 10 rows -->
               <div class="card sinfo-panel">
-                <div class="sinfo-row"><span class="sinfo-label">CPU Usage</span><span class="sinfo-val" id="s-cpu">—</span></div>
-                <div class="sinfo-row"><span class="sinfo-label">Memory RSS</span><span class="sinfo-val" id="s-mem">—</span></div>
-                <div class="sinfo-row"><span class="sinfo-label">Virtual Mem</span><span class="sinfo-val" id="s-vms">—</span></div>
+                <div class="sinfo-row"><span class="sinfo-label">CPU</span><span class="sinfo-val" id="s-cpu">—</span></div>
+                <div class="sinfo-row"><span class="sinfo-label">Memory</span><span class="sinfo-val" id="s-mem">—</span></div>
                 <div class="sinfo-row"><span class="sinfo-label">Uptime</span><span class="sinfo-val" id="s-uptime">—</span></div>
-                <div class="sinfo-row"><span class="sinfo-label">System CPU</span><span class="sinfo-val" id="s-syscpu">—</span></div>
+                <div class="sinfo-row"><span class="sinfo-label">Instances</span><span class="sinfo-val" id="s-instances">—</span></div>
                 <div class="sinfo-divider"></div>
-                <div class="sinfo-row"><span class="sinfo-label" id="sl-r6">PID</span><span class="sinfo-val smet-mono" id="s-r6">—</span></div>
-                <div class="sinfo-row"><span class="sinfo-label" id="sl-r7">Threads</span><span class="sinfo-val" id="s-r7">—</span></div>
-                <div class="sinfo-row"><span class="sinfo-label" id="sl-r8">Connections</span><span class="sinfo-val" id="s-r8">—</span></div>
-                <div class="sinfo-row"><span class="sinfo-label">Disk Read</span><span class="sinfo-val" id="s-disk-read">—</span></div>
-                <div class="sinfo-row"><span class="sinfo-label">Disk Write</span><span class="sinfo-val" id="s-disk-write">—</span></div>
+                <div class="sinfo-row"><span class="sinfo-label">Network in</span><span class="sinfo-val" id="s-net-rx">—</span></div>
+                <div class="sinfo-row"><span class="sinfo-label">Network out</span><span class="sinfo-val" id="s-net-tx">—</span></div>
+                <div class="sinfo-row"><span class="sinfo-label">Disk read</span><span class="sinfo-val" id="s-disk-read">—</span></div>
+                <div class="sinfo-row"><span class="sinfo-label">Disk write</span><span class="sinfo-val" id="s-disk-write">—</span></div>
+                <div class="sinfo-divider"></div>
+                <div class="sinfo-row"><span class="sinfo-label">Host CPU</span><span class="sinfo-val" id="s-syscpu">—</span></div>
               </div>
 
               <!-- Right 2/3: 2×2 real-time charts -->

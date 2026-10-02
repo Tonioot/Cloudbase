@@ -54,4 +54,4 @@ echo "  Stop with Ctrl+C"
 echo
 
 cd "$ROOT/backend"
-exec "$PY" -m uvicorn main:app --host 127.0.0.1 --port "$PORT" --reload --reload-dir .
+exec "$PY" -m uvicorn main:app --host 127.0.0.1 --port "$PORT" --reload --reload-dir . --timeout-graceful-shutdown 3

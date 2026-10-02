@@ -171,7 +171,9 @@ function renderHeader() {
   document.getElementById('btn-maintenance-mode').addEventListener('click', () => toggleMode('maintenance'));
   document.getElementById('btn-update-mode').addEventListener('click',      () => toggleMode('update'));
   // Deploy menu: the pull / rebuild flows live on the Settings → Actions tiles
-  document.getElementById('menu-pull-rebuild')?.addEventListener('click', () => tileAction('pull', 'Pull'));
+  document.getElementById('menu-pull-rolling')?.addEventListener('click', () => pullAndDeploy('rolling'));
+  document.getElementById('menu-pull-bluegreen')?.addEventListener('click', () => pullAndDeploy('blue_green'));
+  document.getElementById('menu-pull-rebuild')?.addEventListener('click', () => pullAndDeploy('rebuild'));
   document.getElementById('menu-rebuild')?.addEventListener('click', () => tileAction('rebuild', 'Rebuild'));
   _syncZeroDowntimeButton();
   // Hide web-only controls (downtime/update mode buttons etc.) right away for
@@ -186,6 +188,7 @@ function _syncZeroDowntimeButton() {
   // Base-domain routed apps can have app_url without app.nginx_enabled.
   const hasPublicRoute = !!(app?.app_url || (app?.nginx_enabled && app?.domain));
   const canDeploy = !!(!app?.no_web && hasPublicRoute);
+  document.querySelectorAll('.needs-route').forEach(el => { el.style.display = canDeploy ? '' : 'none'; });
 
   if (zdBtn) {
     zdBtn.style.display = canDeploy ? '' : 'none';
@@ -683,12 +686,20 @@ function handleStatData(data) {
 
   if (data._instance_count) _updateStatsContextBar(data._instance_count);
 
-  // Always accumulate — even while on a different tab
-  const now = new Date().toLocaleTimeString('nl', { hour:'2-digit', minute:'2-digit' });
+  // Always accumulate all four series — even while on a different tab. The
+  // server replays its recent frames when the socket opens, so label each
+  // point with its own time rather than "now".
   const timestamp = data.timestamp || Date.now();
+  const now = new Date(timestamp).toLocaleTimeString('nl', { hour:'2-digit', minute:'2-digit' });
+  const netTotal  = (data.net_rx_mb    || 0) + (data.net_tx_mb    || 0);
+  const diskTotal = (data.disk_read_mb || 0) + (data.disk_write_mb || 0);
   cpuData.push({ t: now, v: data.cpu_percent || 0, ts: timestamp });
   memData.push({ t: now, v: data.memory_mb   || 0, ts: timestamp });
-  if (cpuData.length > 60) { cpuData.shift(); memData.shift(); }
+  netData.push({ t: now, v: netTotal, ts: timestamp });
+  diskData.push({ t: now, v: diskTotal, ts: timestamp });
+  for (const series of [cpuData, memData, netData, diskData]) {
+    if (series.length > 60) series.shift();
+  }
 
   if (!statsTabActive) return;
 
@@ -700,36 +711,15 @@ function handleStatData(data) {
 
   document.getElementById('s-cpu').textContent    = `${(data.cpu_percent || 0).toFixed(1)}%`;
   document.getElementById('s-mem').textContent    = `${(data.memory_mb   || 0).toFixed(0)} MB`;
-  document.getElementById('s-vms').textContent    = fmtMb(data.memory_vms_mb);
   document.getElementById('s-uptime').textContent = fmtUptime(data.uptime_seconds || 0);
   document.getElementById('s-syscpu').textContent = `${(data.system_cpu_percent || 0).toFixed(1)}%`;
 
-  // Rows 6-8 swap labels/values based on docker vs native
-  const isDocker = !!data.docker;
-  if (isDocker) {
-    document.getElementById('sl-r6').textContent = 'Status';
-    document.getElementById('sl-r7').textContent = 'Net RX';
-    document.getElementById('sl-r8').textContent = 'Net TX';
-    document.getElementById('s-r6').textContent  = data.status || '—';
-    document.getElementById('s-r7').textContent  = fmtMb(data.net_rx_mb);
-    document.getElementById('s-r8').textContent  = fmtMb(data.net_tx_mb);
-  } else {
-    document.getElementById('sl-r6').textContent = 'PID';
-    document.getElementById('sl-r7').textContent = 'Threads';
-    document.getElementById('sl-r8').textContent = 'Connections';
-    document.getElementById('s-r6').textContent  = data.pid ?? '—';
-    document.getElementById('s-r7').textContent  = data.num_threads ?? '—';
-    document.getElementById('s-r8').textContent  = data.num_connections ?? '—';
-  }
+  // Every app runs in Docker: show container metrics only
+  document.getElementById('s-instances').textContent = data._instance_count ?? 1;
+  document.getElementById('s-net-rx').textContent = fmtMb(data.net_rx_mb);
+  document.getElementById('s-net-tx').textContent = fmtMb(data.net_tx_mb);
   document.getElementById('s-disk-read').textContent  = fmtMb(data.disk_read_mb);
   document.getElementById('s-disk-write').textContent = fmtMb(data.disk_write_mb);
-
-  const netTotal  = (data.net_rx_mb    || 0) + (data.net_tx_mb    || 0);
-  const diskTotal = (data.disk_read_mb || 0) + (data.disk_write_mb || 0);
-  netData.push({ t: now, v: netTotal });
-  diskData.push({ t: now, v: diskTotal });
-  if (netData.length  > 60) netData.shift();
-  if (diskData.length > 60) diskData.shift();
 
   updateChart(chartCpu,  cpuData);
   updateChart(chartMem,  memData);
@@ -2117,56 +2107,77 @@ async function initInstances() {
       }
       const available = nodes.filter(n => n.enabled && n.status === 'online');
 
-      const _field = (id, label, type, placeholder, hint) =>
-        `<div style="margin-bottom:10px">
-          <div style="font-size:12px;font-weight:500;color:var(--text-secondary);margin-bottom:4px">${label}</div>
-          <input id="${id}" type="${type}" placeholder="${placeholder}"
-            class="input" />
-          ${hint ? `<div style="font-size:11px;color:var(--text-muted);margin-top:3px">${hint}</div>` : ''}
-        </div>`;
+      const isStaticApp = app.app_type === 'static';
+      const nodeOptions = [
+        { value: '', name: 'primary', meta: 'This server' },
+        ...available.filter(n => !n.is_local).map(n => ({
+          value: String(n.id), name: n.name, meta: [n.metadata?.arch, n.public_host].filter(Boolean).join(' · ') || 'online',
+        })),
+      ];
 
       const result = await new Promise(resolve => {
         const backdrop = document.createElement('div');
         backdrop.className = 'dialog-backdrop';
         backdrop.innerHTML = `
-          <div class="dialog" style="max-width:440px">
-            <div class="dialog-title">Add Instance</div>
-            <div class="dialog-body" style="color:var(--text-secondary);font-size:13px;line-height:1.5">
-              <div style="margin-bottom:12px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Node</div>
-              <select id="inst-node-select" class="input" style="margin-bottom:16px">
-                <option value="">Primary node</option>
-                ${available.filter(n => !n.is_local).map(n => `<option value="${n.id}">${n.name} (${n.public_host || n.status})</option>`).join('')}
-              </select>
-              <div style="margin-bottom:8px;font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em">Docker Runtime <span style="font-weight:400;text-transform:none;letter-spacing:0">(optional overrides)</span></div>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-                ${_field('inst-cpu', 'CPU Limit', 'number', app.docker_cpu_limit || '1.0', 'Max CPUs')}
-                ${_field('inst-mem', 'Memory Limit (MB)', 'number', app.docker_memory_limit_mb || '512', 'Hard memory cap')}
-              </div>
-              <div style="display:flex;align-items:center;gap:16px;margin-top:4px">
-                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-                  <input type="checkbox" id="inst-readonly" ${app.docker_read_only_root ? 'checked' : ''} style="accent-color:var(--accent)" />
-                  Read-only root fs
+          <div class="dialog dialog-modern form-dialog" role="dialog" aria-modal="true" aria-labelledby="inst-dlg-title">
+            <div class="dialog-title" id="inst-dlg-title">Add instance</div>
+            <div class="dialog-body">
+              <p class="form-dialog-intro">Start one more copy of <strong>${escHtml(app.name)}</strong>. Traffic is spread over all running instances.</p>
+
+              <fieldset class="form-block">
+                <legend>Node</legend>
+                <div class="choice-list" role="radiogroup">
+                  ${nodeOptions.map((n, i) => `
+                    <label class="choice">
+                      <input type="radio" name="inst-node" value="${n.value}" ${i === 0 ? 'checked' : ''} />
+                      <span class="choice-dot" aria-hidden="true"></span>
+                      <span class="choice-text"><span>${escHtml(n.name)}</span><small>${escHtml(n.meta)}</small></span>
+                    </label>`).join('')}
+                </div>
+              </fieldset>
+
+              <fieldset class="form-block">
+                <legend>Resources <small>leave empty for the app defaults</small></legend>
+                <div class="form-pair">
+                  <label class="unit-input"><span class="sr-only">CPU limit</span>
+                    <input id="inst-cpu" class="input" type="number" min="0.1" step="0.1" placeholder="${app.docker_cpu_limit || '1.0'}" />
+                    <span class="unit">CPU</span>
+                  </label>
+                  <label class="unit-input"><span class="sr-only">Memory limit</span>
+                    <input id="inst-mem" class="input" type="number" min="16" step="16" placeholder="${app.docker_memory_limit_mb || '512'}" />
+                    <span class="unit">MB</span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <details class="form-advanced">
+                <summary>Advanced</summary>
+                ${isStaticApp ? '' : `
+                <label class="toggle-row form-toggle">
+                  <span><span class="field-label">Read-only root filesystem</span><span class="field-hint">Only mounted paths are writable</span></span>
+                  <span class="toggle"><input type="checkbox" id="inst-readonly" ${app.docker_read_only_root ? 'checked' : ''} /><span class="toggle-slider"></span></span>
+                </label>`}
+                <label class="toggle-row form-toggle">
+                  <span><span class="field-label">Tmpfs at /tmp</span><span class="field-hint">In-memory scratch space</span></span>
+                  <span class="toggle"><input type="checkbox" id="inst-tmpfs" ${app.docker_tmpfs_enabled ? 'checked' : ''} /><span class="toggle-slider"></span></span>
                 </label>
-                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px">
-                  <input type="checkbox" id="inst-tmpfs" ${app.docker_tmpfs_enabled ? 'checked' : ''} style="accent-color:var(--accent)" />
-                  Tmpfs /tmp
+                <label class="unit-input form-tmpfs-size"><span class="sr-only">Tmpfs size</span>
+                  <input id="inst-tmpfs-size" class="input" type="number" min="1" placeholder="${app.docker_tmpfs_size_mb || 64}" />
+                  <span class="unit">MB</span>
                 </label>
-                <input id="inst-tmpfs-size" type="number" placeholder="${app.docker_tmpfs_size_mb || 64}"
-                  class="input" style="width:80px;height:28px" />
-                <span style="font-size:11px;color:var(--text-muted)">MB</span>
-              </div>
+              </details>
             </div>
             <div class="dialog-actions">
-              <button class="btn btn-secondary" id="inst-dlg-cancel">Cancel</button>
-              <button class="btn btn-primary" id="inst-dlg-ok">Start Instance</button>
+              <button class="btn" id="inst-dlg-cancel">Cancel</button>
+              <button class="btn btn-primary" id="inst-dlg-ok">Start instance</button>
             </div>
           </div>`;
         document.body.appendChild(backdrop);
         const ok = () => {
-          const nodeVal = backdrop.querySelector('#inst-node-select').value;
+          const nodeVal = backdrop.querySelector('input[name="inst-node"]:checked')?.value || '';
           const cpu = parseFloat(backdrop.querySelector('#inst-cpu').value);
           const mem = parseInt(backdrop.querySelector('#inst-mem').value, 10);
-          const readonly = backdrop.querySelector('#inst-readonly').checked;
+          const readonly = !!backdrop.querySelector('#inst-readonly')?.checked;
           const tmpfs = backdrop.querySelector('#inst-tmpfs').checked;
           const tmpfsSz = parseInt(backdrop.querySelector('#inst-tmpfs-size').value, 10);
           backdrop.remove();
@@ -2342,10 +2353,11 @@ async function openNginxModal() {
 
 async function tileAction(endpoint, label) {
   const tileId = endpoint === 'pull' ? 'tile-pull' : 'tile-rebuild';
-  const tile = document.getElementById(tileId);
-  tile.disabled = true;
-  const origIcon = tile.querySelector('.action-tile-icon').innerHTML;
-  tile.querySelector('.action-tile-icon').innerHTML = spinner;
+  const tile = document.getElementById(tileId);           // optional: Settings → Actions tile
+  const tileIcon = tile?.querySelector('.action-tile-icon');
+  const origIcon = tileIcon?.innerHTML;
+  if (tile) tile.disabled = true;
+  if (tileIcon) tileIcon.innerHTML = spinner;
   const logsTitle = endpoint === 'pull' ? 'Pull + Rebuild Logs' : 'Rebuild Logs';
   let logDialog;
 
@@ -2372,8 +2384,30 @@ async function tileAction(endpoint, label) {
     }
     toast(e.message, 'error');
   } finally {
-    tile.disabled = false;
-    tile.querySelector('.action-tile-icon').innerHTML = origIcon;
+    if (tile) tile.disabled = false;
+    if (tileIcon) tileIcon.innerHTML = origIcon;
+  }
+}
+
+/** Pull a commit and deploy it in one go: strategy = rebuild | rolling | blue_green. */
+async function pullAndDeploy(strategy) {
+  const commit = await openCommitPicker();
+  if (commit === null) return;
+  const titles = { rebuild: 'Pull & build', rolling: 'Pull & rolling deploy', blue_green: 'Pull & blue/green deploy' };
+  const dlg = openActionLogsDialog(titles[strategy] || 'Deploy');
+  try {
+    const res = await api.streamAction(`/apps/${APP_ID}/deploy/stream`, { commit: commit || null, strategy }, line => dlg.append(line));
+    dlg.setStatus('Done');
+    toast(res?.message || 'Deploy finished');
+  } catch (e) {
+    dlg.append(`[Error] ${e.message}`);
+    dlg.setStatus('Failed');
+    toast(e.message, 'error');
+  } finally {
+    try {
+      app = await api.getApp(APP_ID);
+      updateHeaderStatus();
+    } catch { /* keep the old header */ }
   }
 }
 

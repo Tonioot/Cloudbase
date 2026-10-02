@@ -427,3 +427,13 @@
 @media (max-width: 1000px) {
   .node-bottom { grid-template-columns: 1fr; }
 }
+
+/* Settings forms stay a readable width on wide screens: label, field, hint
+   and toggle sit together instead of stretching across the page. */
+.settings-group { grid-template-columns: 240px minmax(0, 720px); justify-content: start; gap: 56px; }
+.settings-group .field { margin-bottom: 20px; }
+.settings-group .field:last-child { margin-bottom: 0; }
+.settings-group .toggle-row .field-label { margin-bottom: 0; }
+@media (max-width: 1000px) {
+  .settings-group { grid-template-columns: 1fr; gap: 14px; }
+}
