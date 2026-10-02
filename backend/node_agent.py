@@ -352,6 +352,15 @@ async def _run_tunnel(state: AgentState, replica_id: int, local_port: int) -> No
             _agent_log(f"[tunnel] replica={replica_id} cancelled")
             break
         except Exception as e:
+            # The primary rejects the tunnel (HTTP 403 / close 1008) when the
+            # replica no longer exists or isn't ours — stop instead of retrying forever.
+            status = getattr(getattr(e, "response", None), "status_code", None) or getattr(e, "status_code", None)
+            close_code = getattr(getattr(e, "rcvd", None), "code", None)
+            if status == 403 or close_code == 1008:
+                _agent_log(f"[tunnel] replica={replica_id} rejected by primary ({e}), stopping tunnel")
+                if _active_tunnels.get(replica_id) is asyncio.current_task():
+                    _active_tunnels.pop(replica_id, None)
+                break
             _agent_log(f"[tunnel] replica={replica_id} disconnected ({type(e).__name__}: {e}), reconnecting in 5s")
 
         # Check if tunnel was explicitly removed before reconnecting
@@ -395,12 +404,27 @@ _orphan_suspects: set[int] = set()
 
 
 def _parse_docker_created(value: str) -> Optional[float]:
-    """Parse docker's CreatedAt ('2026-10-02 20:43:30 +0200 CEST') to a timestamp."""
-    from datetime import datetime
+    """Parse the Docker API 'Created' value ('2026-10-02T18:43:30.123456789Z') to a timestamp."""
+    from datetime import datetime, timezone
     try:
-        return datetime.strptime(value.strip()[:25], "%Y-%m-%d %H:%M:%S %z").timestamp()
+        base = value.strip().rstrip("Z").split(".")[0]
+        return datetime.strptime(base, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc).timestamp()
     except Exception:
         return None
+
+
+def _list_replica_containers() -> list[tuple[str, Optional[float]]]:
+    import docker_manager as dm
+    client = dm._get_client()
+    out = []
+    for c in client.containers.list(all=True, filters={"name": "cloudbase-app-"}):
+        out.append((c.name, _parse_docker_created(c.attrs.get("Created") or "")))
+    return out
+
+
+def _remove_container(name: str) -> None:
+    import docker_manager as dm
+    dm._get_client().containers.get(name).remove(force=True)
 
 
 async def _cleanup_orphaned_replica_containers(client: httpx.AsyncClient, state: AgentState) -> None:
@@ -418,40 +442,36 @@ async def _cleanup_orphaned_replica_containers(client: httpx.AsyncClient, state:
             headers=node_headers, timeout=10,
         )
         if resp.status_code != 200:
+            _agent_log(f"[cleanup] my-replicas returned HTTP {resp.status_code}, skipping orphan check")
             return
         live_ids: set[int] = {r["id"] for r in resp.json().get("replicas", [])}
 
-        # Enumerate local Docker containers whose name matches the replica pattern
-        result = await asyncio.to_thread(
-            subprocess.run,
-            ["docker", "ps", "-a", "--format", "{{.Names}}\t{{.CreatedAt}}", "--filter", "name=cloudbase-app-"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode != 0:
-            return
+        # Enumerate local replica containers through the Docker API (same access
+        # the node uses to start them — the docker CLI may not be on the PATH
+        # of the service, which made this check silently do nothing).
+        containers = await asyncio.to_thread(_list_replica_containers)
 
-        pattern = re.compile(r"^cloudbase-app-(\d+)-replica-(\d+)\t(.*)$")
+        pattern = re.compile(r"^cloudbase-app-(\d+)-replica-(\d+)$")
         seen_missing: set[int] = set()
         now = time.time()
-        for line in result.stdout.splitlines():
-            m = pattern.match(line.strip())
+        for cname, created in containers:
+            m = pattern.match(cname)
             if not m:
                 continue
-            cname = f"cloudbase-app-{m.group(1)}-replica-{m.group(2)}"
             replica_id = int(m.group(2))
             if replica_id in live_ids:
                 continue
             # A restart briefly reports the replica as stopped on the primary;
             # never touch a container that was just created.
-            created = _parse_docker_created(m.group(3))
             if created is not None and now - created < _ORPHAN_MIN_AGE_SECONDS:
                 continue
             seen_missing.add(replica_id)
             # Only remove after two consecutive checks agree it is orphaned.
             if replica_id in _orphan_suspects:
-                _agent_log(f"[cleanup] Stopping orphan replica container '{cname}' (replica_id={replica_id} no longer exists)")
+                _agent_log(f"[cleanup] Removing orphan replica container '{cname}' (replica_id={replica_id} is stopped or no longer exists on the primary)")
+                await _stop_tunnel_task(replica_id)
                 try:
-                    await asyncio.to_thread(subprocess.run, ["docker", "rm", "-f", cname], capture_output=True, timeout=15)
+                    await asyncio.to_thread(_remove_container, cname)
                 except Exception as e:
                     _agent_log(f"[cleanup] Failed to remove '{cname}': {e}")
             else:
@@ -985,6 +1005,14 @@ async def _drain_stale_commands(client: httpx.AsyncClient, state: AgentState) ->
             return
         commands = resp.json().get("commands") or []
         for cmd in commands:
+            # A stop is still wanted after a restart: it is how a replica deleted
+            # while this node was offline gets its container removed. It is
+            # idempotent, so run it instead of discarding it.
+            if cmd.get("command_type") == "stop_replica":
+                _agent_log(f"[agent] Running queued stop command {cmd['id']} from before restart")
+                status, res, err = await _execute_command(client, state, cmd)
+                await _report_result(client, state, cmd["id"], status=status, result=res, error_message=err)
+                continue
             _agent_log(f"[agent] Draining stale command {cmd['id']} ({cmd.get('command_type')})")
             await _report_result(client, state, cmd["id"], status="failed", error_message="Agent restarted — command discarded")
     except Exception as e:

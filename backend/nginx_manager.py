@@ -92,13 +92,29 @@ def generate_maintenance_html(
     return _update_template(safe_title, safe_message, safe_color, safe_status_url, safe_logo_data)
 
 
+def _cloudbase_logo_data_uri() -> str | None:
+  """The Cloudbase logo as a small inline data URI (the full-size PNG is ~780 KB)."""
+  import base64
+  path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "cloudbase-mark.png")
+  try:
+    with open(path, "rb") as f:
+      return "data:image/png;base64," + base64.b64encode(f.read()).decode("ascii")
+  except OSError:
+    return None
+
+
 def _cloudbase_status_page(title: str, message: str, meta: str, tone: str, refresh_seconds: int | None = None) -> str:
     """Minimal Cloudbase-branded status page (light/dark via prefers-color-scheme).
 
-    Served by nginx as a static file, so everything is inline: no fonts,
-    scripts or images are fetched.
+    Served by nginx as a static file while the panel may be down, so everything
+    is inline: no fonts, scripts or images are fetched.
     """
     refresh = f'<meta http-equiv="refresh" content="{refresh_seconds}">' if refresh_seconds else ""
+    logo = _cloudbase_logo_data_uri()
+    mark = (
+        f'<img class="mark" src="{logo}" alt="Cloudbase">' if logo else
+        '<div class="mark mark-fallback" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 8.5a4 4 0 0 1-.5 9.5z"/></svg></div>'
+    )
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -128,9 +144,9 @@ def _cloudbase_status_page(title: str, message: str, meta: str, tone: str, refre
       -webkit-font-smoothing: antialiased;
     }}
     main {{ width: 100%; max-width: 420px; }}
-    .mark {{
-      width: 36px; height: 36px; margin-bottom: 32px;
-      border-radius: 10px; background: var(--text); color: var(--bg);
+    .mark {{ display: block; width: 44px; height: 44px; margin-bottom: 32px; object-fit: contain; }}
+    .mark-fallback {{
+      width: 36px; height: 36px; border-radius: 10px; background: var(--text); color: var(--bg);
       display: flex; align-items: center; justify-content: center;
     }}
     .status {{ display: flex; align-items: center; gap: 10px; margin-bottom: 14px; font-size: 13px; color: var(--text-2); }}
@@ -145,9 +161,7 @@ def _cloudbase_status_page(title: str, message: str, meta: str, tone: str, refre
 </head>
 <body>
   <main>
-    <div class="mark" aria-hidden="true">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 8.5a4 4 0 0 1-.5 9.5z"/></svg>
-    </div>
+    {mark}
     <div class="status"><span class="dot"></span>{meta}</div>
     <h1>{title}</h1>
     <p>{message}</p>

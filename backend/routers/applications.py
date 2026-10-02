@@ -2581,9 +2581,11 @@ async def delete_instance(
                 await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
             except Exception:
                 pass
-    elif replica.status not in ("stopped", "error", "deploying"):
-        # Queue stop command even when the node is offline — it will be dispatched
-        # as soon as the node reconnects, preventing orphaned containers.
+    else:
+        # Always queue a stop, whatever the status says: a "stopped" replica can
+        # still have a running container (e.g. after a lost tunnel). The agent's
+        # stop is a no-op when no container exists. Queued even when the node is
+        # offline — it is dispatched as soon as the node reconnects.
         await queue_node_command(
             db, node_id=replica_node.id, app_id=app_id,
             command_type="stop_replica",
