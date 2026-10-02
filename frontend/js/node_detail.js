@@ -12,6 +12,7 @@ let latestLogsRequest = 0;
 
 // ── Chart state ───────────────────────────────────────────────────────────────
 let nChartCpu = null, nChartMem = null, nChartDisk = null;
+let _nodeRangeHours = 1;
 const nCpuData = [], nMemData = [], nDiskData = [];
 const MAX_PTS  = 60;
 
@@ -173,7 +174,8 @@ function updateMetrics(m) {
     if (m.disk_percent   != null) _set('n-disk',   `${m.disk_percent.toFixed(1)}%`);
     if (m.uptime_secs    != null) _set('n-uptime', fmtUptime(m.uptime_secs));
 
-    // Feed charts
+    // Feed charts — live points only on the 1-hour view; longer ranges show stored history
+    if (_nodeRangeHours !== 1) return;
     const t = Date.now();
     if (m.cpu_percent    != null) { nCpuData.push({t, v: m.cpu_percent});    if (nCpuData.length  > MAX_PTS) nCpuData.shift(); }
     if (m.memory_percent != null) { nMemData.push({t, v: m.memory_percent}); if (nMemData.length  > MAX_PTS) nMemData.shift(); }
@@ -205,19 +207,23 @@ function _initNodeCharts() {
 
     const offline = node.status !== 'online';
     _setChartsOfflineState(offline);
+    _initNodeRange();
     _loadNodeHistory();
 }
 
-// The server samples every node in the background; prefill the charts with
-// that so they are not empty when the page opens. Live points append after.
-async function _loadNodeHistory() {
+// The server samples every node in the background and keeps 7 days. Prefill
+// the charts with that so they are not empty when the page opens.
+async function _loadNodeHistory(hours = _nodeRangeHours) {
     try {
-        const { samples = [] } = await api.getNodeMetricsHistory(NODE_ID);
-        const recent = samples.slice(-MAX_PTS);
+        const { samples = [] } = await api.getNodeMetricsHistory(NODE_ID, hours);
+        if (hours !== _nodeRangeHours) return;   // a newer range was picked meanwhile
+        const live = hours === 1;
+        const recent = live ? samples.slice(-MAX_PTS) : samples;
         const fill = (arr, key) => {
             const pts = recent.filter(x => x[key] != null).map(x => ({ t: x.ts, v: x[key] }));
-            arr.splice(0, arr.length, ...pts, ...arr);   // history first, keep any live points
-            if (arr.length > MAX_PTS) arr.splice(0, arr.length - MAX_PTS);
+            const keepLive = live ? arr.filter(p => p.t > (pts.at(-1)?.t ?? 0)) : [];
+            arr.splice(0, arr.length, ...pts, ...keepLive);
+            if (live && arr.length > MAX_PTS) arr.splice(0, arr.length - MAX_PTS);
         };
         fill(nCpuData, 'cpu');
         fill(nMemData, 'mem');
@@ -226,6 +232,20 @@ async function _loadNodeHistory() {
         _updateNodeChart(nChartMem,  nMemData);
         _updateNodeChart(nChartDisk, nDiskData);
     } catch { /* history is optional */ }
+}
+
+function _initNodeRange() {
+    const group = document.getElementById('node-range');
+    if (!group) return;
+    const labels = { 1: 'Last hour · live', 24: 'Last 24 hours', 168: 'Last 7 days' };
+    group.addEventListener('click', e => {
+        const btn = e.target.closest('[data-hours]');
+        if (!btn) return;
+        _nodeRangeHours = Number(btn.dataset.hours);
+        group.querySelectorAll('[data-hours]').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+        document.querySelectorAll('.node-range-label').forEach(el => { el.textContent = labels[_nodeRangeHours]; });
+        _loadNodeHistory(_nodeRangeHours);
+    });
 }
 
 function _setChartsOfflineState(offline) {

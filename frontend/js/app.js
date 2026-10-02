@@ -1,4 +1,4 @@
-import { api, wsLogs, wsStats, wsNodeEvents, PermissionError } from './api.js';
+import { api, wsLogs, wsReplicaLogs, wsStats, wsNodeEvents, PermissionError } from './api.js';
 import { auditTableHTML, cssVar, icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, setBtn, parseDotEnv, pickTextFile, mergeEnvIntoRows } from './utils.js';
 import { pickGitHubToken } from './sidebar.js';
 import { setCrumbs } from './shell.js';
@@ -521,98 +521,62 @@ function setupTab(t) {
 let _logsInitDone = false;
 
 function initLogs() {
-  const terminal   = document.getElementById('log-terminal');
-  const select     = document.getElementById('log-instance-select');
-  const refreshBtn = document.getElementById('btn-log-refresh');
-  const hint       = document.getElementById('log-instance-hint');
+  const select = document.getElementById('log-instance-select');
 
-  // Populate instance picker once (idempotent)
+  // Populate the source picker once (idempotent)
   if (!_logsInitDone) {
     _logsInitDone = true;
     api.listInstances(APP_ID).then(instances => {
       if (!select) return;
-      select.innerHTML = '<option value="primary">Live Stream (build / deploy)</option>';
+      select.innerHTML = '<option value="all">All instances</option>';
       instances.forEach(r => {
-        const label = `Instance #${r.id} — ${r.node_name || 'local'} :${r.external_port || '?'}`;
         const opt = document.createElement('option');
         opt.value = String(r.id);
-        opt.textContent = label;
+        opt.textContent = `Instance #${r.id} · ${r.node_name || 'primary'}${r.external_port ? ` :${r.external_port}` : ''}`;
         select.appendChild(opt);
       });
     }).catch(() => {});
-
     select?.addEventListener('change', () => _switchLogInstance());
-    refreshBtn?.addEventListener('click', () => _loadReplicaLogs(parseInt(select?.value, 10)));
   }
 
   _switchLogInstance();
 }
 
+// Both sources stream live. "All instances" also carries Cloudbase's own
+// messages for this app (image builds, deploy steps, start/stop).
 function _switchLogInstance() {
-  const select     = document.getElementById('log-instance-select');
-  const refreshBtn = document.getElementById('btn-log-refresh');
-  const hint       = document.getElementById('log-instance-hint');
-  const val        = select?.value || 'primary';
+  const select = document.getElementById('log-instance-select');
+  const hint   = document.getElementById('log-instance-hint');
+  const val    = select?.value || 'all';
+  const isAll  = val === 'all' || val === 'primary';
 
-  if (val === 'primary') {
-    if (refreshBtn) refreshBtn.style.display = 'none';
-    if (hint) hint.textContent = 'Live stream';
-    _startPrimaryLogs();
-  } else {
-    // Stop live stream if active
-    if (logWs) { logWs.close(); logWs = null; }
-    if (refreshBtn) refreshBtn.style.display = '';
-    if (hint) hint.textContent = 'Snapshot — last 200 lines';
-    _loadReplicaLogs(parseInt(val, 10));
-  }
-}
-
-function _startPrimaryLogs() {
-  const terminal = document.getElementById('log-terminal');
   if (logWs) { logWs.close(); logWs = null; }
+  if (hint) hint.textContent = isAll ? 'Live · all instances + build & deploy output' : `Live · instance #${val}`;
 
-  terminal.innerHTML = `<div class="log-empty">Waiting for log output…</div>`;
-  logLines = [];
-
-  logWs = wsLogs(APP_ID, line => {
-    if (terminal.querySelector('.log-empty')) terminal.innerHTML = '';
-    const n = logLines.length + 1;
-    logLines.push(line);
-
-    const div = document.createElement('div');
-    div.className = `log-line ${logClass(line)}`;
-    div.innerHTML = `<span class="log-num">${String(n).padStart(4)}</span><span class="log-text">${escHtml(line)}</span>`;
-    terminal.appendChild(div);
-
-    const atBottom = terminal.scrollHeight - terminal.clientHeight - terminal.scrollTop < 60;
-    if (atBottom) terminal.scrollTop = terminal.scrollHeight;
-    if (logLines.length > 2000) terminal.removeChild(terminal.firstChild);
-  });
+  const terminal = document.getElementById('log-terminal');
+  const reset = () => {
+    terminal.innerHTML = `<div class="log-empty">Waiting for log output…</div>`;
+    logLines = [];
+  };
+  reset();
+  logWs = isAll
+    ? wsLogs(APP_ID, _appendLogLine, reset)
+    : wsReplicaLogs(APP_ID, parseInt(val, 10), _appendLogLine, reset);
 }
 
-async function _loadReplicaLogs(replicaId) {
+function _appendLogLine(line) {
   const terminal = document.getElementById('log-terminal');
-  terminal.innerHTML = `<div class="log-empty">Loading logs…</div>`;
-  logLines = [];
-  try {
-    const data = await api.getInstanceLogs(APP_ID, replicaId, 200);
-    const lines = data.lines || [];
-    if (!lines.length) {
-      terminal.innerHTML = `<div class="log-empty">No log output available for this instance.</div>`;
-      return;
-    }
-    terminal.innerHTML = '';
-    lines.forEach((line, i) => {
-      const div = document.createElement('div');
-      div.className = `log-line ${logClass(line)}`;
-      div.innerHTML = `<span class="log-num">${String(i + 1).padStart(4)}</span><span class="log-text">${escHtml(line)}</span>`;
-      terminal.appendChild(div);
-    });
-    terminal.scrollTop = terminal.scrollHeight;
-    logLines = lines;
-  } catch (e) {
-    terminal.innerHTML = `<div class="log-empty" style="color:var(--red)">Failed to load logs: ${escHtml(e.message)}</div>`;
-  }
+  if (!terminal) return;
+  if (terminal.querySelector('.log-empty')) terminal.innerHTML = '';
+  logLines.push(line);
+
+  const div = document.createElement('div');
+  div.className = `log-line ${logClass(line)}`;
+  div.innerHTML = `<span class="log-num">${String(logLines.length).padStart(4)}</span><span class="log-text">${escHtml(line)}</span>`;
+  const atBottom = terminal.scrollHeight - terminal.clientHeight - terminal.scrollTop < 60;
+  terminal.appendChild(div);
+  if (atBottom) terminal.scrollTop = terminal.scrollHeight;
+  if (terminal.childElementCount > 2000) terminal.removeChild(terminal.firstChild);
 }
 
 function _logAction(action, phase) {

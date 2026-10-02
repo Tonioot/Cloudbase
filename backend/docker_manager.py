@@ -845,7 +845,10 @@ def attach_container_log_tailer(
             raw_internal_port = labels.get("cloudbase.internal_port")
             internal_port = int(raw_internal_port) if str(raw_internal_port or "").isdigit() else None
             warned_loopback_bind = False
-            for raw in c.logs(stream=True, follow=True, timestamps=False):
+            # Seed an empty buffer with recent history; otherwise only follow new
+            # output, so re-attaching never replays the whole container log again.
+            seed = 300 if not log_buffers[app_id] else 0
+            for raw in c.logs(stream=True, follow=True, timestamps=False, tail=seed):
                 line = raw.decode("utf-8", errors="replace").rstrip()
                 log_buffers[app_id].append(line)
                 if main_loop and not main_loop.is_closed():

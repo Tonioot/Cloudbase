@@ -194,6 +194,34 @@ class StatsHistory(Base):
     disk_mb     = Column(Float, nullable=True)
 
 
+class OverviewHistory(Base):
+    """Cluster-wide samples for the dashboard (every 30s, kept 7 days)."""
+    __tablename__ = "overview_history"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    timestamp     = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    apps_running  = Column(Integer, nullable=False, default=0)
+    apps_total    = Column(Integer, nullable=False, default=0)
+    instances     = Column(Integer, nullable=False, default=0)
+    cpu_percent   = Column(Float, nullable=True)
+    mem_used_mb   = Column(Float, nullable=True)
+    mem_total_mb  = Column(Float, nullable=True)
+    nodes_online  = Column(Integer, nullable=False, default=0)
+    nodes_total   = Column(Integer, nullable=False, default=0)
+
+
+class NodeMetricsHistory(Base):
+    """Per-node cpu / memory / disk samples (every 30s, kept 7 days)."""
+    __tablename__ = "node_metrics_history"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    node_id        = Column(Integer, ForeignKey("nodes.id", ondelete="CASCADE"), nullable=False, index=True)
+    timestamp      = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    cpu_percent    = Column(Float, nullable=True)
+    memory_percent = Column(Float, nullable=True)
+    disk_percent   = Column(Float, nullable=True)
+
+
 class SystemConfig(Base):
     __tablename__ = "system_config"
 

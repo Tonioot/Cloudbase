@@ -10,6 +10,7 @@ from models import Application, ApplicationReplica, Node
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import process_manager as pm
+import docker_manager as dm
 from routers.nodes import (
     ensure_local_node, queue_node_command, wait_for_node_command,
     subscribe_node_stream, unsubscribe_node_stream,
@@ -157,6 +158,103 @@ async def stream_logs(app_id: int, websocket: WebSocket):
         pass
     finally:
         pm.unsubscribe_logs(app_id, q)
+
+
+@router.websocket("/ws/apps/{app_id}/replicas/{replica_id}/logs")
+async def stream_replica_logs(app_id: int, replica_id: int, websocket: WebSocket):
+    """Live logs of one instance: the last 300 lines, then new output as it arrives."""
+    if not await auth.authorize_websocket(websocket, "apps.view"):
+        return
+    await websocket.accept()
+
+    async with AsyncSessionLocal() as db:
+        app = (await db.execute(select(Application).where(Application.id == app_id))).scalar_one_or_none()
+        replica = (await db.execute(select(ApplicationReplica).where(
+            ApplicationReplica.id == replica_id, ApplicationReplica.app_id == app_id,
+        ))).scalar_one_or_none()
+        if not app or not replica:
+            await websocket.send_text("Instance not found\n")
+            await websocket.close()
+            return
+        node = None
+        if replica.node_id:
+            node = (await db.execute(select(Node).where(Node.id == replica.node_id))).scalar_one_or_none()
+        app_name = app.name
+
+    cname = dm.replica_container_name(app_id, replica_id)
+
+    if node is None or node.is_local:
+        # Follow the container directly; the blocking docker stream runs in a thread
+        loop = asyncio.get_running_loop()
+        q: asyncio.Queue = asyncio.Queue()
+        holder: dict = {}
+        _END = object()
+
+        def _reader():
+            try:
+                c = dm._get_client().containers.get(cname)
+                stream = c.logs(stream=True, follow=True, timestamps=False, tail=300)
+                holder["stream"] = stream
+                for raw in stream:
+                    loop.call_soon_threadsafe(q.put_nowait, raw.decode("utf-8", errors="replace").rstrip())
+            except Exception as exc:
+                if type(exc).__name__ == "NotFound":
+                    msg = f"[Cloudbase] Instance #{replica_id} has no container right now — start it to see its logs."
+                else:
+                    msg = f"[Cloudbase] Log stream ended: {exc}"
+                loop.call_soon_threadsafe(q.put_nowait, msg)
+            finally:
+                loop.call_soon_threadsafe(q.put_nowait, _END)
+
+        import threading
+        threading.Thread(target=_reader, daemon=True).start()
+        try:
+            while True:
+                line = await q.get()
+                if line is _END:
+                    break
+                await websocket.send_text(line + "\n")
+        except (WebSocketDisconnect, Exception):
+            pass
+        finally:
+            try:
+                holder.get("stream") and holder["stream"].close()
+            except Exception:
+                pass
+        return
+
+    # Remote instance: poll the node agent and forward only new lines
+    node_id = node.id
+    last: list[str] = []
+    try:
+        while True:
+            async with AsyncSessionLocal() as poll_db:
+                cmd = await queue_node_command(
+                    poll_db, node_id=node_id, app_id=app_id, command_type="get_replica_logs",
+                    payload={"app_id": app_id, "app_name": app_name, "replica_id": replica_id,
+                             "container_name": cname, "lines": 300},
+                    allow_existing_inflight=True,
+                )
+                done = await wait_for_node_command(poll_db, cmd.id, timeout_seconds=20)
+            if done.status == "done":
+                lines = (json.loads(done.result or "{}") or {}).get("lines", []) or []
+                if lines != last:
+                    # Find where the new snapshot continues the previous one
+                    delta = lines
+                    if last:
+                        overlap = min(len(last), len(lines))
+                        for k in range(overlap, 0, -1):
+                            if lines[:k] == last[-k:]:
+                                delta = lines[k:]
+                                break
+                    for line in delta:
+                        await websocket.send_text(line + "\n")
+                    last = lines
+            elif done.error_message:
+                await websocket.send_text(f"[Cloudbase] {done.error_message}\n")
+            await asyncio.sleep(2)
+    except (WebSocketDisconnect, Exception):
+        pass
 
 
 async def _get_or_404(app_id: int, db: AsyncSession) -> Application:

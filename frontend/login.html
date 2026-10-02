@@ -26,15 +26,10 @@
       flex-direction: column;
     }
     .login-mark {
-      width: 36px;
-      height: 36px;
-      margin-bottom: 28px;
-      border-radius: 10px;
-      background: var(--text);
-      color: var(--bg);
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      width: 44px;
+      height: 44px;
+      margin-bottom: 26px;
+      object-fit: contain;
     }
     .login h1 {
       font-size: 26px;
@@ -68,9 +63,7 @@
 <body>
 
 <main class="login">
-  <div class="login-mark" aria-hidden="true">
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 8.5a4 4 0 0 1-.5 9.5z"/></svg>
-  </div>
+  <img class="login-mark" src="/cloudbase.png" alt="Cloudbase" />
   <h1>Sign in to Cloudbase</h1>
   <div class="login-host" id="login-host"></div>
 

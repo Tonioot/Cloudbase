@@ -54,7 +54,7 @@ export const api = {
   deleteNode:(nodeId) => request('DELETE', `/nodes/${nodeId}`),
   pingNode:(nodeId) => request('POST', `/nodes/${nodeId}/ping`),
   getNodeConnectionStatus:(nodeId) => request('GET', `/nodes/${nodeId}/connection-status`),
-  getNodeMetricsHistory:(nodeId) => request('GET', `/nodes/${nodeId}/metrics/history`),
+  getNodeMetricsHistory:(nodeId, hours = 1) => request('GET', `/nodes/${nodeId}/metrics/history?hours=${hours}`),
   getNodeAgentLogs:(nodeId, limit) => request('GET', `/nodes/${nodeId}/agent-logs?limit=${limit || 200}`),
   getApp:   (id)       => request('GET',    `/apps/${id}`),
   deploy:   (payload)  => request('POST',   '/apps', payload),
@@ -159,16 +159,32 @@ export const api = {
   deleteGitHubToken: (id)       => request('DELETE', `/system/github-tokens/${id}`),
 };
 
-export function wsLogs(appId, onLine) {
+// Line-based log socket that reconnects on drop. The server replays recent
+// lines on every (re)connect, so onOpen lets the caller clear what it shows.
+function wsLineStream(path, onLine, onOpen) {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   let ws, closed = false;
   function connect() {
-    ws = new WebSocket(`${proto}//${location.host}/ws/apps/${appId}/logs`);
-    ws.onmessage = e => onLine(e.data);
+    ws = new WebSocket(`${proto}//${location.host}${path}`);
+    ws.onopen = () => onOpen?.();
+    ws.onmessage = e => {
+      // A frame can hold several lines; drop the trailing newline
+      for (const line of String(e.data).replace(/\n$/, '').split('\n')) onLine(line);
+    };
     ws.onclose = () => { if (!closed) setTimeout(connect, 3000); };
   }
   connect();
   return { close() { closed = true; if (ws) ws.close(); } };
+}
+
+/** All instances of an app plus Cloudbase's own messages for it (build, deploy, start/stop). */
+export function wsLogs(appId, onLine, onOpen) {
+  return wsLineStream(`/ws/apps/${appId}/logs`, onLine, onOpen);
+}
+
+/** One instance's container output: the last 300 lines, then live. */
+export function wsReplicaLogs(appId, replicaId, onLine, onOpen) {
+  return wsLineStream(`/ws/apps/${appId}/replicas/${replicaId}/logs`, onLine, onOpen);
 }
 
 export function wsStats(appId, onData) {

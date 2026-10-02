@@ -49,6 +49,14 @@
 
     <!-- Resources -->
     <section class="section" aria-label="Resources" style="border-top:1px solid var(--line)">
+      <div class="section-head">
+        <h2>Resources</h2>
+        <div class="segmented" role="group" aria-label="Chart range" id="node-range">
+          <button type="button" data-hours="1" aria-pressed="true">1h</button>
+          <button type="button" data-hours="24" aria-pressed="false">24h</button>
+          <button type="button" data-hours="168" aria-pressed="false">7d</button>
+        </div>
+      </div>
       <div class="stats-layout">
         <div class="card node-overview-panel">
           <div class="node-summary-grid">
@@ -60,17 +68,17 @@
         </div>
         <div class="node-chart-stack">
           <div class="card chart-card">
-            <div class="chart-hdr"><div><div class="chart-title">CPU</div><div class="chart-subtitle">Last hour · live</div></div><span class="chart-badge">%</span></div>
+            <div class="chart-hdr"><div><div class="chart-title">CPU</div><div class="chart-subtitle node-range-label">Last hour · live</div></div><span class="chart-badge">%</span></div>
             <canvas id="node-chart-cpu" style="width:100%;height:110px;display:block"></canvas>
             <div id="node-chart-cpu-empty" class="chart-offline-overlay" style="display:none"></div>
           </div>
           <div class="card chart-card">
-            <div class="chart-hdr"><div><div class="chart-title">Memory</div><div class="chart-subtitle">Last hour · live</div></div><span class="chart-badge">%</span></div>
+            <div class="chart-hdr"><div><div class="chart-title">Memory</div><div class="chart-subtitle node-range-label">Last hour · live</div></div><span class="chart-badge">%</span></div>
             <canvas id="node-chart-mem" style="width:100%;height:110px;display:block"></canvas>
             <div id="node-chart-mem-empty" class="chart-offline-overlay" style="display:none"></div>
           </div>
           <div class="card chart-card">
-            <div class="chart-hdr"><div><div class="chart-title">Disk</div><div class="chart-subtitle">Last hour · live</div></div><span class="chart-badge">%</span></div>
+            <div class="chart-hdr"><div><div class="chart-title">Disk</div><div class="chart-subtitle node-range-label">Last hour · live</div></div><span class="chart-badge">%</span></div>
             <canvas id="node-chart-disk" style="width:100%;height:110px;display:block"></canvas>
             <div id="node-chart-disk-empty" class="chart-offline-overlay" style="display:none"></div>
           </div>

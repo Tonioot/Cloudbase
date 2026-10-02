@@ -390,17 +390,20 @@ async def _remote_replica_stats_poller():
         await asyncio.sleep(15)
 
 
-# ── Cluster overview history (dashboard sparklines) ───────────────────────────
-# Sampled in the background so the dashboard can draw its sparklines the moment
-# it opens instead of building them up while the page is visible.
+# ── Cluster & node history (dashboard sparklines, node charts) ────────────────
+# Sampled in the background and stored in the DB (7 days), so charts are full
+# the moment a page opens and survive a Cloudbase restart.
 _OVERVIEW_SAMPLE_SECONDS = 30
-_overview_history: deque = deque(maxlen=120)   # last hour
-_node_metrics_history: dict[int, deque] = {}   # node id → last hour of cpu/mem/disk
+_HISTORY_RETENTION_DAYS = 7
+_HISTORY_MAX_POINTS = 240   # longer ranges are averaged down to this many points
 
 
 async def _overview_sampler():
-    from models import ApplicationReplica as _AR, Node as _Node
+    import datetime as _dt
+    from sqlalchemy import delete as _delete
+    from models import ApplicationReplica as _AR, Node as _Node, OverviewHistory, NodeMetricsHistory
     await asyncio.sleep(5)
+    rounds = 0
     while True:
         try:
             async with AsyncSessionLocal() as db:
@@ -408,59 +411,77 @@ async def _overview_sampler():
                 replicas = (await db.execute(select(_AR))).scalars().all()
                 nodes = (await db.execute(select(_Node))).scalars().all()
 
-            online = [n for n in nodes if n.status == "online"]
-            now_ms = int(_time.time() * 1000)
-            # cpu_percent(interval=None) measures since the previous call — read it once per round
-            local_cpu = psutil.cpu_percent(interval=None)
+                now = _dt.datetime.utcnow()
+                online = [n for n in nodes if n.status == "online"]
+                # cpu_percent(interval=None) measures since the previous call — read it once per round
+                local_cpu = psutil.cpu_percent(interval=None)
 
-            # Per-node samples for the node page charts (primary and remote alike)
-            for n in online:
-                if n.is_local:
-                    sample = {
-                        "ts": now_ms,
-                        "cpu": local_cpu,
-                        "mem": psutil.virtual_memory().percent,
-                        "disk": psutil.disk_usage("/").percent,
-                    }
-                else:
-                    sample = {"ts": now_ms, "cpu": n.node_cpu_percent, "mem": n.node_memory_percent, "disk": n.node_disk_percent}
-                _node_metrics_history.setdefault(n.id, deque(maxlen=120)).append(sample)
+                cpu_vals: list[float] = []
+                mem_used = mem_total = 0.0
+                for n in online:
+                    if n.is_local:
+                        vm = psutil.virtual_memory()
+                        cpu, mem, disk = local_cpu, vm.percent, psutil.disk_usage("/").percent
+                        mem_total += vm.total / 1024 / 1024
+                        mem_used += vm.used / 1024 / 1024
+                    else:
+                        cpu, mem, disk = n.node_cpu_percent, n.node_memory_percent, n.node_disk_percent
+                        try:
+                            total = (json.loads(n.metadata_json or "{}") or {}).get("ram_total_mb")
+                        except Exception:
+                            total = None
+                        if total and mem is not None:
+                            mem_total += total
+                            mem_used += total * mem / 100
+                    if cpu is not None:
+                        cpu_vals.append(cpu)
+                    db.add(NodeMetricsHistory(node_id=n.id, timestamp=now, cpu_percent=cpu,
+                                              memory_percent=mem, disk_percent=disk))
 
-            cpu_vals: list[float] = []
-            mem_used = mem_total = 0.0
-            for n in online:
-                if n.is_local:
-                    vm = psutil.virtual_memory()
-                    cpu_vals.append(local_cpu)
-                    mem_total += vm.total / 1024 / 1024
-                    mem_used += vm.used / 1024 / 1024
-                    continue
-                if n.node_cpu_percent is not None:
-                    cpu_vals.append(n.node_cpu_percent)
-                try:
-                    total = (json.loads(n.metadata_json or "{}") or {}).get("ram_total_mb")
-                except Exception:
-                    total = None
-                if total and n.node_memory_percent is not None:
-                    mem_total += total
-                    mem_used += total * n.node_memory_percent / 100
+                db.add(OverviewHistory(
+                    timestamp=now,
+                    apps_running=sum(1 for a in apps if a.status == "running"),
+                    apps_total=len(apps),
+                    instances=sum(1 for r in replicas if r.status == "running"),
+                    cpu_percent=round(sum(cpu_vals) / len(cpu_vals), 1) if cpu_vals else None,
+                    mem_used_mb=round(mem_used) if mem_total else None,
+                    mem_total_mb=round(mem_total) if mem_total else None,
+                    nodes_online=len(online),
+                    nodes_total=len(nodes),
+                ))
 
-            _overview_history.append({
-                "ts": int(_time.time() * 1000),
-                "apps_running": sum(1 for a in apps if a.status == "running"),
-                "apps_total": len(apps),
-                "instances": sum(1 for r in replicas if r.status == "running"),
-                "cpu": round(sum(cpu_vals) / len(cpu_vals), 1) if cpu_vals else None,
-                "mem_used_mb": round(mem_used) if mem_total else None,
-                "mem_total_mb": round(mem_total) if mem_total else None,
-                "nodes_online": len(online),
-                "nodes_total": len(nodes),
-            })
+                rounds += 1
+                if rounds % 120 == 1:   # about once an hour (and at startup)
+                    cutoff = now - _dt.timedelta(days=_HISTORY_RETENTION_DAYS)
+                    await db.execute(_delete(OverviewHistory).where(OverviewHistory.timestamp < cutoff))
+                    await db.execute(_delete(NodeMetricsHistory).where(NodeMetricsHistory.timestamp < cutoff))
+                await db.commit()
         except asyncio.CancelledError:
             return
         except Exception as exc:
             log.debug(f"overview sampler failed: {exc}")
         await asyncio.sleep(_OVERVIEW_SAMPLE_SECONDS)
+
+
+def _downsample(rows: list[dict], keys: tuple[str, ...]) -> list[dict]:
+    """Average consecutive rows into at most _HISTORY_MAX_POINTS buckets."""
+    if len(rows) <= _HISTORY_MAX_POINTS:
+        return rows
+    size = -(-len(rows) // _HISTORY_MAX_POINTS)   # ceil division
+    out = []
+    for i in range(0, len(rows), size):
+        chunk = rows[i:i + size]
+        point = {"ts": chunk[-1]["ts"]}
+        for k in keys:
+            vals = [r[k] for r in chunk if r.get(k) is not None]
+            point[k] = round(sum(vals) / len(vals), 1) if vals else None
+        out.append(point)
+    return out
+
+
+def _ts_ms(dt) -> int:
+    import datetime as _dt
+    return int(dt.replace(tzinfo=_dt.timezone.utc).timestamp() * 1000)
 
 
 # ── Historical stats writer ───────────────────────────────────────────────────
@@ -859,7 +880,12 @@ async def lifespan(app: FastAPI):
                 replica.status = new_status
                 log.debug(f"RECOVERY replica {replica.id} app={replica.app_id}: → {new_status}")
             if alive:
-                dm.attach_container_log_tailer(replica.app_id, pm.log_buffers, pm._push_line, asyncio.get_event_loop())
+                # Re-attach to the replica's own container (not the legacy cloudbase-app-{id}
+                # name), otherwise live logs stay silent after a Cloudbase restart.
+                dm.attach_container_log_tailer(
+                    replica.app_id, pm.log_buffers, pm._push_line, asyncio.get_event_loop(),
+                    cname=dm.replica_container_name(replica.app_id, replica.id),
+                )
 
         # Kill any orphan legacy containers (cloudbase-app-{id} without replica row)
         app_ids_with_replicas = {r.app_id for r in all_replicas}
@@ -1123,15 +1149,40 @@ class LoginRequest(BaseModel):
 
 
 @app.get("/api/nodes/{node_id}/metrics/history")
-async def node_metrics_history(node_id: int, _user: dict = Depends(auth.require_permission("nodes.view"))):
-    """Recent cpu / memory / disk samples for one node (oldest first)."""
-    return {"interval_seconds": _OVERVIEW_SAMPLE_SECONDS, "samples": list(_node_metrics_history.get(node_id, []))}
+async def node_metrics_history(node_id: int, hours: float = 1,
+                               _user: dict = Depends(auth.require_permission("nodes.view")),
+                               db: AsyncSession = Depends(get_db)):
+    """cpu / memory / disk samples for one node over the last `hours` (oldest first)."""
+    import datetime as _dt
+    from models import NodeMetricsHistory as _NMH
+    hours = max(0.25, min(hours, 24 * _HISTORY_RETENTION_DAYS))
+    since = _dt.datetime.utcnow() - _dt.timedelta(hours=hours)
+    res = await db.execute(
+        select(_NMH).where(_NMH.node_id == node_id, _NMH.timestamp >= since).order_by(_NMH.timestamp.asc())
+    )
+    rows = [{"ts": _ts_ms(r.timestamp), "cpu": r.cpu_percent, "mem": r.memory_percent, "disk": r.disk_percent}
+            for r in res.scalars().all()]
+    return {"interval_seconds": _OVERVIEW_SAMPLE_SECONDS, "hours": hours,
+            "samples": _downsample(rows, ("cpu", "mem", "disk"))}
 
 
 @app.get("/api/overview/history")
-async def overview_history(_user: dict = Depends(auth.require_permission("apps.view"))):
-    """Recent cluster samples for the dashboard sparklines (oldest first)."""
-    return {"interval_seconds": _OVERVIEW_SAMPLE_SECONDS, "samples": list(_overview_history)}
+async def overview_history(hours: float = 1,
+                           _user: dict = Depends(auth.require_permission("apps.view")),
+                           db: AsyncSession = Depends(get_db)):
+    """Cluster samples for the dashboard sparklines over the last `hours` (oldest first)."""
+    import datetime as _dt
+    from models import OverviewHistory as _OH
+    hours = max(0.25, min(hours, 24 * _HISTORY_RETENTION_DAYS))
+    since = _dt.datetime.utcnow() - _dt.timedelta(hours=hours)
+    res = await db.execute(select(_OH).where(_OH.timestamp >= since).order_by(_OH.timestamp.asc()))
+    keys = ("apps_running", "apps_total", "instances", "cpu", "mem_used_mb", "mem_total_mb", "nodes_online", "nodes_total")
+    rows = [{
+        "ts": _ts_ms(r.timestamp), "apps_running": r.apps_running, "apps_total": r.apps_total,
+        "instances": r.instances, "cpu": r.cpu_percent, "mem_used_mb": r.mem_used_mb,
+        "mem_total_mb": r.mem_total_mb, "nodes_online": r.nodes_online, "nodes_total": r.nodes_total,
+    } for r in res.scalars().all()]
+    return {"interval_seconds": _OVERVIEW_SAMPLE_SECONDS, "hours": hours, "samples": _downsample(rows, keys)}
 
 
 @app.get("/api/health")

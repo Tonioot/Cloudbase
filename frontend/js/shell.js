@@ -67,7 +67,7 @@ function railHTML(active) {
     `<button type="button" class="sb-item" id="${id}" ${extra}>${ICONS[icon]}<span>${label}</span></button>`;
   return `
     <div class="sb-head">
-      <a href="/" class="rail-logo" aria-label="Cloudbase home">${ICONS.logo}</a>
+      <a href="/" class="rail-logo" aria-label="Cloudbase home"><img src="/cloudbase.png" alt="" /></a>
       <div class="sb-brand">
         <span class="sb-brand-name">Cloudbase</span>
         <span class="sb-brand-host">${esc(location.host)}</span>

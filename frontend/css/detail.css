@@ -437,3 +437,10 @@
 @media (max-width: 1000px) {
   .settings-group { grid-template-columns: 1fr; gap: 14px; }
 }
+
+/* Logs toolbar */
+.logs-toolbar { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.logs-toolbar-label { font-size: 12px; color: var(--muted); }
+.logs-toolbar .input { width: auto; max-width: 280px; height: 28px; }
+.logs-live { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.logs-live .dot { background: var(--green); box-shadow: 0 0 0 3px var(--green-halo); }
