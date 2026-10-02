@@ -766,8 +766,12 @@ def _git_head_commit(app_dir: str) -> Optional[str]:
 
 
 def _git_worktree_dirty(app_dir: str) -> bool:
+    # Dockerfile and .dockerignore are written by Cloudbase during the build;
+    # counting them would flip the revision to "-dirty" after every build and
+    # trigger a second, redundant build on the next start.
     res = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all"],
+        ["git", "status", "--porcelain", "--untracked-files=all", "--",
+         ".", ":(exclude)Dockerfile", ":(exclude).dockerignore"],
         cwd=app_dir,
         capture_output=True,
         text=True,

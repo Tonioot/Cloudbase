@@ -234,6 +234,10 @@ CMD {cmd_json}
 def _cmd_to_json(cmd: str) -> str:
     """Convert a shell command string to a JSON array for Dockerfile CMD."""
     import shlex
+    # Exec-form CMD has no shell, so `a && b` would pass "&&" as a literal
+    # argument to `a`. Commands with shell syntax must run through /bin/sh.
+    if re.search(r"[;&|<>$`*?(){}\\]", cmd):
+        return json.dumps(["/bin/sh", "-c", cmd])
     try:
         parts = shlex.split(cmd)
         return json.dumps(parts)
