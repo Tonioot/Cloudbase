@@ -800,7 +800,16 @@
           </div>
         </div>
         <div class="field">
-          <label class="field-label">Logo <span class="hint">(optional &mdash; shown above the icon)</span></label>
+          <label class="field-label">Appearance</label>
+          <div class="segmented" id="maint-modal-theme" role="radiogroup" aria-label="Appearance">
+            <button type="button" data-theme="auto" role="radio">Automatic</button>
+            <button type="button" data-theme="light" role="radio">Light</button>
+            <button type="button" data-theme="dark" role="radio">Dark</button>
+          </div>
+          <div class="field-hint">Automatic follows the visitor's light or dark system setting.</div>
+        </div>
+        <div class="field">
+          <label class="field-label">Logo <span class="hint">(optional &mdash; shown above the title)</span></label>
           <div id="maint-modal-logo-preview" style="display:none;margin-bottom:8px">
             <img id="maint-modal-logo-img" src="" alt="Logo" style="max-height:48px;max-width:180px;object-fit:contain;border:1px solid var(--border);border-radius:6px;padding:4px;background:#fff" />
           </div>

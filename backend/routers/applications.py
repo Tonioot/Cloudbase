@@ -135,6 +135,7 @@ class MaintenancePageConfig(BaseModel):
     status_url: Optional[str] = None
     custom_html: Optional[str] = None
     logo_data: Optional[str] = None    # base64 data-URL for logo image
+    theme: Optional[str] = "auto"      # auto (visitor's system) | light | dark
 
 
 class ExportRequest(BaseModel):

@@ -1614,6 +1614,18 @@ function initMaintenanceSettings() {
   document.getElementById('btn-open-starting-modal').addEventListener('click',  () => openMaintModal('starting'));
 }
 
+function _setMaintTheme(theme) {
+  document.querySelectorAll('#maint-modal-theme button').forEach(b => {
+    const on = b.dataset.theme === theme;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-checked', String(on));
+  });
+}
+document.getElementById('maint-modal-theme')?.addEventListener('click', e => {
+  const b = e.target.closest('button[data-theme]');
+  if (b) _setMaintTheme(b.dataset.theme);
+});
+
 // Defaults the server uses for empty fields (nginx_manager.PAGE_DEFAULTS)
 const MAINT_PAGE_DEFAULTS = {
   downtime: { title: "Down for Maintenance", message: "We'll be back shortly.", color: '#e5484d' },
@@ -1655,6 +1667,7 @@ function openMaintModal(type) {
   document.getElementById('maint-modal-status-url').value   = cfg.status_url || '';
   document.getElementById('maint-modal-color').value        = color;
   document.getElementById('maint-modal-color-picker').value = color;
+  _setMaintTheme(cfg.theme || 'auto');
 
   _maintLogoData = cfg.logo_data || null;
   const logoPreview = document.getElementById('maint-modal-logo-preview');
@@ -1787,6 +1800,7 @@ async function saveMaintenancePage(type) {
     color:      getVal('maint-modal-color').trim()        || null,
     status_url: getVal('maint-modal-status-url').trim()   || null,
     logo_data:  _maintLogoData,
+    theme:      document.querySelector('#maint-modal-theme button.active')?.dataset.theme || 'auto',
     custom_html: document.getElementById('maint-modal-custom-toggle')?.checked
                    ? getVal('maint-modal-custom-html') || null
                    : null,
@@ -1797,7 +1811,7 @@ async function saveMaintenancePage(type) {
   const currentUp = app.update_page    || {};
   const currentRe = app.restart_page   || {};
   const currentSt = app.starting_page  || {};
-  const _pick = (o) => ({ title: o.title, message: o.message, color: o.color, status_url: o.status_url, custom_html: o.custom_html, logo_data: o.logo_data });
+  const _pick = (o) => ({ title: o.title, message: o.message, color: o.color, status_url: o.status_url, custom_html: o.custom_html, logo_data: o.logo_data, theme: o.theme || 'auto' });
   const payload = {
     downtime_page:  type === 'downtime'  ? pageData : _pick(currentDt),
     update_page:    type === 'update'    ? pageData : _pick(currentUp),

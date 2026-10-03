@@ -69,6 +69,7 @@ def generate_maintenance_html(
     custom_html: str = None,
     page_type: str = "downtime",
     logo_data: str = None,
+    theme: str = "auto",
 ) -> str:
     """Return a full HTML page for downtime or update mode. Uses custom_html if provided."""
     if custom_html:
@@ -83,13 +84,9 @@ def generate_maintenance_html(
     # Validate logo: must be a data-URL with an image MIME type
     safe_logo_data = logo_data if logo_data and _re.match(r'^data:image/[a-zA-Z0-9+/.-]+;base64,', logo_data) else None
 
-    if page_type == "downtime":
-        return _downtime_template(safe_title, safe_message, safe_color, safe_status_url, safe_logo_data)
-    if page_type == "restart":
-        return _restart_template(safe_title, safe_message, safe_color, safe_status_url, safe_logo_data)
-    if page_type == "starting":
-        return _starting_template(safe_title, safe_message, safe_color, safe_status_url, safe_logo_data)
-    return _update_template(safe_title, safe_message, safe_color, safe_status_url, safe_logo_data)
+    kind = page_type if page_type in _APP_PAGE_KINDS else "update"
+    safe_theme = theme if theme in ("light", "dark") else "auto"
+    return _app_status_page(kind, safe_title, safe_message, safe_color, safe_status_url, safe_logo_data, safe_theme)
 
 
 def _cloudbase_logo_data_uri() -> str | None:
@@ -216,6 +213,7 @@ def render_app_page(page_type: str, cfg: dict | None) -> str:
         cfg.get("custom_html"),
         page_type,
         logo_data=cfg.get("logo_data"),
+        theme=cfg.get("theme") or "auto",
     )
 
 
@@ -232,7 +230,7 @@ _APP_PAGE_KINDS = {
 }
 
 
-def _app_status_page(kind: str, title: str, message: str, color: str, status_url: str = None, logo_data: str = None) -> str:
+def _app_status_page(kind: str, title: str, message: str, color: str, status_url: str = None, logo_data: str = None, theme: str = "auto") -> str:
     meta = _APP_PAGE_KINDS[kind]
     logo = f'<img class="logo" src="{logo_data}" alt="">' if logo_data else ""
     link = (
@@ -243,6 +241,15 @@ def _app_status_page(kind: str, title: str, message: str, color: str, status_url
     ) if status_url else ""
     busy = '<div class="progress" aria-hidden="true"><span></span></div>' if meta["busy"] else ""
     refresh = meta["refresh"]
+    light = "color-scheme: light; --bg: #fbfbfa; --text: #111214; --text-2: #4a4f57; --muted: #7a7f88; --line: #e8e8e5;"
+    dark = "color-scheme: dark; --bg: #0a0b0c; --text: #edeef0; --text-2: #a9aeb6; --muted: #7a7f88; --line: #1d1f22;"
+    if theme == "light":
+        theme_css = f":root {{ {light} --accent: {color}; }}"
+    elif theme == "dark":
+        theme_css = f":root {{ {dark} --accent: {color}; }}"
+    else:
+        theme_css = (f":root {{ {light} --accent: {color}; }}\n"
+                     f"    @media (prefers-color-scheme: dark) {{ :root {{ {dark} }} }}")
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -252,14 +259,7 @@ def _app_status_page(kind: str, title: str, message: str, color: str, status_url
   <meta name="robots" content="noindex">
   <title>{title}</title>
   <style>
-    :root {{
-      color-scheme: light;
-      --bg: #fbfbfa; --text: #111214; --text-2: #4a4f57; --muted: #7a7f88; --line: #e8e8e5;
-      --accent: {color};
-    }}
-    @media (prefers-color-scheme: dark) {{
-      :root {{ color-scheme: dark; --bg: #0a0b0c; --text: #edeef0; --text-2: #a9aeb6; --muted: #7a7f88; --line: #1d1f22; }}
-    }}
+    {theme_css}
     * {{ box-sizing: border-box; margin: 0; padding: 0; }}
     body {{
       min-height: 100vh;
@@ -310,25 +310,6 @@ def _app_status_page(kind: str, title: str, message: str, color: str, status_url
 </body>
 </html>
 """
-
-
-def _downtime_template(title: str, message: str, color: str, status_url: str = None, logo_data: str = None) -> str:
-    return _app_status_page("downtime", title, message, color, status_url, logo_data)
-
-
-def _restart_template(title: str, message: str, color: str, status_url: str = None, logo_data: str = None) -> str:
-    return _app_status_page("restart", title, message, color, status_url, logo_data)
-
-
-def _starting_template(title: str, message: str, color: str, status_url: str = None, logo_data: str = None) -> str:
-    return _app_status_page("starting", title, message, color, status_url, logo_data)
-
-
-def _update_template(title: str, message: str, color: str, status_url: str = None, logo_data: str = None) -> str:
-    return _app_status_page("update", title, message, color, status_url, logo_data)
-
-
-
 
 
 # â"€â"€ Nginx config generation â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
