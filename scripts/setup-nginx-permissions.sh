@@ -69,5 +69,15 @@ EOF
 "$SUDO_BIN" chown -R "$TARGET_USER" /var/www/cloudbase/acme
 "$SUDO_BIN" "$CHMOD_BIN" 755 /var/www/cloudbase/acme /var/www/cloudbase/acme/.well-known /var/www/cloudbase/acme/.well-known/acme-challenge
 
+# certbot renews certificates through its own timer; make sure it runs
+# (enabled by default on Debian/Ubuntu, not on every distribution)
+for timer in certbot.timer certbot-renew.timer snap.certbot.renew.timer; do
+  if "$SYSTEMCTL_BIN" list-unit-files "$timer" 2>/dev/null | grep -q "^$timer"; then
+    "$SUDO_BIN" "$SYSTEMCTL_BIN" enable --now "$timer" >/dev/null 2>&1 \
+      && printf 'Certificate renewal timer active: %s\n' "$timer"
+    break
+  fi
+done
+
 printf 'Configured Cloudbase nginx permissions for user: %s\n' "$TARGET_USER"
 printf 'Sudoers file: %s\n' "$SUDOERS_FILE"

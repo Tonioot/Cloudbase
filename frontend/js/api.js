@@ -137,6 +137,7 @@ export const api = {
   checkDomain:           (domain)   => request('POST', '/domains/check', { domain }),
   requestCertificate:    (domains, email, certName) => request('POST', '/domains/certificate', { domains, email, cert_name: certName || null }),
   deleteCertificate:     (certName) => request('DELETE', `/domains/certificate/${encodeURIComponent(certName)}`),
+  certificateInfo:       (certName) => request('GET', `/domains/certificate/${encodeURIComponent(certName)}`),
   saveMaintenancePages:  (id, data) => request('PUT',  `/apps/${id}/maintenance-pages`, data),
   renderMaintenancePage: async (id, pageType, page) => {
     const res = await fetch(`${BASE}/apps/${id}/maintenance-pages/render`, {

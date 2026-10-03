@@ -6,6 +6,8 @@
 #       (same cert-name keeps the same /etc/letsencrypt/live/<cert-name>/ paths).
 #   cloudbase-issue-cert delete <cert-name>
 #       Remove a certificate that is no longer used.
+#   cloudbase-issue-cert info <cert-name>
+#       Print "expires=<date>" and "names=<a,b,...>" for the certificate.
 #   cloudbase-issue-cert exists <cert-name>
 #       Exit 0 when the certificate and key are present. /etc/letsencrypt/live
 #       is only readable by root, so Cloudbase can't check this itself.
@@ -27,6 +29,13 @@ action="$1"; cert_name="$2"; shift 2
 valid_domain "$cert_name" || die "invalid certificate name: $cert_name"
 
 case "$action" in
+  info)
+    cert="/etc/letsencrypt/live/$cert_name/fullchain.pem"
+    [[ -f "$cert" ]] || exit 1
+    echo "expires=$(openssl x509 -in "$cert" -noout -enddate | cut -d= -f2)"
+    echo "names=$(openssl x509 -in "$cert" -noout -ext subjectAltName 2>/dev/null | grep -o 'DNS:[^,]*' | sed 's/DNS://' | paste -sd, -)"
+    exit 0
+    ;;
   exists)
     [[ -f "/etc/letsencrypt/live/$cert_name/fullchain.pem" && -f "/etc/letsencrypt/live/$cert_name/privkey.pem" ]]
     exit $?

@@ -22,6 +22,7 @@ import datetime as _dt
 from models import Application, ApplicationReplica, Node, StatsHistory, NodeCommand, AuditLog
 import process_manager as pm
 import nginx_manager as nm
+import certificates as certs
 import token_vault
 import docker_manager as dm
 from routers.nodes import ensure_local_node, queue_node_command, wait_for_node_command
@@ -391,6 +392,26 @@ async def _write_app_nginx_config(
     if not ok:
         raise HTTPException(500, f"Nginx config failed: {msg}")
 
+    if not has_custom and not _syscfg.get_base_ssl_cert_cached():
+        _schedule_auto_certificate(app)
+
+
+def _schedule_auto_certificate(app: Application) -> None:
+    """Apps on the base domain get a certificate for their own subdomain.
+    Once it's there, the nginx config is written again with HTTPS."""
+    name = _auto_subdomain(app)
+    if not name or not certs.wants_auto_certificate(name):
+        return
+    app_id = app.id
+
+    async def _rewrite():
+        async with AsyncSessionLocal() as _db:
+            fresh = await _db.get(Application, app_id)
+            if fresh:
+                await _write_app_nginx_config(fresh, _db, await ensure_local_node(_db))
+
+    asyncio.create_task(certs.ensure_auto_certificate(name, _rewrite))
+
 
 async def _wait_for_app_backends_ready(
     app_id: int,
@@ -599,32 +620,31 @@ def _remote_replica_command_payload(app: Application, env_vars: dict, external_p
     }
 
 
-_LE_LIVE_PATH_RE = re.compile(r"^/etc/letsencrypt/live/([a-z0-9.-]+)/(fullchain|privkey)\.pem$")
+def _best_effort_delete_app_certificate(app: Application) -> None:
+    """Remove the app's Let's Encrypt certificates (its own domains and its
+    automatic subdomain), so certbot stops renewing them — renewals would
+    fail once the domains point elsewhere."""
+    names = {certs.name_from_path(app.ssl_cert_path), _auto_subdomain(app)}
+    for name in filter(None, names):
+        certs.delete(name)
 
 
-def _letsencrypt_cert_exists(cert_name: str) -> bool:
-    """/etc/letsencrypt/live is only readable by root, so Cloudbase can't see
-    these files itself; the root-owned helper checks for it."""
-    try:
-        r = subprocess.run(
-            ["sudo", "-n", "/usr/local/lib/cloudbase/issue-cert", "exists", cert_name],
-            capture_output=True, text=True, timeout=10,
-        )
-    except Exception:
-        return True  # can't check — let `nginx -t` be the judge
-    if r.returncode in (0, 1):
-        return r.returncode == 0
-    return True  # helper missing or outdated (run: cloudbase nginx permissions)
+def _auto_subdomain(app: Application) -> Optional[str]:
+    """<app>.<base domain> — mirrors nginx_manager.generate_config."""
+    base = _syscfg.get_base_domain_cached()
+    slug = re.sub(r"[^a-z0-9]+", "-", (app.name or "").lower()).strip("-")
+    return f"{slug}.{base}" if base and slug else None
 
 
 def _resolve_ssl_paths(cert: str | None, key: str | None) -> tuple[str | None, str | None]:
     """Return cert/key paths only if both files actually exist on disk; otherwise None."""
     if cert and key:
-        m_cert, m_key = _LE_LIVE_PATH_RE.match(cert), _LE_LIVE_PATH_RE.match(key)
-        if m_cert and m_key and m_cert.group(1) == m_key.group(1):
-            if _letsencrypt_cert_exists(m_cert.group(1)):
+        name = certs.name_from_path(cert)
+        if name and certs.name_from_path(key) == name:
+            # /etc/letsencrypt is root-only; the helper checks it for us
+            if certs.exists(name):
                 return cert, key
-            log.warning("Let's Encrypt certificate %s not found, skipping SSL", m_cert.group(1))
+            log.warning("Let's Encrypt certificate %s not found, skipping SSL", name)
             return None, None
     if cert and key and os.path.isfile(cert) and os.path.isfile(key):
         return cert, key
@@ -1361,8 +1381,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         new_redirects = req.redirect_domains if req.redirect_domains is not None else json.loads(app.redirect_domains or "[]")
         all_domains = [new_primary] + (new_extra or []) + (new_redirects or [])
         await _check_domain_conflicts([d for d in all_domains if d], db, exclude_app_id=app.id)
-        from routers.domains import forget_pending
-        await forget_pending([d for d in all_domains if d])
+        await certs.forget_pending([d for d in all_domains if d])
 
     if req.domain is not None:
         app.domain = req.domain
@@ -1511,6 +1530,7 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dic
             if done.status != "done":
                 raise HTTPException(500, f"Failed to delete app on node '{node.name}': {done.error_message}")
             _best_effort_remove_app_nginx(app.name)
+            _best_effort_delete_app_certificate(app)
             await _cleanup_app_dependencies(db, app.id)
             await db.delete(app)
             try:
@@ -1523,6 +1543,7 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dic
         else:
             # Node offline — remove from DB only; node cleans up its own files when it reconnects
             _best_effort_remove_app_nginx(app.name)
+            _best_effort_delete_app_certificate(app)
             await _cleanup_app_dependencies(db, app.id)
             await db.delete(app)
             try:
@@ -1552,6 +1573,7 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dic
     await asyncio.to_thread(dm.remove_image, app_id, app.name)
 
     _best_effort_remove_app_nginx(app.name)
+    _best_effort_delete_app_certificate(app)
 
     app_dir = pm.get_app_dir(app.name)
     if os.path.exists(app_dir):
@@ -3909,7 +3931,9 @@ def _app_to_dict(
             if _base:
                 _slug = _re.sub(r"[^a-z0-9]+", "-", (app.name or "").lower()).strip("-")
                 if _slug:
-                    _app_url = f"https://{_slug}.{_base}"
+                    _auto = f"{_slug}.{_base}"
+                    _secure = bool(_syscfg.get_base_ssl_cert_cached()) or (certs.capability()[0] and certs.exists(_auto))
+                    _app_url = f"{'https' if _secure else 'http'}://{_auto}"
     return {
         "id": app.id,
         "name": app.name,

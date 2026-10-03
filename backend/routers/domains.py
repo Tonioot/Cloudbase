@@ -3,6 +3,7 @@
 - GET  /api/domains/server        public IP to point DNS at, and whether HTTPS can be automated
 - POST /api/domains/check         does this name resolve here, and does port 80 reach us?
 - POST /api/domains/certificate   request a free Let's Encrypt certificate
+- GET  /api/domains/certificate/{name}   expiry date and names of a certificate
 """
 import asyncio
 import ipaddress
@@ -10,9 +11,7 @@ import logging
 import os
 import re
 import secrets
-import shutil
 import socket
-import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -23,16 +22,14 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import auth as _auth
-import config as _cfg
+import certificates as certs
 import nginx_manager as nm
 from database import get_db
 
 log = logging.getLogger("cloudbase.domains")
 router = APIRouter(prefix="/api/domains", tags=["domains"])
 
-ISSUE_CERT_BIN = "/usr/local/lib/cloudbase/issue-cert"
-_DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
-_EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}$")
+_DOMAIN_RE = certs.DOMAIN_RE
 
 # Cloudflare's published proxy ranges (cloudflare.com/ips-v4, ips-v6)
 _CLOUDFLARE_NETS = [ipaddress.ip_network(n) for n in (
@@ -53,52 +50,10 @@ def _is_cloudflare(ip: str) -> bool:
 
 
 _server_ip_cache: dict = {"ip": None, "at": 0.0}
-_issue_lock = asyncio.Lock()
-
-# Domains being set up in the wizard that may not be routed to an app yet.
-# They get a temporary port-80 server that only answers verification
-# requests, so the check and Let's Encrypt both reach this server — also
-# through Cloudflare's proxy. Entries expire after an hour.
-_PENDING_TTL = 3600
-_pending: dict[str, float] = {}
-_acme_written: tuple = ()
-_acme_lock = asyncio.Lock()
 
 
-async def _sync_acme_server() -> tuple[bool, str]:
-    global _acme_written
-    async with _acme_lock:
-        now = time.time()
-        for d, expires in list(_pending.items()):
-            if expires < now:
-                del _pending[d]
-        names = tuple(sorted(_pending))
-        if names == _acme_written:
-            return True, ""
-        if names:
-            ok, msg = await asyncio.to_thread(nm.write_acme_server, list(names))
-        else:
-            await asyncio.to_thread(nm.remove_acme_server)
-            ok, msg = True, ""
-        if ok:
-            _acme_written = names
-        return ok, msg
-
-
-async def _mark_pending(domains: list[str]) -> tuple[bool, str]:
-    for d in domains:
-        _pending[d] = time.time() + _PENDING_TTL
-    return await _sync_acme_server()
-
-
-async def forget_pending(domains: list[str]) -> None:
-    """Called once domains are configured on an app (or set up is done)."""
-    changed = False
-    for d in domains:
-        if _pending.pop((d or "").strip().lower(), None) is not None:
-            changed = True
-    if changed:
-        await _sync_acme_server()
+# Kept for callers that import it from here
+forget_pending = certs.forget_pending
 
 
 def _clean_domain(value: str) -> str:
@@ -119,15 +74,17 @@ async def _server_ip() -> Optional[str]:
     return ip
 
 
-def _https_capability() -> tuple[bool, str]:
-    """Can this server request certificates by itself?"""
-    if not shutil.which("certbot"):
-        return False, "certbot isn’t installed on the server. Run cloudbase update, then cloudbase nginx permissions."
-    if not os.path.exists(ISSUE_CERT_BIN):
-        return False, "Certificate permissions aren’t set up yet. Run cloudbase nginx permissions on the server."
-    if not os.access(os.path.join(nm.ACME_WEBROOT, ".well-known", "acme-challenge"), os.W_OK):
-        return False, "The verification folder isn’t writable. Run cloudbase nginx permissions on the server."
-    return True, ""
+def _local_ipv6_addresses() -> set[str]:
+    try:
+        import psutil
+        return {
+            a.address.split("%")[0]
+            for addrs in psutil.net_if_addrs().values()
+            for a in addrs
+            if a.family == socket.AF_INET6
+        }
+    except Exception:
+        return set()
 
 
 def _resolve_cached(domain: str) -> list[str]:
@@ -208,12 +165,12 @@ def _fetch_via(ip: str, domain: str, path: str, timeout: float = 6.0) -> tuple[i
 
 @router.get("/server")
 async def server_info(_user: dict = Depends(_auth.require_permission("apps.view"))):
-    ok, reason = _https_capability()
+    ok, reason = certs.capability()
     return {
         "ip": await _server_ip(),
         "https_available": ok,
         "https_reason": reason,
-        "email": (_cfg._config.get("acme") or {}).get("email") or "",
+        "email": certs.acme_email(),
     }
 
 
@@ -238,7 +195,16 @@ async def check_domain(req: CheckRequest, _user: dict = Depends(_auth.require_pe
         "reachable": False,
         "cloudflare_proxy": bool(ips) and all(_is_cloudflare(ip) for ip in ips),
         "detail": "",
+        "warnings": [],
     }
+    # Let's Encrypt prefers IPv6: an AAAA record that doesn't lead here makes
+    # the certificate request fail even when the IPv4 record is right.
+    stray_v6 = [ip for ip in ips if ":" in ip and not _is_cloudflare(ip) and ip not in _local_ipv6_addresses()]
+    if stray_v6:
+        result["warnings"].append(
+            f"{domain} also has an IPv6 (AAAA) record: {', '.join(stray_v6)}. Let’s Encrypt tries IPv6 first — "
+            "remove that record unless it points to this server, or the certificate request will fail."
+        )
     if not ips:
         result["detail"] = "No DNS record found yet. Most providers publish it within a few minutes."
         return result
@@ -248,7 +214,7 @@ async def check_domain(req: CheckRequest, _user: dict = Depends(_auth.require_pe
     elif server_ip and server_ip not in ips:
         result["detail"] = f"{domain} points to {', '.join(ips)}, not to this server ({server_ip})."
 
-    await _mark_pending([domain])
+    await certs.mark_pending([domain])
 
     token = "cloudbase-check-" + secrets.token_hex(8)
     value = secrets.token_hex(16)
@@ -304,73 +270,33 @@ class CertificateRequest(BaseModel):
     cert_name: Optional[str] = None
 
 
-_LE_LIVE_RE = re.compile(r"^/etc/letsencrypt/live/([a-z0-9.-]+)/(fullchain|privkey)\.pem$")
-
-
-def cert_name_from_path(path: Optional[str]) -> Optional[str]:
-    """Name of a Cloudbase-managed Let's Encrypt certificate, from its file path."""
-    m = _LE_LIVE_RE.match(path or "")
-    return m.group(1) if m and _DOMAIN_RE.match(m.group(1)) else None
-
-
 @router.post("/certificate")
 async def request_certificate(req: CertificateRequest, _user: dict = Depends(_auth.require_permission("apps.configure"))):
-    domains = []
-    for d in req.domains:
-        c = _clean_domain(d)
-        if c not in domains:
-            domains.append(c)
-    if not domains:
-        raise HTTPException(400, "Add at least one domain")
-    if len(domains) > 10:
-        raise HTTPException(400, "At most 10 domains per certificate")
-
-    cert_name = (req.cert_name or "").strip().lower() or domains[0]
-    if not _DOMAIN_RE.match(cert_name):
-        raise HTTPException(400, "Invalid certificate name")
-
+    domains = list(dict.fromkeys(_clean_domain(d) for d in req.domains))
     email = (req.email or "").strip()
-    if email and not _EMAIL_RE.match(email):
-        raise HTTPException(400, "That email address doesn’t look right")
-
-    ok, reason = _https_capability()
-    if not ok:
-        raise HTTPException(400, reason)
-
     if email:
         try:
+            import config as _cfg
             _cfg.save_config_sections({"acme": {"email": email}})
         except Exception as e:
             log.warning("Could not remember ACME email: %s", e)
+    try:
+        cert, key = await certs.issue(domains, cert_name=req.cert_name, email=email or None)
+    except certs.CertificateError as e:
+        raise HTTPException(400, str(e))
+    return {"ok": True, "domains": domains, "ssl_cert_path": cert, "ssl_key_path": key}
 
-    async with _issue_lock:
-        # Serve challenges for names that aren't routed to an app yet
-        acme_ok, acme_msg = await _mark_pending(domains)
-        if not acme_ok:
-            raise HTTPException(500, f"Couldn’t prepare nginx for verification: {acme_msg}")
-        try:
-            proc = await asyncio.to_thread(
-                subprocess.run,
-                ["sudo", "-n", ISSUE_CERT_BIN, "issue", cert_name, email or "-", *domains],
-                capture_output=True, text=True, timeout=240,
-            )
-        except subprocess.TimeoutExpired:
-            raise HTTPException(504, "Let’s Encrypt didn’t answer in time. Try again in a minute.")
-        finally:
-            await forget_pending(domains)
 
-    output = (proc.stdout or "") + (proc.stderr or "")
-    log.info("[certificate] domains=%s rc=%d", domains, proc.returncode)
-    if proc.returncode != 0:
-        raise HTTPException(400, _explain_certbot_error(output))
-
-    live = f"/etc/letsencrypt/live/{cert_name}"
-    return {
-        "ok": True,
-        "domains": domains,
-        "ssl_cert_path": f"{live}/fullchain.pem",
-        "ssl_key_path": f"{live}/privkey.pem",
-    }
+@router.get("/certificate/{cert_name}")
+async def certificate_info(cert_name: str, _user: dict = Depends(_auth.require_permission("apps.view"))):
+    """Expiry and names of a Cloudbase-managed certificate."""
+    cert_name = cert_name.strip().lower()
+    if not _DOMAIN_RE.match(cert_name):
+        raise HTTPException(400, "Invalid certificate name")
+    data = await asyncio.to_thread(certs.info, cert_name)
+    if not data:
+        return {"found": False}
+    return {"found": True, **data}
 
 
 @router.delete("/certificate/{cert_name}")
@@ -379,28 +305,4 @@ async def delete_certificate(cert_name: str, _user: dict = Depends(_auth.require
     cert_name = cert_name.strip().lower()
     if not _DOMAIN_RE.match(cert_name):
         raise HTTPException(400, "Invalid certificate name")
-    ok, _reason = _https_capability()
-    if not ok:
-        return {"ok": False}
-    proc = await asyncio.to_thread(
-        subprocess.run, ["sudo", "-n", ISSUE_CERT_BIN, "delete", cert_name],
-        capture_output=True, text=True, timeout=60,
-    )
-    log.info("[certificate] delete %s rc=%d", cert_name, proc.returncode)
-    return {"ok": proc.returncode == 0}
-
-
-def _explain_certbot_error(output: str) -> str:
-    low = output.lower()
-    if "too many certificates" in low or "ratelimit" in low or "rate limit" in low:
-        return "Let’s Encrypt’s rate limit was hit for this domain. Wait an hour and try again."
-    if "dns problem" in low or "nxdomain" in low:
-        return "Let’s Encrypt couldn’t find a DNS record for the domain. Check the record and wait a few minutes."
-    if "connection refused" in low or "timeout during connect" in low or "fetching http" in low:
-        return "Let’s Encrypt couldn’t reach the server on port 80. Make sure port 80 is open to the internet."
-    if "unauthorized" in low or "invalid response" in low:
-        return "Let’s Encrypt reached a different server for this domain. Check that the DNS record points to this server."
-    if "sudo" in low and ("password" in low or "not allowed" in low):
-        return "Cloudbase isn’t allowed to request certificates yet. Run cloudbase nginx permissions on the server."
-    last = [l for l in output.strip().splitlines() if l.strip()][-3:]
-    return "Requesting the certificate failed: " + (" ".join(last) or "unknown error")
+    return {"ok": await asyncio.to_thread(certs.delete, cert_name)}

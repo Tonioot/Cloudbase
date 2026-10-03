@@ -36,7 +36,7 @@ export function openDomainWizard(app, { onDone, domain = '' } = {}) {
   const state = {
     step: domain ? 1 : 0,
     domain,
-    www: !domain,
+    www: false,         // opt-in: only when www.<domain> also has a DNS record
     role: 'alias',      // for an app that already has a domain: 'alias' (show the app) | 'redirect'
     server: null,       // { ip, https_available, https_reason, email }
     check: null,        // last /check result
@@ -214,7 +214,7 @@ export function openDomainWizard(app, { onDone, domain = '' } = {}) {
     el.className = `dw-status dw-status--${tone}`;
     el.innerHTML = `
       <span class="dw-status-icon">${tone === 'ok' ? ICON.check : '<span class="dw-pulse"></span>'}</span>
-      <span class="dw-status-text"><strong>${esc(title)}</strong>${detail ? `<span>${esc(detail)}</span>` : ''}</span>
+      <span class="dw-status-text"><strong>${esc(title)}</strong>${detail ? `<span>${esc(detail)}</span>` : ''}${(c?.warnings || []).map(w => `<span class="dw-warn-line">${esc(w)}</span>`).join('')}</span>
       ${tone !== 'ok' ? `<button class="btn btn-sm" id="dw-recheck" ${state.checking ? 'disabled' : ''}>${state.checking ? 'Checking…' : 'Check now'}</button>` : ''}`;
     $('#dw-recheck')?.addEventListener('click', runCheck);
     const next = $('#dw-next');

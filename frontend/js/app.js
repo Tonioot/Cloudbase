@@ -1229,12 +1229,16 @@ async function initActivity() {
 function renderNetwork() {
   const list = document.getElementById('net-domains');
   if (!list) return;
-  const https = !!(app.ssl_cert_path && app.ssl_key_path);
   const rows = [
     ...(app.domain ? [{ name: app.domain, kind: 'primary', role: 'Primary' }] : []),
     ...(app.extra_domains || []).map(name => ({ name, kind: 'alias', role: 'Also shows the app' })),
     ...(app.redirect_domains || []).map(name => ({ name, kind: 'redirect', role: `Redirects to ${app.domain || 'primary'}` })),
   ];
+  const autoHost = !rows.length && app.app_url ? app.app_url.replace(/^https?:\/\//, '').split('/')[0] : null;
+  if (autoHost) rows.push({ name: autoHost, kind: 'auto', role: 'Automatic subdomain' });
+  // Own domains use the app's certificate; the automatic subdomain gets its
+  // own Let's Encrypt certificate named after it
+  const https = autoHost ? /^https:/.test(app.app_url) : !!(app.ssl_cert_path && app.ssl_key_path);
   const canEdit = _canManageApps();
 
   if (!rows.length) {
@@ -1254,7 +1258,7 @@ function renderNetwork() {
         <a class="net-name" href="${https ? 'https' : 'http'}://${escAttr(r.name)}" target="_blank" rel="noopener">${escHtml(r.name)}</a>
         <span class="net-role">${escHtml(r.role)}</span>
         <span class="net-proto ${https ? 'on' : ''}">${https ? 'HTTPS' : 'HTTP'}</span>
-        ${canEdit ? `
+        ${canEdit && r.kind !== 'auto' ? `
           <div class="menu-wrap">
             <button type="button" class="btn btn-sm btn-icon btn-ghost" data-dropdown aria-haspopup="menu" aria-label="Domain actions">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
@@ -1276,8 +1280,11 @@ function renderNetwork() {
     });
   }
 
+  _renderCertStatus(autoHost);
+
   const httpsBtn = document.getElementById('btn-net-https');
-  if (httpsBtn) {
+  if (httpsBtn && autoHost) httpsBtn.hidden = true;
+  else if (httpsBtn) {
     // Also offered for a certificate Cloudbase doesn't manage (e.g. an old
     // Cloudflare Origin certificate, which browsers don't trust)
     const managed = !!leCertName(app);
@@ -1285,6 +1292,37 @@ function renderNetwork() {
     httpsBtn.textContent = https ? 'Switch to a free certificate' : 'Set up HTTPS';
     httpsBtn.title = https ? 'This app uses a certificate Cloudbase doesn’t renew. Replace it with a free, auto-renewing Let’s Encrypt certificate.' : '';
     httpsBtn.onclick = () => openDomainWizard(app, { domain: app.domain, onDone: _afterDomainChange });
+  }
+}
+
+// Line under the domain list: until when the certificate is valid
+async function _renderCertStatus(autoHost) {
+  let el = document.getElementById('net-cert');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'net-cert';
+    el.className = 'net-cert';
+    document.getElementById('net-domains').after(el);
+  }
+  el.innerHTML = '';
+  const managed = leCertName(app) || autoHost;
+  if (!managed) {
+    if (app.ssl_cert_path) el.innerHTML = '<span class="net-cert-own">Own certificate — Cloudbase doesn’t renew it. Switch to a free certificate to have it renewed automatically.</span>';
+    return;
+  }
+  let info;
+  try { info = await api.certificateInfo(managed); } catch { return; }
+  if (!info?.found) {
+    if (autoHost) el.innerHTML = '<span>HTTPS for this subdomain is being set up automatically. It’s usually ready within a minute after the app starts.</span>';
+    return;
+  }
+  const date = new Date(info.expires_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+  if (info.days_left < 0) {
+    el.innerHTML = `<span class="net-cert-bad">Certificate expired on ${escHtml(date)}. Renewal failed — check that every domain still points to this server and port 80 is open.</span>`;
+  } else if (info.days_left < 14) {
+    el.innerHTML = `<span class="net-cert-warn">Certificate expires in ${info.days_left} day${info.days_left === 1 ? '' : 's'} (${escHtml(date)}). Automatic renewal seems to be failing — check that every domain still points to this server.</span>`;
+  } else {
+    el.innerHTML = `<span>Certificate valid until ${escHtml(date)} · renews automatically</span>`;
   }
 }
 

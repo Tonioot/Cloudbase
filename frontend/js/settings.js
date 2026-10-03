@@ -10,7 +10,7 @@ import { toast, confirm } from './utils.js';
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 export const SETTINGS_SECTIONS = {
-  domain:   { title: 'Domain & SSL',     sub: 'Where the panel and your apps are reachable, and the certificates nginx serves them with.' },
+  domain:   { title: 'Domain & SSL',     sub: 'Where the panel and your apps are reachable. HTTPS certificates are requested and renewed automatically.' },
   system:   { title: 'System settings',  sub: 'Session length, port ranges and resource limits for this Cloudbase installation.' },
   users:    { title: 'Users & roles',    sub: 'Who can sign in to this panel, and what each role is allowed to do.' },
   tokens:   { title: 'GitHub tokens',    sub: 'Saved access tokens for private repositories. Pick one when you create or edit an app.' },
@@ -123,76 +123,187 @@ function wireCert(id) {
 
 /* ─── Domain & SSL ──────────────────────────────────────────────────────── */
 
+const LE_LIVE = /^\/etc\/letsencrypt\/live\/([a-z0-9.-]+)\/fullchain\.pem$/;
+const unquote = v => (v || '').replace(/^["']|["']$/g, '');
+
 function renderDomain(root) {
   root.innerHTML = `
     ${actionBar('Changes are written to nginx and reloaded when you save.', 'domain-save', 'Save &amp; apply')}
     ${group('Cloudbase panel',
-      'The address of this dashboard. nginx listens on 80/443 and forwards to Cloudbase on port 7823.',
+      'The address of this dashboard. nginx listens on 80/443 and forwards to Cloudbase.',
       `<div class="field">
          <label class="field-label" for="pdm-domain">Domain</label>
-         <input class="input" id="pdm-domain" placeholder="panel.example.com" autocomplete="off" />
-         <div class="field-hint">Point an A record for this name at the server first. Leave the certificate empty to serve over plain HTTP.</div>
+         <input class="input" id="pdm-domain" placeholder="panel.example.com" autocomplete="off" spellcheck="false" />
+         <div class="field-hint">Point an A record for this name at the server, then save.</div>
        </div>
-       ${certField('pdm-cert', 'SSL certificate', 'Full chain in PEM format (<code>fullchain.pem</code>, <code>.crt</code>).', '.pem,.crt,.cer')}
-       ${certField('pdm-key', 'SSL private key', 'The matching private key (<code>privkey.pem</code>, <code>.key</code>).', '.pem,.key')}`)}
+       <div class="field">
+         <label class="field-label">HTTPS</label>
+         <div class="https-card" id="panel-https"><span class="settings-note">Loading…</span></div>
+       </div>
+       <details class="settings-advanced" id="panel-own">
+         <summary>Use my own certificate</summary>
+         <div class="settings-advanced-body">
+           <div class="field-hint">For example a Cloudflare Origin certificate. Cloudbase won’t renew it.</div>
+           ${certField('pdm-cert', 'Certificate', 'Full chain in PEM format (<code>fullchain.pem</code>, <code>.crt</code>).', '.pem,.crt,.cer')}
+           ${certField('pdm-key', 'Private key', 'The matching key (<code>privkey.pem</code>, <code>.key</code>).', '.pem,.key')}
+         </div>
+       </details>`)}
     ${group('App subdomains',
-      'Give every app an automatic address like <code>myapp.apps.example.com</code>, before or instead of a custom domain.',
+      'Give every app an automatic address like <code>myapp.apps.example.com</code>, before or instead of its own domain.',
       `<div class="field">
          <label class="field-label" for="pdm-base-domain">Base domain <span class="hint">optional</span></label>
-         <input class="input" id="pdm-base-domain" placeholder="apps.example.com" autocomplete="off" />
-         <div class="field-hint">Needs a wildcard DNS record: <code>*.apps.example.com → server IP</code>. Leave empty to turn automatic subdomains off.</div>
+         <input class="input" id="pdm-base-domain" placeholder="apps.example.com" autocomplete="off" spellcheck="false" />
+         <div class="field-hint">Needs a wildcard DNS record: <code>*.apps.example.com → server IP</code>. Leave empty to turn app subdomains off.</div>
        </div>
-       ${certField('pdm-base-cert', 'Wildcard certificate', 'A certificate for <code>*.apps.example.com</code>.', '.pem,.crt,.cer')}
-       ${certField('pdm-base-key', 'Wildcard private key', 'The key that belongs to the wildcard certificate.', '.pem,.key')}`)}
+       <div class="field">
+         <label class="field-label">HTTPS for app subdomains</label>
+         <div class="choice-list">
+           <label class="choice">
+             <input type="radio" name="base-https" value="auto" checked />
+             <span class="choice-dot"></span>
+             <span class="choice-text"><span>Automatic</span><small>Each app gets its own free certificate, renewed automatically</small></span>
+           </label>
+           <label class="choice">
+             <input type="radio" name="base-https" value="own" />
+             <span class="choice-dot"></span>
+             <span class="choice-text"><span>My own wildcard certificate</span><small>One certificate for <code>*.apps.example.com</code> that you upload</small></span>
+           </label>
+         </div>
+         <div class="field-hint" id="base-https-hint">Apps get HTTPS within a minute after they start on the base domain. Status per app is under the app’s <em>Settings → Network</em>.</div>
+       </div>
+       <div id="base-own" hidden>
+         ${certField('pdm-base-cert', 'Wildcard certificate', 'A certificate for <code>*.apps.example.com</code>.', '.pem,.crt,.cer')}
+         ${certField('pdm-base-key', 'Wildcard private key', 'The key that belongs to the wildcard certificate.', '.pem,.key')}
+       </div>`)}
     ${group('Status pages',
       'Saving also regenerates the page nginx shows while Cloudbase restarts, and the page for hostnames that aren’t linked to an app.',
       `<div class="settings-note">Nothing to configure here — these follow the panel domain above.</div>`)}
   `;
 
   ['pdm-cert', 'pdm-key', 'pdm-base-cert', 'pdm-base-key'].forEach(wireCert);
+  const val = id => document.getElementById(id).value.trim() || null;
+  const baseMode = () => document.querySelector('input[name="base-https"]:checked').value;
+  const syncBase = () => {
+    const own = baseMode() === 'own';
+    document.getElementById('base-own').hidden = !own;
+    document.getElementById('base-https-hint').hidden = own;
+  };
+  document.querySelectorAll('input[name="base-https"]').forEach(r => r.onchange = syncBase);
+
+  let saved = { domain: null, cert: null };
 
   api.getPDManagerNginx().then(data => {
     if (data.exists && data.content) {
       const m = data.content.match(/server_name\s+([^\s;]+)/);
       if (m) document.getElementById('pdm-domain').value = m[1];
       const c = data.content.match(/ssl_certificate\s+([^\s;]+)/);
-      if (c) setCert('pdm-cert', c[1]);
+      if (c) setCert('pdm-cert', unquote(c[1]));
       const k = data.content.match(/ssl_certificate_key\s+([^\s;]+)/);
-      if (k) setCert('pdm-key', k[1]);
+      if (k) setCert('pdm-key', unquote(k[1]));
+      saved = { domain: m?.[1] || null, cert: c ? unquote(c[1]) : null };
     }
     if (data.base_domain) document.getElementById('pdm-base-domain').value = data.base_domain;
-    if (data.base_ssl_cert_path) setCert('pdm-base-cert', data.base_ssl_cert_path);
+    if (data.base_ssl_cert_path) {
+      setCert('pdm-base-cert', data.base_ssl_cert_path);
+      document.querySelector('input[name="base-https"][value="own"]').checked = true;
+    }
     if (data.base_ssl_key_path) setCert('pdm-base-key', data.base_ssl_key_path);
-  }).catch(() => {});
+    syncBase();
+    // A Let's Encrypt certificate is managed here, not in "own certificate"
+    if (LE_LIVE.test(saved.cert || '')) { setCert('pdm-cert', ''); setCert('pdm-key', ''); }
+    else if (saved.cert) document.getElementById('panel-own').open = true;
+    renderPanelHttps(saved);
+  }).catch(() => renderPanelHttps(saved));
+
+  async function apply({ panelCert = null, panelKey = null } = {}) {
+    const domain = val('pdm-domain');
+    if (!domain) throw new Error('Enter the panel domain first.');
+    const ownBase = baseMode() === 'own';
+    const res = await api.applyPDManagerNginx({
+      domain,
+      ssl_cert_path: panelCert ?? val('pdm-cert'),
+      ssl_key_path: panelKey ?? val('pdm-key'),
+      base_domain: val('pdm-base-domain'),
+      base_ssl_cert_path: ownBase ? val('pdm-base-cert') : null,
+      base_ssl_key_path: ownBase ? val('pdm-base-key') : null,
+    });
+    if (!res.ok) throw new Error(res.message || 'nginx rejected the configuration');
+    return domain;
+  }
 
   const save = document.getElementById('domain-save');
   save.onclick = async () => {
-    const val = id => document.getElementById(id).value.trim() || null;
-    const domain = val('pdm-domain');
-    if (!domain) { setStatus('Enter the panel domain first.', 'error'); document.getElementById('pdm-domain').focus(); return; }
     save.disabled = true;
     setStatus('Applying…');
     try {
-      const res = await api.applyPDManagerNginx({
-        domain,
-        ssl_cert_path: val('pdm-cert'),
-        ssl_key_path: val('pdm-key'),
-        base_domain: val('pdm-base-domain'),
-        base_ssl_cert_path: val('pdm-base-cert'),
-        base_ssl_key_path: val('pdm-base-key'),
-      });
-      if (res.ok) {
-        const proto = val('pdm-cert') ? 'https' : 'http';
-        setStatus(`Applied — panel at ${proto}://${domain}`, 'ok');
-      } else {
-        setStatus(res.message || 'nginx rejected the configuration', 'error');
-      }
+      // Keep a Let's Encrypt panel certificate when nothing else was chosen
+      const keepLe = !val('pdm-cert') && LE_LIVE.test(saved.cert || '') && saved.domain === val('pdm-domain');
+      const le = keepLe ? { panelCert: saved.cert, panelKey: saved.cert.replace('fullchain.pem', 'privkey.pem') } : {};
+      const domain = await apply(le);
+      saved = { domain, cert: le.panelCert || val('pdm-cert') };
+      setStatus(`Applied — panel at ${saved.cert ? 'https' : 'http'}://${domain}`, 'ok');
+      renderPanelHttps(saved);
     } catch (e) {
       setStatus(e.message, 'error');
     } finally {
       save.disabled = false;
     }
   };
+
+  async function renderPanelHttps(current) {
+    const box = document.getElementById('panel-https');
+    const leName = LE_LIVE.exec(current.cert || '')?.[1];
+    if (leName) {
+      box.innerHTML = '<span class="settings-note">Checking certificate…</span>';
+      let info = null;
+      try { info = await api.certificateInfo(leName); } catch { /* shown below */ }
+      const date = info?.found ? new Date(info.expires_at).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : null;
+      const tone = !info?.found ? '' : info.days_left < 0 ? 'bad' : info.days_left < 14 ? 'warn' : 'ok';
+      box.innerHTML = `
+        <span class="https-dot ${tone}"></span>
+        <span class="https-text"><strong>Free certificate</strong><span>${date
+          ? (info.days_left < 0 ? `Expired on ${esc(date)} — renewal failed. Check the DNS record and port 80.`
+            : info.days_left < 14 ? `Expires in ${info.days_left} days (${esc(date)}) — automatic renewal seems to be failing.`
+            : `Valid until ${esc(date)} · renews automatically`)
+          : 'Let’s Encrypt · renews automatically'}</span></span>`;
+      return;
+    }
+    const own = !!current.cert;
+    box.innerHTML = `
+      <span class="https-dot ${own ? 'ok' : ''}"></span>
+      <span class="https-text"><strong>${own ? 'Own certificate' : 'Not secured'}</strong><span>${own
+        ? 'Not renewed by Cloudbase. Switch to a free certificate to have it renewed automatically.'
+        : 'The panel is served over plain HTTP.'}</span></span>
+      <button type="button" class="btn btn-sm btn-primary" id="panel-https-go">${own ? 'Switch to a free certificate' : 'Set up HTTPS'}</button>`;
+    document.getElementById('panel-https-go').onclick = () => securePanel(current);
+  }
+
+  async function securePanel(current) {
+    const domain = val('pdm-domain');
+    const box = document.getElementById('panel-https');
+    if (!domain) { setStatus('Enter the panel domain first.', 'error'); return; }
+    const progress = text => {
+      box.innerHTML = `<span class="https-dot wait"></span><span class="https-text"><strong>Setting up HTTPS</strong><span>${esc(text)}</span></span>`;
+    };
+    try {
+      if (current.domain !== domain) { progress('Saving the domain…'); await apply(); current = { domain, cert: val('pdm-cert') }; }
+      progress('Checking that the domain reaches this server…');
+      const check = await api.checkDomain(domain);
+      if (!check.reachable && !check.nginx_ready) throw new Error(check.detail || 'The domain doesn’t reach this server yet.');
+      progress('Requesting a certificate from Let’s Encrypt — about 10–30 seconds…');
+      const res = await api.requestCertificate([domain], null, LE_LIVE.exec(current.cert || '')?.[1] || null);
+      progress('Switching the panel to HTTPS…');
+      setCert('pdm-cert', ''); setCert('pdm-key', '');
+      await apply({ panelCert: res.ssl_cert_path, panelKey: res.ssl_key_path });
+      saved = { domain, cert: res.ssl_cert_path };
+      setStatus(`Done — panel at https://${domain}`, 'ok');
+      renderPanelHttps(saved);
+    } catch (e) {
+      box.innerHTML = `<span class="https-dot bad"></span><span class="https-text"><strong>That didn’t work</strong><span>${esc(e.message)}</span></span>
+        <button type="button" class="btn btn-sm" id="panel-https-go">Try again</button>`;
+      document.getElementById('panel-https-go').onclick = () => securePanel(current);
+    }
+  }
 }
 
 /* ─── System settings ───────────────────────────────────────────────────── */

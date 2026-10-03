@@ -66,10 +66,10 @@ export const GUIDES = [
 <h2>Checklist for a new setup</h2>
 <ol class="guide-steps">
   <li><strong>Start on boot.</strong> Run <code>cloudbase enable</code> on the server once, so Cloudbase and its apps come back after a reboot. <code>cloudbase status</code> shows whether the service is installed and running.</li>
-  <li><strong>Serve the panel over HTTPS.</strong> Point a domain at the server and set it under <a href="/settings?s=domain">Domain &amp; SSL</a> with a certificate. Until then the panel is plain HTTP on port 7823.</li>
+  <li><strong>Serve the panel over HTTPS.</strong> Point a domain at the server, enter it under <a href="/settings?s=domain">Domain &amp; SSL</a> and click <strong>Set up HTTPS</strong> — the certificate is free and renews itself. Until then the panel is plain HTTP on port 7823.</li>
   <li><strong>Close port 7823.</strong> Once the panel has a domain, only ports 80, 443 and 22 need to be open — see <a href="/guides?g=system-settings">System settings</a>.</li>
   <li><strong>Store the admin password</strong> in a password manager, and give teammates their own login instead of sharing it (<a href="/guides?g=users-roles">Users &amp; roles</a>).</li>
-  <li><strong>Set a base domain</strong> if you want every app to get an address automatically.</li>
+  <li><strong>Set a base domain</strong> if you want every app to get an address — with HTTPS — automatically.</li>
 </ol>
 <div class="callout callout--warn"><p>As long as the panel runs on plain HTTP, your password travels unencrypted. Restrict port 7823 to your own IP in the firewall until HTTPS is set up.</p></div>
 
@@ -146,7 +146,7 @@ cloudbase stop</pre>
   <li>The first instance starts on the primary. While it boots, visitors see the <em>starting</em> page instead of an error.</li>
   <li>Once the app answers on its port, its status turns <strong>running</strong> and the URL in the app header works.</li>
 </ol>
-<p>If a base domain is configured, the app is immediately reachable at <code>&lt;name&gt;.&lt;base-domain&gt;</code>. Otherwise click <strong>Connect a domain</strong> under the app’s <strong>Settings → Network</strong>, see <a href="/guides?g=domains">Domains &amp; SSL</a>.</p>
+<p>If a base domain is configured, the app is immediately reachable at <code>&lt;name&gt;.&lt;base-domain&gt;</code>. Otherwise click <strong>Connect a domain</strong> under the app’s <strong>Settings → Network</strong>, see <a href="/guides?g=domains">Domains &amp; HTTPS</a>.</p>
 
 <h2>When it doesn’t start</h2>
 <ul>
@@ -382,51 +382,72 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
 {
   slug: 'domains',
   group: 'Networking',
-  title: 'Domains & SSL',
-  summary: 'Panel domain, automatic app subdomains, custom domains, redirects and certificates.',
-  keywords: 'domain dns ssl tls https certificate wildcard nginx subdomain redirect letsencrypt connect wizard certbot',
-  lead: 'nginx on the primary terminates TLS and routes every hostname to the right app. There are three levels: the panel’s own domain, automatic subdomains for all apps, and custom domains per app.',
+  title: 'Domains & HTTPS',
+  summary: 'Connect domains, free automatic HTTPS, the panel domain, app subdomains and Cloudflare.',
+  keywords: 'domain dns ssl tls https certificate wildcard nginx subdomain redirect letsencrypt connect wizard certbot cloudflare renew expiry',
+  lead: 'Every domain points at the primary, where nginx routes it to the right app and serves HTTPS. Certificates come free from Let’s Encrypt, are requested in one click and renew by themselves.',
   body: `
-<h2>The quick way: Connect a domain</h2>
-<p>In the app, open <strong>Settings → Network</strong> and click <strong>Connect a domain</strong>. The wizard takes three steps:</p>
+<h2>Connect a domain to an app</h2>
+<p>In the app, open <strong>Settings → Network</strong> and click <strong>Connect a domain</strong>:</p>
 <ol class="guide-steps">
-  <li><strong>Domain</strong> — type the name, for example <code>shop.example.com</code>. For a bare domain like <code>example.com</code> you can include <code>www.example.com</code> too; it redirects to the main name.</li>
-  <li><strong>DNS</strong> — the wizard shows the exact record to add at your domain provider, with copy buttons, and keeps checking until the domain really reaches this server.</li>
-  <li><strong>HTTPS</strong> — one click requests a free certificate from Let’s Encrypt and switches the app to HTTPS. Certificates renew automatically.</li>
+  <li><strong>Domain</strong> — type the name, for example <code>shop.example.com</code>. If the app already has a domain, choose whether the new one <em>shows the app</em> too or <em>redirects</em> to the main domain. For a bare domain like <code>example.com</code> you can tick <code>www.example.com</code> as well.</li>
+  <li><strong>DNS</strong> — the wizard shows the record to add at your domain provider, with copy buttons, and checks every few seconds until the domain reaches this server.</li>
+  <li><strong>HTTPS</strong> — one click requests the certificate and switches the app to HTTPS.</li>
 </ol>
-<div class="callout"><p>Automatic HTTPS needs <code>certbot</code> on the primary and port 80 open to the internet. Servers installed before this feature get it with <code>cloudbase update</code> followed by <code>cloudbase nginx permissions</code>.</p></div>
+<div class="callout"><p>Automatic HTTPS needs <code>certbot</code> on the primary and ports 80 and 443 reachable from the internet. Older installations get it with <code>cloudbase update</code> followed by <code>cloudbase nginx permissions</code>.</p></div>
 
-<h2>DNS first</h2>
-<p>Every hostname must point at the <strong>primary</strong>’s public IP, also for apps whose instances run on other nodes — traffic always enters through the primary.</p>
+<h2>The DNS record</h2>
+<p>Every name points at the <strong>primary</strong>’s public IP — also for apps whose instances run on other nodes, because traffic always enters through the primary.</p>
 <table>
-  <tr><th>Record</th><th>Purpose</th></tr>
+  <tr><th>Record</th><th>For</th></tr>
   <tr><td><code>panel.example.com  A  203.0.113.10</code></td><td>The panel</td></tr>
-  <tr><td><code>*.apps.example.com  A  203.0.113.10</code></td><td>Automatic app subdomains (wildcard)</td></tr>
-  <tr><td><code>shop.example.com  A  203.0.113.10</code></td><td>A custom domain for one app</td></tr>
+  <tr><td><code>*.apps.example.com  A  203.0.113.10</code></td><td>Automatic app subdomains</td></tr>
+  <tr><td><code>shop.example.com  A  203.0.113.10</code></td><td>One app’s own domain</td></tr>
 </table>
-
-<h2>Panel domain</h2>
-<p>Under <a href="/settings?s=domain">Settings → Domain &amp; SSL</a>, enter the panel domain and upload its certificate and key. Cloudbase writes the nginx config, reloads nginx and from then on serves the panel at <code>https://panel.example.com</code>. Without a certificate the domain is served over HTTP.</p>
-<p>Saving also regenerates two status pages: the page shown while Cloudbase restarts, and the page for hostnames that point at the server but aren’t linked to an app.</p>
-
-<h2>Automatic app subdomains</h2>
-<p>Set a <strong>base domain</strong> such as <code>apps.example.com</code> (with a wildcard DNS record) and every app is reachable at <code>&lt;app-name&gt;.apps.example.com</code> without further setup. Upload a wildcard certificate for <code>*.apps.example.com</code> to serve them over HTTPS.</p>
+<p>The wizard asks your domain’s own nameservers directly, so a new record shows up the moment it’s saved — your computer or router may still show the old answer for a while. A brand-new record usually works within minutes; a changed record can take as long as its old TTL (often an hour).</p>
+<div class="callout callout--warn"><p>Remove any <strong>AAAA (IPv6) record</strong> that doesn’t point to this server. Let’s Encrypt tries IPv6 first, so a stray AAAA record makes the certificate request fail even when the A record is right. The wizard warns you when it sees one.</p></div>
 
 <h2>Managing an app’s domains</h2>
-<p><strong>Settings → Network</strong> lists every domain the app answers on, with a lock that shows whether it’s served over HTTPS. From there you can:</p>
+<p><strong>Settings → Network</strong> lists every domain the app answers on, with a lock for HTTPS and what each domain does. The <strong>⋯</strong> menu on a domain offers:</p>
 <ul>
-  <li><strong>Connect a domain</strong> — add another one with the wizard. One certificate covers all of the app’s domains, so adding a domain renews it to include the new name.</li>
-  <li><strong>Set up HTTPS</strong> — appears when the app’s domains are still on plain HTTP.</li>
-  <li><strong>Remove</strong> — stops the app answering on that domain. Removing the last one falls back to the automatic subdomain, if a base domain is set.</li>
+  <li><strong>Make primary</strong> — the main address of the app. The old primary keeps showing the app.</li>
+  <li><strong>Redirect to …</strong> / <strong>Show the app here</strong> — send visitors to the primary domain, or serve the app on this one too.</li>
+  <li><strong>Remove</strong> — the certificate is renewed for the remaining names; after the last domain it’s deleted. The app then falls back to its automatic subdomain, if there’s a base domain.</li>
 </ul>
-<p>A <code>www.</code> name added through the wizard redirects to the main domain instead of serving a copy of the site.</p>
+<p>Below the list you see until when the certificate is valid. A yellow or red line means renewal is failing — see <a href="/guides?g=troubleshooting">Troubleshooting</a>.</p>
 
-<h2>Certificates</h2>
-<p>Certificates requested through <strong>Connect a domain</strong> come from Let’s Encrypt and live in <code>/etc/letsencrypt/live/&lt;domain&gt;/</code>. certbot renews them on its own schedule and nginx reloads automatically afterwards — there’s nothing to maintain.</p>
-<p>Renewal needs the domain to keep pointing at the primary, and port 80 to stay open. Behind Cloudflare’s proxy it also works, as long as <em>Always Use HTTPS</em> is off — Let’s Encrypt checks over plain HTTP. Any SSL mode is fine; <em>Full (strict)</em> is the safest.</p>
+<h2>How certificates work</h2>
+<p>Each app has <strong>one certificate</strong> that covers all of its domains — <code>shop.example.com</code>, <code>example.com</code> and <code>www.example.com</code> on one app share a certificate, even across different domains. Another app gets its own. Certificates are valid for 90 days.</p>
+<ol class="guide-steps">
+  <li>Cloudbase asks Let’s Encrypt for a certificate through <code>certbot</code>.</li>
+  <li>Let’s Encrypt checks each name by fetching a file from <code>http://&lt;domain&gt;/.well-known/acme-challenge/</code>. nginx serves that folder on every domain, also on names not linked to an app yet.</li>
+  <li>The certificate is stored in <code>/etc/letsencrypt/live/&lt;name&gt;/</code> and nginx switches to HTTPS.</li>
+</ol>
+<p><strong>Renewal</strong> runs without Cloudbase: certbot’s timer checks twice a day and renews certificates that have less than 30 days left, then reloads nginx. It works while Cloudbase is stopped, as long as the domains still point here and port 80 is open.</p>
+<pre>sudo certbot certificates          # all certificates, names and expiry
+sudo certbot renew --dry-run       # test renewal without changing anything
+systemctl list-timers | grep certbot</pre>
+<p>Certificates are public: anyone can see which names share one, and Let’s Encrypt publishes all certificates in open logs.</p>
+
+<h2>Panel domain</h2>
+<p>Under <a href="/settings?s=domain">Settings → Domain &amp; SSL</a>, enter the panel’s domain and save. Then click <strong>Set up HTTPS</strong>: Cloudbase checks the domain, requests a certificate and switches the panel to HTTPS. The card shows until when it’s valid.</p>
+<p>Prefer your own certificate, like a Cloudflare Origin certificate? Open <strong>Use my own certificate</strong> and upload it. Cloudbase won’t renew those; <strong>Switch to a free certificate</strong> moves you back to an automatic one.</p>
+<p>Saving also regenerates the page shown while Cloudbase restarts and the page for hostnames that aren’t linked to an app.</p>
+
+<h2>Automatic app subdomains</h2>
+<p>Set a <strong>base domain</strong> such as <code>apps.example.com</code>, with a wildcard DNS record <code>*.apps.example.com</code> pointing at the primary. Every app is then reachable at <code>&lt;app-name&gt;.apps.example.com</code> without further setup.</p>
+<p>With HTTPS on <strong>Automatic</strong>, each app gets its own free certificate for its subdomain, usually within a minute after it starts. Let’s Encrypt can only issue a wildcard certificate through DNS verification, which would need access to your DNS provider — one certificate per app avoids that. If you have a wildcard certificate yourself, choose <strong>My own wildcard certificate</strong> and upload it instead.</p>
+<p>A failed automatic request is retried after an hour. The app’s <strong>Settings → Network</strong> shows the state of its subdomain.</p>
+
+<h2>Cloudflare</h2>
+<p>The proxy (orange cloud) can stay on, as long as <strong>Always Use HTTPS</strong> is off: Let’s Encrypt checks over plain HTTP, and that setting would redirect it. If the DNS check in the wizard stays red, set the record to <em>DNS only</em> (grey) for a moment. Once HTTPS works, use SSL mode <strong>Full (strict)</strong>.</p>
+<p>Behind the proxy, Cloudflare’s 526 error means the server showed a certificate Cloudflare doesn’t accept for that name — usually because the app has no certificate of its own yet. Set up HTTPS for it as above.</p>
+
+<h2>Servers at home</h2>
+<p>Behind a home router, the server often can’t reach its own public address (no “NAT loopback”). The wizard detects this and checks nginx locally instead; the real test happens when Let’s Encrypt connects from outside. Make sure ports 80 and 443 are forwarded to the server.</p>
 
 <h2>Unknown hostnames</h2>
-<p>With strict hostname handling active, a hostname that reaches the server but isn’t linked to any app gets a neutral “Nothing is deployed here” page, instead of accidentally showing another app.</p>
+<p>A hostname that reaches the server but isn’t linked to any app gets a neutral “Nothing is deployed here” page, instead of accidentally showing another app.</p>
 `,
 },
 
@@ -640,7 +661,7 @@ cloudbase import ~/cloudbase-backup.tar.gz</pre>
 <ol class="guide-steps">
   <li>Install Cloudbase on the new server.</li>
   <li>Export your apps on the old panel and import them on the new one. Add their environment variables and tokens again.</li>
-  <li>Re-upload certificates and set the panel and base domain under Domain &amp; SSL.</li>
+  <li>Set the panel and base domain under Domain &amp; SSL. Certificates aren’t part of an export: click <strong>Set up HTTPS</strong> for the panel and for each app once DNS points to the new server.</li>
   <li>Move DNS to the new server’s IP.</li>
   <li>Re-connect remote nodes with a new invite from the new panel.</li>
 </ol>
@@ -783,6 +804,15 @@ cloudbase import ~/cloudbase-backup.tar.gz</pre>
 <p>Compare with the server itself:</p>
 <pre>docker ps -a --filter name=cloudbase-app</pre>
 <p>Container names are <code>cloudbase-app-&lt;app id&gt;-replica-&lt;instance id&gt;</code>, and the container ID in the instance list matches the first column. A restart of the instance from the panel brings the two back in line.</p>
+
+<h2>HTTPS or certificate problems</h2>
+<ul>
+  <li><strong>The wizard’s DNS check stays red</strong> — the record isn’t there yet, points elsewhere, or Cloudflare’s proxy is on with <em>Always Use HTTPS</em>. The message says which.</li>
+  <li><strong>“A site answered instead of the verification folder”</strong> — an older nginx config handles the domain. Click <strong>Save Changes</strong> in the app’s settings, and remove leftover files for that domain from <code>/etc/nginx/sites-enabled</code>.</li>
+  <li><strong>Request fails with a rate limit</strong> — Let’s Encrypt allows only a few failed attempts per hour per name. Fix the cause, wait an hour, try again.</li>
+  <li><strong>Browser says the certificate is invalid</strong> — the server showed a certificate for another name, often the panel’s. That app has no certificate yet: use <strong>Set up HTTPS</strong> in its Network settings.</li>
+  <li><strong>Expiry warning under the domain list</strong> — renewal is failing. Run <code>sudo certbot renew --dry-run</code> to see why; usually a domain no longer points here, or port 80 is closed.</li>
+</ul>
 
 <h2>A domain doesn’t work</h2>
 <ul>

@@ -88,6 +88,7 @@
 .dw-status-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
 .dw-status-text strong { font-weight: 500; color: var(--text); }
 .dw-status-text span { color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.dw-status-text .dw-warn-line { color: var(--yellow); margin-top: 4px; }
 .dw-pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); animation: dw-pulse 1.4s ease-in-out infinite; }
 @keyframes dw-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.8); } }
 .dw-status--ok { border-color: var(--green-border); background: var(--green-bg); }
@@ -150,3 +151,9 @@
 .net-empty-sub a { color: var(--text-2); font-family: var(--font-mono); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
 .net-actions { display: flex; gap: 8px; margin-top: 12px; }
 .net-actions .btn[hidden] { display: none; }
+
+.net-cert { font-size: 12.5px; color: var(--muted); margin-top: 10px; line-height: 1.5; }
+.net-cert:empty { display: none; }
+.net-cert-warn { color: var(--yellow); }
+.net-cert-bad { color: var(--red); }
+.net-cert-own { color: var(--text-2); }

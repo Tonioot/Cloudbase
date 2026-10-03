@@ -457,6 +457,12 @@ def generate_config(
         if _base_cert and _base_key:
             ssl_cert = _base_cert
             ssl_key  = _base_key
+        else:
+            # No wildcard certificate: use the app's own automatic certificate
+            # for its subdomain once Cloudbase has requested it
+            import certificates as _certs
+            if _certs.capability()[0] and _certs.exists(domain):
+                ssl_cert, ssl_key = _certs.paths(domain)
 
     if not domain:
       domain = "localhost"
