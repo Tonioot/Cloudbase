@@ -106,7 +106,7 @@ async function loadAppStats() {
 }
 
 /* ─── Helpers ───────────────────────────────────────────────────────────── */
-const KINDS = { nodejs: 'Node.js', python: 'Python', go: 'Go', ruby: 'Ruby', php: 'PHP', java: 'Java', dotnet: '.NET' };
+const KINDS = { nodejs: 'Node.js', python: 'Python', go: 'Go', ruby: 'Ruby', php: 'PHP', java: 'Java', dotnet: '.NET', rust: 'Rust' };
 
 function appCategory(app) {
   if (app.no_web) return 'worker';

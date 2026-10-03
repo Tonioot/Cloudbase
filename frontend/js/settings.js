@@ -170,7 +170,7 @@ function renderDomain(root) {
       card('base-card', {
         tone: 'ok',
         title: `*.${esc(live.base)}`,
-        text: 'Apps are reachable at <code>&lt;app-name&gt;.' + esc(live.base) + '</code>. HTTPS is set up automatically per app — the status is under each app’s Settings → Network.',
+        text: 'Apps are reachable at <code>&lt;app-name&gt;.' + esc(live.base) + '</code>. HTTPS is set up automatically per app — the status is under each app’s Settings → Domains.',
         actions: btn('base-setup', 'Change') + btn('base-off', 'Turn off'),
       });
     }

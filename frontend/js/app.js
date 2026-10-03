@@ -52,7 +52,7 @@ function _updateAppTypeVisibility(app) {
   if (el('cfg-port-field'))          el('cfg-port-field').style.display = (noWeb || isStatic) ? 'none' : '';
   if (el('cfg-docker-readonly-field')) el('cfg-docker-readonly-field').style.display = isStatic ? 'none' : '';
   if (el('cfg-env-static-hint'))     el('cfg-env-static-hint').style.display = isStatic ? '' : 'none';
-  if (el('cfg-cmd-label'))           el('cfg-cmd-label').textContent = isStatic ? 'Publish Directory' : 'Start Command';
+  if (el('cfg-cmd-label'))           el('cfg-cmd-label').textContent = isStatic ? 'Publish directory' : 'Start command';
   if (el('cfg-cmd'))                 el('cfg-cmd').placeholder = isStatic ? 'auto-detect (root, dist, build, …)' : 'npm start';
   // Network section
   const networkSection = el('net-domains')?.closest('.settings-group');
@@ -171,7 +171,7 @@ function renderHeader() {
 
   document.getElementById('btn-maintenance-mode').addEventListener('click', () => toggleMode('maintenance'));
   document.getElementById('btn-update-mode').addEventListener('click',      () => toggleMode('update'));
-  // Deploy menu: the pull / rebuild flows live on the Settings → Actions tiles
+  // Deploy menu: pull / rebuild flows
   document.getElementById('menu-pull-rolling')?.addEventListener('click', () => pullAndDeploy('rolling'));
   document.getElementById('menu-pull-bluegreen')?.addEventListener('click', () => pullAndDeploy('blue_green'));
   document.getElementById('menu-pull-rebuild')?.addEventListener('click', () => pullAndDeploy('rebuild'));
@@ -1435,8 +1435,11 @@ function initAutoDeploySettings() {
     const current = res.current_branch || res.default_branch || '';
     const branches = res.branches?.length ? res.branches : [current].filter(Boolean);
     if (!branches.length) return fallback();
+    const wasClean = !_dirtySettingsSections().includes('autodeploy-section');
     branchSel.innerHTML = branches.map(b => `<option value="${escAttr(b)}">${escHtml(b)}${b === current ? ' (current)' : ''}</option>`).join('');
     branchSel.value = app.deploy_branch || current;
+    // Filling in the list is not a change by the user
+    if (wasClean) _settingsBaselineReset(['autodeploy-section']);
   }).catch(fallback);
 }
 
@@ -1529,21 +1532,24 @@ function initSettings() {
     pickGitHubToken(document.getElementById('cfg-token'), document.getElementById('cfg-token-id'));
   };
 
-  // Save
+  // Save / discard
   document.getElementById('btn-save').onclick = saveSettings;
+  document.getElementById('btn-discard').onclick = () => {
+    document.getElementById('cfg-token').value = '';
+    initSettings();
+  };
 
   // Connect a domain (wizard with DNS check and free HTTPS)
   const dnsBtn = document.getElementById('btn-dns-setup');
   if (dnsBtn) dnsBtn.onclick = () => openDomainWizard(app, { onDone: _afterDomainChange });
 
-  // Action tiles
-  document.getElementById('tile-pull').onclick = () => tileAction('pull', 'Pull');
+  // Advanced
   document.getElementById('tile-nginx').onclick = openNginxModal;
 
-  const pullTitle = document.getElementById('tile-pull-title');
-  const pullSub = document.getElementById('tile-pull-sub');
-  if (pullTitle) pullTitle.textContent = 'Pull + Rebuild';
-  if (pullSub) pullSub.textContent = 'Pick a commit, sync code, and rebuild without stop/restart';
+  initSettingsNav();
+  _watchSettingsDirty();
+  _settingsBaseline = {};
+  _settingsBaselineReset();
 
   // Delete
   document.getElementById('btn-delete').onclick = async () => {
@@ -1565,6 +1571,121 @@ function initSettings() {
   else _enableSettingsForEditor();
 }
 
+/** Settings tab: the nav on the left picks the one section that is shown. */
+let _settingsSection = null;
+
+const _SETTINGS_ICONS = {
+  info:   '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
+  hammer: '<path d="m15 12-8.4 8.4a2.1 2.1 0 0 1-3-3L12 9"/><path d="M17.6 15 22 10.6M20.9 11.6l-1.2-1.2a2 2 0 0 1-.6-1.4v-.9L16.3 5.3A5.6 5.6 0 0 0 12.4 3.6H9l.9.8A6.2 6.2 0 0 1 12 9l2 2h1.3a2 2 0 0 1 1.4.6l1.2 1.2"/>',
+  rocket: '<path d="M4.5 16.5c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2.1-.1-2.9a2.2 2.2 0 0 0-2.9-.1z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.9A12.9 12.9 0 0 1 22 2c0 2.7-.8 7.5-6 11a22.4 22.4 0 0 1-4 2z"/><path d="M9 12H4s.6-3 2-4c1.6-1.1 5 0 5 0M12 15v5s3-.6 4-2c1.1-1.6 0-5 0-5"/>',
+  globe:  '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  key:    '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M17 6l3 3M14.5 8.5l2 2"/>',
+  cpu:    '<rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>',
+  layout: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/>',
+  code:   '<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>',
+  alert:  '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
+};
+const _settingsIcon = name =>
+  `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${_SETTINGS_ICONS[name] || ''}</svg>`;
+
+function initSettingsNav() {
+  const nav = document.getElementById('settings-nav');
+  const panel = document.getElementById('panel-settings');
+  if (!nav || !panel) return;
+  const all = [...panel.querySelectorAll('.sv2-sec[data-nav]')];
+  all.forEach(s => s.classList.remove('is-inactive'));
+  // Sections hidden for this app type or role stay out of the nav
+  const sections = all.filter(s => !s.hidden && getComputedStyle(s).display !== 'none');
+  nav.innerHTML = sections.map(s =>
+    `<a href="#${s.id}" data-target="${s.id}"${s.classList.contains('settings-group--danger') ? ' class="danger"' : ''}>${_settingsIcon(s.dataset.icon)}<span>${escHtml(s.dataset.nav)}</span></a>`
+  ).join('');
+  nav.onclick = e => {
+    const a = e.target.closest('a[data-target]');
+    if (!a) return;
+    e.preventDefault();
+    showSettingsSection(a.dataset.target);
+  };
+  const keep = sections.some(s => s.id === _settingsSection) ? _settingsSection : sections[0]?.id;
+  showSettingsSection(keep);
+}
+
+function showSettingsSection(id) {
+  const panel = document.getElementById('panel-settings');
+  if (!panel) return;
+  _settingsSection = id;
+  let target = null;
+  panel.querySelectorAll('.sv2-sec[data-nav]').forEach(s => {
+    const on = s.id === id;
+    s.classList.toggle('is-inactive', !on);
+    if (on) target = s;
+  });
+  document.querySelectorAll('#settings-nav a').forEach(a => a.classList.toggle('active', a.dataset.target === id));
+  _refreshSettingsDirty();
+}
+
+/* Unsaved changes: every section that goes through Save (no data-nosave) is
+   compared with what it held when it was loaded or last saved. */
+let _settingsBaseline = {};
+
+function _sectionSnapshot(sec) {
+  const parts = [];
+  sec.querySelectorAll('input, select, textarea').forEach(el => {
+    if (el.type === 'hidden' && el.id !== 'cfg-token-id') return;
+    parts.push(el.type === 'checkbox' ? el.checked : el.value);
+  });
+  sec.querySelectorAll('.segmented button.active').forEach(b => parts.push(b.dataset.value));
+  return JSON.stringify(parts);
+}
+
+function _savableSections() {
+  return [...document.querySelectorAll('#panel-settings .sv2-sec[data-nav]:not([data-nosave])')];
+}
+
+function _settingsBaselineReset(ids = null) {
+  _savableSections().forEach(sec => {
+    if (!ids || ids.includes(sec.id)) _settingsBaseline[sec.id] = _sectionSnapshot(sec);
+  });
+  _refreshSettingsDirty();
+}
+
+function _dirtySettingsSections() {
+  return _savableSections()
+    .filter(sec => sec.id in _settingsBaseline && _sectionSnapshot(sec) !== _settingsBaseline[sec.id])
+    .map(sec => sec.id);
+}
+
+function _refreshSettingsDirty() {
+  const dirty = _dirtySettingsSections();
+  document.querySelectorAll('#settings-nav a').forEach(a => a.classList.toggle('dirty', dirty.includes(a.dataset.target)));
+  const box = document.getElementById('settings-save');
+  const state = document.getElementById('settings-save-state');
+  const btn = document.getElementById('btn-save');
+  box?.classList.toggle('is-dirty', dirty.length > 0);
+  // Domains, visitor pages, … apply right away: the bar only shows there
+  // while other sections still have unsaved changes
+  const current = _settingsSection && document.getElementById(_settingsSection);
+  box?.classList.toggle('is-hidden', !!current?.hasAttribute('data-nosave') && !dirty.length);
+  const names = dirty.map(id => document.getElementById(id)?.dataset.nav).filter(Boolean);
+  if (state) state.textContent = !names.length ? 'All changes saved'
+    : `Unsaved changes in ${names.length > 2 ? `${names.length} sections` : names.join(' and ')}`;
+  if (btn && !btn.dataset.busy) btn.classList.toggle('btn-primary', dirty.length > 0);
+  const discard = document.getElementById('btn-discard');
+  if (discard) discard.hidden = !dirty.length;
+}
+
+function _watchSettingsDirty() {
+  const panel = document.getElementById('panel-settings');
+  if (!panel || panel.dataset.dirtyWatch) return;
+  panel.dataset.dirtyWatch = '1';
+  const later = () => setTimeout(_refreshSettingsDirty, 0);
+  panel.addEventListener('input', later);
+  panel.addEventListener('change', later);
+  panel.addEventListener('click', later);
+  window.addEventListener('beforeunload', e => {
+    if (_dirtySettingsSections().length) { e.preventDefault(); e.returnValue = ''; }
+  });
+}
+
 function _disableSettingsForViewer() {
   const panel = document.getElementById('panel-settings');
   if (!panel) return;
@@ -1576,7 +1697,7 @@ function _disableSettingsForViewer() {
   });
 
   // Add a notice banner inside the settings bar
-  const bar = panel.querySelector('.settings-bar');
+  const bar = panel.querySelector('#settings-save');
   if (bar && !bar.querySelector('.viewer-notice')) {
     const notice = document.createElement('span');
     notice.className = 'viewer-notice';
@@ -1635,8 +1756,8 @@ function canToggleMaintenanceMode() {
 }
 
 function getMaintenanceToggleDisabledReason() {
-  if (app.domain && !app.nginx_enabled) return 'The nginx config for this domain is not active (writing it may have failed) — click Save Changes in Settings to retry';
-  return 'Requires a domain: add one under Network, or set a base domain in system settings';
+  if (app.domain && !app.nginx_enabled) return 'The nginx config for this domain is not active (writing it may have failed) — click Save changes in Settings to retry';
+  return 'Requires a domain: add one under Domains, or set a base domain in system settings';
 }
 
 function refreshMaintenanceUiState() {
@@ -2381,6 +2502,7 @@ async function initInstances() {
 async function saveSettings() {
   const btn = document.getElementById('btn-save');
   btn.disabled = true;
+  btn.dataset.busy = '1';
   btn.innerHTML = `${spinner} Saving…`;
 
   // Build env var update: send new/changed values + the full set of remaining keys
@@ -2433,11 +2555,14 @@ async function saveSettings() {
     } else {
       toast('Settings saved');
     }
+    _settingsBaselineReset();
   } catch (e) {
     toast(e.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.innerHTML = `${icon.save} Save Settings`;
+    delete btn.dataset.busy;
+    btn.textContent = 'Save changes';
+    _refreshSettingsDirty();
   }
 }
 
@@ -2484,7 +2609,7 @@ async function openNginxModal() {
 
 async function tileAction(endpoint, label) {
   const tileId = endpoint === 'pull' ? 'tile-pull' : 'tile-rebuild';
-  const tile = document.getElementById(tileId);           // optional: Settings → Actions tile
+  const tile = document.getElementById(tileId);           // optional: a tile with this id
   const tileIcon = tile?.querySelector('.action-tile-icon');
   const origIcon = tileIcon?.innerHTML;
   if (tile) tile.disabled = true;
@@ -2548,7 +2673,7 @@ function renderAutoDeploySummary() {
   el.insertAdjacentHTML('beforeend', `<button type="button" class="btn btn-sm btn-ghost" id="deploys-auto-settings">${app.auto_deploy ? 'Change' : 'Turn on'}</button>`);
   document.getElementById('deploys-auto-settings').onclick = () => {
     switchTab('settings');
-    setTimeout(() => document.getElementById('autodeploy-section')?.scrollIntoView({ block: 'center' }), 50);
+    showSettingsSection('autodeploy-section');
   };
 }
 

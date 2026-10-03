@@ -124,6 +124,8 @@ def detect_app_type_from_command(cmd: str) -> str:
         return "java"
     if cmd.startswith("dotnet") or cmd.endswith(".exe"):
         return "dotnet"
+    if cmd.startswith("cargo") or "target/release/" in cmd or "target/debug/" in cmd:
+        return "rust"
     return "unknown"
 
 

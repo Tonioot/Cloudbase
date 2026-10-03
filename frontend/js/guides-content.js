@@ -147,7 +147,7 @@ cloudbase stop</pre>
   <li>The first instance starts on the primary. While it boots, visitors see the <em>starting</em> page instead of an error.</li>
   <li>Once the app answers on its port, its status turns <strong>running</strong> and the URL in the app header works.</li>
 </ol>
-<p>If a base domain is configured, the app is immediately reachable at <code>&lt;name&gt;.&lt;base-domain&gt;</code>. Otherwise click <strong>Connect a domain</strong> under the app’s <strong>Settings → Network</strong>, see <a href="/guides?g=domains">Domains &amp; HTTPS</a>.</p>
+<p>If a base domain is configured, the app is immediately reachable at <code>&lt;name&gt;.&lt;base-domain&gt;</code>. Otherwise click <strong>Connect a domain</strong> under the app’s <strong>Settings → Domains</strong>, see <a href="/guides?g=domains">Domains &amp; HTTPS</a>.</p>
 
 <h2>When it doesn’t start</h2>
 <ul>
@@ -227,7 +227,7 @@ cloudbase stop</pre>
   lead: 'Environment variables are the place for configuration and secrets: database URLs, API keys, feature flags. Cloudbase stores them encrypted and passes them to every instance of the app.',
   body: `
 <h2>Adding variables</h2>
-<p>In the app, go to <strong>Settings → Environment Variables</strong>. Add rows one by one, or click <strong>Import .env</strong> to read a file in the usual <code>KEY=value</code> format. Comments, blank lines, <code>export</code> prefixes and quoted values are understood. Imported keys that already exist are updated; others are added.</p>
+<p>In the app, go to <strong>Settings → Environment</strong>. Add rows one by one, or click <strong>Import .env</strong> to read a file in the usual <code>KEY=value</code> format. Comments, blank lines, <code>export</code> prefixes and quoted values are understood. Imported keys that already exist are updated; others are added.</p>
 <pre># .env
 DATABASE_URL="postgres://app:secret@db:5432/app"
 export NODE_ENV=production
@@ -335,19 +335,19 @@ SESSION_SECRET=change-me</pre>
 </table>
 
 <h2>Restart policy</h2>
-<p>Under <strong>Settings → Runtime</strong>:</p>
+<p>Under <strong>Settings → Build &amp; run</strong>, “When it crashes”:</p>
 <ul>
-  <li><strong>No</strong> — a crashed instance stays stopped.</li>
-  <li><strong>On failure</strong> — restart when the process exits with an error.</li>
-  <li><strong>Always</strong> — restart on any exit.</li>
+  <li><strong>Stay stopped</strong> — a crashed instance stays stopped.</li>
+  <li><strong>Restart on failure</strong> — restart when the process exits with an error.</li>
+  <li><strong>Always restart</strong> — restart on any exit.</li>
 </ul>
-<p><strong>Auto-start on boot</strong> starts the app’s instances when Cloudbase itself starts, for example after a server reboot.</p>
+<p><strong>Start on boot</strong> starts the app’s instances when Cloudbase itself starts, for example after a server reboot.</p>
 
 <h2>Crash protection</h2>
 <p>An instance that keeps crashing is not restarted forever. After 5 restarts within 60 seconds (configurable under <a href="/settings?s=system">System settings</a>), Cloudbase gives up and marks it as <code>error</code>. Fix the cause, then start it again.</p>
 
 <h2>Autoscaling</h2>
-<p>Turn on <strong>autoscaling</strong> in the app settings and set a minimum, a maximum and a CPU target. Every minute Cloudbase looks at the app’s average CPU over the last two minutes:</p>
+<p>Turn on <strong>Autoscaling</strong> under the app’s <strong>Settings → Resources</strong> and set a minimum, a maximum and a CPU target. Every minute Cloudbase looks at the app’s average CPU over the last two minutes:</p>
 <ul>
   <li>Above the target and below the maximum → one instance is added on the primary.</li>
   <li>Below half the target and above the minimum → one instance is removed.</li>
@@ -403,7 +403,7 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
   lead: 'Every domain points at the primary, where nginx routes it to the right app and serves HTTPS. Certificates come free from Let’s Encrypt, are requested in one click and renew by themselves.',
   body: `
 <h2>Connect a domain to an app</h2>
-<p>In the app, open <strong>Settings → Network</strong> and click <strong>Connect a domain</strong>:</p>
+<p>In the app, open <strong>Settings → Domains</strong> and click <strong>Connect a domain</strong>:</p>
 <ol class="guide-steps">
   <li><strong>Domain</strong> — type the name, for example <code>shop.example.com</code>. If the app already has a domain, choose whether the new one <em>shows the app</em> too or <em>redirects</em> to the main domain. For a bare domain like <code>example.com</code> you can tick <code>www.example.com</code> as well.</li>
   <li><strong>DNS</strong> — the wizard shows the record to add at your domain provider, with copy buttons, and checks every few seconds until the domain reaches this server.</li>
@@ -423,7 +423,7 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
 <div class="callout callout--warn"><p>Remove any <strong>AAAA (IPv6) record</strong> that doesn’t point to this server. Let’s Encrypt tries IPv6 first, so a stray AAAA record makes the certificate request fail even when the A record is right. The wizard warns you when it sees one.</p></div>
 
 <h2>Managing an app’s domains</h2>
-<p><strong>Settings → Network</strong> lists every domain the app answers on, with a lock for HTTPS and what each domain does. The <strong>⋯</strong> menu on a domain offers:</p>
+<p><strong>Settings → Domains</strong> lists every domain the app answers on, with a lock for HTTPS and what each domain does. The <strong>⋯</strong> menu on a domain offers:</p>
 <ul>
   <li><strong>Make primary</strong> — the main address of the app. The old primary keeps showing the app.</li>
   <li><strong>Redirect to …</strong> / <strong>Show the app here</strong> — send visitors to the primary domain, or serve the app on this one too.</li>
@@ -453,7 +453,7 @@ systemctl list-timers | grep certbot</pre>
 <h2>Automatic app subdomains</h2>
 <p>Click <strong>Set up app subdomains</strong> under <a href="/settings?s=domain">Settings → Domain &amp; SSL</a> and enter a base domain such as <code>apps.example.com</code>. The wizard shows the one record to add — a wildcard <code>*.apps</code> A record pointing at the primary — and checks it with a test name under it. Every app is then reachable at <code>&lt;app-name&gt;.apps.example.com</code>, and new apps work without new records.</p>
 <p>HTTPS is automatic: each app gets its own free certificate for its subdomain, usually within a minute after it starts. Let’s Encrypt can only issue a wildcard certificate through DNS verification, which would need access to your DNS provider — one certificate per app avoids that. A wildcard certificate set up earlier keeps working until you click <strong>Switch to automatic</strong>.</p>
-<p>A failed automatic request is retried after an hour. The app’s <strong>Settings → Network</strong> shows the state of its subdomain.</p>
+<p>A failed automatic request is retried after an hour. The app’s <strong>Settings → Domains</strong> shows the state of its subdomain.</p>
 
 <h2>Cloudflare</h2>
 <p>The proxy (orange cloud) can stay on, as long as <strong>Always Use HTTPS</strong> is off: Let’s Encrypt checks over plain HTTP, and that setting would redirect it. If the DNS check in the wizard stays red, set the record to <em>DNS only</em> (grey) for a moment. Once HTTPS works, use SSL mode <strong>Full (strict)</strong>.</p>
@@ -492,7 +492,7 @@ systemctl list-timers | grep certbot</pre>
 
 <h2>“Requires nginx”</h2>
 <p>Maintenance pages are served by nginx in front of your app, so they only work for apps that nginx serves: apps with a custom domain, or reachable through the base domain. You’ll see <em>Requires nginx</em> when neither is set up. Workers never have these pages — there’s nothing in front of them.</p>
-<p>If a domain is set but the label still shows, writing the nginx config failed earlier. Click <strong>Save Changes</strong> in the app’s settings to write it again.</p>
+<p>If a domain is set but the label still shows, writing the nginx config failed earlier. Click <strong>Save changes</strong> in the app’s settings to write it again.</p>
 
 <h2>Status codes</h2>
 <p>Maintenance pages are served with HTTP <code>503</code> and no-cache headers, so search engines treat the outage as temporary and browsers don’t keep showing the page after you’re back.</p>
@@ -796,7 +796,7 @@ cloudbase import ~/cloudbase-backup.tar.gz</pre>
 <ul>
   <li>Open <strong>Logs → All instances</strong>: the failing build step and its output are there.</li>
   <li><em>Missing module / package</em> — the dependency isn’t in <code>package.json</code> or <code>requirements.txt</code>.</li>
-  <li><em>Build needs a variable</em> — add it under Environment Variables; they’re available during the build. With your own Dockerfile, declare it with <code>ARG</code>.</li>
+  <li><em>Build needs a variable</em> — add it under Settings → Environment; they’re available during the build. With your own Dockerfile, declare it with <code>ARG</code>.</li>
   <li><em>Out of memory during build</em> — large frontend builds can need 2 GB+. Add swap or build on a bigger node.</li>
 </ul>
 
@@ -826,7 +826,7 @@ cloudbase import ~/cloudbase-backup.tar.gz</pre>
 <h2>HTTPS or certificate problems</h2>
 <ul>
   <li><strong>The wizard’s DNS check stays red</strong> — the record isn’t there yet, points elsewhere, or Cloudflare’s proxy is on with <em>Always Use HTTPS</em>. The message says which.</li>
-  <li><strong>“A site answered instead of the verification folder”</strong> — an older nginx config handles the domain. Click <strong>Save Changes</strong> in the app’s settings, and remove leftover files for that domain from <code>/etc/nginx/sites-enabled</code>.</li>
+  <li><strong>“A site answered instead of the verification folder”</strong> — an older nginx config handles the domain. Click <strong>Save changes</strong> in the app’s settings, and remove leftover files for that domain from <code>/etc/nginx/sites-enabled</code>.</li>
   <li><strong>Request fails with a rate limit</strong> — Let’s Encrypt allows only a few failed attempts per hour per name. Fix the cause, wait an hour, try again.</li>
   <li><strong>Browser says the certificate is invalid</strong> — the server showed a certificate for another name, often the panel’s. That app has no certificate yet: use <strong>Set up HTTPS</strong> in its Network settings.</li>
   <li><strong>Expiry warning under the domain list</strong> — renewal is failing. Run <code>sudo certbot renew --dry-run</code> to see why; usually a domain no longer points here, or port 80 is closed.</li>
@@ -836,7 +836,7 @@ cloudbase import ~/cloudbase-backup.tar.gz</pre>
 <ul>
   <li><code>dig +short shop.example.com</code> must return the primary’s IP.</li>
   <li>Ports 80 and 443 must be open on the primary.</li>
-  <li>Click <strong>Save Changes</strong> in the app’s settings — nginx is written again, and an error is shown if that fails.</li>
+  <li>Click <strong>Save changes</strong> in the app’s settings — nginx is written again, and an error is shown if that fails.</li>
   <li>Check nginx itself: <code>sudo nginx -t</code>.</li>
 </ul>
 

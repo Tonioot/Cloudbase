@@ -24,7 +24,7 @@ def write_credentials(password: str) -> None:
 
 
 async def seed_demo() -> None:
-    from sqlalchemy import select, func
+    from sqlalchemy import select
     from database import init_db, AsyncSessionLocal
     from models import Application, ApplicationReplica
     from routers.nodes import ensure_local_node
@@ -32,10 +32,7 @@ async def seed_demo() -> None:
 
     await init_db()
     async with AsyncSessionLocal() as db:
-        count = (await db.execute(select(func.count()).select_from(Application))).scalar()
-        if count:
-            print(f"[dev] {count} app(s) already present — demo seed skipped")
-            return
+        existing = set((await db.execute(select(Application.name))).scalars())
         node = await ensure_local_node(db)
 
         demo = [
@@ -51,8 +48,27 @@ async def seed_demo() -> None:
             dict(name="discord-bot", repo_url="https://github.com/example/discord-bot", app_type="nodejs",
                  start_command="node bot.js", port=None, domain=None, env={"DISCORD_TOKEN": "demo"},
                  replicas=1, no_web=True),
+            # One app per remaining runtime, so every type icon has something to show
+            dict(name="rails-shop", repo_url="https://github.com/example/rails-shop", app_type="ruby",
+                 start_command="rails server -b 0.0.0.0 -p 3000", port=3000, domain=None, env={}, replicas=1),
+            dict(name="go-gateway", repo_url="https://github.com/example/go-gateway", app_type="go",
+                 start_command="go run .", port=8080, domain=None, env={}, replicas=1),
+            dict(name="php-blog", repo_url="https://github.com/example/php-blog", app_type="php",
+                 start_command="php -S 0.0.0.0:8000 -t public", port=8000, domain=None, env={}, replicas=1),
+            dict(name="java-orders", repo_url="https://github.com/example/java-orders", app_type="java",
+                 start_command="java -jar target/app.jar", port=8080, domain=None, env={}, replicas=1),
+            dict(name="dotnet-billing", repo_url="https://github.com/example/dotnet-billing", app_type="dotnet",
+                 start_command="dotnet Billing.dll", port=5000, domain=None, env={}, replicas=1),
+            dict(name="rust-worker", repo_url="https://github.com/example/rust-worker", app_type="rust",
+                 start_command="cargo run --release", port=8080, domain=None, env={}, replicas=1),
+            dict(name="custom-image", repo_url="https://github.com/example/custom-image", app_type="unknown",
+                 start_command="./run.sh", port=9000, domain=None, env={}, replicas=1),
         ]
-        port = 10001
+        demo = [d for d in demo if d["name"] not in existing]
+        if not demo:
+            print("[dev] demo apps already present — seed skipped")
+            return
+        port = 10001 + len(existing) * 2
         for d in demo:
             app = Application(
                 name=d["name"], repo_url=d["repo_url"], app_type=d["app_type"],

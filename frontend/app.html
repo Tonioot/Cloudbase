@@ -273,343 +273,241 @@
 
       <!-- SETTINGS -->
       <div class="tab-panel" id="panel-settings">
-        <div class="settings-panel">
+        <div class="sv2">
+          <aside class="sv2-side">
+            <nav class="sv2-nav" id="settings-nav" aria-label="Settings sections"></nav>
+          </aside>
 
-          <!-- Sticky action bar -->
-          <div class="settings-bar">
-            <span class="settings-bar-title">Application Settings</span>
-            <div style="display:flex;gap:8px;align-items:center">
-              <button class="btn btn-primary btn-sm" id="btn-save" data-perm="apps.configure">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/><polyline points="7,3 7,8 15,8"/></svg>
-                Save Changes
-              </button>
-            </div>
-          </div>
-
-          <!-- Scrollable content -->
-          <div class="settings-content">
+          <div class="sv2-main">
 
             <!-- General -->
-            <div class="settings-group">
-              <div class="settings-group-hd">
-                <div class="settings-group-title">General</div>
-                <div class="settings-group-sub">Application overview and identity</div>
+            <section class="settings-group sv2-sec" id="set-general" data-nav="General" data-icon="info">
+              <header class="sv2-head"><h3>General</h3><p>What this app is and where its code comes from.</p></header>
+              <div class="s3-card">
+                <div class="s3-row"><span class="s3-label"><span class="s3-title">Name</span></span><span class="s3-value" id="si-name">—</span></div>
+                <div class="s3-row"><span class="s3-label"><span class="s3-title">Repository</span></span><span class="s3-value" id="si-repo">—</span></div>
+                <div class="s3-row"><span class="s3-label"><span class="s3-title">Type</span></span><span class="s3-value" id="si-type">—</span></div>
+                <div class="s3-row"><span class="s3-label"><span class="s3-title">Created</span></span><span class="s3-value" id="si-date">—</span></div>
               </div>
-              <div class="settings-group-bd">
-                <div class="info-row"><span class="label">Name</span><span class="value" id="si-name">—</span></div>
-                <div class="info-row"><span class="label">Repository</span><span class="value" id="si-repo" style="font-size:12px;word-break:break-all;text-align:right;max-width:65%">—</span></div>
-                <div class="info-row"><span class="label">Type</span><span class="value" id="si-type">—</span></div>
-                <div class="info-row"><span class="label">Deployed</span><span class="value" id="si-date">—</span></div>
+              <div class="s3-card">
+                <div class="s3-row s3-row--stack">
+                  <span class="s3-label">
+                    <label class="s3-title" for="cfg-token">Access token</label>
+                    <span class="s3-desc">Only needed for private repositories. Leave empty to keep the current one.<span id="cfg-token-current" style="display:none"> Current: <span id="cfg-token-current-label" class="mono"></span></span></span>
+                  </span>
+                  <form id="cfg-token-form" class="s3-inline" onsubmit="return false;">
+                    <input type="text" autocomplete="username" tabindex="-1" class="sr-only" aria-hidden="true" />
+                    <input class="input input-mono" id="cfg-token" type="password" placeholder="ghp_… or glpat-…" autocomplete="current-password" />
+                    <button type="button" class="btn" id="cfg-token-pick">Use saved token</button>
+                  </form>
+                  <input type="hidden" id="cfg-token-id" />
+                </div>
               </div>
-            </div>
+            </section>
 
-            <!-- Runtime -->
-            <div class="settings-group">
-              <div class="settings-group-hd">
-                <div class="settings-group-title">Runtime</div>
-                <div class="settings-group-sub">Process configuration and restart behaviour</div>
-              </div>
-              <div class="settings-group-bd">
-                <div class="field">
-                  <label class="field-label" id="cfg-cmd-label">Start Command</label>
+            <!-- Build & run -->
+            <section class="settings-group sv2-sec" id="set-build" data-nav="Build & run" data-icon="hammer">
+              <header class="sv2-head"><h3>Build &amp; run</h3><p>How the image is built and how the app starts.</p></header>
+              <div class="s3-card">
+                <div class="s3-row s3-row--stack">
+                  <span class="s3-label"><label class="s3-title" id="cfg-cmd-label" for="cfg-cmd">Start command</label></span>
                   <input class="input input-mono" id="cfg-cmd" placeholder="npm start" />
                 </div>
-                <div class="field" id="cfg-build-field">
-                  <label class="field-label">Build Command <span class="hint">optional</span></label>
+                <div class="s3-row s3-row--stack" id="cfg-build-field">
+                  <span class="s3-label">
+                    <label class="s3-title" for="cfg-build">Build command</label>
+                    <span class="s3-desc" id="cfg-build-hint">Optional. Runs once while the image is built, not on every start. Ignored when the repository has its own Dockerfile.</span>
+                  </span>
                   <input class="input input-mono" id="cfg-build" placeholder="npm run build" />
-                  <div class="field-hint" id="cfg-build-hint">Runs once during the image build, not on every start. Ignored when the repository has its own Dockerfile.</div>
                 </div>
-                <div class="field" id="cfg-port-field">
-                  <label class="field-label">Internal Port</label>
-                  <input class="input" id="cfg-port" type="number" placeholder="3000" style="max-width:140px" />
-                  <div class="field-hint">The port your app listens on inside the container. Each instance gets its own external host port, assigned automatically.</div>
+                <div class="s3-row" id="cfg-port-field">
+                  <span class="s3-label"><label class="s3-title" for="cfg-port">Internal port</label><span class="s3-desc">The port your app listens on inside the container.</span></span>
+                  <span class="s3-ctl"><input class="input" id="cfg-port" type="number" placeholder="3000" /></span>
                 </div>
-                <div class="field">
-                  <label class="toggle-row">
-                    <span class="field-label" style="margin-bottom:0">Auto-start on boot</span>
-                    <label class="toggle">
-                      <input type="checkbox" id="cfg-autostart" />
-                      <span class="toggle-slider"></span>
-                    </label>
-                  </label>
-                  <div class="field-hint">Start this app automatically when Cloudbase starts</div>
-                </div>
-                <div class="field" style="margin-bottom:0">
-                  <label class="field-label">Restart Policy</label>
-                  <select class="input" id="cfg-restart-policy" style="cursor:pointer;max-width:360px">
-                    <option value="no">No — stay stopped on crash</option>
-                    <option value="on-failure">On failure — restart if it crashes</option>
-                    <option value="always">Always — restart on any exit</option>
-                  </select>
-                  <div class="field-hint">Max 5 restarts per 60s before giving up</div>
-                </div>
-              </div>
-            </div>
-
-            <div class="settings-group" id="docker-runtime-section">
-              <div class="settings-group-hd">
-                <div class="settings-group-title">Docker Runtime <span style="font-size:11px;font-weight:400;color:var(--text-muted);margin-left:6px">— Primary Instance</span></div>
-                <div class="settings-group-sub">Default resource limits and filesystem restrictions. Can be overridden per instance when adding a new instance.</div>
-              </div>
-              <div class="settings-group-bd">
-                <div class="grid-3-1">
-                  <div class="field">
-                    <label class="field-label">CPU Limit</label>
-                    <input class="input" id="cfg-docker-cpu" type="number" min="0.1" step="0.1" placeholder="1.0" style="max-width:140px" />
-                    <div class="field-hint">Optional. Maximum CPUs for this container.</div>
-                  </div>
-                  <div class="field">
-                    <label class="field-label">Memory Limit (MB)</label>
-                    <input class="input" id="cfg-docker-memory" type="number" min="1" step="1" placeholder="512" style="max-width:140px" />
-                    <div class="field-hint">Optional hard memory cap.</div>
-                  </div>
-                </div>
-                <div class="field" id="cfg-docker-readonly-field">
-                  <label class="toggle-row">
-                    <span class="field-label" style="margin-bottom:0">Read-only root filesystem</span>
-                    <label class="toggle">
-                      <input type="checkbox" id="cfg-docker-readonly" />
-                      <span class="toggle-slider"></span>
-                    </label>
-                  </label>
-                  <div class="field-hint">Makes the container root filesystem read-only except mounted paths.</div>
-                </div>
-                <div class="field" style="margin-bottom:0">
-                  <label class="toggle-row">
-                    <span class="field-label" style="margin-bottom:0">Tmpfs at /tmp</span>
-                    <label class="toggle">
-                      <input type="checkbox" id="cfg-docker-tmpfs-enabled" />
-                      <span class="toggle-slider"></span>
-                    </label>
-                  </label>
-                  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px">
-                    <input class="input" id="cfg-docker-tmpfs-size" type="number" min="1" step="1" placeholder="64" style="max-width:140px" />
-                    <span style="font-size:12px;color:var(--text-muted)">MB for /tmp tmpfs</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Autoscaling -->
-            <div class="settings-group">
-              <div class="settings-group-hd">
-                <div class="settings-group-title">Autoscaling</div>
-                <div class="settings-group-sub">Automatically add or remove replicas based on CPU usage.</div>
-              </div>
-              <div class="settings-group-bd">
-                <div class="field">
-                  <label class="toggle-row">
-                    <span class="field-label" style="margin-bottom:0">Enable autoscaling</span>
-                    <label class="toggle">
-                      <input type="checkbox" id="cfg-autoscale-enabled" />
-                      <span class="toggle-slider"></span>
-                    </label>
-                  </label>
-                </div>
-                <div id="autoscale-options">
-                  <div class="grid-3-1">
-                    <div class="field">
-                      <label class="field-label">Min replicas</label>
-                      <input class="input" id="cfg-autoscale-min" type="number" min="1" step="1" placeholder="1" style="max-width:100px" />
-                    </div>
-                    <div class="field">
-                      <label class="field-label">Max replicas</label>
-                      <input class="input" id="cfg-autoscale-max" type="number" min="1" step="1" placeholder="4" style="max-width:100px" />
-                    </div>
-                    <div class="field">
-                      <label class="field-label">CPU target (%)</label>
-                      <input class="input" id="cfg-autoscale-cpu" type="number" min="10" max="95" step="1" placeholder="70" style="max-width:100px" />
-                      <div class="field-hint">Scale up above this, scale down below half.</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Auto-deploy -->
-            <div class="settings-group" id="autodeploy-section" data-perm="apps.configure">
-              <div class="settings-group-hd">
-                <div class="settings-group-title">Auto-deploy</div>
-                <div class="settings-group-sub">Deploy new commits automatically. Cloudbase checks the branch for new commits and rolls them out.</div>
-              </div>
-              <div class="settings-group-bd">
-                <div class="field">
-                  <label class="toggle-row">
-                    <span class="field-label" style="margin-bottom:0">Deploy new commits automatically</span>
-                    <label class="toggle"><input type="checkbox" id="cfg-autodeploy" /><span class="toggle-slider"></span></label>
-                  </label>
-                </div>
-                <div id="autodeploy-options">
-                  <div class="field">
-                    <label class="field-label" for="cfg-deploy-branch">Branch</label>
-                    <select class="input" id="cfg-deploy-branch" style="max-width:320px"><option value="">Loading branches…</option></select>
-                  </div>
-                  <div class="field">
-                    <label class="field-label">Strategy</label>
-                    <div class="segmented" id="cfg-deploy-strategy" role="radiogroup">
-                      <button type="button" data-value="rolling" role="radio">Rolling</button>
-                      <button type="button" data-value="blue_green" role="radio">Blue/green</button>
-                    </div>
-                    <div class="field-hint" id="cfg-deploy-strategy-hint">Rolling replaces instances one by one; blue/green switches all at once.</div>
-                  </div>
-                  <div class="field">
-                    <label class="field-label" for="cfg-deploy-interval">Check for new commits every</label>
-                    <select class="input" id="cfg-deploy-interval" style="max-width:200px">
-                      <option value="60">minute</option>
-                      <option value="300">5 minutes</option>
-                      <option value="900">15 minutes</option>
+                <div class="s3-row">
+                  <span class="s3-label"><label class="s3-title" for="cfg-restart-policy">When it crashes</label><span class="s3-desc">Gives up after 5 restarts in 60 seconds.</span></span>
+                  <span class="s3-ctl">
+                    <select class="input" id="cfg-restart-policy">
+                      <option value="no">Stay stopped</option>
+                      <option value="on-failure">Restart on failure</option>
+                      <option value="always">Always restart</option>
                     </select>
+                  </span>
+                </div>
+                <label class="s3-row">
+                  <span class="s3-label"><span class="s3-title">Start on boot</span><span class="s3-desc">Start this app when Cloudbase starts, for example after a server reboot.</span></span>
+                  <span class="toggle"><input type="checkbox" id="cfg-autostart" /><span class="toggle-slider"></span></span>
+                </label>
+              </div>
+            </section>
+
+            <!-- Deploys -->
+            <section class="settings-group sv2-sec" id="autodeploy-section" data-nav="Deploys" data-icon="rocket" data-perm="apps.configure">
+              <header class="sv2-head"><h3>Deploys</h3><p>Put new commits live automatically. Cloudbase checks the branch and rolls new commits out.</p></header>
+              <div class="s3-card">
+                <label class="s3-row">
+                  <span class="s3-label"><span class="s3-title">Auto-deploy</span><span class="s3-desc">Deploy every new commit on the branch below.</span></span>
+                  <span class="toggle"><input type="checkbox" id="cfg-autodeploy" /><span class="toggle-slider"></span></span>
+                </label>
+                <div id="autodeploy-options">
+                  <div class="s3-row">
+                    <span class="s3-label"><label class="s3-title" for="cfg-deploy-branch">Branch</label></span>
+                    <span class="s3-ctl"><select class="input" id="cfg-deploy-branch"><option value="">Loading branches…</option></select></span>
+                  </div>
+                  <div class="s3-row">
+                    <span class="s3-label"><label class="s3-title" for="cfg-deploy-interval">Check for new commits</label></span>
+                    <span class="s3-ctl">
+                      <select class="input" id="cfg-deploy-interval">
+                        <option value="60">Every minute</option>
+                        <option value="300">Every 5 minutes</option>
+                        <option value="900">Every 15 minutes</option>
+                      </select>
+                    </span>
+                  </div>
+                  <div class="s3-row">
+                    <span class="s3-label"><span class="s3-title">Strategy</span><span class="s3-desc" id="cfg-deploy-strategy-hint">Rolling replaces instances one by one; blue/green switches all at once.</span></span>
+                    <span class="s3-ctl">
+                      <div class="segmented" id="cfg-deploy-strategy" role="radiogroup">
+                        <button type="button" data-value="rolling" role="radio">Rolling</button>
+                        <button type="button" data-value="blue_green" role="radio">Blue/green</button>
+                      </div>
+                    </span>
                   </div>
                 </div>
               </div>
-            </div>
+            </section>
 
-            <!-- Network -->
-            <div class="settings-group">
-              <div class="settings-group-hd">
-                <div class="settings-group-title">Network</div>
-                <div class="settings-group-sub">Domains this app answers on. HTTPS certificates are requested and renewed automatically.</div>
-              </div>
-              <div class="settings-group-bd">
+            <!-- Domains -->
+            <section class="settings-group sv2-sec" id="set-domains" data-nav="Domains" data-icon="globe" data-nosave>
+              <header class="sv2-head"><h3>Domains</h3><p>Where the app is reachable. HTTPS certificates are requested and renewed automatically.</p></header>
+              <div class="s3-card">
                 <div class="net-domains" id="net-domains"></div>
-                <div class="net-actions" data-perm="apps.configure">
-                  <button type="button" class="btn btn-primary btn-sm" id="btn-dns-setup">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    Connect a domain
-                  </button>
+                <div class="s3-foot net-actions" data-perm="apps.configure">
+                  <button type="button" class="btn btn-primary btn-sm" id="btn-dns-setup">Connect a domain</button>
                   <button type="button" class="btn btn-sm" id="btn-net-https" hidden>Set up HTTPS</button>
                 </div>
               </div>
-            </div>
+            </section>
 
-            <!-- Credentials & Environment -->
-            <div class="settings-group">
-              <div class="settings-group-hd">
-                <div class="settings-group-title">Credentials &amp; Environment</div>
-                <div class="settings-group-sub">GitHub token and runtime environment variables</div>
-              </div>
-              <div class="settings-group-bd">
-                <div class="field">
-                  <label class="field-label">GitHub Token <span class="hint">(leave blank to keep current)</span></label>
-                  <form id="cfg-token-form" onsubmit="return false;" style="display:flex;gap:6px;align-items:center">
-                    <input type="text" autocomplete="username" tabindex="-1" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0" aria-hidden="true" />
-                    <input class="input input-mono" id="cfg-token" type="password" placeholder="ghp_…" autocomplete="current-password" style="flex:1;min-width:0" />
-                    <button type="button" class="btn btn-secondary btn-sm" id="cfg-token-pick" style="white-space:nowrap;flex-shrink:0">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/></svg>
-                      Saved
-                    </button>
-                  </form>
-                  <input type="hidden" id="cfg-token-id" />
-                  <div id="cfg-token-current" style="font-size:11px;color:var(--text-muted);margin-top:4px;display:none">
-                    Current: <span id="cfg-token-current-label" style="font-family:var(--font-mono);color:var(--text-secondary)"></span>
-                  </div>
-                </div>
-                <div class="field-label" style="display:block;margin-bottom:10px">Environment Variables</div>
-                <div class="field-hint" id="cfg-env-static-hint" style="display:none;margin:-4px 0 10px">Static sites have no server process — these variables are only used by the Build Command (e.g. <code>VITE_*</code>, <code>NEXT_PUBLIC_*</code>).</div>
-                <div id="cfg-env-rows" class="env-rows-scroll"></div>
-                <div class="env-actions">
-                  <button class="add-env-btn" id="cfg-add-env">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    Add variable
-                  </button>
-                  <button class="add-env-btn" id="cfg-import-env" title="Import variables from a .env file — existing keys are overwritten">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                    Import .env
-                  </button>
+            <!-- Environment -->
+            <section class="settings-group sv2-sec" id="set-env" data-nav="Environment" data-icon="key">
+              <header class="sv2-head"><h3>Environment variables</h3><p>Available to the app at runtime and to the build command.</p></header>
+              <div class="s3-card">
+                <div class="s3-note" id="cfg-env-static-hint" style="display:none">Static sites have no server process — these variables are only used by the build command (e.g. <code>VITE_*</code>, <code>NEXT_PUBLIC_*</code>).</div>
+                <div id="cfg-env-rows" class="env-rows-scroll s3-env"></div>
+                <div class="s3-foot env-actions">
+                  <button class="btn btn-sm" id="cfg-add-env">Add variable</button>
+                  <button class="btn btn-sm btn-ghost" id="cfg-import-env" title="Import variables from a .env file — existing keys are overwritten">Import .env</button>
                   <span class="env-count" id="cfg-env-count"></span>
                 </div>
               </div>
-            </div>
+            </section>
 
-            <!-- Actions -->
-            <div class="settings-group" data-perm="apps.pull">
-              <div class="settings-group-hd">
-                <div class="settings-group-title">Actions</div>
-                <div class="settings-group-sub">Repository and deployment operations</div>
-              </div>
-              <div class="settings-group-bd">
-                <div class="action-grid">
-                  <button class="action-tile" id="tile-pull" data-perm="apps.pull">
-                    <div class="action-tile-icon">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
-                    </div>
-                    <div>
-                      <div class="action-tile-title" id="tile-pull-title">Pull Latest Commit</div>
-                      <div class="action-tile-sub" id="tile-pull-sub">Fetch updates from repository</div>
-                    </div>
-                  </button>
-                  <button class="action-tile" id="tile-nginx" data-perm="apps.configure">
-                    <div class="action-tile-icon">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                    </div>
-                    <div>
-                      <div class="action-tile-title">Nginx Config</div>
-                      <div class="action-tile-sub">View &amp; edit reverse proxy config</div>
-                    </div>
-                  </button>
+            <!-- Resources -->
+            <section class="settings-group sv2-sec" id="docker-runtime-section" data-nav="Resources" data-icon="cpu">
+              <header class="sv2-head"><h3>Resources</h3><p>Limits per instance and scaling with load. Instances you add can override the limits.</p></header>
+              <div class="s3-card">
+                <div class="s3-row">
+                  <span class="s3-label"><label class="s3-title" for="cfg-docker-cpu">CPU limit</label><span class="s3-desc">In cores. Empty for no limit.</span></span>
+                  <span class="s3-ctl"><input class="input" id="cfg-docker-cpu" type="number" min="0.1" step="0.1" placeholder="No limit" /></span>
+                </div>
+                <div class="s3-row">
+                  <span class="s3-label"><label class="s3-title" for="cfg-docker-memory">Memory limit</label><span class="s3-desc">In MB. Empty for no limit.</span></span>
+                  <span class="s3-ctl"><input class="input" id="cfg-docker-memory" type="number" min="1" step="1" placeholder="No limit" /></span>
+                </div>
+                <label class="s3-row" id="cfg-docker-readonly-field">
+                  <span class="s3-label"><span class="s3-title">Read-only filesystem</span><span class="s3-desc">The container can’t change its own files — only /tmp, when enabled below.</span></span>
+                  <span class="toggle"><input type="checkbox" id="cfg-docker-readonly" /><span class="toggle-slider"></span></span>
+                </label>
+                <label class="s3-row">
+                  <span class="s3-label"><span class="s3-title">Memory-backed /tmp</span><span class="s3-desc">A fast /tmp in memory, wiped on every restart.</span></span>
+                  <span class="toggle"><input type="checkbox" id="cfg-docker-tmpfs-enabled" /><span class="toggle-slider"></span></span>
+                </label>
+                <div class="s3-row s3-row--sub">
+                  <span class="s3-label"><label class="s3-title" for="cfg-docker-tmpfs-size">/tmp size</label><span class="s3-desc">In MB.</span></span>
+                  <span class="s3-ctl"><input class="input" id="cfg-docker-tmpfs-size" type="number" min="1" step="1" placeholder="64" /></span>
                 </div>
               </div>
-            </div>
-
-            <!-- Maintenance Pages -->
-            <div class="settings-group" id="maintenance-pages-section" data-perm="apps.configure">
-              <div class="settings-group-hd">
-                <div class="settings-group-title">Maintenance Pages</div>
-                <div class="settings-group-sub">Static pages served by nginx — visible even when the app is offline</div>
-                <span id="maint-no-nginx-warn" class="maint-no-nginx-warn" style="display:none;margin-top:8px">
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                  <span id="maint-no-nginx-text">Requires a domain</span>
-                </span>
-              </div>
-              <div class="settings-group-bd">
-                <div class="maint-row-actions" style="flex-wrap:wrap">
-                  <button class="btn btn-secondary btn-sm maint-row-btn maint-row-btn--red" id="btn-open-downtime-modal" title="Edit Downtime Page" data-perm="apps.configure">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                    <span>Downtime</span>
-                    <span id="maint-downtime-badge" class="maint-row-badge maint-badge--off">Off</span>
-                  </button>
-                  <button class="btn btn-secondary btn-sm maint-row-btn maint-row-btn--orange" id="btn-open-update-modal" title="Edit Update Page" data-perm="apps.configure">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
-                    <span>Update</span>
-                    <span id="maint-update-badge" class="maint-row-badge maint-badge--off">Off</span>
-                  </button>
-                  <button class="btn btn-secondary btn-sm maint-row-btn maint-row-btn--blue" id="btn-open-restart-modal" title="Edit Restart Page" data-perm="apps.configure">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-                    <span>Restart</span>
-                    <span id="maint-restart-badge" class="maint-row-badge maint-badge--off">Auto</span>
-                  </button>
-                  <button class="btn btn-secondary btn-sm maint-row-btn maint-row-btn--blue" id="btn-open-starting-modal" title="Edit Starting Page" data-perm="apps.configure">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                    <span>Starting</span>
-                    <span id="maint-starting-badge" class="maint-row-badge maint-badge--off">Auto</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Danger Zone -->
-            <div class="settings-group settings-group--danger" data-perm="apps.delete">
-              <div class="settings-group-hd">
-                <div class="settings-group-title">Danger Zone</div>
-                <div class="settings-group-sub">Irreversible and destructive actions</div>
-              </div>
-              <div class="settings-group-bd">
-                <div class="danger-row">
-                  <div class="danger-row-text">
-                    <div class="title">Delete Application</div>
-                    <div class="sub">Permanently remove this app and all its files</div>
+              <div class="s3-card">
+                <label class="s3-row">
+                  <span class="s3-label"><span class="s3-title">Autoscaling</span><span class="s3-desc">Add instances on the primary when CPU is high, remove them when it drops.</span></span>
+                  <span class="toggle"><input type="checkbox" id="cfg-autoscale-enabled" /><span class="toggle-slider"></span></span>
+                </label>
+                <div id="autoscale-options">
+                  <div class="s3-row s3-row--sub">
+                    <span class="s3-label"><label class="s3-title" for="cfg-autoscale-min">Minimum instances</label></span>
+                    <span class="s3-ctl"><input class="input" id="cfg-autoscale-min" type="number" min="1" step="1" placeholder="1" /></span>
                   </div>
-                  <button class="btn btn-danger" id="btn-delete" data-perm="apps.delete">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="3,6 5,6 21,6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-                    Delete
-                  </button>
+                  <div class="s3-row s3-row--sub">
+                    <span class="s3-label"><label class="s3-title" for="cfg-autoscale-max">Maximum instances</label></span>
+                    <span class="s3-ctl"><input class="input" id="cfg-autoscale-max" type="number" min="1" step="1" placeholder="4" /></span>
+                  </div>
+                  <div class="s3-row s3-row--sub">
+                    <span class="s3-label"><label class="s3-title" for="cfg-autoscale-cpu">CPU target</label><span class="s3-desc">In %. Scales up above it, down below half of it.</span></span>
+                    <span class="s3-ctl"><input class="input" id="cfg-autoscale-cpu" type="number" min="10" max="95" step="1" placeholder="70" /></span>
+                  </div>
                 </div>
               </div>
+            </section>
+
+            <!-- Visitor pages -->
+            <section class="settings-group sv2-sec" id="maintenance-pages-section" data-nav="Visitor pages" data-icon="layout" data-nosave data-perm="apps.configure">
+              <header class="sv2-head"><h3>Visitor pages</h3><p>What visitors see while the app can’t serve them. Served by nginx, also when every instance is down.</p></header>
+              <div class="s3-card">
+                <div class="s3-note" id="maint-no-nginx-warn" style="display:none"><span id="maint-no-nginx-text">Requires a domain</span></div>
+                <button type="button" class="s3-row s3-link" id="btn-open-downtime-modal">
+                  <span class="s3-label"><span class="s3-title">Downtime</span><span class="s3-desc">Downtime mode, or when no instance answers</span></span>
+                  <span id="maint-downtime-badge" class="maint-row-badge maint-badge--off">Off</span>
+                  <span class="s3-chev" aria-hidden="true"></span>
+                </button>
+                <button type="button" class="s3-row s3-link" id="btn-open-update-modal">
+                  <span class="s3-label"><span class="s3-title">Update</span><span class="s3-desc">Update mode, for planned maintenance</span></span>
+                  <span id="maint-update-badge" class="maint-row-badge maint-badge--off">Off</span>
+                  <span class="s3-chev" aria-hidden="true"></span>
+                </button>
+                <button type="button" class="s3-row s3-link" id="btn-open-restart-modal">
+                  <span class="s3-label"><span class="s3-title">Restart</span><span class="s3-desc">While the app restarts</span></span>
+                  <span id="maint-restart-badge" class="maint-row-badge maint-badge--off">Auto</span>
+                  <span class="s3-chev" aria-hidden="true"></span>
+                </button>
+                <button type="button" class="s3-row s3-link" id="btn-open-starting-modal">
+                  <span class="s3-label"><span class="s3-title">Starting</span><span class="s3-desc">While the app starts for the first time</span></span>
+                  <span id="maint-starting-badge" class="maint-row-badge maint-badge--off">Auto</span>
+                  <span class="s3-chev" aria-hidden="true"></span>
+                </button>
+              </div>
+            </section>
+
+            <!-- Advanced -->
+            <section class="settings-group sv2-sec" id="set-advanced" data-nav="Advanced" data-icon="code" data-nosave data-perm="apps.configure">
+              <header class="sv2-head"><h3>Advanced</h3><p>For when you need to look under the hood.</p></header>
+              <div class="s3-card">
+                <button type="button" class="s3-row s3-link" id="tile-nginx">
+                  <span class="s3-label"><span class="s3-title">nginx configuration</span><span class="s3-desc">View or edit the reverse proxy config Cloudbase generated for this app</span></span>
+                  <span class="s3-chev" aria-hidden="true"></span>
+                </button>
+              </div>
+            </section>
+
+            <!-- Danger zone -->
+            <section class="settings-group sv2-sec settings-group--danger" id="set-danger" data-nav="Danger zone" data-icon="alert" data-nosave data-perm="apps.delete">
+              <header class="sv2-head"><h3>Danger zone</h3><p>Can’t be undone.</p></header>
+              <div class="s3-card s3-card--danger">
+                <div class="s3-row">
+                  <span class="s3-label"><span class="s3-title">Delete this app</span><span class="s3-desc">Permanently removes this app and all its files.</span></span>
+                  <button class="btn btn-danger btn-sm" id="btn-delete" data-perm="apps.delete">Delete app</button>
+                </div>
+              </div>
+            </section>
+
+            <!-- Save: sticks to the bottom of the content while it scrolls -->
+            <div class="s3-savebar" id="settings-save" data-perm="apps.configure">
+              <span class="s3-save-state" id="settings-save-state">All changes saved</span>
+              <button type="button" class="btn btn-sm btn-ghost" id="btn-discard">Discard</button>
+              <button type="button" class="btn btn-sm" id="btn-save">Save changes</button>
             </div>
-
-          </div><!-- /settings-content -->
-
-        </div><!-- /settings-panel -->
+          </div>
+        </div>
       </div><!-- /panel-settings -->
 
       <!-- INSTANCES -->
