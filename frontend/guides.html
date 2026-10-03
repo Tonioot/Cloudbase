@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Guides — Cloudbase</title>
+  <link rel="icon" type="image/png" href="/cloudbase.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="css/variables.css" />
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/components.css" />
+  <link rel="stylesheet" href="css/guides.css" />
+</head>
+<body>
+
+<div class="shell">
+  <aside class="rail" id="rail"></aside>
+
+  <main class="main-content" id="guides-scroll">
+    <div class="page guides-page">
+      <div class="guides-layout">
+        <nav class="guides-nav" id="guides-nav" aria-label="Guides"></nav>
+        <article class="guide" id="guide"></article>
+        <aside class="guide-toc" id="guide-toc" aria-label="On this page"></aside>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div id="toast-container"></div>
+
+<script type="module">
+  import { api } from './js/api.js';
+  import { initSidebar } from './js/sidebar.js';
+  import { initGuides } from './js/guides.js';
+
+  try {
+    await api.checkAuth();
+  } catch {
+    location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search);
+  }
+
+  initGuides();
+  await initSidebar();
+</script>
+</body>
+</html>

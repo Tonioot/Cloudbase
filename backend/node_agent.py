@@ -764,7 +764,11 @@ async def cmd_start_replica(client, state, main_id, payload, headers):
         _agent_log(f"[agent] replica={replica_id} container already running, reconnecting tunnel only")
         local_port = payload.get("external_port", 8000)
         _start_tunnel_task(state, replica_id, local_port)
-        return {"container_id": None, "replica_id": replica_id, "reused": True}
+        try:
+            container_id = dm._get_client().containers.get(dm.replica_container_name(int(main_id), replica_id)).id
+        except Exception:
+            container_id = None
+        return {"container_id": container_id, "replica_id": replica_id, "reused": True}
 
     await _wait_local_api(client)
     local_id = await _ensure_replica_app_deployed(client, state, main_id, payload, headers, replica_id)

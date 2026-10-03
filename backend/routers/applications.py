@@ -632,42 +632,10 @@ def _ensure_maintenance_files(app: Application, app_id: int) -> tuple[bool, str]
         _page_meta(starting_cfg),
     )
 
-    downtime_html = nm.generate_maintenance_html(
-        downtime_cfg.get("title")       or "Down for Maintenance",
-        downtime_cfg.get("message")     or "We'll be back shortly.",
-        downtime_cfg.get("color")       or "#f85149",
-        downtime_cfg.get("status_url"),
-        downtime_cfg.get("custom_html"),
-        "downtime",
-        logo_data=downtime_cfg.get("logo_data"),
-    )
-    update_html = nm.generate_maintenance_html(
-        update_cfg.get("title")         or "Updating\u2026",
-        update_cfg.get("message")       or "We\u2019re deploying a new version. Check back soon.",
-        update_cfg.get("color")         or "#f0883e",
-        update_cfg.get("status_url"),
-        update_cfg.get("custom_html"),
-        "update",
-        logo_data=update_cfg.get("logo_data"),
-    )
-    restart_html = nm.generate_maintenance_html(
-        restart_cfg.get("title")        or "Restarting\u2026",
-        restart_cfg.get("message")      or "The server is restarting. This only takes a moment.",
-        restart_cfg.get("color")        or "#388bfd",
-        restart_cfg.get("status_url"),
-        restart_cfg.get("custom_html"),
-        "restart",
-        logo_data=restart_cfg.get("logo_data"),
-    )
-    starting_html = nm.generate_maintenance_html(
-        starting_cfg.get("title")       or "Starting\u2026",
-        starting_cfg.get("message")     or "The service is starting up. This only takes a moment.",
-        starting_cfg.get("color")       or "#388bfd",
-        starting_cfg.get("status_url"),
-        starting_cfg.get("custom_html"),
-        "starting",
-        logo_data=starting_cfg.get("logo_data"),
-    )
+    downtime_html = nm.render_app_page("downtime", downtime_cfg)
+    update_html = nm.render_app_page("update", update_cfg)
+    restart_html = nm.render_app_page("restart", restart_cfg)
+    starting_html = nm.render_app_page("starting", starting_cfg)
     ok, msg = nm.write_maintenance_files(app_id, downtime_html, update_html, restart_html, starting_html)
     log.info("[ensure-files] write result ok=%s msg=%r", ok, msg)
     return ok, msg
@@ -4060,42 +4028,10 @@ async def save_maintenance_pages(
     app.update_page   = json.dumps(req.update_page.model_dump())
     app.restart_page  = json.dumps(req.restart_page.model_dump())
     app.starting_page = json.dumps(req.starting_page.model_dump())
-    downtime_html = nm.generate_maintenance_html(
-        req.downtime_page.title   or "Down for Maintenance",
-        req.downtime_page.message or "We'll be back shortly.",
-        req.downtime_page.color   or "#f85149",
-        req.downtime_page.status_url,
-        req.downtime_page.custom_html,
-        "downtime",
-        logo_data=req.downtime_page.logo_data,
-    )
-    update_html = nm.generate_maintenance_html(
-        req.update_page.title   or "Updating\u2026",
-        req.update_page.message or "We\u2019re deploying a new version. Check back soon.",
-        req.update_page.color   or "#f0883e",
-        req.update_page.status_url,
-        req.update_page.custom_html,
-        "update",
-        logo_data=req.update_page.logo_data,
-    )
-    restart_html = nm.generate_maintenance_html(
-        req.restart_page.title   or "Restarting\u2026",
-        req.restart_page.message or "The server is restarting. This only takes a moment.",
-        req.restart_page.color   or "#388bfd",
-        req.restart_page.status_url,
-        req.restart_page.custom_html,
-        "restart",
-        logo_data=req.restart_page.logo_data,
-    )
-    starting_html = nm.generate_maintenance_html(
-        req.starting_page.title   or "Starting\u2026",
-        req.starting_page.message or "The service is starting up. This only takes a moment.",
-        req.starting_page.color   or "#388bfd",
-        req.starting_page.status_url,
-        req.starting_page.custom_html,
-        "starting",
-        logo_data=req.starting_page.logo_data,
-    )
+    downtime_html = nm.render_app_page("downtime", req.downtime_page.model_dump())
+    update_html = nm.render_app_page("update", req.update_page.model_dump())
+    restart_html = nm.render_app_page("restart", req.restart_page.model_dump())
+    starting_html = nm.render_app_page("starting", req.starting_page.model_dump())
     ok, msg = nm.write_maintenance_files(app_id, downtime_html, update_html, restart_html, starting_html)
     if not ok:
         await db.commit()
@@ -4201,45 +4137,13 @@ async def preview_maintenance_page(
     cfg = json.loads(raw or "{}")
 
     if page_type == "downtime":
-        html = nm.generate_maintenance_html(
-            cfg.get("title")      or "Down for Maintenance",
-            cfg.get("message")    or "We'll be back shortly.",
-            cfg.get("color")      or "#f85149",
-            cfg.get("status_url"),
-            cfg.get("custom_html"),
-            "downtime",
-            logo_data=cfg.get("logo_data"),
-        )
+        html = nm.render_app_page("downtime", cfg)
     elif page_type == "restart":
-        html = nm.generate_maintenance_html(
-            cfg.get("title")      or "Restarting\u2026",
-            cfg.get("message")    or "The server is restarting. This only takes a moment.",
-            cfg.get("color")      or "#388bfd",
-            cfg.get("status_url"),
-            cfg.get("custom_html"),
-            "restart",
-            logo_data=cfg.get("logo_data"),
-        )
+        html = nm.render_app_page("restart", cfg)
     elif page_type == "starting":
-        html = nm.generate_maintenance_html(
-            cfg.get("title")      or "Starting\u2026",
-            cfg.get("message")    or "The service is starting up. This only takes a moment.",
-            cfg.get("color")      or "#388bfd",
-            cfg.get("status_url"),
-            cfg.get("custom_html"),
-            "starting",
-            logo_data=cfg.get("logo_data"),
-        )
+        html = nm.render_app_page("starting", cfg)
     else:
-        html = nm.generate_maintenance_html(
-            cfg.get("title")      or "Updating\u2026",
-            cfg.get("message")    or "We\u2019re deploying a new version. Check back soon.",
-            cfg.get("color")      or "#f0883e",
-            cfg.get("status_url"),
-            cfg.get("custom_html"),
-            "update",
-            logo_data=cfg.get("logo_data"),
-        )
+        html = nm.render_app_page("update", cfg)
     return HTMLResponse(content=html)
 
 

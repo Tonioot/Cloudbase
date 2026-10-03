@@ -195,498 +195,137 @@ def generate_cloudbase_unknown_host_html(domain: str | None = None) -> str:
     )
 
 
-def _render_visual_block(color: str, icon_svg: str, logo_data: str = None) -> str:
-    inner = (
-        f'<span class="icon-logo"><img src="{logo_data}" alt="Logo" /></span>'
-        if logo_data else
-        f'<span class="icon-glyph">{icon_svg}</span>'
+# Defaults for an app's visitor pages when the owner left a field empty.
+PAGE_DEFAULTS = {
+    "downtime": {"title": "Down for Maintenance", "message": "We'll be back shortly.", "color": "#e5484d"},
+    "update": {"title": "Updating…", "message": "We’re deploying a new version. Check back soon.", "color": "#f5a524"},
+    "restart": {"title": "Restarting…", "message": "The server is restarting. This only takes a moment.", "color": "#3b82f6"},
+    "starting": {"title": "Starting…", "message": "The service is starting up. This only takes a moment.", "color": "#3b82f6"},
+}
+
+
+def render_app_page(page_type: str, cfg: dict | None) -> str:
+    """HTML for one of an app's visitor pages, filling in defaults for empty fields."""
+    cfg = cfg or {}
+    d = PAGE_DEFAULTS[page_type]
+    return generate_maintenance_html(
+        cfg.get("title") or d["title"],
+        cfg.get("message") or d["message"],
+        cfg.get("color") or d["color"],
+        cfg.get("status_url"),
+        cfg.get("custom_html"),
+        page_type,
+        logo_data=cfg.get("logo_data"),
     )
-    return f'<div class="icon-ring">{inner}</div>'
+
+
+# Visitor-facing pages for an app (downtime, update, restart, starting).
+# One shared, quiet layout: optional logo, a status line in the app's accent
+# colour, title, message and an optional status-page link. Light/dark follows
+# the visitor's system setting. Everything is inline — nginx serves the file
+# while the app itself may be down.
+_APP_PAGE_KINDS = {
+    "downtime": {"label": "Temporarily unavailable", "refresh": 30, "busy": False},
+    "update":   {"label": "Scheduled maintenance",   "refresh": 30, "busy": True},
+    "restart":  {"label": "Restarting",              "refresh": 8,  "busy": True},
+    "starting": {"label": "Starting up",             "refresh": 8,  "busy": True},
+}
+
+
+def _app_status_page(kind: str, title: str, message: str, color: str, status_url: str = None, logo_data: str = None) -> str:
+    meta = _APP_PAGE_KINDS[kind]
+    logo = f'<img class="logo" src="{logo_data}" alt="">' if logo_data else ""
+    link = (
+        f'<a class="link" href="{status_url}" target="_blank" rel="noopener noreferrer">'
+        'View status page'
+        '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>'
+        '</a>'
+    ) if status_url else ""
+    busy = '<div class="progress" aria-hidden="true"><span></span></div>' if meta["busy"] else ""
+    refresh = meta["refresh"]
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="refresh" content="{refresh}">
+  <meta name="robots" content="noindex">
+  <title>{title}</title>
+  <style>
+    :root {{
+      color-scheme: light;
+      --bg: #fbfbfa; --text: #111214; --text-2: #4a4f57; --muted: #7a7f88; --line: #e8e8e5;
+      --accent: {color};
+    }}
+    @media (prefers-color-scheme: dark) {{
+      :root {{ color-scheme: dark; --bg: #0a0b0c; --text: #edeef0; --text-2: #a9aeb6; --muted: #7a7f88; --line: #1d1f22; }}
+    }}
+    * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+    body {{
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 32px 20px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }}
+    main {{ width: 100%; max-width: 440px; }}
+    .logo {{ display: block; max-width: 140px; max-height: 40px; object-fit: contain; margin-bottom: 40px; }}
+    .status {{ display: flex; align-items: center; gap: 10px; margin-bottom: 16px; font-size: 13px; color: var(--text-2); }}
+    .dot {{
+      width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
+    }}
+    h1 {{ font-size: 30px; font-weight: 500; line-height: 1.15; letter-spacing: -0.03em; margin-bottom: 14px; }}
+    p {{ font-size: 15px; line-height: 1.65; color: var(--text-2); }}
+    .progress {{ position: relative; height: 2px; margin-top: 32px; background: var(--line); border-radius: 2px; overflow: hidden; }}
+    .progress span {{
+      position: absolute; top: 0; bottom: 0; width: 30%; border-radius: 2px; background: var(--accent);
+      animation: slide 1.6s ease-in-out infinite;
+    }}
+    @keyframes slide {{ from {{ left: -30%; }} to {{ left: 100%; }} }}
+    .link {{
+      display: inline-flex; align-items: center; gap: 6px; margin-top: 28px;
+      font-size: 14px; color: var(--text); text-decoration: none;
+      border-bottom: 1px solid var(--line); padding-bottom: 2px;
+    }}
+    .link:hover {{ border-bottom-color: var(--text); }}
+    footer {{ margin-top: 32px; font-size: 12px; color: var(--muted); }}
+    @media (prefers-reduced-motion: reduce) {{ .progress span {{ animation: none; left: 0; width: 100%; opacity: .35; }} }}
+  </style>
+</head>
+<body>
+  <main>
+    {logo}
+    <div class="status"><span class="dot"></span>{meta["label"]}</div>
+    <h1>{title}</h1>
+    <p>{message}</p>
+    {busy}
+    {link}
+    <footer>This page refreshes automatically every {refresh} seconds.</footer>
+  </main>
+</body>
+</html>
+"""
 
 
 def _downtime_template(title: str, message: str, color: str, status_url: str = None, logo_data: str = None) -> str:
-    status_btn = f"""
-    <a class="status-link" href="{status_url}" target="_blank" rel="noopener noreferrer">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 16 12 13 21 11 3 8 12 2 12"/></svg>
-      View status page
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
-    </a>""" if status_url else ""
-    visual_block = _render_visual_block(
-        color,
-        f"""<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round">
-        <circle cx="12" cy="12" r="10"/>
-        <polyline points="12 6 12 12 16 14"/>
-      </svg>""",
-        logo_data,
-    )
-
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{title}</title>
-  <style>
-    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
-      background: #f1f5f9;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 40px 20px;
-    }}
-    .card {{
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: 20px;
-      box-shadow: 0 1px 3px rgba(0,0,0,.04), 0 8px 32px rgba(0,0,0,.07);
-      padding: 52px 44px 44px;
-      max-width: 460px;
-      width: 100%;
-      text-align: center;
-    }}
-    .icon-ring {{
-      width: 72px; height: 72px;
-      border-radius: 50%;
-      background: color-mix(in srgb, {color} 8%, #fff);
-      border: 1.5px solid color-mix(in srgb, {color} 20%, transparent);
-      display: flex; align-items: center; justify-content: center;
-      margin: 0 auto 24px;
-      position: relative;
-    }}
-    .icon-glyph {{ display: inline-flex; align-items: center; justify-content: center; }}
-    .icon-glyph svg {{ display: block; }}
-    .icon-logo {{
-      width: 52px; height: 52px;
-      border-radius: 50%;
-      overflow: hidden;
-      display: flex; align-items: center; justify-content: center;
-      background: #ffffff;
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,.7);
-    }}
-    .icon-logo img {{
-      width: 100%; height: 100%;
-      object-fit: contain;
-      padding: 8px;
-      background: #ffffff;
-    }}
-    .icon-ring::before {{
-      content: '';
-      position: absolute; inset: -5px; border-radius: 50%;
-      border: 2px solid color-mix(in srgb, {color} 15%, transparent);
-      border-top-color: {color};
-      animation: spin 2.5s linear infinite;
-    }}
-    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
-    .badge {{
-      display: inline-flex; align-items: center; gap: 7px;
-      background: color-mix(in srgb, {color} 8%, #fff);
-      border: 1px solid color-mix(in srgb, {color} 22%, transparent);
-      border-radius: 100px; padding: 5px 14px; margin-bottom: 22px;
-      font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
-      color: {color};
-    }}
-    .dot {{ width: 6px; height: 6px; border-radius: 50%; background: {color}; animation: blink 1.8s ease-in-out infinite; }}
-    @keyframes blink {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: .25; }} }}
-    h1 {{ font-size: 26px; font-weight: 700; color: #0f172a; letter-spacing: -.03em; line-height: 1.25; margin-bottom: 12px; }}
-    .msg {{ font-size: 15px; color: #64748b; line-height: 1.8; margin-bottom: 28px; }}
-    .divider {{ width: 40px; height: 2px; background: linear-gradient(90deg, transparent, {color}, transparent); margin: 0 auto 24px; border-radius: 2px; }}
-    .status-link {{
-      display: inline-flex; align-items: center; gap: 7px;
-      font-size: 13px; font-weight: 500; color: {color};
-      text-decoration: none; padding: 9px 20px;
-      border: 1px solid color-mix(in srgb, {color} 30%, transparent);
-      border-radius: 10px;
-      background: color-mix(in srgb, {color} 5%, transparent);
-      transition: background .15s;
-    }}
-    .status-link:hover {{ background: color-mix(in srgb, {color} 12%, transparent); }}
-    .footer {{ margin-top: 36px; font-size: 11px; color: #94a3b8; }}
-  </style>
-</head>
-<body>
-  <div class="card">
-    {visual_block}
-    <h1>{title}</h1>
-    <p class="msg">{message}</p>
-    <div class="divider"></div>
-    {status_btn}
-    <div class="footer">Powered by Cloudbase &middot; We&rsquo;re working on it &mdash; this page updates automatically.</div>
-  </div>
-</body>
-</html>
-"""
+    return _app_status_page("downtime", title, message, color, status_url, logo_data)
 
 
 def _restart_template(title: str, message: str, color: str, status_url: str = None, logo_data: str = None) -> str:
-    status_btn = f"""
-    <a class="status-link" href="{status_url}" target="_blank" rel="noopener noreferrer">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 16 12 13 21 11 3 8 12 2 12"/></svg>
-      View status page
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
-    </a>""" if status_url else ""
-    visual_block = _render_visual_block(
-        color,
-        f"""<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round">
-        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
-        <path d="M3 3v5h5"/>
-      </svg>""",
-        logo_data,
-    )
-
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="refresh" content="8">
-  <title>{title}</title>
-  <style>
-    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
-      background: #f1f5f9;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 40px 20px;
-    }}
-    .card {{
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: 20px;
-      box-shadow: 0 1px 3px rgba(0,0,0,.04), 0 8px 32px rgba(0,0,0,.07);
-      padding: 52px 44px 44px;
-      max-width: 460px;
-      width: 100%;
-      text-align: center;
-    }}
-    .icon-ring {{
-      width: 72px; height: 72px;
-      border-radius: 50%;
-      background: color-mix(in srgb, {color} 8%, #fff);
-      border: 1.5px solid color-mix(in srgb, {color} 20%, transparent);
-      display: flex; align-items: center; justify-content: center;
-      margin: 0 auto 24px;
-      position: relative;
-    }}
-    .icon-glyph {{ display: inline-flex; align-items: center; justify-content: center; }}
-    .icon-glyph svg {{ display: block; }}
-    .icon-logo {{
-      width: 52px; height: 52px;
-      border-radius: 50%;
-      overflow: hidden;
-      display: flex; align-items: center; justify-content: center;
-      background: #ffffff;
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,.7);
-    }}
-    .icon-logo img {{
-      width: 100%; height: 100%;
-      object-fit: contain;
-      padding: 8px;
-      background: #ffffff;
-    }}
-    .icon-ring::before {{
-      content: '';
-      position: absolute; inset: -5px; border-radius: 50%;
-      border: 2px solid color-mix(in srgb, {color} 15%, transparent);
-      border-top-color: {color};
-      animation: spin .9s linear infinite;
-    }}
-    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
-    .badge {{
-      display: inline-flex; align-items: center; gap: 7px;
-      background: color-mix(in srgb, {color} 8%, #fff);
-      border: 1px solid color-mix(in srgb, {color} 22%, transparent);
-      border-radius: 100px; padding: 5px 14px; margin-bottom: 22px;
-      font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
-      color: {color};
-    }}
-    .spinner {{
-      width: 8px; height: 8px; border-radius: 50%;
-      border: 2px solid color-mix(in srgb, {color} 22%, transparent);
-      border-top-color: {color};
-      animation: spin .7s linear infinite;
-    }}
-    h1 {{ font-size: 26px; font-weight: 700; color: #0f172a; letter-spacing: -.03em; line-height: 1.25; margin-bottom: 12px; }}
-    .msg {{ font-size: 15px; color: #64748b; line-height: 1.8; margin-bottom: 28px; }}
-    .track {{ background: #f1f5f9; border-radius: 100px; height: 3px; overflow: hidden; margin-bottom: 28px; }}
-    .bar {{ height: 100%; background: linear-gradient(90deg, transparent, {color}, transparent); animation: sweep 1.1s ease-in-out infinite; }}
-    @keyframes sweep {{ 0% {{ transform: translateX(-100%) scaleX(.5); }} 100% {{ transform: translateX(200%) scaleX(.5); }} }}
-    .status-link {{
-      display: inline-flex; align-items: center; gap: 7px;
-      font-size: 13px; font-weight: 500; color: {color};
-      text-decoration: none; padding: 9px 20px;
-      border: 1px solid color-mix(in srgb, {color} 30%, transparent);
-      border-radius: 10px;
-      background: color-mix(in srgb, {color} 5%, transparent);
-      transition: background .15s;
-    }}
-    .status-link:hover {{ background: color-mix(in srgb, {color} 12%, transparent); }}
-    .footer {{ margin-top: 28px; font-size: 11px; color: #94a3b8; }}
-  </style>
-</head>
-<body>
-  <div class="card">
-    {visual_block}
-    <h1>{title}</h1>
-    <p class="msg">{message}</p>
-    <div class="track"><div class="bar"></div></div>
-    {status_btn}
-    <div class="footer">Powered by Cloudbase &middot; Page auto-refreshes every 8 seconds.</div>
-  </div>
-</body>
-</html>
-"""
+    return _app_status_page("restart", title, message, color, status_url, logo_data)
 
 
 def _starting_template(title: str, message: str, color: str, status_url: str = None, logo_data: str = None) -> str:
-    status_btn = f"""
-    <a class="status-link" href="{status_url}" target="_blank" rel="noopener noreferrer">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 16 12 13 21 11 3 8 12 2 12"/></svg>
-      View status page
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
-    </a>""" if status_url else ""
-    visual_block = _render_visual_block(
-        color,
-        f"""<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <polygon points="5 3 19 12 5 21 5 3"/>
-      </svg>""",
-        logo_data,
-    )
-
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="refresh" content="8">
-  <title>{title}</title>
-  <style>
-    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
-      background: #f1f5f9;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 40px 20px;
-    }}
-    .card {{
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: 20px;
-      box-shadow: 0 1px 3px rgba(0,0,0,.04), 0 8px 32px rgba(0,0,0,.07);
-      padding: 52px 44px 44px;
-      max-width: 460px;
-      width: 100%;
-      text-align: center;
-    }}
-    .icon-ring {{
-      width: 72px; height: 72px;
-      border-radius: 50%;
-      background: color-mix(in srgb, {color} 8%, #fff);
-      border: 1.5px solid color-mix(in srgb, {color} 20%, transparent);
-      display: flex; align-items: center; justify-content: center;
-      margin: 0 auto 24px;
-      position: relative;
-    }}
-    .icon-glyph {{ display: inline-flex; align-items: center; justify-content: center; }}
-    .icon-glyph svg {{ display: block; }}
-    .icon-logo {{
-      width: 52px; height: 52px;
-      border-radius: 50%;
-      overflow: hidden;
-      display: flex; align-items: center; justify-content: center;
-      background: #ffffff;
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,.7);
-    }}
-    .icon-logo img {{
-      width: 100%; height: 100%;
-      object-fit: contain;
-      padding: 8px;
-      background: #ffffff;
-    }}
-    .icon-ring::before {{
-      content: '';
-      position: absolute; inset: -5px; border-radius: 50%;
-      border: 2px solid color-mix(in srgb, {color} 15%, transparent);
-      border-top-color: {color};
-      animation: spin .9s linear infinite;
-    }}
-    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
-    .badge {{
-      display: inline-flex; align-items: center; gap: 7px;
-      background: color-mix(in srgb, {color} 8%, #fff);
-      border: 1px solid color-mix(in srgb, {color} 22%, transparent);
-      border-radius: 100px; padding: 5px 14px; margin-bottom: 22px;
-      font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
-      color: {color};
-    }}
-    .spinner {{
-      width: 8px; height: 8px; border-radius: 50%;
-      border: 2px solid color-mix(in srgb, {color} 22%, transparent);
-      border-top-color: {color};
-      animation: spin .7s linear infinite;
-    }}
-    h1 {{ font-size: 26px; font-weight: 700; color: #0f172a; letter-spacing: -.03em; line-height: 1.25; margin-bottom: 12px; }}
-    .msg {{ font-size: 15px; color: #64748b; line-height: 1.8; margin-bottom: 28px; }}
-    .track {{ background: #f1f5f9; border-radius: 100px; height: 3px; overflow: hidden; margin-bottom: 28px; }}
-    .bar {{ height: 100%; background: linear-gradient(90deg, transparent, {color}, transparent); animation: sweep 1.1s ease-in-out infinite; }}
-    @keyframes sweep {{ 0% {{ transform: translateX(-100%) scaleX(.5); }} 100% {{ transform: translateX(200%) scaleX(.5); }} }}
-    .status-link {{
-      display: inline-flex; align-items: center; gap: 7px;
-      font-size: 13px; font-weight: 500; color: {color};
-      text-decoration: none; padding: 9px 20px;
-      border: 1px solid color-mix(in srgb, {color} 30%, transparent);
-      border-radius: 10px;
-      background: color-mix(in srgb, {color} 5%, transparent);
-      transition: background .15s;
-    }}
-    .status-link:hover {{ background: color-mix(in srgb, {color} 12%, transparent); }}
-    .footer {{ margin-top: 28px; font-size: 11px; color: #94a3b8; }}
-  </style>
-</head>
-<body>
-  <div class="card">
-    {visual_block}
-    <h1>{title}</h1>
-    <p class="msg">{message}</p>
-    <div class="track"><div class="bar"></div></div>
-    {status_btn}
-    <div class="footer">Powered by Cloudbase &middot; Page auto-refreshes every 8 seconds.</div>
-  </div>
-</body>
-</html>
-"""
+    return _app_status_page("starting", title, message, color, status_url, logo_data)
 
 
 def _update_template(title: str, message: str, color: str, status_url: str = None, logo_data: str = None) -> str:
-    status_btn = f"""
-    <a class="status-link" href="{status_url}" target="_blank" rel="noopener noreferrer">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 16 12 13 21 11 3 8 12 2 12"/></svg>
-      View status page
-      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>
-    </a>""" if status_url else ""
-    visual_block = _render_visual_block(
-        color,
-        f"""<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <polyline points="16 16 12 12 8 16"/>
-        <line x1="12" y1="12" x2="12" y2="21"/>
-        <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
-      </svg>""",
-        logo_data,
-    )
-
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="refresh" content="30">
-  <title>{title}</title>
-  <style>
-    *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-    body {{
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
-      background: #f1f5f9;
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 40px 20px;
-    }}
-    .card {{
-      background: #ffffff;
-      border: 1px solid #e2e8f0;
-      border-radius: 20px;
-      box-shadow: 0 1px 3px rgba(0,0,0,.04), 0 8px 32px rgba(0,0,0,.07);
-      padding: 52px 44px 44px;
-      max-width: 460px;
-      width: 100%;
-      text-align: center;
-    }}
-    .icon-ring {{
-      width: 72px; height: 72px;
-      border-radius: 50%;
-      background: color-mix(in srgb, {color} 8%, #fff);
-      border: 1.5px solid color-mix(in srgb, {color} 20%, transparent);
-      display: flex; align-items: center; justify-content: center;
-      margin: 0 auto 24px;
-      position: relative;
-    }}
-    .icon-ring::before {{
-      content: '';
-      position: absolute; inset: -5px; border-radius: 50%;
-      border: 2px solid color-mix(in srgb, {color} 15%, transparent);
-      border-top-color: {color};
-      animation: spin 1.6s linear infinite;
-    }}
-    .icon-glyph {{ display: inline-flex; align-items: center; justify-content: center; }}
-    .icon-glyph svg {{ display: block; }}
-    .icon-logo {{
-      width: 52px; height: 52px;
-      border-radius: 50%;
-      overflow: hidden;
-      display: flex; align-items: center; justify-content: center;
-      background: #ffffff;
-      box-shadow: inset 0 0 0 1px rgba(255,255,255,.7);
-    }}
-    .icon-logo img {{
-      width: 100%; height: 100%;
-      object-fit: contain;
-      padding: 8px;
-      background: #ffffff;
-    }}
-    .badge {{
-      display: inline-flex; align-items: center; gap: 8px;
-      background: color-mix(in srgb, {color} 8%, #fff);
-      border: 1px solid color-mix(in srgb, {color} 22%, transparent);
-      border-radius: 100px; padding: 5px 14px; margin-bottom: 22px;
-      font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
-      color: {color};
-    }}
-    .spinner {{
-      width: 10px; height: 10px; border-radius: 50%;
-      border: 2px solid color-mix(in srgb, {color} 22%, transparent);
-      border-top-color: {color};
-      animation: spin .8s linear infinite;
-    }}
-    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
-    h1 {{ font-size: 26px; font-weight: 700; color: #0f172a; letter-spacing: -.03em; line-height: 1.25; margin-bottom: 12px; }}
-    .msg {{ font-size: 15px; color: #64748b; line-height: 1.8; margin-bottom: 28px; }}
-    .track {{ background: #f1f5f9; border-radius: 100px; height: 3px; overflow: hidden; margin-bottom: 28px; }}
-    .bar {{ height: 100%; background: linear-gradient(90deg, transparent, {color}, transparent); animation: sweep 2.2s ease-in-out infinite; }}
-    @keyframes sweep {{ 0% {{ transform: translateX(-100%) scaleX(.5); }} 100% {{ transform: translateX(200%) scaleX(.5); }} }}
-    .status-link {{
-      display: inline-flex; align-items: center; gap: 7px;
-      font-size: 13px; font-weight: 500; color: {color};
-      text-decoration: none; padding: 9px 20px;
-      border: 1px solid color-mix(in srgb, {color} 30%, transparent);
-      border-radius: 10px;
-      background: color-mix(in srgb, {color} 5%, transparent);
-      transition: background .15s;
-    }}
-    .status-link:hover {{ background: color-mix(in srgb, {color} 12%, transparent); }}
-    .footer {{ margin-top: 28px; font-size: 11px; color: #94a3b8; }}
-  </style>
-</head>
-<body>
-  <div class="card">
-    {visual_block}
-    <h1>{title}</h1>
-    <p class="msg">{message}</p>
-    <div class="track"><div class="bar"></div></div>
-    {status_btn}
-    <div class="footer">Powered by Cloudbase &middot; Page auto-refreshes every 30 seconds.</div>
-  </div>
-</body>
-</html>
-"""
+    return _app_status_page("update", title, message, color, status_url, logo_data)
 
 
 

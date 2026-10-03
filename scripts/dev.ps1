@@ -56,6 +56,16 @@ $seedScript = Join-Path $PSScriptRoot 'dev_seed.py'
 & $Py $seedScript credentials $Password
 if ($Seed) { & $Py $seedScript demo }
 
+# A crashed --reload run can leave a worker process holding the port, which
+# keeps serving old code. Stop whatever still listens on it.
+Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
+  $owner = $_.OwningProcess
+  Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -eq $owner -or $_.ParentProcessId -eq $owner } | ForEach-Object {
+    Write-Host "[dev] stopping leftover process $($_.ProcessId) on port $Port"
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+  }
+}
+
 Write-Host ''
 Write-Host "  Cloudbase dev server:  http://127.0.0.1:$Port"
 Write-Host "  Login:                 admin / $Password"

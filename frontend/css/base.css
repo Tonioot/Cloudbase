@@ -129,6 +129,8 @@ code, kbd, pre, .mono { font-family: var(--font-mono); }
 .sb-list .menu-item { min-height: 30px; padding: 4px 8px; font-size: 13px; }
 .sb-list .menu-item-meta { font-size: 10px; }
 
+.sb-help { padding: 6px 10px; border-top: 1px solid var(--line); }
+
 .sb-foot {
   display: flex;
   align-items: center;

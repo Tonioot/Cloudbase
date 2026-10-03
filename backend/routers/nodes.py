@@ -316,7 +316,8 @@ async def _apply_command_result(
                                 # Container is up on the remote node; stay in "starting"
                                 # until the reverse tunnel connects (which sets "running").
                                 replica.status = "starting"
-                                replica.container_id = (result_payload or {}).get("container_id")
+                                # Keep the known id when the agent reused a container without reporting one
+                                replica.container_id = (result_payload or {}).get("container_id") or replica.container_id
                                 replica.last_error = None
                             else:
                                 replica.status = "error"

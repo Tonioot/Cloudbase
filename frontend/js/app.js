@@ -503,7 +503,10 @@ function switchTab(t) {
 }
 
 function teardownTab(t) {
-  if (t === 'logs')  { if (logWs) { logWs.close(); logWs = null; } _logsInitDone = false; }
+  if (t === 'logs')  {
+    if (logWs) { logWs.close(); logWs = null; }
+    clearInterval(_logInstancesTimer); _logInstancesTimer = null;
+  }
   if (t === 'stats') { statsTabActive = false; } // Keep statWs alive — data keeps accumulating
   if (t === 'instances' && _instancesRefreshTimer) { clearInterval(_instancesRefreshTimer); _instancesRefreshTimer = null; }
 }
@@ -519,27 +522,69 @@ function setupTab(t) {
 
 /* ─── LOGS ──────────────────────────────────────────────────────────────── */
 let _logsInitDone = false;
+let _logInstances = new Map();      // id → instance, refreshed while the tab is open
+let _logInstancesTimer = null;
+let _logSourceKey = null;           // what the terminal currently shows (stream or empty state)
+
+const LOG_LIVE_STATUSES = new Set(['running', 'starting', 'restarting', 'stopping', 'pending', 'deploying']);
+
+function _logOptionLabel(r) {
+  const where = `${r.node_name || 'primary'}${r.external_port ? ` :${r.external_port}` : ''}`;
+  const state = LOG_LIVE_STATUSES.has(r.status) ? '' : ` · ${String(r.status || '').replace('_', ' ')}`;
+  return `#${r.id} · ${where}${state}`;
+}
+
+async function _refreshLogInstances() {
+  const select = document.getElementById('log-instance-select');
+  if (!select) return;
+  let instances;
+  try { instances = await api.listInstances(APP_ID); } catch { return; }
+  _logInstances = new Map(instances.map(r => [String(r.id), r]));
+
+  const current = select.value || 'all';
+  select.innerHTML = '<option value="all">All instances</option>';
+  instances.forEach(r => {
+    const opt = document.createElement('option');
+    opt.value = String(r.id);
+    opt.textContent = _logOptionLabel(r);
+    select.appendChild(opt);
+  });
+  select.value = _logInstances.has(current) ? current : 'all';
+
+  // Re-render when the selected instance went up or down (e.g. node came back)
+  if (_logSourceKey !== _logSourceKeyFor(select.value)) _switchLogInstance();
+}
+
+function _logSourceKeyFor(val) {
+  if (val === 'all' || val === 'primary') return 'all';
+  const r = _logInstances.get(val);
+  return r && !LOG_LIVE_STATUSES.has(r.status) ? `empty:${val}:${r.status}` : `live:${val}`;
+}
 
 function initLogs() {
   const select = document.getElementById('log-instance-select');
 
-  // Populate the source picker once (idempotent)
   if (!_logsInitDone) {
     _logsInitDone = true;
-    api.listInstances(APP_ID).then(instances => {
-      if (!select) return;
-      select.innerHTML = '<option value="all">All instances</option>';
-      instances.forEach(r => {
-        const opt = document.createElement('option');
-        opt.value = String(r.id);
-        opt.textContent = `Instance #${r.id} · ${r.node_name || 'primary'}${r.external_port ? ` :${r.external_port}` : ''}`;
-        select.appendChild(opt);
-      });
-    }).catch(() => {});
     select?.addEventListener('change', () => _switchLogInstance());
   }
 
+  _logSourceKey = null;
+  _refreshLogInstances();
+  clearInterval(_logInstancesTimer);
+  _logInstancesTimer = setInterval(_refreshLogInstances, 5000);
   _switchLogInstance();
+}
+
+function _logEmptyState(r) {
+  const node = escHtml(r.node_name || 'primary');
+  const states = {
+    node_offline: ['Node offline', `Instance #${r.id} runs on <strong>${node}</strong>, which can't be reached right now. Logs come back here automatically once the node reconnects.`],
+    stopped:      ['Instance stopped', `Instance #${r.id} isn't running, so there is nothing to stream. Start it to see live logs.`],
+    error:        ['Instance failed', `Instance #${r.id} isn't running.${r.last_error ? `<code>${escHtml(r.last_error)}</code>` : ''}`],
+  };
+  const [title, body] = states[r.status] || ['No live logs', `Instance #${r.id} is ${escHtml(String(r.status || 'unknown').replace('_', ' '))}.`];
+  return `<div class="log-empty-state"><div class="log-empty-title">${title}</div><p>${body}</p></div>`;
 }
 
 // Both sources stream live. "All instances" also carries Cloudbase's own
@@ -549,13 +594,27 @@ function _switchLogInstance() {
   const hint   = document.getElementById('log-instance-hint');
   const val    = select?.value || 'all';
   const isAll  = val === 'all' || val === 'primary';
+  const terminal = document.getElementById('log-terminal');
 
   if (logWs) { logWs.close(); logWs = null; }
-  if (hint) hint.textContent = isAll ? 'Live · all instances + build & deploy output' : `Live · instance #${val}`;
+  _logSourceKey = _logSourceKeyFor(val);
+  logLines = [];
 
-  const terminal = document.getElementById('log-terminal');
+  const inst = isAll ? null : _logInstances.get(val);
+  if (inst && !LOG_LIVE_STATUSES.has(inst.status)) {
+    if (hint) hint.textContent = `Not streaming · instance #${val}`;
+    terminal.closest('.logs-panel')?.classList.add('logs-idle');
+    terminal.innerHTML = _logEmptyState(inst);
+    return;
+  }
+  terminal.closest('.logs-panel')?.classList.remove('logs-idle');
+
+  if (hint) hint.textContent = isAll ? 'Live · all instances + build & deploy output' : `Live · instance #${val}`;
+  const noneLive = isAll && _logInstances.size > 0 && ![..._logInstances.values()].some(r => LOG_LIVE_STATUSES.has(r.status));
   const reset = () => {
-    terminal.innerHTML = `<div class="log-empty">Waiting for log output…</div>`;
+    terminal.innerHTML = noneLive
+      ? `<div class="log-empty">No instances are running. Build and deploy output still shows up here.</div>`
+      : `<div class="log-empty">Waiting for log output…</div>`;
     logLines = [];
   };
   reset();
@@ -1555,50 +1614,13 @@ function initMaintenanceSettings() {
   document.getElementById('btn-open-starting-modal').addEventListener('click',  () => openMaintModal('starting'));
 }
 
-function _openMaintModal_legacy(type) {
-  _maintModalType = type;
-  let cfg;
-  if (type === 'downtime')      cfg = app.downtime_page || {};
-  else if (type === 'restart')  cfg = app.restart_page  || {};
-  else                          cfg = app.update_page   || {};
-  const isDown    = type === 'downtime';
-  const isRestart = type === 'restart';
-
-  const backdrop = document.getElementById('maint-modal-backdrop');
-  backdrop.style.display = '';
-
-  document.getElementById('maint-modal-title').textContent = isDown ? 'Downtime Page' : isRestart ? 'Restart Page' : 'Update Page';
-  document.getElementById('maint-modal-sub').textContent   = isDown
-    ? 'Shown automatically on 502/503 (crash or stop) and when Maintenance mode is on'
-    : isRestart
-    ? 'Shown automatically whenever the Restart button is pressed — clears when the app is back up'
-    : 'Shown when Update Mode is manually enabled — ideal for planned deployments';
-
-  const color = cfg.color || (isDown ? '#f85149' : isRestart ? '#a0a0a0' : '#f0883e');
-  document.getElementById('maint-modal-title-input').value  = cfg.title   || '';
-  document.getElementById('maint-modal-message').value      = cfg.message || '';
-  document.getElementById('maint-modal-status-url').value   = cfg.status_url || '';
-  document.getElementById('maint-modal-color').value        = color;
-  document.getElementById('maint-modal-color-picker').value = color;
-
-  // Logo
-  _maintLogoData = cfg.logo_data || null;
-  const logoPreview = document.getElementById('maint-modal-logo-preview');
-  const btnLogoClr  = document.getElementById('btn-maint-logo-clear');
-  if (_maintLogoData) {
-    document.getElementById('maint-modal-logo-img').src = _maintLogoData;
-    logoPreview.style.display = '';
-    btnLogoClr.style.display  = '';
-  } else {
-    logoPreview.style.display = 'none';
-    btnLogoClr.style.display  = 'none';
-  }
-
-  const hasCustom = !!cfg.custom_html;
-  document.getElementById('maint-modal-custom-toggle').checked     = hasCustom;
-  document.getElementById('maint-modal-custom-wrap').style.display = hasCustom ? '' : 'none';
-  document.getElementById('maint-modal-custom-html').value         = cfg.custom_html || '';
-}
+// Defaults the server uses for empty fields (nginx_manager.PAGE_DEFAULTS)
+const MAINT_PAGE_DEFAULTS = {
+  downtime: { title: "Down for Maintenance", message: "We'll be back shortly.", color: '#e5484d' },
+  update: { title: "Updating…", message: "We’re deploying a new version. Check back soon.", color: '#f5a524' },
+  restart: { title: "Restarting…", message: "The server is restarting. This only takes a moment.", color: '#3b82f6' },
+  starting: { title: "Starting…", message: "The service is starting up. This only takes a moment.", color: '#3b82f6' },
+};
 
 function openMaintModal(type) {
   _maintModalType = type;
@@ -1624,9 +1646,12 @@ function openMaintModal(type) {
     ? 'Shown automatically whenever the Start button is pressed - clears when the app is online'
     : 'Shown when Update mode is manually enabled - ideal for planned deployments';
 
-  const color = cfg.color || (isDown ? '#f85149' : (isRestart || isStarting) ? '#a0a0a0' : '#f0883e');
+  const defaults = MAINT_PAGE_DEFAULTS[type] || MAINT_PAGE_DEFAULTS.update;
+  const color = cfg.color || defaults.color;
   document.getElementById('maint-modal-title-input').value  = cfg.title   || '';
+  document.getElementById('maint-modal-title-input').placeholder = defaults.title;
   document.getElementById('maint-modal-message').value      = cfg.message || '';
+  document.getElementById('maint-modal-message').placeholder = defaults.message;
   document.getElementById('maint-modal-status-url').value   = cfg.status_url || '';
   document.getElementById('maint-modal-color').value        = color;
   document.getElementById('maint-modal-color-picker').value = color;

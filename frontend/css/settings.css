@@ -1,0 +1,97 @@
+/* ─── Settings pages ────────────────────────────────────────────────────── */
+.settings-page { padding-top: 32px; }
+
+.settings-head { margin-bottom: 8px; }
+.settings-head h1 { font-size: 22px; font-weight: 500; letter-spacing: -0.02em; margin-bottom: 6px; }
+.settings-head p { color: var(--muted); max-width: 640px; line-height: 1.55; }
+
+.settings-page .settings-bar { top: 52px; margin-bottom: 4px; }
+.settings-bar-title code,
+.settings-group code { font-size: 11.5px; color: var(--text-2); background: var(--hover); padding: 1px 5px; border-radius: 4px; }
+.settings-bar-actions { display: flex; align-items: center; gap: 12px; }
+
+.settings-status { font-size: 12px; color: var(--muted); }
+.settings-status[data-tone="ok"], .settings-inline-status[data-tone="ok"] { color: var(--green); }
+.settings-status[data-tone="error"], .settings-inline-status[data-tone="error"],
+#imp-summary[data-tone="error"] { color: var(--red); }
+
+.settings-note { font-size: 13px; color: var(--muted); padding: 4px 0; }
+.settings-notice {
+  font-size: 13px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong);
+  color: var(--text-2);
+}
+.settings-notice[data-tone="error"] { border-color: var(--red-border); background: var(--red-bg); color: var(--red); }
+
+.settings-group-sub strong { color: var(--text-2); font-weight: 500; }
+
+/* Lists inside a group */
+.settings-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.settings-count { font-size: 12px; color: var(--muted); }
+
+.settings-table td { padding-top: 11px; padding-bottom: 11px; }
+.settings-table .row-actions { text-align: right; white-space: nowrap; width: 1%; }
+.settings-table .row-actions .btn + .btn { margin-left: 2px; }
+.user-cell { display: inline-flex; align-items: center; gap: 10px; color: var(--text); }
+.user-cell .rail-avatar { width: 24px; height: 24px; font-size: 10px; }
+.role-name { color: var(--text); display: flex; align-items: center; gap: 8px; }
+.role-desc { font-size: 12px; margin-top: 2px; }
+.btn-danger-text { color: var(--red); }
+.btn-danger-text:hover:not(:disabled) { color: var(--red); background: var(--red-bg); }
+
+/* Export checklist */
+.check-inline { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); cursor: pointer; }
+.check-list {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 8px 0 0;
+}
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+}
+.check-row:last-child { border-bottom: none; }
+.check-row:hover { background: color-mix(in srgb, var(--hover) 55%, transparent); }
+.check-row-name { flex: 1; color: var(--text); }
+.check-row-meta { font-size: 12px; color: var(--muted); }
+.check-inline input, .check-row input, .perm-check input { accent-color: var(--text); width: 14px; height: 14px; }
+
+/* Dialog extras */
+.form-dialog--wide { width: 560px; }
+.form-dialog .dialog-body .field { margin: 0; }
+.dialog-error {
+  font-size: 12px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--red-bg);
+  border: 1px solid var(--red-border);
+  color: var(--red);
+}
+
+.perm-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 18px 24px; max-height: 50vh; overflow-y: auto; }
+.perm-group { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.perm-group legend { font-size: 12px; color: var(--faint); margin-bottom: 6px; padding: 0; }
+.perm-check { display: flex; align-items: flex-start; gap: 10px; padding: 5px 0; cursor: pointer; }
+.perm-check input { margin-top: 2px; flex-shrink: 0; }
+.perm-check input:disabled + span { opacity: .75; }
+.perm-name { display: block; font-family: var(--font-mono); font-size: 12px; color: var(--text); }
+.perm-desc { display: block; font-size: 12px; color: var(--muted); line-height: 1.4; }
+
+@media (max-width: 640px) {
+  .perm-groups { grid-template-columns: 1fr; }
+  .form-dialog, .form-dialog--wide { width: calc(100vw - 32px); }
+}

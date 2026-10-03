@@ -1843,6 +1843,16 @@ if os.path.isdir(FRONTEND_DIR):
     async def audit_page():
         return FileResponse(os.path.join(FRONTEND_DIR, "audit.html"))
 
+    @app.get("/settings.html", include_in_schema=False)
+    @app.get("/settings", include_in_schema=False)
+    async def settings_page():
+        return FileResponse(os.path.join(FRONTEND_DIR, "settings.html"))
+
+    @app.get("/guides.html", include_in_schema=False)
+    @app.get("/guides", include_in_schema=False)
+    async def guides_page():
+        return FileResponse(os.path.join(FRONTEND_DIR, "guides.html"))
+
     @app.get("/", include_in_schema=False)
     async def index_page():
         return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))

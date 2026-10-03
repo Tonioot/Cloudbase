@@ -28,6 +28,7 @@ export const ICONS = {
   transfer: svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>', 15),
   users:    svg('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M21.5 20c0-2.8-1.7-4.9-4-5.7"/>', 15),
   lock:     svg('<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>', 15),
+  guides:   svg('<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="9" y1="7" x2="16" y2="7"/><line x1="9" y1="11" x2="14" y2="11"/>'),
   logout:   svg('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>', 15),
   plus:     svg('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>', 15),
   arrow:    svg('<polyline points="9 6 15 12 9 18"/>', 14),
@@ -48,6 +49,8 @@ function currentSection() {
   if (p.startsWith('/app')) return 'apps';
   if (p.startsWith('/node')) return 'nodes';
   if (p.startsWith('/audit')) return 'audit';
+  if (p.startsWith('/settings')) return 'settings';
+  if (p.startsWith('/guides')) return 'guides';
   return 'overview';
 }
 
@@ -56,6 +59,8 @@ const DEFAULT_CRUMBS = {
   apps: ['Apps'],
   nodes: ['Nodes'],
   audit: ['Audit log'],
+  settings: ['Settings'],
+  guides: ['Guides'],
 };
 
 /* ─── Sidebar ───────────────────────────────────────────────────────────── */
@@ -63,8 +68,9 @@ const DEFAULT_CRUMBS = {
 function railHTML(active) {
   const nav = (key, href, label, extra = '') =>
     `<a class="sb-item${active === key ? ' active' : ''}" href="${href}" ${extra}>${ICONS[key]}<span>${label}</span></a>`;
-  const setting = (id, icon, label, extra = '') =>
-    `<button type="button" class="sb-item" id="${id}" ${extra}>${ICONS[icon]}<span>${label}</span></button>`;
+  const settingKey = active === 'settings' ? (new URLSearchParams(location.search).get('s') || 'domain') : null;
+  const setting = (id, key, icon, label, extra = '') =>
+    `<a class="sb-item${settingKey === key ? ' active' : ''}" id="${id}" href="/settings?s=${key}" ${extra}>${ICONS[icon]}<span>${label}</span></a>`;
   return `
     <div class="sb-head">
       <a href="/" class="rail-logo" aria-label="Cloudbase home"><img src="/cloudbase.png" alt="" /></a>
@@ -86,12 +92,16 @@ function railHTML(active) {
       <div class="sb-list" id="rail-nodes-list"><div class="flyout-empty">Loading…</div></div>
 
       <div class="sb-section"><span>Settings</span></div>
-      ${setting('btn-pdm-nginx', 'globe', 'Domain &amp; SSL', 'data-perm="system.manage"')}
-      ${setting('btn-system-settings', 'sliders', 'System settings', 'data-perm="system.manage"')}
-      ${setting('btn-manage-users', 'users', 'Users &amp; roles', 'style="display:none"')}
-      ${setting('btn-github-tokens', 'key', 'GitHub tokens', 'data-perm="tokens.manage"')}
-      ${setting('btn-export-import', 'transfer', 'Export / import', 'data-perm="apps.configure"')}
+      ${setting('btn-pdm-nginx', 'domain', 'globe', 'Domain &amp; SSL', 'data-perm="system.manage"')}
+      ${setting('btn-system-settings', 'system', 'sliders', 'System settings', 'data-perm="system.manage"')}
+      ${setting('btn-manage-users', 'users', 'users', 'Users &amp; roles', 'style="display:none"')}
+      ${setting('btn-github-tokens', 'tokens', 'key', 'GitHub tokens', 'data-perm="tokens.manage"')}
+      ${setting('btn-export-import', 'transfer', 'transfer', 'Export / import', 'data-perm="apps.configure"')}
     </nav>
+
+    <div class="sb-help">
+      ${nav('guides', '/guides', 'Guides')}
+    </div>
 
     <div class="sb-foot">
       <button type="button" class="sb-user" data-flyout="account" aria-haspopup="menu" aria-label="Account">
@@ -113,7 +123,7 @@ function railHTML(active) {
         <div class="session-timer-label">Session: —</div>
         <div class="session-timer-track"><div class="session-timer-fill" style="width:100%"></div></div>
       </div>
-      <button type="button" class="menu-item" id="btn-change-password">${ICONS.lock}<span>Change password</span></button>
+      <a class="menu-item" id="btn-change-password" href="/settings?s=account">${ICONS.lock}<span>Account &amp; password</span></a>
       <button type="button" class="menu-item menu-item--danger" id="btn-logout">${ICONS.logout}<span>Sign out</span></button>
     </div>`;
 }
@@ -236,6 +246,7 @@ function paletteCommands() {
     { group: 'Actions', label: 'Toggle theme', icon: ICONS.moon, run: () => { window.cbTheme?.cycle(); syncThemeButton(); }, keywords: 'dark light appearance' },
     { group: 'Go to', label: 'Overview', icon: ICONS.overview, run: go('/'), keywords: 'dashboard home' },
     { group: 'Go to', label: 'Audit log', icon: ICONS.audit, run: go('/audit'), keywords: 'history events' },
+    { group: 'Go to', label: 'Guides', icon: ICONS.guides, run: go('/guides'), keywords: 'docs documentation help how' },
   ];
   for (const a of index.apps) {
     cmds.push({ group: 'Apps', label: a.name, dot: statusColor(a.status), meta: a.status || '', run: go(`/app?id=${a.id}`), keywords: `${a.domain || ''} ${a.app_type || ''}` });
@@ -244,14 +255,18 @@ function paletteCommands() {
     cmds.push({ group: 'Nodes', label: n.is_local ? 'primary' : n.name, dot: statusColor(n.status), meta: n.status || '', run: go(`/node?id=${n.id}`), keywords: n.public_host || '' });
   }
   const tail = [
-    ['btn-pdm-nginx', 'Domain & SSL', ICONS.globe], ['btn-system-settings', 'System settings', ICONS.sliders],
-    ['btn-manage-users', 'Users & roles', ICONS.users], ['btn-github-tokens', 'GitHub tokens', ICONS.key],
-    ['btn-export-import', 'Export / import apps', ICONS.transfer], ['btn-change-password', 'Change password', ICONS.lock],
-    ['btn-logout', 'Sign out', ICONS.logout],
+    ['btn-pdm-nginx', 'Domain & SSL', ICONS.globe, 'nginx ssl certificate subdomain'],
+    ['btn-system-settings', 'System settings', ICONS.sliders, 'ports limits session'],
+    ['btn-manage-users', 'Users & roles', ICONS.users, 'permissions accounts'],
+    ['btn-github-tokens', 'GitHub tokens', ICONS.key, 'private repository'],
+    ['btn-export-import', 'Export / import apps', ICONS.transfer, 'backup json'],
+    ['btn-change-password', 'Account & password', ICONS.lock, 'change password'],
+    ['btn-logout', 'Sign out', ICONS.logout, 'logout'],
   ];
-  for (const [id, label, ic] of tail) {
+  for (const [id, label, ic, keywords] of tail) {
     const el = document.getElementById(id);
-    if (el && getComputedStyle(el).display !== 'none') cmds.push({ group: 'Settings', label, icon: ic, run: click(id) });
+    if (!el || getComputedStyle(el).display === 'none') continue;
+    cmds.push({ group: 'Settings', label, icon: ic, keywords, run: el.tagName === 'A' ? go(el.getAttribute('href')) : click(id) });
   }
   return cmds;
 }

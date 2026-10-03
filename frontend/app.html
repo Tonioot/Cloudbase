@@ -745,123 +745,6 @@
 
 <div id="toast-container"></div>
 
-<!-- Change password modal -->
-<div id="change-pwd-modal" style="display:none" class="dialog-backdrop">
-  <div class="dialog" style="max-width:360px;width:90%">
-    <div class="dialog-title">Change Password</div>
-    <form id="change-pwd-form" onsubmit="return false;">
-    <input type="text" autocomplete="username" tabindex="-1" style="position:absolute;left:-9999px;width:1px;height:1px;opacity:0" aria-hidden="true" />
-    <div class="dialog-body" style="display:flex;flex-direction:column;gap:14px">
-      <div class="field" style="margin:0">
-        <label class="field-label">New Password <span class="hint">(min 8 chars)</span></label>
-        <input class="input input-mono" id="pwd-new" type="password" placeholder="••••••••••" autocomplete="new-password" />
-      </div>
-      <div class="field" style="margin:0">
-        <label class="field-label">Confirm Password</label>
-        <input class="input input-mono" id="pwd-confirm" type="password" placeholder="••••••••••" autocomplete="new-password" />
-      </div>
-      <div id="pwd-error" style="display:none;font-size:12px;padding:8px 10px;border-radius:6px;background:var(--red-bg);border:1px solid var(--red-border);color:var(--red)"></div>
-    </div>
-    <div class="dialog-actions">
-      <button type="button" class="btn btn-secondary" id="pwd-cancel">Cancel</button>
-      <button type="button" class="btn btn-primary" id="pwd-save">Update Password</button>
-    </div>
-    </form>
-  </div>
-</div>
-
-<!-- Cloudbase nginx modal (same as dashboard) -->
-<div id="pdm-nginx-modal" style="display:none" class="dialog-backdrop">
-  <div class="dialog" style="max-width:540px;width:90%">
-    <div class="dialog-title">Cloudbase — Domain, SSL &amp; Apps</div>
-    <div class="dialog-body" style="display:flex;flex-direction:column;gap:14px">
-
-      <!-- Section 1: Cloudbase panel -->
-      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)">Cloudbase Panel</div>
-      <p style="margin:0;font-size:13px;color:var(--text-secondary)">
-        Serve the Cloudbase dashboard under your own domain with optional SSL.
-        Cloudbase itself runs on port 7823; nginx will proxy it.
-      </p>
-      <div class="field" style="margin:0">
-        <label class="field-label">Domain <span class="req">*</span></label>
-        <input class="input" id="pdm-domain" placeholder="panel.example.com" />
-      </div>
-      <div class="field" style="margin:0">
-        <label class="field-label">SSL Certificate <span class="hint">(optional)</span></label>
-        <div class="cert-upload-row">
-          <span class="cert-filename" id="pdm-cert-name">No file selected</span>
-          <button type="button" class="btn-scan" id="pdm-upload-cert">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            Upload .pem / .crt
-          </button>
-          <input type="file" id="pdm-cert-file" accept=".pem,.crt,.cer" style="display:none">
-          <input type="hidden" id="pdm-cert">
-        </div>
-      </div>
-      <div class="field" style="margin:0">
-        <label class="field-label">SSL Key <span class="hint">(optional)</span></label>
-        <div class="cert-upload-row">
-          <span class="cert-filename" id="pdm-key-name">No file selected</span>
-          <button type="button" class="btn-scan" id="pdm-upload-key">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            Upload .pem / .key
-          </button>
-          <input type="file" id="pdm-key-file" accept=".pem,.key" style="display:none">
-          <input type="hidden" id="pdm-key">
-        </div>
-      </div>
-
-      <!-- Section divider -->
-      <hr style="border:none;border-top:1px solid var(--border);margin:2px 0">
-
-      <!-- Section 2: App subdomains -->
-      <div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)">App Subdomains</div>
-      <p style="margin:0;font-size:13px;color:var(--text-secondary)">
-        Give every app an automatic URL before a custom domain is set —
-        e.g. <code style="background:var(--bg-muted);padding:1px 4px;border-radius:3px">myapp.apps.example.com</code>.
-        Requires a wildcard DNS record <code style="background:var(--bg-muted);padding:1px 4px;border-radius:3px">*.apps.example.com&nbsp;→&nbsp;server&nbsp;IP</code>.
-      </p>
-      <div class="field" style="margin:0">
-        <label class="field-label">Base Domain <span class="hint">(optional)</span></label>
-        <input class="input" id="pdm-base-domain" placeholder="apps.example.com" />
-      </div>
-      <div class="field" style="margin:0">
-        <label class="field-label">Wildcard SSL Certificate <span class="hint">(optional)</span></label>
-        <div class="cert-upload-row">
-          <span class="cert-filename" id="pdm-base-cert-name">No file selected</span>
-          <button type="button" class="btn-scan" id="pdm-upload-base-cert">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            Upload .pem / .crt
-          </button>
-          <input type="file" id="pdm-base-cert-file" accept=".pem,.crt,.cer" style="display:none">
-          <input type="hidden" id="pdm-base-cert">
-        </div>
-      </div>
-      <div class="field" style="margin:0">
-        <label class="field-label">Wildcard SSL Key <span class="hint">(optional)</span></label>
-        <div class="cert-upload-row">
-          <span class="cert-filename" id="pdm-base-key-name">No file selected</span>
-          <button type="button" class="btn-scan" id="pdm-upload-base-key">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-            Upload .pem / .key
-          </button>
-          <input type="file" id="pdm-base-key-file" accept=".pem,.key" style="display:none">
-          <input type="hidden" id="pdm-base-key">
-        </div>
-      </div>
-
-      <div id="pdm-nginx-msg" style="display:none;font-size:12px;padding:8px 10px;border-radius:6px"></div>
-    </div>
-    <div class="dialog-actions">
-      <button class="btn btn-secondary" id="pdm-nginx-close">Cancel</button>
-      <button class="btn btn-primary" id="pdm-nginx-apply">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-        Save &amp; Apply
-      </button>
-    </div>
-  </div>
-</div>
-
 <script type="module">
   import { api } from './js/api.js';
   import { initApp } from './js/app.js';
@@ -876,43 +759,6 @@
 
   await initSidebar();
   initApp();
-
-  document.getElementById('btn-logout').addEventListener('click', async () => {
-    await api.logout().catch(() => {});
-    location.href = '/login';
-  });
-
-  const pwdModal = document.getElementById('change-pwd-modal');
-  const pwdError = document.getElementById('pwd-error');
-  document.getElementById('btn-change-password').addEventListener('click', () => {
-    document.getElementById('pwd-new').value = '';
-    document.getElementById('pwd-confirm').value = '';
-    pwdError.style.display = 'none';
-    pwdModal.style.display = 'flex';
-    document.getElementById('pwd-new').focus();
-  });
-  document.getElementById('pwd-cancel').addEventListener('click', () => { pwdModal.style.display = 'none'; });
-  pwdModal.addEventListener('click', e => { if (e.target === pwdModal) pwdModal.style.display = 'none'; });
-  document.getElementById('pwd-save').addEventListener('click', async () => {
-    const pwd  = document.getElementById('pwd-new').value;
-    const pwd2 = document.getElementById('pwd-confirm').value;
-    pwdError.style.display = 'none';
-    if (pwd.length < 8) { pwdError.textContent = 'Password must be at least 8 characters.'; pwdError.style.display = 'block'; return; }
-    if (pwd !== pwd2)   { pwdError.textContent = 'Passwords do not match.'; pwdError.style.display = 'block'; return; }
-    const btn = document.getElementById('pwd-save');
-    btn.disabled = true;
-    try {
-      await api.changePassword(pwd);
-      pwdModal.style.display = 'none';
-      await api.logout().catch(() => {});
-      location.href = '/login';
-    } catch (e) {
-      pwdError.textContent = e.message;
-      pwdError.style.display = 'block';
-      btn.disabled = false;
-    }
-  });
-
 
 </script>
 
@@ -950,7 +796,7 @@
           <label class="field-label">Accent Color</label>
           <div class="maint-color-row">
             <input type="color" id="maint-modal-color-picker" class="maint-color-swatch" />
-            <input class="input input-mono" id="maint-modal-color" style="max-width:110px" placeholder="#f85149" />
+            <input class="input input-mono" id="maint-modal-color" style="max-width:110px" placeholder="#e5484d" />
           </div>
         </div>
         <div class="field">
