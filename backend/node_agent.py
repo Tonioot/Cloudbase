@@ -736,6 +736,21 @@ async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id
     return int(main_id)
 
 
+async def _wait_local_api(client, timeout: float = 90) -> None:
+    """After a node reboot the agent can be up before the local Cloudbase API."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            r = await client.get(f"{_LOCAL_API_BASE}/api/health", timeout=3)
+            if r.status_code < 500:
+                return
+        except Exception:
+            pass
+        if time.monotonic() > deadline:
+            raise RuntimeError("Local Cloudbase API did not come up in time")
+        await asyncio.sleep(2)
+
+
 async def cmd_start_replica(client, state, main_id, payload, headers):
     # Ensure the app source exists locally on this node. The replica container
     # itself still uses the main app id for naming, logs, and tunnel identity.
@@ -751,6 +766,7 @@ async def cmd_start_replica(client, state, main_id, payload, headers):
         _start_tunnel_task(state, replica_id, local_port)
         return {"container_id": None, "replica_id": replica_id, "reused": True}
 
+    await _wait_local_api(client)
     local_id = await _ensure_replica_app_deployed(client, state, main_id, payload, headers, replica_id)
 
     await _report_replica_substatus(client, state, int(main_id), replica_id, "creating_container")

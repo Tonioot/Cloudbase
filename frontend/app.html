@@ -60,26 +60,26 @@
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>
             </button>
             <div class="dropdown dropdown--wide" role="menu" aria-label="Deploy">
-              <div class="dropdown-label">Latest code from Git</div>
+              <div class="dropdown-label">Pull from Git · you choose the commit</div>
               <button type="button" class="menu-item needs-route" id="menu-pull-rolling" role="menuitem">
-                <span class="menu-item-text"><span>Pull &amp; rolling deploy</span><small>Pick a commit, build once, replace instances one at a time</small></span>
+                <span class="menu-item-text"><span>Pull &amp; rolling deploy</span><small>Build, then replace instances one by one: start new, health check, stop old</small></span>
               </button>
               <button type="button" class="menu-item needs-route" id="menu-pull-bluegreen" role="menuitem">
-                <span class="menu-item-text"><span>Pull &amp; blue/green deploy</span><small>Start new instances next to the old ones, then switch</small></span>
+                <span class="menu-item-text"><span>Pull &amp; blue/green deploy</span><small>Build, start a full new set beside the old one, health check, switch all at once</small></span>
               </button>
               <button type="button" class="menu-item" id="menu-pull-rebuild" role="menuitem">
-                <span class="menu-item-text"><span>Pull &amp; build only</span><small>Build a new image; running instances stay as they are</small></span>
+                <span class="menu-item-text"><span>Pull &amp; build only</span><small>Build the new image; instances keep running the old code until restarted</small></span>
               </button>
               <div class="menu-sep" role="separator"></div>
-              <div class="dropdown-label">Current code</div>
+              <div class="dropdown-label">Current code · no pull</div>
               <button type="button" class="menu-item" id="menu-rebuild" role="menuitem">
-                <span class="menu-item-text"><span>Rebuild image</span><small>Build again without pulling</small></span>
+                <span class="menu-item-text"><span>Rebuild image</span><small>Build the image again; instances keep running until restarted</small></span>
               </button>
               <button type="button" class="menu-item" id="btn-rolling-deploy" role="menuitem" style="display:none">
-                <span class="menu-item-text"><span>Rolling redeploy</span><small>Rebuild and replace instances one at a time</small></span>
+                <span class="menu-item-text"><span>Rolling redeploy</span><small>Build, then replace instances one by one: start new, health check, stop old</small></span>
               </button>
               <button type="button" class="menu-item" id="btn-zero-downtime" role="menuitem" style="display:none">
-                <span class="menu-item-text"><span>Blue/green redeploy</span><small>Rebuild, start new instances, health check, switch</small></span>
+                <span class="menu-item-text"><span>Blue/green redeploy</span><small>Build, start a full new set beside the old one, health check, switch all at once</small></span>
               </button>
             </div>
           </div>

@@ -1312,13 +1312,10 @@ async def recover_node_replicas(node_id: int) -> None:
                 await db.commit()
                 continue
 
-            # Not configured to auto-start or restart: settle it as stopped instead
-            # of leaving it in node_offline forever.
-            if not app.auto_start and app.restart_policy in (None, "no"):
-                log.info("recover_node_replicas: not restarting replica %d (app %d has auto_start=False, restart_policy=%r)", replica.id, app.id, app.restart_policy)
-                replica.status = "stopped"
-                await db.commit()
-                continue
+            # Always recover: node_offline only comes from a replica that was
+            # running/starting when the node or its tunnel dropped, so running is
+            # the desired state. (auto_start is about Cloudbase boot, not outages.)
+            # If the container survived, the agent just reattaches the tunnel.
 
             try:
                 env_vars = decrypt_env(app.env_vars or "")
