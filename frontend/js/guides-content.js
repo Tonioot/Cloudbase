@@ -384,9 +384,18 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
   group: 'Networking',
   title: 'Domains & SSL',
   summary: 'Panel domain, automatic app subdomains, custom domains, redirects and certificates.',
-  keywords: 'domain dns ssl tls https certificate wildcard nginx subdomain redirect letsencrypt',
+  keywords: 'domain dns ssl tls https certificate wildcard nginx subdomain redirect letsencrypt connect wizard certbot',
   lead: 'nginx on the primary terminates TLS and routes every hostname to the right app. There are three levels: the panel’s own domain, automatic subdomains for all apps, and custom domains per app.',
   body: `
+<h2>The quick way: Connect a domain</h2>
+<p>In the app, open <strong>Settings → Network</strong> and click <strong>Connect a domain</strong>. The wizard takes three steps:</p>
+<ol class="guide-steps">
+  <li><strong>Domain</strong> — type the name, for example <code>shop.example.com</code>. For a bare domain like <code>example.com</code> you can include <code>www.example.com</code> too; it redirects to the main name.</li>
+  <li><strong>DNS</strong> — the wizard shows the exact record to add at your domain provider, with copy buttons, and keeps checking until the domain really reaches this server.</li>
+  <li><strong>HTTPS</strong> — one click requests a free certificate from Let’s Encrypt and switches the app to HTTPS. Certificates renew automatically.</li>
+</ol>
+<div class="callout"><p>Automatic HTTPS needs <code>certbot</code> on the primary and port 80 open to the internet. Servers installed before this feature get it with <code>cloudbase update</code> followed by <code>cloudbase nginx permissions</code>.</p></div>
+
 <h2>DNS first</h2>
 <p>Every hostname must point at the <strong>primary</strong>’s public IP, also for apps whose instances run on other nodes — traffic always enters through the primary.</p>
 <table>
@@ -418,7 +427,7 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
 cloudbase cert add /etc/letsencrypt/live/example.com/privkey.pem
 cloudbase cert list</pre>
 <div class="callout"><p>Behind Cloudflare with the orange cloud on, a Cloudflare Origin certificate (valid for 15 years) saves you from renewals. Set the Cloudflare SSL mode to <em>Full (strict)</em>.</p></div>
-<div class="callout callout--warn"><p>Cloudbase doesn’t renew certificates. When you use Let’s Encrypt, renew with certbot and re-upload, or point Cloudbase at the live certificate path so renewals are picked up after an nginx reload.</p></div>
+<p>Certificates requested through <strong>Connect a domain</strong> live in <code>/etc/letsencrypt/live/&lt;domain&gt;/</code> and are renewed by certbot’s own timer; nginx reloads automatically after each renewal. Certificates you upload yourself are not renewed — replace them before they expire.</p>
 
 <h2>Unknown hostnames</h2>
 <p>With strict hostname handling active, a hostname that reaches the server but isn’t linked to any app gets a neutral “Nothing is deployed here” page, instead of accidentally showing another app.</p>

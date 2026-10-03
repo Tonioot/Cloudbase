@@ -170,6 +170,13 @@ else
   install_pkg "Nginx" "nginx" "nginx" "nginx" "nginx"
 fi
 
+# certbot gives apps free HTTPS certificates from Let's Encrypt
+if command -v certbot &>/dev/null; then
+  success "certbot found"
+else
+  install_pkg "certbot" "certbot" "certbot" "certbot" "python3-certbot"
+fi
+
 # ── Docker ────────────────────────────────────────────────────────────────────
 if command -v docker &>/dev/null; then
   success "Docker found: $(docker --version)"

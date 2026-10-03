@@ -157,6 +157,20 @@ detect_pkg_mgr() {
     fi
 }
 
+# certbot gives apps free HTTPS certificates from Let's Encrypt
+ensure_certbot() {
+    command -v certbot >/dev/null 2>&1 && return 0
+    info "Installing certbot (free HTTPS certificates)"
+    case "$(detect_pkg_mgr)" in
+        apt)    sudo apt-get install -y certbot ;;
+        dnf)    sudo dnf install -y certbot ;;
+        yum)    sudo yum install -y certbot ;;
+        pacman) sudo pacman -S --noconfirm certbot ;;
+        zypper) sudo zypper install -y python3-certbot ;;
+        *)      warn "Install certbot manually to enable automatic HTTPS"; return 0 ;;
+    esac
+}
+
 install_missing_runtime_deps() {
     local pkg_mgr="$1"
     case "$pkg_mgr" in
@@ -431,6 +445,7 @@ nginx_disable() {
 nginx_permissions() {
     require_nginx
     local target_user="${1:-$(service_run_user)}"
+    ensure_certbot
     info "Configuring Cloudbase nginx permissions for user '$target_user'"
     bash "$INSTALL_DIR/scripts/setup-nginx-permissions.sh" "$target_user"
     success "Cloudbase nginx permissions configured"
@@ -739,6 +754,13 @@ cmd_update() {
     "$VENV_PATH/bin/pip" install --quiet --upgrade pip
     "$VENV_PATH/bin/pip" install --quiet -r "$BACKEND_DIR/requirements.txt"
     success "Dependencies updated"
+    ensure_certbot
+    if command -v nginx >/dev/null 2>&1; then
+        info "Refreshing nginx and certificate permissions"
+        bash "$INSTALL_DIR/scripts/setup-nginx-permissions.sh" "$(service_run_user)" >/dev/null \
+            && success "Permissions refreshed" \
+            || warn "Could not refresh permissions — run: cloudbase nginx permissions"
+    fi
     info "Restarting Cloudbase"
     if service_installed && command -v systemctl >/dev/null 2>&1; then
         info "Refreshing systemd service file"

@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="css/pages.css" />
   <link rel="stylesheet" href="css/detail.css" />
   <link rel="stylesheet" href="css/visitor-pages.css" />
+  <link rel="stylesheet" href="css/domain-wizard.css" />
 </head>
 <body>
 
@@ -432,9 +433,9 @@
               </div>
               <div class="settings-group-bd">
                 <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
-                  <button type="button" class="btn-scan" id="btn-dns-setup">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                    DNS Setup
+                  <button type="button" class="btn btn-primary btn-sm" id="btn-dns-setup">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                    Connect a domain
                   </button>
                 </div>
                 <div class="field">
@@ -657,66 +658,6 @@
       </div><!-- /panel-activity -->
 
       <!-- DNS Setup modal -->
-      <div id="dns-setup-modal" style="display:none" class="dialog-backdrop">
-        <div class="dialog" style="max-width:480px;width:92%">
-          <div class="dialog-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-3px;margin-right:6px"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-            DNS Setup
-          </div>
-          <div class="dialog-body" style="display:flex;flex-direction:column;gap:16px">
-
-            <!-- Step 1: A record -->
-            <div style="background:var(--bg-muted);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
-              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:8px">Step 1 — Point your domain</div>
-              <p style="margin:0 0 10px;font-size:13px;color:var(--text-secondary)">
-                Add an <strong style="color:var(--text-primary)">A record</strong> in your DNS provider pointing to the IP of this server:
-              </p>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-                <div>
-                  <div style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:4px">Type</div>
-                  <div style="font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--text-primary);background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:5px 10px">A</div>
-                </div>
-                <div>
-                  <div style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:4px">Value (IP)</div>
-                  <div id="dns-server-ip" style="font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--accent);background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:5px 10px;cursor:pointer;user-select:all" title="Click to copy">—</div>
-                </div>
-              </div>
-              <div style="margin-top:8px">
-                <div style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--text-muted);margin-bottom:4px">Name (Host)</div>
-                <div id="dns-app-domain" style="font-family:var(--font-mono);font-size:13px;font-weight:600;color:var(--text-primary);background:var(--bg);border:1px solid var(--border);border-radius:5px;padding:5px 10px">—</div>
-              </div>
-            </div>
-
-            <!-- How load balancing works -->
-            <div style="background:var(--bg-muted);border:1px solid var(--border);border-radius:8px;padding:14px 16px">
-              <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:8px">How load balancing works</div>
-              <div style="display:flex;flex-direction:column;gap:8px">
-                <div style="display:flex;gap:10px;align-items:flex-start">
-                  <div style="width:20px;height:20px;border-radius:50%;background:var(--hover);color:var(--text);border:1px solid var(--line-strong);font-size:10px;font-weight:500;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px">1</div>
-                  <p style="margin:0;font-size:13px;color:var(--text-secondary)">Your domain points to this server's IP. Nginx acts as the entry point.</p>
-                </div>
-                <div style="display:flex;gap:10px;align-items:flex-start">
-                  <div style="width:20px;height:20px;border-radius:50%;background:var(--hover);color:var(--text);border:1px solid var(--line-strong);font-size:10px;font-weight:500;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px">2</div>
-                  <p style="margin:0;font-size:13px;color:var(--text-secondary)">Each running instance — whether on this node or a remote node connected via tunnel — is added to an nginx upstream pool.</p>
-                </div>
-                <div style="display:flex;gap:10px;align-items:flex-start">
-                  <div style="width:20px;height:20px;border-radius:50%;background:var(--hover);color:var(--text);border:1px solid var(--line-strong);font-size:10px;font-weight:500;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px">3</div>
-                  <p style="margin:0;font-size:13px;color:var(--text-secondary)">Nginx distributes incoming requests across all healthy instances automatically. Adding more instances immediately increases capacity — no DNS changes needed.</p>
-                </div>
-              </div>
-            </div>
-
-            <div style="font-size:12px;color:var(--text-muted);display:flex;align-items:center;gap:6px">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              DNS propagation usually takes a few minutes up to 48 hours depending on your provider's TTL.
-            </div>
-          </div>
-          <div class="dialog-actions">
-            <button class="btn btn-primary" id="dns-modal-close">Got it</button>
-          </div>
-        </div>
-      </div>
-
       <!-- Nginx config modal -->
       <div id="nginx-modal" style="display:none" class="dialog-backdrop">
         <div class="dialog nginx-dialog">

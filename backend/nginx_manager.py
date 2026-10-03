@@ -8,6 +8,17 @@ log = logging.getLogger("pdm.nginx")
 NGINX_SITES_DIR = "/etc/nginx/sites-available"
 NGINX_ENABLED_DIR = "/etc/nginx/sites-enabled"
 MAINTENANCE_DIR = "/var/www/cloudbase/maintenance"
+ACME_WEBROOT = "/var/www/cloudbase/acme"
+
+# Served on every port-80 server so Let's Encrypt can verify a domain
+# (HTTP-01), also while the rest of that server redirects to HTTPS.
+_ACME_LOCATION = f"""
+    location ^~ /.well-known/acme-challenge/ {{
+        root {ACME_WEBROOT};
+        default_type text/plain;
+        try_files $uri =404;
+    }}
+"""
 
 
 def _normalize_domain(value: str) -> str:
@@ -562,7 +573,10 @@ def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str
         return f"""{upstream_block}{redirect_blocks}server {{
     listen 80;
     server_name {server_name_str};
-    return 301 https://$host$request_uri;
+{_ACME_LOCATION}
+    location / {{
+        return 301 https://$host$request_uri;
+    }}
 }}
 
 server {{
@@ -582,7 +596,7 @@ server {{
     listen 80;
     server_name {server_name_str};
   {strict_guard}
-
+{_ACME_LOCATION}
 {server_content}
 }}
 """
@@ -674,7 +688,10 @@ def _static_page_config(domain: str, maint_root: str, filename: str, ssl_cert: s
         return f"""{redirect_blocks}server {{
     listen 80;
     server_name {server_name_str};
-    return 301 https://$host$request_uri;
+{_ACME_LOCATION}
+    location / {{
+        return 301 https://$host$request_uri;
+    }}
 }}
 
 server {{
@@ -694,7 +711,7 @@ server {{
     listen 80;
     server_name {server_name_str};
   {strict_guard}
-
+{_ACME_LOCATION}
 {server_content}
 }}
 """
@@ -712,7 +729,10 @@ def _redirect_server_blocks(redirect_domains: list, primary_domain: str, ssl_cer
         return f"""server {{
     listen 80;
     server_name {names};
-    return 301 https://{primary_domain}$request_uri;
+{_ACME_LOCATION}
+    location / {{
+        return 301 https://{primary_domain}$request_uri;
+    }}
 }}
 
 server {{
@@ -731,7 +751,10 @@ server {{
     return f"""server {{
     listen 80;
     server_name {names};
-    return 301 {target};
+{_ACME_LOCATION}
+    location / {{
+        return 301 {target};
+    }}
 }}
 
 """
@@ -777,7 +800,7 @@ server {{
   listen 80 default_server;
   listen [::]:80 default_server;
   server_name _;
-
+{_ACME_LOCATION}
   root /var/www/cloudbase/maintenance/cloudbase;
   error_page 404 = /app-not-found.html;
   location = /app-not-found.html {{
@@ -964,6 +987,48 @@ def write_nginx_config(app_name: str, config: str) -> tuple[bool, str]:
     except Exception as e:
         log.exception("[nginx-cfg] unexpected error")
         return False, str(e)
+
+
+ACME_CONFIG_NAME = "cloudbase-acme"
+
+
+def write_acme_server(domains: list[str]) -> tuple[bool, str]:
+    """Temporary port-80 server that answers Let's Encrypt challenges for
+    domains that aren't linked to an app yet. Removed again after issuing."""
+    names = " ".join(_normalize_domain(d) for d in domains if d)
+    config = f"""# Cloudbase: temporary server for HTTPS certificate verification
+server {{
+    listen 80;
+    server_name {names};
+{_ACME_LOCATION}
+    location / {{
+        return 404;
+    }}
+}}
+"""
+    return write_nginx_config(ACME_CONFIG_NAME, config)
+
+
+def remove_acme_server() -> None:
+    remove_nginx_config(ACME_CONFIG_NAME)
+
+
+def write_acme_probe(token: str, content: str) -> tuple[bool, str]:
+    """Place a file in the challenge webroot (owned by the Cloudbase user)."""
+    path = os.path.join(ACME_WEBROOT, ".well-known", "acme-challenge", token)
+    try:
+        with open(path, "w", encoding="ascii") as f:
+            f.write(content)
+        return True, path
+    except OSError as e:
+        return False, str(e)
+
+
+def remove_acme_probe(token: str) -> None:
+    try:
+        os.remove(os.path.join(ACME_WEBROOT, ".well-known", "acme-challenge", token))
+    except OSError:
+        pass
 
 
 def remove_nginx_config(app_name: str) -> bool:

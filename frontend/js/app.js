@@ -1,6 +1,7 @@
 import { api, wsLogs, wsReplicaLogs, wsStats, wsNodeEvents, PermissionError } from './api.js';
 import { auditTableHTML, cssVar, icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, setBtn, parseDotEnv, pickTextFile, mergeEnvIntoRows } from './utils.js';
 import { pickGitHubToken } from './sidebar.js';
+import { openDomainWizard } from './domain-wizard.js';
 import { setCrumbs } from './shell.js';
 
 const params = new URLSearchParams(location.search);
@@ -1257,6 +1258,25 @@ async function initActivity() {
   }
 }
 
+function _refreshNetworkFields() {
+  const domainsContainer = document.getElementById('cfg-domains-rows');
+  if (!domainsContainer) return;
+  domainsContainer.innerHTML = '';
+  const allDomains = [app.domain, ...(app.extra_domains || [])].filter(Boolean);
+  if (allDomains.length === 0) addDomainRow(domainsContainer, '');
+  else allDomains.forEach(d => addDomainRow(domainsContainer, d));
+  const redirectContainer = document.getElementById('cfg-redirect-domains-rows');
+  redirectContainer.innerHTML = '';
+  (app.redirect_domains || []).forEach(d => addDomainRow(redirectContainer, d));
+  for (const [inputId, nameId, path] of [['cfg-cert', 'cfg-cert-name', app.ssl_cert_path], ['cfg-key', 'cfg-key-name', app.ssl_key_path]]) {
+    document.getElementById(inputId).value = path || '';
+    const nameEl = document.getElementById(nameId);
+    nameEl.textContent = path ? path.split('/').pop() : 'No file selected';
+    nameEl.classList.toggle('has-value', !!path);
+  }
+  refreshMaintenanceUiState();
+}
+
 function initSettings() {
   const isViewer = !_canManageApps();
   _settingsInitialized = true;
@@ -1370,89 +1390,15 @@ function initSettings() {
   // Save
   document.getElementById('btn-save').onclick = saveSettings;
 
-  // DNS Setup modal (from Settings header)
+  // Connect a domain (wizard with DNS check and free HTTPS)
   const dnsBtn = document.getElementById('btn-dns-setup');
-  const dnsModal = document.getElementById('dns-setup-modal');
-  const dnsModalClose = document.getElementById('dns-modal-close');
-  if (dnsBtn && dnsModal) {
-    dnsBtn.onclick = async () => {
-      const ipEl = document.getElementById('dns-server-ip');
-      const domainEl = document.getElementById('dns-app-domain');
-
-      if (domainEl) {
-        const domain = app && app.domain ? app.domain : '(no domain configured)';
-        domainEl.textContent = domain;
-        domainEl.style.color = app && app.domain ? 'var(--text-primary)' : 'var(--text-muted)';
-      }
-
-      let serverIp = null;
-      if (ipEl) {
-        ipEl.textContent = 'Loading…';
-        ipEl.style.cursor = 'default';
-        ipEl.onclick = null;
-      }
-
-      try {
-        const nodes = await api.listNodes();
-        const primaryNode = nodes.find(n => n.is_local) || nodes.find(n => n.role === 'main') || nodes[0] || null;
-        if (primaryNode) {
-          const meta = primaryNode.metadata || {};
-          const parsedHost = primaryNode.api_base_url ? (() => {
-            try { return new URL(primaryNode.api_base_url).hostname; } catch { return null; }
-          })() : null;
-          const isPublicIpAddress = value => {
-            if (!value || typeof value !== 'string') return false;
-            const v = value.trim();
-
-            if (/^(\d{1,3}\.){3}\d{1,3}$/.test(v)) {
-              const parts = v.split('.').map(Number);
-              if (parts.some(n => Number.isNaN(n) || n < 0 || n > 255)) return false;
-              if (parts[0] === 10) return false;
-              if (parts[0] === 127) return false;
-              if (parts[0] === 0) return false;
-              if (parts[0] === 169 && parts[1] === 254) return false;
-              if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return false;
-              if (parts[0] === 192 && parts[1] === 168) return false;
-              if (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) return false;
-              return true;
-            }
-
-            if (/^[0-9a-fA-F:]+$/.test(v) && v.includes(':')) {
-              const low = v.toLowerCase();
-              if (low === '::1') return false;
-              if (low.startsWith('fe80:')) return false;
-              if (low.startsWith('fc') || low.startsWith('fd')) return false;
-              return true;
-            }
-
-            return false;
-          };
-
-          const candidates = [meta.public_ip, primaryNode.public_host, parsedHost];
-          serverIp = candidates.find(isPublicIpAddress) || null;
-        }
-      } catch {
-        // Keep fallback text below
-      }
-
-      if (ipEl) {
-        if (serverIp) {
-          ipEl.textContent = serverIp;
-          ipEl.style.cursor = 'pointer';
-          ipEl.onclick = () => {
-            navigator.clipboard.writeText(serverIp).then(() => toast('IP copied', 'success')).catch(() => {});
-          };
-        } else {
-          ipEl.textContent = 'IP not available';
-          ipEl.style.cursor = 'default';
-        }
-      }
-
-      dnsModal.style.display = 'flex';
-    };
-    if (dnsModalClose) dnsModalClose.onclick = () => { dnsModal.style.display = 'none'; };
-    dnsModal.onclick = e => { if (e.target === dnsModal) dnsModal.style.display = 'none'; };
-  }
+  if (dnsBtn) dnsBtn.onclick = () => openDomainWizard(app, {
+    onDone: updated => {
+      if (updated) app = updated;
+      _refreshNetworkFields();
+      renderHeader();
+    },
+  });
 
   // Action tiles
   document.getElementById('tile-pull').onclick = () => tileAction('pull', 'Pull');

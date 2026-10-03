@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Request or renew a Let's Encrypt certificate for one or more hostnames.
+#
+#   cloudbase-issue-cert <email|-> <domain> [domain ...]
+#
+# Installed root-owned to /usr/local/lib/cloudbase/issue-cert; Cloudbase may run
+# it through sudo without a password. It only ever calls certbot in webroot
+# mode for the given names, so arguments are validated strictly.
+set -euo pipefail
+
+WEBROOT="/var/www/cloudbase/acme"
+
+die() { echo "error: $*" >&2; exit 2; }
+
+[[ $# -ge 2 ]] || die "usage: cloudbase-issue-cert <email|-> <domain> [domain ...]"
+command -v certbot >/dev/null 2>&1 || die "certbot is not installed (run: cloudbase update)"
+
+email="$1"; shift
+[[ $# -le 10 ]] || die "at most 10 names per certificate"
+
+domain_re='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$'
+for d in "$@"; do
+  [[ ${#d} -le 253 && "$d" =~ $domain_re ]] || die "invalid domain: $d"
+done
+
+args=(certonly --webroot -w "$WEBROOT" --non-interactive --agree-tos --keep-until-expiring
+      --cert-name "$1" --deploy-hook "systemctl reload nginx")
+if [[ "$email" == "-" ]]; then
+  args+=(--register-unsafely-without-email)
+else
+  [[ ${#email} -le 254 && "$email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}$ ]] || die "invalid email address"
+  args+=(-m "$email")
+fi
+for d in "$@"; do args+=(-d "$d"); done
+
+mkdir -p "$WEBROOT/.well-known/acme-challenge"
+exec certbot "${args[@]}"

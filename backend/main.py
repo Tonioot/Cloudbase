@@ -24,6 +24,7 @@ from database import AsyncSessionLocal, init_db, get_db
 from models import Application, User, Role, Permission, role_permissions
 from routers import applications, files, logs, stats, nodes, audit as audit_router
 from routers import roles as roles_router
+from routers import domains as domains_router
 from env_crypto import decrypt_env
 from audit import log_audit
 import auth
@@ -1719,6 +1720,7 @@ app.include_router(logs.router)
 app.include_router(stats.router)
 app.include_router(audit_router.router)
 app.include_router(roles_router.router)
+app.include_router(domains_router.router)
 
 
 # ── App preview reverse proxy ────────────────────────────────────────────────────────────────
