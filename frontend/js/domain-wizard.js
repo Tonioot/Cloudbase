@@ -163,7 +163,7 @@ export function openDomainWizard(app, { onDone, domain = '' } = {}) {
             <span class="dw-copyable" data-copy="${esc(r.value || '')}"><span class="dw-mono">${esc(r.value || 'IP unknown')}</span>${ICON.copy}</span>
           </div>`).join('')}
       </div>
-      <div class="dw-hint">Leave <em>TTL</em> on its default. Using Cloudflare? Keep the cloud on <em>DNS only</em> (grey) for now. Once HTTPS works you can switch the proxy back on, with SSL mode <em>Full (strict)</em>.</div>
+      <div class="dw-hint">Leave <em>TTL</em> on its default. Using Cloudflare? The proxy (orange cloud) can stay on as long as <em>Always Use HTTPS</em> is off. If the check below stays red, set the record to <em>DNS only</em> (grey) for a moment.</div>
       <div class="dw-status" id="dw-status"></div>`;
 
     backdrop.querySelectorAll('.dw-copyable').forEach(el => {
@@ -176,7 +176,7 @@ export function openDomainWizard(app, { onDone, domain = '' } = {}) {
     $('#dw-next').onclick = () => { state.step = 2; render(); };
 
     runCheck();
-    state.pollTimer = setInterval(() => { if (!state.check?.reachable) runCheck(); }, 8000);
+    state.pollTimer = setInterval(() => { if (!state.check?.reachable && !state.check?.nginx_ready) runCheck(); }, 8000);
   }
 
   async function runCheck() {
@@ -202,8 +202,10 @@ export function openDomainWizard(app, { onDone, domain = '' } = {}) {
       tone = 'ok'; title = `${state.domain} reaches this server`; detail = '';
     } else if (c?.cloudflare_proxy) {
       tone = 'warn'; title = 'Cloudflare proxy is on'; detail = c.detail;
+    } else if (c?.dns_ok && c?.nginx_ready) {
+      tone = 'ok'; title = `${state.domain} points here and nginx is ready`; detail = c.detail;
     } else if (c?.dns_ok) {
-      tone = 'warn'; title = 'DNS is set, but the server didn’t answer the test'; detail = c.detail;
+      tone = 'warn'; title = 'DNS is set, but the test didn’t pass'; detail = c.detail;
     } else if (c?.ips?.length) {
       tone = 'warn'; title = 'The record points somewhere else'; detail = c.detail;
     } else if (c?.detail && c.detail !== 'No DNS record found yet. New records can take a few minutes to appear.') {
@@ -218,7 +220,7 @@ export function openDomainWizard(app, { onDone, domain = '' } = {}) {
     const next = $('#dw-next');
     if (next) next.disabled = !(c?.reachable || c?.dns_ok);
     const skip = $('#dw-skip');
-    if (skip) skip.hidden = !!c?.reachable;
+    if (skip) skip.hidden = !!(c?.reachable || c?.nginx_ready);
   }
 
   /* ── 3. HTTPS ────────────────────────────────────────────────────────── */

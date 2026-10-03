@@ -423,7 +423,7 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
 
 <h2>Certificates</h2>
 <p>Certificates requested through <strong>Connect a domain</strong> come from Let’s Encrypt and live in <code>/etc/letsencrypt/live/&lt;domain&gt;/</code>. certbot renews them on its own schedule and nginx reloads automatically afterwards — there’s nothing to maintain.</p>
-<p>Renewal needs the domain to keep pointing at the primary, and port 80 to stay open. Behind Cloudflare’s proxy it also works, as long as the SSL mode is <em>Full (strict)</em>.</p>
+<p>Renewal needs the domain to keep pointing at the primary, and port 80 to stay open. Behind Cloudflare’s proxy it also works, as long as <em>Always Use HTTPS</em> is off — Let’s Encrypt checks over plain HTTP. Any SSL mode is fine; <em>Full (strict)</em> is the safest.</p>
 
 <h2>Unknown hostnames</h2>
 <p>With strict hostname handling active, a hostname that reaches the server but isn’t linked to any app gets a neutral “Nothing is deployed here” page, instead of accidentally showing another app.</p>

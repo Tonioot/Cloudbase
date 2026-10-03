@@ -6,6 +6,9 @@
 #       (same cert-name keeps the same /etc/letsencrypt/live/<cert-name>/ paths).
 #   cloudbase-issue-cert delete <cert-name>
 #       Remove a certificate that is no longer used.
+#   cloudbase-issue-cert exists <cert-name>
+#       Exit 0 when the certificate and key are present. /etc/letsencrypt/live
+#       is only readable by root, so Cloudbase can't check this itself.
 #
 # Installed root-owned to /usr/local/lib/cloudbase/issue-cert; Cloudbase may run
 # it through sudo without a password. It only ever calls certbot in webroot
@@ -18,17 +21,22 @@ DOMAIN_RE='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$'
 die() { echo "error: $*" >&2; exit 2; }
 valid_domain() { [[ ${#1} -le 253 && "$1" =~ $DOMAIN_RE ]]; }
 
-command -v certbot >/dev/null 2>&1 || die "certbot is not installed (run: cloudbase update)"
 [[ $# -ge 2 ]] || die "usage: cloudbase-issue-cert issue <cert-name> <email|-> <domain>... | delete <cert-name>"
 
 action="$1"; cert_name="$2"; shift 2
 valid_domain "$cert_name" || die "invalid certificate name: $cert_name"
 
 case "$action" in
+  exists)
+    [[ -f "/etc/letsencrypt/live/$cert_name/fullchain.pem" && -f "/etc/letsencrypt/live/$cert_name/privkey.pem" ]]
+    exit $?
+    ;;
   delete)
+    command -v certbot >/dev/null 2>&1 || die "certbot is not installed (run: cloudbase update)"
     exec certbot delete --cert-name "$cert_name" --non-interactive
     ;;
   issue)
+    command -v certbot >/dev/null 2>&1 || die "certbot is not installed (run: cloudbase update)"
     [[ $# -ge 2 ]] || die "usage: cloudbase-issue-cert issue <cert-name> <email|-> <domain>..."
     email="$1"; shift
     [[ $# -le 10 ]] || die "at most 10 names per certificate"

@@ -198,8 +198,8 @@ async def check_domain(req: CheckRequest, _user: dict = Depends(_auth.require_pe
         result["detail"] = "No DNS record found yet. Most providers publish it within a few minutes."
         return result
     if result["cloudflare_proxy"]:
-        result["detail"] = ("This domain goes through Cloudflare’s proxy (orange cloud). Set it to DNS only (grey) "
-                            "while you set up HTTPS — you can turn the proxy back on afterwards.")
+        result["detail"] = ("This domain goes through Cloudflare’s proxy (orange cloud) and the test didn’t get through. "
+                            "Turn off “Always Use HTTPS” in Cloudflare, or set the record to DNS only (grey) while you set up HTTPS.")
     elif server_ip and server_ip not in ips:
         result["detail"] = f"{domain} points to {', '.join(ips)}, not to this server ({server_ip})."
 
@@ -210,17 +210,40 @@ async def check_domain(req: CheckRequest, _user: dict = Depends(_auth.require_pe
         result["detail"] = result["detail"] or "Couldn’t run the reachability test on this server (run cloudbase nginx permissions)."
         return result
     try:
+        path = f"/.well-known/acme-challenge/{token}"
         target = server_ip if server_ip in ips else ips[0]
-        status, body = await asyncio.to_thread(_fetch_via, target, domain, f"/.well-known/acme-challenge/{token}")
+        status, body = await asyncio.to_thread(_fetch_via, target, domain, path)
         if status == 200 and body.strip() == value:
             result["reachable"] = True
             result["dns_ok"] = True
             result["detail"] = ""
-        elif not result["detail"]:
-            result["detail"] = (
-                f"{domain} points here, but the test request didn’t come back (HTTP {status or 'no response'}). "
-                "Check that port 80 is open. Behind a home router or NAT this test can fail even when it works from outside."
-            )
+        else:
+            # Through the public address it didn't work. Ask nginx on this
+            # machine directly to tell "nginx isn't ready" apart from "this
+            # server can't reach its own public IP" (home routers without NAT
+            # loopback answer with their own page instead).
+            local_status, local_body = await asyncio.to_thread(_fetch_via, "127.0.0.1", domain, path)
+            local_ok = local_status == 200 and local_body.strip() == value
+            result["nginx_ready"] = local_ok
+            if result["cloudflare_proxy"] or (server_ip and server_ip not in ips):
+                pass  # keep the DNS explanation set above
+            elif local_ok:
+                result["detail"] = (
+                    "DNS points here and nginx is ready. This server can’t reach itself through its public address "
+                    "(normal behind a home router), so the final check happens when the certificate is requested — "
+                    "make sure ports 80 and 443 are forwarded to this server."
+                )
+            elif local_status and local_status < 500:
+                result["detail"] = (
+                    f"A site answered for {domain} instead of the verification folder (HTTP {local_status}). "
+                    "Click Save Changes in the app’s settings to rewrite its nginx config, "
+                    "and remove any old nginx config for this domain from /etc/nginx/sites-enabled."
+                )
+            else:
+                result["detail"] = (
+                    f"{domain} points here, but the test request didn’t come back (HTTP {status or 'no response'}). "
+                    "Check that nginx is running and port 80 is open."
+                )
     finally:
         nm.remove_acme_probe(token)
     return result

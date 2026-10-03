@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -598,8 +599,33 @@ def _remote_replica_command_payload(app: Application, env_vars: dict, external_p
     }
 
 
+_LE_LIVE_PATH_RE = re.compile(r"^/etc/letsencrypt/live/([a-z0-9.-]+)/(fullchain|privkey)\.pem$")
+
+
+def _letsencrypt_cert_exists(cert_name: str) -> bool:
+    """/etc/letsencrypt/live is only readable by root, so Cloudbase can't see
+    these files itself; the root-owned helper checks for it."""
+    try:
+        r = subprocess.run(
+            ["sudo", "-n", "/usr/local/lib/cloudbase/issue-cert", "exists", cert_name],
+            capture_output=True, text=True, timeout=10,
+        )
+    except Exception:
+        return True  # can't check — let `nginx -t` be the judge
+    if r.returncode in (0, 1):
+        return r.returncode == 0
+    return True  # helper missing or outdated (run: cloudbase nginx permissions)
+
+
 def _resolve_ssl_paths(cert: str | None, key: str | None) -> tuple[str | None, str | None]:
     """Return cert/key paths only if both files actually exist on disk; otherwise None."""
+    if cert and key:
+        m_cert, m_key = _LE_LIVE_PATH_RE.match(cert), _LE_LIVE_PATH_RE.match(key)
+        if m_cert and m_key and m_cert.group(1) == m_key.group(1):
+            if _letsencrypt_cert_exists(m_cert.group(1)):
+                return cert, key
+            log.warning("Let's Encrypt certificate %s not found, skipping SSL", m_cert.group(1))
+            return None, None
     if cert and key and os.path.isfile(cert) and os.path.isfile(key):
         return cert, key
     if cert or key:
