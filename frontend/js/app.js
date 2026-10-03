@@ -1,7 +1,7 @@
 import { api, wsLogs, wsReplicaLogs, wsStats, wsNodeEvents, PermissionError } from './api.js';
 import { auditTableHTML, cssVar, icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, setBtn, parseDotEnv, pickTextFile, mergeEnvIntoRows } from './utils.js';
 import { pickGitHubToken } from './sidebar.js';
-import { openDomainWizard } from './domain-wizard.js';
+import { openDomainWizard, leCertName } from './domain-wizard.js';
 import { setCrumbs } from './shell.js';
 
 const params = new URLSearchParams(location.search);
@@ -1278,7 +1278,12 @@ function renderNetwork() {
 
   const httpsBtn = document.getElementById('btn-net-https');
   if (httpsBtn) {
-    httpsBtn.hidden = !(rows.length && !https && canEdit);
+    // Also offered for a certificate Cloudbase doesn't manage (e.g. an old
+    // Cloudflare Origin certificate, which browsers don't trust)
+    const managed = !!leCertName(app);
+    httpsBtn.hidden = !(rows.length && !managed && canEdit);
+    httpsBtn.textContent = https ? 'Switch to a free certificate' : 'Set up HTTPS';
+    httpsBtn.title = https ? 'This app uses a certificate Cloudbase doesn’t renew. Replace it with a free, auto-renewing Let’s Encrypt certificate.' : '';
     httpsBtn.onclick = () => openDomainWizard(app, { domain: app.domain, onDone: _afterDomainChange });
   }
 }
@@ -1318,15 +1323,35 @@ async function removeDomain(name) {
     ? 'This is the last domain. The app will no longer be reachable on it' + (app.app_url ? ', but stays reachable through the base domain.' : '.')
     : 'Visitors to this domain will no longer reach the app.');
   if (!ok) return;
+  const certName = leCertName(app);
   try {
     const payload = last
       ? { domain: '', extra_domains: [], redirect_domains: [], ssl_cert_path: '', ssl_key_path: '' }
-      : { domain: primary, extra_domains: extras, redirect_domains: last ? [] : redirects };
+      : { domain: primary, extra_domains: extras, redirect_domains: redirects };
     app = await api.updateApp(APP_ID, payload);
     _afterDomainChange();
     toast(`${name} removed`);
   } catch (e) {
     toast(e.message, 'error');
+    return;
+  }
+  if (certName) _tidyCertificate(certName, last);
+}
+
+// Keep the Let's Encrypt certificate in line with the remaining domains:
+// a certificate that still lists a removed name fails to renew once that
+// name points elsewhere — and then HTTPS breaks for every domain on it.
+async function _tidyCertificate(certName, removedLast) {
+  if (removedLast) {
+    api.deleteCertificate(certName).catch(() => {});
+    return;
+  }
+  const names = [app.domain, ...(app.extra_domains || []), ...(app.redirect_domains || [])].filter(Boolean);
+  try {
+    await api.requestCertificate(names, null, certName);
+    toast('HTTPS certificate updated');
+  } catch (e) {
+    toast(`Domain removed, but the HTTPS certificate couldn't be updated yet: ${e.message}`, 'warn');
   }
 }
 

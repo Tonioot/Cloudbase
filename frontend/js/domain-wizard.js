@@ -8,6 +8,12 @@ import { toast } from './utils.js';
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const STEPS = ['Domain', 'DNS', 'HTTPS'];
 
+// Name of the app's Let's Encrypt certificate (from /etc/letsencrypt/live/<name>/…), if it has one
+export function leCertName(app) {
+  const m = /^\/etc\/letsencrypt\/live\/([a-z0-9.-]+)\/fullchain\.pem$/.exec(app?.ssl_cert_path || '');
+  return m ? m[1] : null;
+}
+
 const ICON = {
   check: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
   copy: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
@@ -228,7 +234,7 @@ export function openDomainWizard(app, { onDone, domain = '' } = {}) {
             <div class="dw-hint">From Let’s Encrypt, renewed automatically. Covers ${names.map(n => `<code>${esc(n)}</code>`).join(', ')}.</div>
           </div>
         </div>
-        <label class="dw-label" for="dw-email">Email for expiry warnings <span class="dw-optional">optional</span></label>
+        <label class="dw-label" for="dw-email">Email for your Let’s Encrypt account <span class="dw-optional">optional · for important notices about your certificates</span></label>
         <input class="input dw-input" id="dw-email" type="email" placeholder="you@example.com" value="${esc(s.email || '')}" />
         <div class="dw-status" id="dw-https-status" hidden></div>`;
       footer(`<button class="btn" id="dw-back">Back</button><span class="dw-foot-gap"></span><button class="btn btn-ghost" id="dw-nohttps">Use HTTP only</button><button class="btn btn-primary" id="dw-issue">Set up HTTPS</button>`);
@@ -267,7 +273,8 @@ export function openDomainWizard(app, { onDone, domain = '' } = {}) {
     status.className = 'dw-status dw-status--wait';
     status.innerHTML = `<span class="dw-status-icon"><span class="dw-pulse"></span></span><span class="dw-status-text"><strong>Requesting certificate</strong><span>Let’s Encrypt is verifying the domain. This takes about 10–30 seconds.</span></span>`;
     try {
-      const res = await api.requestCertificate(certNames(), email || null);
+      // Update the app's existing certificate rather than adding a second one
+      const res = await api.requestCertificate(certNames(), email || null, leCertName(app));
       await finish({ cert: res.ssl_cert_path, key: res.ssl_key_path });
     } catch (e) {
       status.className = 'dw-status dw-status--warn';

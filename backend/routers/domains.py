@@ -85,7 +85,9 @@ def _https_capability() -> tuple[bool, str]:
     return True, ""
 
 
-def _resolve(domain: str) -> list[str]:
+def _resolve_cached(domain: str) -> list[str]:
+    """The server's own resolver — can be minutes to hours behind (it caches
+    answers, including "doesn't exist"). Only used as a fallback."""
     try:
         infos = socket.getaddrinfo(domain, 80, proto=socket.IPPROTO_TCP)
     except socket.gaierror:
@@ -93,15 +95,70 @@ def _resolve(domain: str) -> list[str]:
     return sorted({i[4][0] for i in infos})
 
 
-def _fetch(url: str, timeout: float = 6.0) -> tuple[int, str]:
-    req = urllib.request.Request(url, headers={"User-Agent": "Cloudbase-domain-check"})
+def _resolve_authoritative(domain: str, depth: int = 0) -> Optional[list[str]]:
+    """Ask the domain's own nameservers directly, so a record shows up the
+    moment it's saved at the DNS provider. Returns None when that isn't
+    possible (no dnspython, nameservers unreachable)."""
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, resp.read(256).decode("ascii", errors="ignore")
-    except urllib.error.HTTPError as e:
-        return e.code, ""
+        import dns.message
+        import dns.name
+        import dns.query
+        import dns.rdatatype
+        import dns.resolver
+    except ImportError:
+        return None
+    if depth > 4:
+        return None
+    try:
+        name = dns.name.from_text(domain)
+        zone = dns.resolver.zone_for_name(name, lifetime=5)
+        nameservers = [r.target.to_text() for r in dns.resolver.resolve(zone, "NS", lifetime=5)]
+    except Exception:
+        return None
+
+    for ns in nameservers[:4]:
+        try:
+            ns_ips = [r.address for r in dns.resolver.resolve(ns, "A", lifetime=5)]
+        except Exception:
+            continue
+        for ns_ip in ns_ips[:2]:
+            try:
+                ips: set[str] = set()
+                cname = None
+                for rdtype in ("A", "AAAA"):
+                    resp = dns.query.udp(dns.message.make_query(name, rdtype), ns_ip, timeout=4)
+                    for rrset in resp.answer:
+                        for rr in rrset:
+                            if rr.rdtype in (dns.rdatatype.A, dns.rdatatype.AAAA):
+                                ips.add(rr.address)
+                            elif rr.rdtype == dns.rdatatype.CNAME:
+                                cname = rr.target.to_text().rstrip(".")
+                if not ips and cname:
+                    return _resolve_authoritative(cname, depth + 1)
+                return sorted(ips)
+            except Exception:
+                continue
+    return None
+
+
+def _resolve(domain: str) -> list[str]:
+    fresh = _resolve_authoritative(domain)
+    return fresh if fresh is not None else _resolve_cached(domain)
+
+
+def _fetch_via(ip: str, domain: str, path: str, timeout: float = 6.0) -> tuple[int, str]:
+    """GET http://<domain><path>, connecting straight to `ip` — so the test
+    uses the fresh DNS answer instead of whatever this server has cached."""
+    import http.client
+    conn = http.client.HTTPConnection(ip, 80, timeout=timeout)
+    try:
+        conn.request("GET", path, headers={"Host": domain, "User-Agent": "Cloudbase-domain-check"})
+        resp = conn.getresponse()
+        return resp.status, resp.read(256).decode("ascii", errors="ignore")
     except Exception as e:
         return 0, str(e)
+    finally:
+        conn.close()
 
 
 @router.get("/server")
@@ -138,7 +195,7 @@ async def check_domain(req: CheckRequest, _user: dict = Depends(_auth.require_pe
         "detail": "",
     }
     if not ips:
-        result["detail"] = "No DNS record found yet. New records can take a few minutes to appear."
+        result["detail"] = "No DNS record found yet. Most providers publish it within a few minutes."
         return result
     if result["cloudflare_proxy"]:
         result["detail"] = ("This domain goes through Cloudflare’s proxy (orange cloud). Set it to DNS only (grey) "
@@ -153,7 +210,8 @@ async def check_domain(req: CheckRequest, _user: dict = Depends(_auth.require_pe
         result["detail"] = result["detail"] or "Couldn’t run the reachability test on this server (run cloudbase nginx permissions)."
         return result
     try:
-        status, body = await asyncio.to_thread(_fetch, f"http://{domain}/.well-known/acme-challenge/{token}")
+        target = server_ip if server_ip in ips else ips[0]
+        status, body = await asyncio.to_thread(_fetch_via, target, domain, f"/.well-known/acme-challenge/{token}")
         if status == 200 and body.strip() == value:
             result["reachable"] = True
             result["dns_ok"] = True
@@ -171,6 +229,18 @@ async def check_domain(req: CheckRequest, _user: dict = Depends(_auth.require_pe
 class CertificateRequest(BaseModel):
     domains: list[str]
     email: Optional[str] = None
+    # Existing certificate to update instead of creating a new one, so its
+    # /etc/letsencrypt/live/<cert_name>/ paths stay the same
+    cert_name: Optional[str] = None
+
+
+_LE_LIVE_RE = re.compile(r"^/etc/letsencrypt/live/([a-z0-9.-]+)/(fullchain|privkey)\.pem$")
+
+
+def cert_name_from_path(path: Optional[str]) -> Optional[str]:
+    """Name of a Cloudbase-managed Let's Encrypt certificate, from its file path."""
+    m = _LE_LIVE_RE.match(path or "")
+    return m.group(1) if m and _DOMAIN_RE.match(m.group(1)) else None
 
 
 @router.post("/certificate")
@@ -184,6 +254,10 @@ async def request_certificate(req: CertificateRequest, _user: dict = Depends(_au
         raise HTTPException(400, "Add at least one domain")
     if len(domains) > 10:
         raise HTTPException(400, "At most 10 domains per certificate")
+
+    cert_name = (req.cert_name or "").strip().lower() or domains[0]
+    if not _DOMAIN_RE.match(cert_name):
+        raise HTTPException(400, "Invalid certificate name")
 
     email = (req.email or "").strip()
     if email and not _EMAIL_RE.match(email):
@@ -207,7 +281,7 @@ async def request_certificate(req: CertificateRequest, _user: dict = Depends(_au
         try:
             proc = await asyncio.to_thread(
                 subprocess.run,
-                ["sudo", "-n", ISSUE_CERT_BIN, email or "-", *domains],
+                ["sudo", "-n", ISSUE_CERT_BIN, "issue", cert_name, email or "-", *domains],
                 capture_output=True, text=True, timeout=240,
             )
         except subprocess.TimeoutExpired:
@@ -220,13 +294,30 @@ async def request_certificate(req: CertificateRequest, _user: dict = Depends(_au
     if proc.returncode != 0:
         raise HTTPException(400, _explain_certbot_error(output))
 
-    live = f"/etc/letsencrypt/live/{domains[0]}"
+    live = f"/etc/letsencrypt/live/{cert_name}"
     return {
         "ok": True,
         "domains": domains,
         "ssl_cert_path": f"{live}/fullchain.pem",
         "ssl_key_path": f"{live}/privkey.pem",
     }
+
+
+@router.delete("/certificate/{cert_name}")
+async def delete_certificate(cert_name: str, _user: dict = Depends(_auth.require_permission("apps.configure"))):
+    """Remove a certificate no app uses anymore, so certbot stops renewing it."""
+    cert_name = cert_name.strip().lower()
+    if not _DOMAIN_RE.match(cert_name):
+        raise HTTPException(400, "Invalid certificate name")
+    ok, _reason = _https_capability()
+    if not ok:
+        return {"ok": False}
+    proc = await asyncio.to_thread(
+        subprocess.run, ["sudo", "-n", ISSUE_CERT_BIN, "delete", cert_name],
+        capture_output=True, text=True, timeout=60,
+    )
+    log.info("[certificate] delete %s rc=%d", cert_name, proc.returncode)
+    return {"ok": proc.returncode == 0}
 
 
 def _explain_certbot_error(output: str) -> str:
