@@ -1231,9 +1231,9 @@ function renderNetwork() {
   if (!list) return;
   const https = !!(app.ssl_cert_path && app.ssl_key_path);
   const rows = [
-    ...(app.domain ? [{ name: app.domain, role: 'Primary' }] : []),
-    ...(app.extra_domains || []).map(name => ({ name, role: '' })),
-    ...(app.redirect_domains || []).map(name => ({ name, role: `Redirects to ${app.domain || 'primary'}` })),
+    ...(app.domain ? [{ name: app.domain, kind: 'primary', role: 'Primary' }] : []),
+    ...(app.extra_domains || []).map(name => ({ name, kind: 'alias', role: 'Also shows the app' })),
+    ...(app.redirect_domains || []).map(name => ({ name, kind: 'redirect', role: `Redirects to ${app.domain || 'primary'}` })),
   ];
   const canEdit = _canManageApps();
 
@@ -1254,10 +1254,25 @@ function renderNetwork() {
         <a class="net-name" href="${https ? 'https' : 'http'}://${escAttr(r.name)}" target="_blank" rel="noopener">${escHtml(r.name)}</a>
         <span class="net-role">${escHtml(r.role)}</span>
         <span class="net-proto ${https ? 'on' : ''}">${https ? 'HTTPS' : 'HTTP'}</span>
-        ${canEdit ? '<button type="button" class="btn btn-sm btn-ghost net-remove">Remove</button>' : ''}
+        ${canEdit ? `
+          <div class="menu-wrap">
+            <button type="button" class="btn btn-sm btn-icon btn-ghost" data-dropdown aria-haspopup="menu" aria-label="Domain actions">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>
+            </button>
+            <div class="dropdown" role="menu">
+              ${r.kind !== 'primary' ? `
+                <button type="button" class="menu-item" data-act="primary" role="menuitem"><span class="menu-item-text"><span>Make primary</span><small>The main address of the app</small></span></button>
+                ${r.kind === 'alias'
+                  ? `<button type="button" class="menu-item" data-act="redirect" role="menuitem"><span class="menu-item-text"><span>Redirect to ${escHtml(app.domain)}</span><small>Visitors are sent to the primary domain</small></span></button>`
+                  : `<button type="button" class="menu-item" data-act="alias" role="menuitem"><span class="menu-item-text"><span>Show the app here</span><small>Serve the app on this domain too</small></span></button>`}
+                <div class="menu-sep" role="separator"></div>` : ''}
+              <button type="button" class="menu-item menu-item--danger" data-act="remove" role="menuitem"><span class="menu-item-text"><span>Remove</span></span></button>
+            </div>
+          </div>` : ''}
       </div>`).join('');
-    list.querySelectorAll('.net-remove').forEach(btn => {
-      btn.onclick = () => removeDomain(rows[+btn.closest('.net-row').dataset.i].name);
+    list.querySelectorAll('[data-act]').forEach(btn => {
+      const name = rows[+btn.closest('.net-row').dataset.i].name;
+      btn.onclick = () => btn.dataset.act === 'remove' ? removeDomain(name) : setDomainRole(name, btn.dataset.act);
     });
   }
 
@@ -1265,6 +1280,30 @@ function renderNetwork() {
   if (httpsBtn) {
     httpsBtn.hidden = !(rows.length && !https && canEdit);
     httpsBtn.onclick = () => openDomainWizard(app, { domain: app.domain, onDone: _afterDomainChange });
+  }
+}
+
+// role: 'primary' | 'alias' (serves the app) | 'redirect' (301 to the primary)
+async function setDomainRole(name, role) {
+  let primary = app.domain;
+  const extras = (app.extra_domains || []).filter(d => d !== name);
+  const redirects = (app.redirect_domains || []).filter(d => d !== name);
+  if (role === 'primary') {
+    if (primary) extras.unshift(primary);  // the old primary keeps serving the app
+    primary = name;
+  } else if (role === 'alias') {
+    extras.push(name);
+  } else {
+    redirects.push(name);
+  }
+  try {
+    app = await api.updateApp(APP_ID, { domain: primary, extra_domains: extras, redirect_domains: redirects });
+    _afterDomainChange();
+    toast(role === 'primary' ? `${name} is now the primary domain`
+      : role === 'redirect' ? `${name} now redirects to ${primary}`
+      : `${name} now shows the app`);
+  } catch (e) {
+    toast(e.message, 'error');
   }
 }
 

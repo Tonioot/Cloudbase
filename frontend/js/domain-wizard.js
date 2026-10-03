@@ -31,6 +31,7 @@ export function openDomainWizard(app, { onDone, domain = '' } = {}) {
     step: domain ? 1 : 0,
     domain,
     www: !domain,
+    role: 'alias',      // for an app that already has a domain: 'alias' (show the app) | 'redirect'
     server: null,       // { ip, https_available, https_reason, email }
     check: null,        // last /check result
     checking: false,
@@ -100,7 +101,21 @@ export function openDomainWizard(app, { onDone, domain = '' } = {}) {
       <label class="dw-check" id="dw-www-row" hidden>
         <input type="checkbox" id="dw-www" ${state.www ? 'checked' : ''} />
         <span>Also send <code id="dw-www-name"></code> to this app</span>
-      </label>`;
+      </label>
+      ${app.domain ? `
+        <div class="dw-label dw-role-label">What should this domain do?</div>
+        <div class="choice-list dw-role">
+          <label class="choice">
+            <input type="radio" name="dw-role" value="alias" ${state.role === 'alias' ? 'checked' : ''} />
+            <span class="choice-dot"></span>
+            <span class="choice-text"><span>Show the app</span><small>Same site as ${esc(app.domain)}, on this address too</small></span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="dw-role" value="redirect" ${state.role === 'redirect' ? 'checked' : ''} />
+            <span class="choice-dot"></span>
+            <span class="choice-text"><span>Redirect to ${esc(app.domain)}</span><small>Visitors are sent to the primary domain</small></span>
+          </label>
+        </div>` : ''}`;
     footer(`<button class="btn" data-close>Cancel</button><button class="btn btn-primary" id="dw-next" disabled>Continue</button>`);
     $('#dw-foot [data-close]').onclick = close;
 
@@ -118,6 +133,7 @@ export function openDomainWizard(app, { onDone, domain = '' } = {}) {
     input.addEventListener('input', sync);
     input.addEventListener('keydown', e => { if (e.key === 'Enter' && !next.disabled) next.click(); });
     $('#dw-www').onchange = e => { state.www = e.target.checked; };
+    backdrop.querySelectorAll('input[name="dw-role"]').forEach(r => { r.onchange = () => { state.role = r.value; }; });
     next.onclick = () => { state.step = 1; state.check = null; render(); };
     sync();
     setTimeout(() => input.focus(), 30);
@@ -271,8 +287,10 @@ export function openDomainWizard(app, { onDone, domain = '' } = {}) {
     const redirects = [...(app.redirect_domains || [])];
     for (const n of names) {
       if (n === primary || extras.includes(n) || redirects.includes(n)) continue;
-      // www.<domain> goes to the main name instead of serving a duplicate site
-      if (n.startsWith('www.') && names.includes(n.slice(4))) redirects.push(n);
+      // Chosen to redirect, or www.<domain>: send visitors to the primary
+      // instead of serving a duplicate site
+      if (app.domain && state.role === 'redirect') redirects.push(n);
+      else if (n.startsWith('www.') && names.includes(n.slice(4))) redirects.push(n);
       else extras.push(n);
     }
     const payload = { domain: primary, extra_domains: extras, redirect_domains: redirects };

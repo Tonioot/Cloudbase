@@ -475,3 +475,4 @@ kbd {
 /* Account menu opens above the user button, inside the sidebar */
 .flyout--bottom { left: 10px; width: calc(var(--rail-width) - 20px); }
 .dropdown--wide { min-width: 340px; }
+.menu-item--danger .menu-item-text > span { color: var(--red); }

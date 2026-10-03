@@ -50,6 +50,8 @@
 .dw-lead strong { color: var(--text); font-weight: 500; }
 .dw-check { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-2); cursor: pointer; margin-top: 4px; }
 .dw-check input { accent-color: var(--text); width: 14px; height: 14px; }
+.dw-role-label { margin-top: 10px; }
+.dw-role .choice-text small { font-family: var(--font-sans); font-size: 12px; }
 
 /* DNS records */
 .dw-records { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
@@ -131,7 +133,7 @@
 }
 
 /* ─── Network section: connected domains ────────────────────────────────── */
-.net-domains { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.net-domains { border: 1px solid var(--line); border-radius: var(--radius); }
 .net-row { display: flex; align-items: center; gap: 12px; padding: 11px 14px; border-top: 1px solid var(--line); min-height: 48px; }
 .net-row:first-child { border-top: none; }
 .net-lock { display: inline-flex; color: var(--faint); }
@@ -141,8 +143,7 @@
 .net-role { flex: 1; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .net-proto { font-size: 11px; color: var(--muted); border: 1px solid var(--line-strong); border-radius: var(--radius-xs); padding: 1px 6px; }
 .net-proto.on { color: var(--green); border-color: var(--green-border); }
-.net-remove { color: var(--muted); }
-.net-remove:hover:not(:disabled) { color: var(--red); background: var(--red-bg); }
+.net-row .menu-wrap .dropdown { min-width: 260px; }
 .net-empty { padding: 18px 16px; }
 .net-empty-title { font-size: 13.5px; color: var(--text); margin-bottom: 4px; }
 .net-empty-sub { font-size: 12.5px; color: var(--muted); line-height: 1.55; }
