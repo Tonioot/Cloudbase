@@ -146,7 +146,7 @@ cloudbase stop</pre>
   <li>The first instance starts on the primary. While it boots, visitors see the <em>starting</em> page instead of an error.</li>
   <li>Once the app answers on its port, its status turns <strong>running</strong> and the URL in the app header works.</li>
 </ol>
-<p>If a base domain is configured, the app is immediately reachable at <code>&lt;name&gt;.&lt;base-domain&gt;</code>. Otherwise add a domain in the app’s <strong>Settings → Network</strong>, see <a href="/guides?g=domains">Domains &amp; SSL</a>.</p>
+<p>If a base domain is configured, the app is immediately reachable at <code>&lt;name&gt;.&lt;base-domain&gt;</code>. Otherwise click <strong>Connect a domain</strong> under the app’s <strong>Settings → Network</strong>, see <a href="/guides?g=domains">Domains &amp; SSL</a>.</p>
 
 <h2>When it doesn’t start</h2>
 <ul>
@@ -412,22 +412,18 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
 <h2>Automatic app subdomains</h2>
 <p>Set a <strong>base domain</strong> such as <code>apps.example.com</code> (with a wildcard DNS record) and every app is reachable at <code>&lt;app-name&gt;.apps.example.com</code> without further setup. Upload a wildcard certificate for <code>*.apps.example.com</code> to serve them over HTTPS.</p>
 
-<h2>Custom domains per app</h2>
-<p>In the app, open <strong>Settings → Network</strong>:</p>
+<h2>Managing an app’s domains</h2>
+<p><strong>Settings → Network</strong> lists every domain the app answers on, with a lock that shows whether it’s served over HTTPS. From there you can:</p>
 <ul>
-  <li><strong>Domains</strong> — one or more hostnames the app answers on.</li>
-  <li><strong>Redirect domains</strong> — hostnames that permanently redirect to the main domain, e.g. <code>www.shop.example.com → shop.example.com</code>.</li>
-  <li><strong>SSL certificate and key</strong> — for these domains. Upload them, or scan for certificate files already on the server.</li>
+  <li><strong>Connect a domain</strong> — add another one with the wizard. One certificate covers all of the app’s domains, so adding a domain renews it to include the new name.</li>
+  <li><strong>Set up HTTPS</strong> — appears when the app’s domains are still on plain HTTP.</li>
+  <li><strong>Remove</strong> — stops the app answering on that domain. Removing the last one falls back to the automatic subdomain, if a base domain is set.</li>
 </ul>
-<p>Saving writes the app’s nginx config. As long as a domain is active, the app counts as <em>nginx-enabled</em>; that’s what makes maintenance pages possible.</p>
+<p>A <code>www.</code> name added through the wizard redirects to the main domain instead of serving a copy of the site.</p>
 
 <h2>Certificates</h2>
-<p>Cloudbase uses certificate files you provide — any PEM certificate works: Let’s Encrypt, Cloudflare Origin, or one from your registrar. Use the <em>full chain</em> as the certificate. Uploaded files go to the Cloudbase certificate store; from the shell:</p>
-<pre>cloudbase cert add /etc/letsencrypt/live/example.com/fullchain.pem
-cloudbase cert add /etc/letsencrypt/live/example.com/privkey.pem
-cloudbase cert list</pre>
-<div class="callout"><p>Behind Cloudflare with the orange cloud on, a Cloudflare Origin certificate (valid for 15 years) saves you from renewals. Set the Cloudflare SSL mode to <em>Full (strict)</em>.</p></div>
-<p>Certificates requested through <strong>Connect a domain</strong> live in <code>/etc/letsencrypt/live/&lt;domain&gt;/</code> and are renewed by certbot’s own timer; nginx reloads automatically after each renewal. Certificates you upload yourself are not renewed — replace them before they expire.</p>
+<p>Certificates requested through <strong>Connect a domain</strong> come from Let’s Encrypt and live in <code>/etc/letsencrypt/live/&lt;domain&gt;/</code>. certbot renews them on its own schedule and nginx reloads automatically afterwards — there’s nothing to maintain.</p>
+<p>Renewal needs the domain to keep pointing at the primary, and port 80 to stay open. Behind Cloudflare’s proxy it also works, as long as the SSL mode is <em>Full (strict)</em>.</p>
 
 <h2>Unknown hostnames</h2>
 <p>With strict hostname handling active, a hostname that reaches the server but isn’t linked to any app gets a neutral “Nothing is deployed here” page, instead of accidentally showing another app.</p>
@@ -457,7 +453,7 @@ cloudbase cert list</pre>
 
 <h2>“Requires nginx”</h2>
 <p>Maintenance pages are served by nginx in front of your app, so they only work for apps that nginx serves: apps with a custom domain, or reachable through the base domain. You’ll see <em>Requires nginx</em> when neither is set up. Workers never have these pages — there’s nothing in front of them.</p>
-<p>If a domain is set but the label still shows, writing the nginx config failed earlier. Save the app’s Network settings again to retry.</p>
+<p>If a domain is set but the label still shows, writing the nginx config failed earlier. Click <strong>Save Changes</strong> in the app’s settings to write it again.</p>
 
 <h2>Status codes</h2>
 <p>Maintenance pages are served with HTTP <code>503</code> and no-cache headers, so search engines treat the outage as temporary and browsers don’t keep showing the page after you’re back.</p>
@@ -792,7 +788,7 @@ cloudbase import ~/cloudbase-backup.tar.gz</pre>
 <ul>
   <li><code>dig +short shop.example.com</code> must return the primary’s IP.</li>
   <li>Ports 80 and 443 must be open on the primary.</li>
-  <li>Save the app’s Network settings again — if writing the nginx config failed, the error is shown.</li>
+  <li>Click <strong>Save Changes</strong> in the app’s settings — nginx is written again, and an error is shown if that fails.</li>
   <li>Check nginx itself: <code>sudo nginx -t</code>.</li>
 </ul>
 

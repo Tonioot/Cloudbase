@@ -1,6 +1,6 @@
 // "Connect a domain" wizard: domain → DNS record → free HTTPS certificate.
 //
-//   openDomainWizard(app, { onDone(updatedApp) })
+//   openDomainWizard(app, { onDone(updatedApp), domain? })
 
 import { api } from './api.js';
 import { toast } from './utils.js';
@@ -25,11 +25,12 @@ function splitDomain(domain) {
   return { name: parts.slice(0, parts.length - zoneLen).join('.'), zone: parts.slice(-zoneLen).join('.'), apex: false };
 }
 
-export function openDomainWizard(app, { onDone } = {}) {
+export function openDomainWizard(app, { onDone, domain = '' } = {}) {
+  // With a domain given (e.g. "Set up HTTPS" for an existing one) start at the DNS check
   const state = {
-    step: 0,
-    domain: '',
-    www: true,
+    step: domain ? 1 : 0,
+    domain,
+    www: !domain,
     server: null,       // { ip, https_available, https_reason, email }
     check: null,        // last /check result
     checking: false,
@@ -140,7 +141,7 @@ export function openDomainWizard(app, { onDone } = {}) {
             <span class="dw-copyable" data-copy="${esc(r.value || '')}"><span class="dw-mono">${esc(r.value || 'IP unknown')}</span>${ICON.copy}</span>
           </div>`).join('')}
       </div>
-      <div class="dw-hint">Leave <em>TTL</em> on its default. Using Cloudflare? Set the cloud to <em>DNS only</em> (grey) until HTTPS is set up.</div>
+      <div class="dw-hint">Leave <em>TTL</em> on its default. Using Cloudflare? Keep the cloud on <em>DNS only</em> (grey) for now. Once HTTPS works you can switch the proxy back on, with SSL mode <em>Full (strict)</em>.</div>
       <div class="dw-status" id="dw-status"></div>`;
 
     backdrop.querySelectorAll('.dw-copyable').forEach(el => {
@@ -177,6 +178,8 @@ export function openDomainWizard(app, { onDone } = {}) {
     let tone = 'wait', title = 'Waiting for the DNS record…', detail = 'Checking every few seconds. Changes usually show up within minutes.';
     if (c?.reachable) {
       tone = 'ok'; title = `${state.domain} reaches this server`; detail = '';
+    } else if (c?.cloudflare_proxy) {
+      tone = 'warn'; title = 'Cloudflare proxy is on'; detail = c.detail;
     } else if (c?.dns_ok) {
       tone = 'warn'; title = 'DNS is set, but the server didn’t answer the test'; detail = c.detail;
     } else if (c?.ips?.length) {

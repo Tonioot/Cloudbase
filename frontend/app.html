@@ -429,62 +429,16 @@
             <div class="settings-group">
               <div class="settings-group-hd">
                 <div class="settings-group-title">Network</div>
-                <div class="settings-group-sub">Domains, redirects and SSL certificates</div>
+                <div class="settings-group-sub">Domains this app answers on. HTTPS certificates are requested and renewed automatically.</div>
               </div>
               <div class="settings-group-bd">
-                <div style="display:flex;justify-content:flex-end;margin-bottom:10px">
+                <div class="net-domains" id="net-domains"></div>
+                <div class="net-actions" data-perm="apps.configure">
                   <button type="button" class="btn btn-primary btn-sm" id="btn-dns-setup">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                     Connect a domain
                   </button>
-                </div>
-                <div class="field">
-                  <label class="field-label">Domains <span style="font-weight:400;color:var(--text-muted);font-size:11px">(first is primary)</span></label>
-                  <div id="cfg-domains-rows"></div>
-                  <button type="button" class="btn-scan" id="cfg-add-domain" style="margin-top:6px">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    Add domain
-                  </button>
-                </div>
-                <div class="field">
-                  <label class="field-label">Redirect Domains <span style="font-weight:400;color:var(--text-muted);font-size:11px">(301 → primary)</span></label>
-                  <div id="cfg-redirect-domains-rows"></div>
-                  <button type="button" class="btn-scan" id="cfg-add-redirect-domain" style="margin-top:6px">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    Add domain
-                  </button>
-                </div>
-                <div class="field">
-                  <label class="field-label">SSL Certificate</label>
-                  <div class="cert-upload-row">
-                    <span class="cert-filename" id="cfg-cert-name">No file selected</span>
-                    <button type="button" class="btn-scan" id="cfg-scan-cert">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                      Scan
-                    </button>
-                    <button type="button" class="btn-scan" id="cfg-upload-cert">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                      Upload
-                    </button>
-                    <input type="file" id="cfg-cert-file" accept=".pem,.crt,.cer" style="display:none">
-                    <input type="hidden" id="cfg-cert">
-                  </div>
-                </div>
-                <div class="field" style="margin-bottom:0">
-                  <label class="field-label">SSL Key</label>
-                  <div class="cert-upload-row">
-                    <span class="cert-filename" id="cfg-key-name">No file selected</span>
-                    <button type="button" class="btn-scan" id="cfg-scan-key">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                      Scan
-                    </button>
-                    <button type="button" class="btn-scan" id="cfg-upload-key">
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                      Upload
-                    </button>
-                    <input type="file" id="cfg-key-file" accept=".pem,.key" style="display:none">
-                    <input type="hidden" id="cfg-key">
-                  </div>
+                  <button type="button" class="btn btn-sm" id="btn-net-https" hidden>Set up HTTPS</button>
                 </div>
               </div>
             </div>

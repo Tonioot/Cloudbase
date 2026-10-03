@@ -54,8 +54,8 @@ function _updateAppTypeVisibility(app) {
   if (el('cfg-env-static-hint'))     el('cfg-env-static-hint').style.display = isStatic ? '' : 'none';
   if (el('cfg-cmd-label'))           el('cfg-cmd-label').textContent = isStatic ? 'Publish Directory' : 'Start Command';
   if (el('cfg-cmd'))                 el('cfg-cmd').placeholder = isStatic ? 'auto-detect (root, dist, build, …)' : 'npm start';
-  // Network section: parent settings-group of cfg-domains-rows
-  const networkSection = el('cfg-domains-rows')?.closest('.settings-group');
+  // Network section
+  const networkSection = el('net-domains')?.closest('.settings-group');
   if (networkSection)                networkSection.style.display = hide;
   // Maintenance Pages section
   if (el('maintenance-pages-section')) el('maintenance-pages-section').style.display = hide;
@@ -1211,39 +1211,6 @@ async function openFile(entry, el) {
   }
 }
 
-/* ─── SETTINGS ──────────────────────────────────────────────────────────── */function showCertPicker(inputEl, items, label, displayEl) {
-  document.querySelectorAll('.cert-picker').forEach(p => p.remove());
-  if (!items.length) { toast(`No ${label} found in app folder`, 'warn'); return; }
-
-  const picker = document.createElement('div');
-  picker.className = 'cert-picker';
-  picker.style.cssText = 'position:absolute;z-index:9999;background:var(--pop);border:1px solid var(--line-strong);border-radius:8px;max-height:200px;overflow-y:auto;box-shadow:var(--shadow-lg);font-size:12px;padding:4px;';
-
-  items.forEach(path => {
-    const row = document.createElement('div');
-    row.textContent = path;
-    row.style.cssText = 'padding:7px 10px;border-radius:6px;cursor:pointer;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
-    row.addEventListener('mouseenter', () => row.style.background = 'var(--hover)');
-    row.addEventListener('mouseleave', () => row.style.background = '');
-    row.addEventListener('click', () => {
-      inputEl.value = path;
-      if (displayEl) { displayEl.textContent = path.split('/').pop(); displayEl.classList.add('has-value'); }
-      picker.remove();
-    });
-    picker.appendChild(row);
-  });
-
-  // Anchor to the visible row container (cert-upload-row), not the hidden input
-  const anchorEl = displayEl ? displayEl.closest('.cert-upload-row') || displayEl : inputEl;
-  const rect = anchorEl.getBoundingClientRect();
-  picker.style.top   = `${rect.bottom + window.scrollY + 4}px`;
-  picker.style.left  = `${rect.left + window.scrollX}px`;
-  picker.style.width = `${Math.max(rect.width, 280)}px`;
-  document.body.appendChild(picker);
-
-  const close = e => { if (!picker.contains(e.target)) { picker.remove(); document.removeEventListener('click', close, true); } };
-  setTimeout(() => document.addEventListener('click', close, true), 0);
-}
 async function initActivity() {
   const wrap = document.getElementById('audit-log-table-wrap');
   try {
@@ -1258,22 +1225,76 @@ async function initActivity() {
   }
 }
 
-function _refreshNetworkFields() {
-  const domainsContainer = document.getElementById('cfg-domains-rows');
-  if (!domainsContainer) return;
-  domainsContainer.innerHTML = '';
-  const allDomains = [app.domain, ...(app.extra_domains || [])].filter(Boolean);
-  if (allDomains.length === 0) addDomainRow(domainsContainer, '');
-  else allDomains.forEach(d => addDomainRow(domainsContainer, d));
-  const redirectContainer = document.getElementById('cfg-redirect-domains-rows');
-  redirectContainer.innerHTML = '';
-  (app.redirect_domains || []).forEach(d => addDomainRow(redirectContainer, d));
-  for (const [inputId, nameId, path] of [['cfg-cert', 'cfg-cert-name', app.ssl_cert_path], ['cfg-key', 'cfg-key-name', app.ssl_key_path]]) {
-    document.getElementById(inputId).value = path || '';
-    const nameEl = document.getElementById(nameId);
-    nameEl.textContent = path ? path.split('/').pop() : 'No file selected';
-    nameEl.classList.toggle('has-value', !!path);
+/* ─── Network: connected domains ───────────────────────────────────────── */
+function renderNetwork() {
+  const list = document.getElementById('net-domains');
+  if (!list) return;
+  const https = !!(app.ssl_cert_path && app.ssl_key_path);
+  const rows = [
+    ...(app.domain ? [{ name: app.domain, role: 'Primary' }] : []),
+    ...(app.extra_domains || []).map(name => ({ name, role: '' })),
+    ...(app.redirect_domains || []).map(name => ({ name, role: `Redirects to ${app.domain || 'primary'}` })),
+  ];
+  const canEdit = _canManageApps();
+
+  if (!rows.length) {
+    list.innerHTML = `
+      <div class="net-empty">
+        <div class="net-empty-title">No domain connected</div>
+        <div class="net-empty-sub">${app.app_url
+          ? `Reachable at <a href="${escAttr(app.app_url)}" target="_blank" rel="noopener">${escHtml(app.app_url.replace(/^https?:\/\//, ''))}</a> through the base domain. Connect your own domain to use a custom address.`
+          : 'Connect a domain to make this app reachable on its own address.'}</div>
+      </div>`;
+  } else {
+    list.innerHTML = rows.map((r, i) => `
+      <div class="net-row" data-i="${i}">
+        <span class="net-lock ${https ? 'on' : ''}" title="${https ? 'HTTPS' : 'HTTP only'}">${https
+          ? '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>'
+          : '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>'}</span>
+        <a class="net-name" href="${https ? 'https' : 'http'}://${escAttr(r.name)}" target="_blank" rel="noopener">${escHtml(r.name)}</a>
+        <span class="net-role">${escHtml(r.role)}</span>
+        <span class="net-proto ${https ? 'on' : ''}">${https ? 'HTTPS' : 'HTTP'}</span>
+        ${canEdit ? '<button type="button" class="btn btn-sm btn-ghost net-remove">Remove</button>' : ''}
+      </div>`).join('');
+    list.querySelectorAll('.net-remove').forEach(btn => {
+      btn.onclick = () => removeDomain(rows[+btn.closest('.net-row').dataset.i].name);
+    });
   }
+
+  const httpsBtn = document.getElementById('btn-net-https');
+  if (httpsBtn) {
+    httpsBtn.hidden = !(rows.length && !https && canEdit);
+    httpsBtn.onclick = () => openDomainWizard(app, { domain: app.domain, onDone: _afterDomainChange });
+  }
+}
+
+async function removeDomain(name) {
+  const isPrimary = name === app.domain;
+  const extras = (app.extra_domains || []).filter(d => d !== name);
+  const redirects = (app.redirect_domains || []).filter(d => d !== name);
+  let primary = app.domain;
+  if (isPrimary) primary = extras.shift() || '';
+  const last = !primary;
+  const ok = await confirm(`Remove ${name}?`, last
+    ? 'This is the last domain. The app will no longer be reachable on it' + (app.app_url ? ', but stays reachable through the base domain.' : '.')
+    : 'Visitors to this domain will no longer reach the app.');
+  if (!ok) return;
+  try {
+    const payload = last
+      ? { domain: '', extra_domains: [], redirect_domains: [], ssl_cert_path: '', ssl_key_path: '' }
+      : { domain: primary, extra_domains: extras, redirect_domains: last ? [] : redirects };
+    app = await api.updateApp(APP_ID, payload);
+    _afterDomainChange();
+    toast(`${name} removed`);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+function _afterDomainChange(updated) {
+  if (updated) app = updated;
+  renderNetwork();
+  renderHeader();
   refreshMaintenanceUiState();
 }
 
@@ -1291,19 +1312,7 @@ function initSettings() {
   document.getElementById('cfg-cmd').value          = app.start_command  || '';
   document.getElementById('cfg-build').value        = app.build_command  || '';
   document.getElementById('cfg-port').value         = app.port           || '';
-  // Domains list (primary first, then extras)
-  const domainsContainer = document.getElementById('cfg-domains-rows');
-  domainsContainer.innerHTML = '';
-  const allDomains = [app.domain, ...(app.extra_domains || [])].filter(Boolean);
-  if (allDomains.length === 0) addDomainRow(domainsContainer, '');
-  else allDomains.forEach(d => addDomainRow(domainsContainer, d));
-  document.getElementById('cfg-add-domain').onclick = () => addDomainRow(domainsContainer, '');
-
-  // Redirect domains
-  const redirectContainer = document.getElementById('cfg-redirect-domains-rows');
-  redirectContainer.innerHTML = '';
-  (app.redirect_domains || []).forEach(d => addDomainRow(redirectContainer, d));
-  document.getElementById('cfg-add-redirect-domain').onclick = () => addDomainRow(redirectContainer, '');
+  renderNetwork();
 
   _updateAppTypeVisibility(app);
   document.getElementById('cfg-autostart').checked  = !!app.auto_start;
@@ -1326,16 +1335,6 @@ function initSettings() {
     document.getElementById('autoscale-options').style.display = this.checked ? '' : 'none';
   };
   if (dockerSection) dockerSection.style.display = '';
-
-  // Cert/key hidden inputs + filename display
-  function setCertDisplay(inputId, nameId, path) {
-    document.getElementById(inputId).value = path || '';
-    const nameEl = document.getElementById(nameId);
-    if (path) { nameEl.textContent = path.split('/').pop(); nameEl.classList.add('has-value'); }
-    else      { nameEl.textContent = 'No file selected'; nameEl.classList.remove('has-value'); }
-  }
-  setCertDisplay('cfg-cert', 'cfg-cert-name', app.ssl_cert_path || '');
-  setCertDisplay('cfg-key',  'cfg-key-name',  app.ssl_key_path  || '');
 
   // Env vars — values are write-only: server returns names with empty values.
   // Rows with an empty value field mean "keep existing value unless user types a new one".
@@ -1392,13 +1391,7 @@ function initSettings() {
 
   // Connect a domain (wizard with DNS check and free HTTPS)
   const dnsBtn = document.getElementById('btn-dns-setup');
-  if (dnsBtn) dnsBtn.onclick = () => openDomainWizard(app, {
-    onDone: updated => {
-      if (updated) app = updated;
-      _refreshNetworkFields();
-      renderHeader();
-    },
-  });
+  if (dnsBtn) dnsBtn.onclick = () => openDomainWizard(app, { onDone: _afterDomainChange });
 
   // Action tiles
   document.getElementById('tile-pull').onclick = () => tileAction('pull', 'Pull');
@@ -1408,48 +1401,6 @@ function initSettings() {
   const pullSub = document.getElementById('tile-pull-sub');
   if (pullTitle) pullTitle.textContent = 'Pull + Rebuild';
   if (pullSub) pullSub.textContent = 'Pick a commit, sync code, and rebuild without stop/restart';
-
-  // Cert scan buttons (search within app folder only)
-  document.getElementById('cfg-scan-cert').onclick = async () => {
-    const btn = document.getElementById('cfg-scan-cert');
-    btn.disabled = true; btn.textContent = 'Scanning…';
-    try {
-      const { certs } = await api.discoverAppCerts(APP_ID);
-      showCertPicker(document.getElementById('cfg-cert'), certs, 'certificates', document.getElementById('cfg-cert-name'));
-    } catch { toast('Scan failed', 'error'); }
-    finally { btn.disabled = false; btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Scan'; }
-  };
-  document.getElementById('cfg-scan-key').onclick = async () => {
-    const btn = document.getElementById('cfg-scan-key');
-    btn.disabled = true; btn.textContent = 'Scanning…';
-    try {
-      const { keys } = await api.discoverAppCerts(APP_ID);
-      showCertPicker(document.getElementById('cfg-key'), keys, 'private keys', document.getElementById('cfg-key-name'));
-    } catch { toast('Scan failed', 'error'); }
-    finally { btn.disabled = false; btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg> Scan'; }
-  };
-
-  // Cert upload buttons
-  document.getElementById('cfg-upload-cert').onclick = () => document.getElementById('cfg-cert-file').click();
-  document.getElementById('cfg-cert-file').onchange = async e => {
-    const file = e.target.files[0]; if (!file) return;
-    document.getElementById('cfg-upload-cert').disabled = true;
-    try {
-      const res = await api.uploadAppCert(APP_ID, file);
-      setCertDisplay('cfg-cert', 'cfg-cert-name', res.path);
-    } catch (err) { toast(err.message, 'error'); }
-    finally { document.getElementById('cfg-upload-cert').disabled = false; e.target.value = ''; }
-  };
-  document.getElementById('cfg-upload-key').onclick = () => document.getElementById('cfg-key-file').click();
-  document.getElementById('cfg-key-file').onchange = async e => {
-    const file = e.target.files[0]; if (!file) return;
-    document.getElementById('cfg-upload-key').disabled = true;
-    try {
-      const res = await api.uploadAppCert(APP_ID, file);
-      setCertDisplay('cfg-key', 'cfg-key-name', res.path);
-    } catch (err) { toast(err.message, 'error'); }
-    finally { document.getElementById('cfg-upload-key').disabled = false; e.target.value = ''; }
-  };
 
   // Delete
   document.getElementById('btn-delete').onclick = async () => {
@@ -1541,7 +1492,7 @@ function canToggleMaintenanceMode() {
 }
 
 function getMaintenanceToggleDisabledReason() {
-  if (app.domain && !app.nginx_enabled) return 'The nginx config for this domain is not active (writing it may have failed) — save the Network settings to retry';
+  if (app.domain && !app.nginx_enabled) return 'The nginx config for this domain is not active (writing it may have failed) — click Save Changes in Settings to retry';
   return 'Requires a domain: add one under Network, or set a base domain in system settings';
 }
 
@@ -1883,16 +1834,6 @@ async function saveMaintenancePages() {
   } finally {
     btn.textContent = 'Save pages';
   }
-}
-
-function addDomainRow(container, value = '') {
-  const row = document.createElement('div');
-  row.className = 'env-row';
-  row.innerHTML = `
-    <input class="input" placeholder="sub.example.com" value="${escAttr(value)}" data-domain-val style="flex:1" />
-    <button type="button" class="btn-remove" title="Remove">${icon.trash}</button>`;
-  row.querySelector('.btn-remove').addEventListener('click', () => row.remove());
-  container.appendChild(row);
 }
 
 function addEnvRow(container, key = '', value = '') {
@@ -2317,18 +2258,10 @@ async function saveSettings() {
   const dockerMemory = parseInt(document.getElementById('cfg-docker-memory').value, 10);
   const dockerTmpfsSize = parseInt(document.getElementById('cfg-docker-tmpfs-size').value, 10);
 
-  const allDomainInputs = [...document.querySelectorAll('#cfg-domains-rows [data-domain-val]')]
-                            .map(i => i.value.trim()).filter(Boolean);
   const payload = {
     start_command:  document.getElementById('cfg-cmd').value.trim()    || null,
     build_command:  document.getElementById('cfg-build').value.trim(),  // "" clears it
     port:           parseInt(document.getElementById('cfg-port').value) || null,
-    domain:         allDomainInputs[0] || null,
-    extra_domains:  allDomainInputs.slice(1),
-    redirect_domains: [...document.querySelectorAll('#cfg-redirect-domains-rows [data-domain-val]')]
-                        .map(i => i.value.trim()).filter(Boolean),
-    ssl_cert_path:  document.getElementById('cfg-cert').value.trim()   || null,
-    ssl_key_path:   document.getElementById('cfg-key').value.trim()    || null,
     no_web:         !!app?.no_web,
     auto_start:     document.getElementById('cfg-autostart').checked,
     restart_policy: document.getElementById('cfg-restart-policy').value,

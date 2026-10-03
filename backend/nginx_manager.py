@@ -588,7 +588,7 @@ server {{
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
   {strict_guard}
-
+{_ACME_LOCATION}
 {server_content}
 }}
 """
@@ -703,7 +703,7 @@ server {{
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
   {strict_guard}
-
+{_ACME_LOCATION}
 {server_content}
 }}
 """
@@ -743,8 +743,10 @@ server {{
     ssl_certificate_key "{ssl_key}";
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
-
-    return 301 {target};
+{_ACME_LOCATION}
+    location / {{
+        return 301 {target};
+    }}
 }}
 
 """

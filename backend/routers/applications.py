@@ -1445,6 +1445,19 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.nginx_enabled = ok
         if not ok:
             raise HTTPException(500, f"Nginx config failed: {msg}")
+    elif req.domain is not None and not req.domain.strip() and not app.no_web:
+        # Every custom domain was removed: drop them from nginx and fall back to
+        # the automatic subdomain (base domain) if there is one.
+        app.domain = None
+        app.extra_domains = "[]"
+        app.redirect_domains = "[]"
+        app.ssl_cert_path = None
+        app.ssl_key_path = None
+        app.nginx_enabled = False
+        if _syscfg.get_base_domain_cached():
+            await _write_app_nginx_config(app, db, await ensure_local_node(db))
+        else:
+            _best_effort_remove_app_nginx(app.name)
 
     await log_audit(db, "app.config_update", actor=actor, app_id=app.id, detail={"name": app.name})
     await db.commit()

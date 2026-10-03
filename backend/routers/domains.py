@@ -5,6 +5,7 @@
 - POST /api/domains/certificate   request a free Let's Encrypt certificate
 """
 import asyncio
+import ipaddress
 import logging
 import os
 import re
@@ -32,6 +33,24 @@ router = APIRouter(prefix="/api/domains", tags=["domains"])
 ISSUE_CERT_BIN = "/usr/local/lib/cloudbase/issue-cert"
 _DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 _EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,63}$")
+
+# Cloudflare's published proxy ranges (cloudflare.com/ips-v4, ips-v6)
+_CLOUDFLARE_NETS = [ipaddress.ip_network(n) for n in (
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18",
+    "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17",
+    "162.158.0.0/15", "104.16.0.0/13", "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+    "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32", "2405:8100::/32",
+    "2a06:98c0::/29", "2c0f:f248::/32",
+)]
+
+
+def _is_cloudflare(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(addr in net for net in _CLOUDFLARE_NETS if net.version == addr.version)
+
 
 _server_ip_cache: dict = {"ip": None, "at": 0.0}
 _issue_lock = asyncio.Lock()
@@ -115,12 +134,16 @@ async def check_domain(req: CheckRequest, _user: dict = Depends(_auth.require_pe
         "ips": ips,
         "dns_ok": bool(ips) and (server_ip in ips if server_ip else True),
         "reachable": False,
+        "cloudflare_proxy": bool(ips) and all(_is_cloudflare(ip) for ip in ips),
         "detail": "",
     }
     if not ips:
         result["detail"] = "No DNS record found yet. New records can take a few minutes to appear."
         return result
-    if server_ip and server_ip not in ips:
+    if result["cloudflare_proxy"]:
+        result["detail"] = ("This domain goes through Cloudflare’s proxy (orange cloud). Set it to DNS only (grey) "
+                            "while you set up HTTPS — you can turn the proxy back on afterwards.")
+    elif server_ip and server_ip not in ips:
         result["detail"] = f"{domain} points to {', '.join(ips)}, not to this server ({server_ip})."
 
     token = "cloudbase-check-" + secrets.token_hex(8)
