@@ -829,6 +829,38 @@ async def _crash_monitor():
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
+def read_panel_nginx() -> dict:
+    """Domain and certificate of the panel, read back from its nginx config."""
+    import re as _re
+    path = os.path.join(nm.NGINX_SITES_DIR, "cloudbase")
+    try:
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+    except OSError:
+        return {}
+    def _val(pattern):
+        m = _re.search(pattern, content)
+        return m.group(1).strip("\"'") if m else None
+    return {
+        "domain": _val(r"server_name\s+([^\s;]+)"),
+        "ssl_cert_path": _val(r"ssl_certificate\s+([^\s;]+)"),
+        "ssl_key_path": _val(r"ssl_certificate_key\s+([^\s;]+)"),
+    }
+
+
+def _refresh_panel_nginx() -> None:
+    panel = read_panel_nginx()
+    if not panel.get("domain"):
+        return
+    cert, key = panel.get("ssl_cert_path"), panel.get("ssl_key_path")
+    config = nm.generate_config("cloudbase", panel["domain"], PORT, cert, key, strict_hostnames=True)
+    ok, msg = nm.write_nginx_config("cloudbase", config)
+    if not ok:
+        log.warning("STARTUP panel nginx rewrite failed: %s", msg)
+        return
+    nm.write_default_catch_all(cert, key)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # First-run: generate a password if none exists. This must happen before
@@ -950,6 +982,14 @@ async def lifespan(app: FastAPI):
                 log.debug(f"STARTUP nginx regenerated for app {a.id} ({a.name})")
             except Exception as exc:
                 log.debug(f"STARTUP nginx regen failed for app {a.id}: {exc}")
+
+    # The panel's own nginx config is otherwise only written on "Save & apply";
+    # rewrite it so it always matches the current generator (e.g. serves the
+    # Let's Encrypt verification folder).
+    try:
+        await asyncio.to_thread(_refresh_panel_nginx)
+    except Exception as exc:
+        log.warning("STARTUP panel nginx refresh failed: %s", exc)
 
     monitor_task       = asyncio.create_task(_crash_monitor())
     stats_task         = asyncio.create_task(_stats_collector())
@@ -1538,6 +1578,78 @@ async def apply_cloudbase_nginx(
         "preview": config,
         "default_catchall": {"ok": catchall_ok, "message": catchall_msg},
     }
+
+
+class PanelDomainRequest(BaseModel):
+    domain: str
+    ssl_cert_path: Optional[str] = None
+    ssl_key_path: Optional[str] = None
+
+
+@app.post("/api/system/panel-domain")
+async def set_panel_domain(req: PanelDomainRequest, _: dict = Depends(auth.require_permission("system.manage"))):
+    """Set the panel's domain (and certificate) without touching the base domain."""
+    domain = nm._normalize_domain(req.domain)
+    if not domain:
+        raise HTTPException(400, "Enter a domain")
+    cert = nm._sanitize_ssl_path(req.ssl_cert_path)
+    key = nm._sanitize_ssl_path(req.ssl_key_path)
+    for writer, html in (
+        (nm.write_cloudbase_unavailable_page, nm.generate_cloudbase_unavailable_html(domain)),
+        (nm.write_cloudbase_unknown_host_page, nm.generate_cloudbase_unknown_host_html(domain)),
+    ):
+        ok, msg = writer(html)
+        if not ok:
+            raise HTTPException(500, f"Failed to write status page: {msg}")
+    config = nm.generate_config("cloudbase", domain, PORT, cert, key, strict_hostnames=True)
+    ok, msg = nm.write_nginx_config("cloudbase", config)
+    if not ok:
+        raise HTTPException(500, f"Failed to apply nginx config: {msg}")
+    nm.write_default_catch_all(cert, key)
+    import certificates as _certs
+    await _certs.forget_pending([domain])
+    return {"ok": True, "domain": domain, "https": bool(cert and key)}
+
+
+class BaseDomainRequest(BaseModel):
+    base_domain: Optional[str] = None
+
+
+@app.post("/api/system/base-domain")
+async def set_base_domain(req: BaseDomainRequest, db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_permission("system.manage"))):
+    """Set (or clear) the base domain for app subdomains. HTTPS is automatic:
+    every app gets its own certificate, so no wildcard certificate is kept."""
+    import re as _re2
+    base_domain = str(req.base_domain or "").strip().strip(".").lower()
+    if base_domain and not _re2.match(r'^[a-z0-9.-]+$', base_domain):
+        raise HTTPException(400, "Invalid base domain")
+    await _syscfg.set_base_settings(db, base_domain=base_domain, base_ssl_cert="", base_ssl_key="")
+    asyncio.create_task(_refresh_all_app_nginx())
+    return {"ok": True, "base_domain": base_domain}
+
+
+async def _refresh_all_app_nginx() -> None:
+    """Rewrite every app's nginx config (after base domain changes). This also
+    schedules automatic certificates for apps on the base domain."""
+    from routers.nodes import ensure_local_node as _eln
+    from routers.applications import _write_app_nginx_config as _wanc
+    try:
+        async with AsyncSessionLocal() as _db:
+            _apps = (await _db.execute(select(Application))).scalars().all()
+            _local = await _eln(_db)
+            _bdom = _syscfg.get_base_domain_cached()
+            for _a in _apps:
+                if not (_a.nginx_enabled and _a.domain) and not _bdom:
+                    if not _a.domain:
+                        # Was only reachable through the base domain, which is gone
+                        await asyncio.to_thread(nm.remove_nginx_config, _a.name)
+                    continue
+                try:
+                    await _wanc(_a, _db, _local)
+                except Exception as _e:
+                    log.warning("nginx refresh failed for app %s: %s", _a.name, _e)
+    except Exception as _e:
+        log.warning("nginx refresh batch failed: %s", _e)
 
 
 # ── System settings (ports, limits from config.yaml) ─────────────────────────

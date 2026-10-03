@@ -430,13 +430,14 @@ systemctl list-timers | grep certbot</pre>
 <p>Certificates are public: anyone can see which names share one, and Let’s Encrypt publishes all certificates in open logs.</p>
 
 <h2>Panel domain</h2>
-<p>Under <a href="/settings?s=domain">Settings → Domain &amp; SSL</a>, enter the panel’s domain and save. Then click <strong>Set up HTTPS</strong>: Cloudbase checks the domain, requests a certificate and switches the panel to HTTPS. The card shows until when it’s valid.</p>
-<p>Prefer your own certificate, like a Cloudflare Origin certificate? Open <strong>Use my own certificate</strong> and upload it. Cloudbase won’t renew those; <strong>Switch to a free certificate</strong> moves you back to an automatic one.</p>
+<p>Under <a href="/settings?s=domain">Settings → Domain &amp; SSL</a>, click <strong>Connect a domain</strong> next to the panel. It’s the same wizard as for apps: the domain, the DNS record with a live check, and a free certificate. The card then shows until when it’s valid.</p>
+<p>Set up the panel earlier with a certificate of your own, like a Cloudflare Origin certificate? It keeps working, and the card says so. <strong>Switch to a free certificate</strong> replaces it with one that renews itself.</p>
+<p>The panel’s nginx config is rewritten every time Cloudbase starts, so it always serves the verification folder Let’s Encrypt needs.</p>
 <p>Saving also regenerates the page shown while Cloudbase restarts and the page for hostnames that aren’t linked to an app.</p>
 
 <h2>Automatic app subdomains</h2>
-<p>Set a <strong>base domain</strong> such as <code>apps.example.com</code>, with a wildcard DNS record <code>*.apps.example.com</code> pointing at the primary. Every app is then reachable at <code>&lt;app-name&gt;.apps.example.com</code> without further setup.</p>
-<p>With HTTPS on <strong>Automatic</strong>, each app gets its own free certificate for its subdomain, usually within a minute after it starts. Let’s Encrypt can only issue a wildcard certificate through DNS verification, which would need access to your DNS provider — one certificate per app avoids that. If you have a wildcard certificate yourself, choose <strong>My own wildcard certificate</strong> and upload it instead.</p>
+<p>Click <strong>Set up app subdomains</strong> under <a href="/settings?s=domain">Settings → Domain &amp; SSL</a> and enter a base domain such as <code>apps.example.com</code>. The wizard shows the one record to add — a wildcard <code>*.apps</code> A record pointing at the primary — and checks it with a test name under it. Every app is then reachable at <code>&lt;app-name&gt;.apps.example.com</code>, and new apps work without new records.</p>
+<p>HTTPS is automatic: each app gets its own free certificate for its subdomain, usually within a minute after it starts. Let’s Encrypt can only issue a wildcard certificate through DNS verification, which would need access to your DNS provider — one certificate per app avoids that. A wildcard certificate set up earlier keeps working until you click <strong>Switch to automatic</strong>.</p>
 <p>A failed automatic request is retried after an hour. The app’s <strong>Settings → Network</strong> shows the state of its subdomain.</p>
 
 <h2>Cloudflare</h2>
