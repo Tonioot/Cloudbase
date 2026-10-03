@@ -1361,6 +1361,8 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         new_redirects = req.redirect_domains if req.redirect_domains is not None else json.loads(app.redirect_domains or "[]")
         all_domains = [new_primary] + (new_extra or []) + (new_redirects or [])
         await _check_domain_conflicts([d for d in all_domains if d], db, exclude_app_id=app.id)
+        from routers.domains import forget_pending
+        await forget_pending([d for d in all_domains if d])
 
     if req.domain is not None:
         app.domain = req.domain

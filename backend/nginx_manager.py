@@ -991,7 +991,9 @@ def write_nginx_config(app_name: str, config: str) -> tuple[bool, str]:
         return False, str(e)
 
 
-ACME_CONFIG_NAME = "cloudbase-acme"
+# nginx loads sites-enabled alphabetically and the first server_name wins, so
+# "zz-" makes an app's own server block always take precedence over this one.
+ACME_CONFIG_NAME = "zz-cloudbase-acme"
 
 
 def write_acme_server(domains: list[str]) -> tuple[bool, str]:
@@ -1013,6 +1015,7 @@ server {{
 
 def remove_acme_server() -> None:
     remove_nginx_config(ACME_CONFIG_NAME)
+    remove_nginx_config("cloudbase-acme")  # name used by earlier versions
 
 
 def write_acme_probe(token: str, content: str) -> tuple[bool, str]:

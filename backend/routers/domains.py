@@ -55,6 +55,51 @@ def _is_cloudflare(ip: str) -> bool:
 _server_ip_cache: dict = {"ip": None, "at": 0.0}
 _issue_lock = asyncio.Lock()
 
+# Domains being set up in the wizard that may not be routed to an app yet.
+# They get a temporary port-80 server that only answers verification
+# requests, so the check and Let's Encrypt both reach this server — also
+# through Cloudflare's proxy. Entries expire after an hour.
+_PENDING_TTL = 3600
+_pending: dict[str, float] = {}
+_acme_written: tuple = ()
+_acme_lock = asyncio.Lock()
+
+
+async def _sync_acme_server() -> tuple[bool, str]:
+    global _acme_written
+    async with _acme_lock:
+        now = time.time()
+        for d, expires in list(_pending.items()):
+            if expires < now:
+                del _pending[d]
+        names = tuple(sorted(_pending))
+        if names == _acme_written:
+            return True, ""
+        if names:
+            ok, msg = await asyncio.to_thread(nm.write_acme_server, list(names))
+        else:
+            await asyncio.to_thread(nm.remove_acme_server)
+            ok, msg = True, ""
+        if ok:
+            _acme_written = names
+        return ok, msg
+
+
+async def _mark_pending(domains: list[str]) -> tuple[bool, str]:
+    for d in domains:
+        _pending[d] = time.time() + _PENDING_TTL
+    return await _sync_acme_server()
+
+
+async def forget_pending(domains: list[str]) -> None:
+    """Called once domains are configured on an app (or set up is done)."""
+    changed = False
+    for d in domains:
+        if _pending.pop((d or "").strip().lower(), None) is not None:
+            changed = True
+    if changed:
+        await _sync_acme_server()
+
 
 def _clean_domain(value: str) -> str:
     d = (value or "").strip().lower()
@@ -177,7 +222,7 @@ class CheckRequest(BaseModel):
 
 
 @router.post("/check")
-async def check_domain(req: CheckRequest, _user: dict = Depends(_auth.require_permission("apps.view"))):
+async def check_domain(req: CheckRequest, _user: dict = Depends(_auth.require_permission("apps.configure"))):
     """DNS lookup plus a real HTTP round trip: a token file is placed in the
     challenge folder and fetched through the domain, exactly like Let's
     Encrypt will do. That proves both DNS and port 80 are right."""
@@ -202,6 +247,8 @@ async def check_domain(req: CheckRequest, _user: dict = Depends(_auth.require_pe
                             "Turn off “Always Use HTTPS” in Cloudflare, or set the record to DNS only (grey) while you set up HTTPS.")
     elif server_ip and server_ip not in ips:
         result["detail"] = f"{domain} points to {', '.join(ips)}, not to this server ({server_ip})."
+
+    await _mark_pending([domain])
 
     token = "cloudbase-check-" + secrets.token_hex(8)
     value = secrets.token_hex(16)
@@ -298,7 +345,7 @@ async def request_certificate(req: CertificateRequest, _user: dict = Depends(_au
 
     async with _issue_lock:
         # Serve challenges for names that aren't routed to an app yet
-        acme_ok, acme_msg = await asyncio.to_thread(nm.write_acme_server, domains)
+        acme_ok, acme_msg = await _mark_pending(domains)
         if not acme_ok:
             raise HTTPException(500, f"Couldn’t prepare nginx for verification: {acme_msg}")
         try:
@@ -310,7 +357,7 @@ async def request_certificate(req: CertificateRequest, _user: dict = Depends(_au
         except subprocess.TimeoutExpired:
             raise HTTPException(504, "Let’s Encrypt didn’t answer in time. Try again in a minute.")
         finally:
-            await asyncio.to_thread(nm.remove_acme_server)
+            await forget_pending(domains)
 
     output = (proc.stdout or "") + (proc.stderr or "")
     log.info("[certificate] domains=%s rc=%d", domains, proc.returncode)
