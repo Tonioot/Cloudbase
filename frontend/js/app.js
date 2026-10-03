@@ -1,5 +1,5 @@
 import { api, wsLogs, wsReplicaLogs, wsStats, wsNodeEvents, PermissionError } from './api.js';
-import { auditTableHTML, cssVar, icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, setBtn, parseDotEnv, pickTextFile, mergeEnvIntoRows } from './utils.js';
+import { auditTableHTML, cssVar, icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, setBtn, parseDotEnv, pickTextFile, mergeEnvIntoRows, timeAgo } from './utils.js';
 import { pickGitHubToken } from './sidebar.js';
 import { openDomainWizard, leCertName } from './domain-wizard.js';
 import { setCrumbs } from './shell.js';
@@ -476,7 +476,7 @@ function _waitForRemoteCommand(commandId, nodeId) {
 
 /* ─── Tabs ──────────────────────────────────────────────────────────────── */
 function initTabs() {
-  const tabs = ['logs', 'stats', 'files', 'instances', 'settings', 'activity'];
+  const tabs = ['logs', 'stats', 'files', 'instances', 'deployments', 'settings', 'activity'];
   tabs.forEach(t => {
     document.getElementById(`tab-${t}`).addEventListener('click', () => switchTab(t));
   });
@@ -510,6 +510,7 @@ function teardownTab(t) {
   }
   if (t === 'stats') { statsTabActive = false; } // Keep statWs alive — data keeps accumulating
   if (t === 'instances' && _instancesRefreshTimer) { clearInterval(_instancesRefreshTimer); _instancesRefreshTimer = null; }
+  if (t === 'deployments') { clearInterval(_deploysTimer); _deploysTimer = null; }
 }
 
 function setupTab(t) {
@@ -518,6 +519,7 @@ function setupTab(t) {
   if (t === 'files')     initFiles();
   if (t === 'instances') initInstances();
   if (t === 'settings')  initSettings();
+  if (t === 'deployments') initDeployments();
   if (t === 'activity')  initActivity();
 }
 
@@ -1400,6 +1402,44 @@ function _afterDomainChange(updated) {
   refreshMaintenanceUiState();
 }
 
+function initAutoDeploySettings() {
+  const toggle = document.getElementById('cfg-autodeploy');
+  if (!toggle) return;
+  const options = document.getElementById('autodeploy-options');
+  toggle.checked = !!app.auto_deploy;
+  const sync = () => options.classList.toggle('is-off', !toggle.checked);
+  toggle.onchange = sync;
+  sync();
+
+  const seg = document.getElementById('cfg-deploy-strategy');
+  const setStrategy = v => seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.value === v));
+  setStrategy(app.deploy_strategy || 'rolling');
+  seg.onclick = e => { const b = e.target.closest('button[data-value]'); if (b) setStrategy(b.dataset.value); };
+  // Without a domain nginx can't swap instances: new commits are built and restarted
+  const noRoute = app.no_web || !app.app_url;
+  seg.hidden = noRoute;
+  document.getElementById('cfg-deploy-strategy-hint').textContent = noRoute
+    ? 'This app has no domain, so a new commit is built and the running instances are restarted.'
+    : 'Rolling replaces instances one by one; blue/green switches all at once.';
+
+  const interval = document.getElementById('cfg-deploy-interval');
+  interval.value = String([60, 300, 900].includes(app.auto_deploy_interval) ? app.auto_deploy_interval : 60);
+
+  const branchSel = document.getElementById('cfg-deploy-branch');
+  const fallback = () => {
+    // Repository unreachable: keep the saved branch, or follow the checked-out one
+    const b = app.deploy_branch || '';
+    branchSel.innerHTML = `<option value="${escAttr(b)}">${escHtml(b || 'Current branch')}</option>`;
+  };
+  api.listBranches(APP_ID).then(res => {
+    const current = res.current_branch || res.default_branch || '';
+    const branches = res.branches?.length ? res.branches : [current].filter(Boolean);
+    if (!branches.length) return fallback();
+    branchSel.innerHTML = branches.map(b => `<option value="${escAttr(b)}">${escHtml(b)}${b === current ? ' (current)' : ''}</option>`).join('');
+    branchSel.value = app.deploy_branch || current;
+  }).catch(fallback);
+}
+
 function initSettings() {
   const isViewer = !_canManageApps();
   _settingsInitialized = true;
@@ -1415,6 +1455,7 @@ function initSettings() {
   document.getElementById('cfg-build').value        = app.build_command  || '';
   document.getElementById('cfg-port').value         = app.port           || '';
   renderNetwork();
+  initAutoDeploySettings();
 
   _updateAppTypeVisibility(app);
   document.getElementById('cfg-autostart').checked  = !!app.auto_start;
@@ -2376,6 +2417,10 @@ async function saveSettings() {
     autoscale_min_replicas: parseInt(document.getElementById('cfg-autoscale-min').value) || 1,
     autoscale_max_replicas: parseInt(document.getElementById('cfg-autoscale-max').value) || 4,
     autoscale_cpu_target:   parseFloat(document.getElementById('cfg-autoscale-cpu').value) || 70,
+    auto_deploy:            document.getElementById('cfg-autodeploy').checked,
+    deploy_branch:          document.getElementById('cfg-deploy-branch').value,
+    deploy_strategy:        document.querySelector('#cfg-deploy-strategy button.active')?.dataset.value || 'rolling',
+    auto_deploy_interval:   parseInt(document.getElementById('cfg-deploy-interval').value, 10) || 60,
     env_vars,
     env_var_keys,
     ...(tokenId ? { github_token_id: tokenId } : token ? { github_token: token } : {}),
@@ -2476,6 +2521,113 @@ async function tileAction(endpoint, label) {
 }
 
 /** Pull a commit and deploy it in one go: strategy = rebuild | rolling | blue_green. */
+/* ─── DEPLOYMENTS ───────────────────────────────────────────────────────── */
+let _deploysTimer = null;
+let _deploysOpenLog = null;
+
+const _shortSha = sha => (sha || '').slice(0, 7);
+const _fmtDuration = (a, b) => {
+  if (!a || !b) return '';
+  const s = Math.max(0, Math.round((new Date(b) - new Date(a)) / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
+};
+
+function initDeployments() {
+  renderAutoDeploySummary();
+  loadDeployments();
+  clearInterval(_deploysTimer);
+  _deploysTimer = setInterval(loadDeployments, 5000);
+}
+
+function renderAutoDeploySummary() {
+  const el = document.getElementById('deploys-auto');
+  if (!el) return;
+  el.innerHTML = app.auto_deploy
+    ? `<span class="dot" style="background:var(--green)"></span><span>Auto-deploy is on — new commits on <code>${escHtml(app.deploy_branch || 'the current branch')}</code> are rolled out ${app.deploy_strategy === 'blue_green' ? 'blue/green' : 'rolling'}.</span>`
+    : `<span class="dot" style="background:var(--faint)"></span><span>Auto-deploy is off. Deploys happen from the Deploy menu.</span>`;
+  el.insertAdjacentHTML('beforeend', `<button type="button" class="btn btn-sm btn-ghost" id="deploys-auto-settings">${app.auto_deploy ? 'Change' : 'Turn on'}</button>`);
+  document.getElementById('deploys-auto-settings').onclick = () => {
+    switchTab('settings');
+    setTimeout(() => document.getElementById('autodeploy-section')?.scrollIntoView({ block: 'center' }), 50);
+  };
+}
+
+async function loadDeployments() {
+  const list = document.getElementById('deploys-list');
+  if (!list) return;
+  let data;
+  try { data = await api.listDeployments(APP_ID); } catch (e) { list.innerHTML = `<div class="apps-empty">${escHtml(e.message)}</div>`; return; }
+  const rows = data.deployments || [];
+  if (!rows.length) {
+    list.innerHTML = `<div class="deploys-empty"><strong>No deployments yet</strong><span>Deploys from the Deploy menu and automatic deploys show up here, with their logs.</span></div>`;
+    return;
+  }
+  const currentSha = (app.source_revision || '').replace('-dirty', '');
+  const live = rows.find(r => r.status === 'success' && r.commit_sha === currentSha);
+  const canDeploy = _canManageApps();
+  list.innerHTML = rows.map(d => {
+    const isLive = live && d.id === live.id;
+    const statusText = d.status === 'running' ? 'Deploying' : d.status === 'success' ? (isLive ? 'Live' : 'Deployed') : 'Failed';
+    const trigger = { auto: 'Auto', manual: 'Manual', rollback: 'Rollback' }[d.trigger] || d.trigger;
+    const when = d.created_at ? timeAgo(d.created_at) : '';
+    const dur = _fmtDuration(d.created_at, d.finished_at);
+    return `
+      <div class="deploy-row ${d.status}${isLive ? ' live' : ''}" data-id="${d.id}">
+        <span class="deploy-status"><span class="deploy-dot"></span>${statusText}</span>
+        <span class="deploy-main">
+          <span class="deploy-msg">${escHtml(d.commit_message || (d.status === 'running' ? 'Fetching code…' : 'Unknown commit'))}</span>
+          <span class="deploy-meta">${d.commit_sha ? `<code>${_shortSha(d.commit_sha)}</code>` : ''}${d.branch ? ` · ${escHtml(d.branch)}` : ''}${d.commit_author ? ` · ${escHtml(d.commit_author)}` : ''} · ${trigger}${d.trigger !== 'auto' && d.actor ? ` by ${escHtml(d.actor)}` : ''}</span>
+          ${d.status === 'failed' && d.error ? `<span class="deploy-error">${escHtml(d.error)}</span>` : ''}
+        </span>
+        <span class="deploy-when">${when}${dur ? `<small>${dur}</small>` : ''}</span>
+        <span class="deploy-actions">
+          <button type="button" class="btn btn-sm btn-ghost" data-act="log">${_deploysOpenLog === d.id ? 'Hide log' : 'Log'}</button>
+          ${canDeploy && d.status === 'success' && !isLive && d.commit_sha ? '<button type="button" class="btn btn-sm" data-act="rollback">Roll back to this</button>' : ''}
+          ${canDeploy && d.status === 'failed' && d.commit_sha ? '<button type="button" class="btn btn-sm" data-act="retry">Retry</button>' : ''}
+        </span>
+        ${_deploysOpenLog === d.id ? '<pre class="deploy-log" data-log>Loading…</pre>' : ''}
+      </div>`;
+  }).join('');
+
+  list.querySelectorAll('.deploy-row').forEach(row => {
+    const d = rows.find(r => String(r.id) === row.dataset.id);
+    row.querySelector('[data-act="log"]').onclick = () => {
+      _deploysOpenLog = _deploysOpenLog === d.id ? null : d.id;
+      loadDeployments();
+    };
+    row.querySelector('[data-act="rollback"]')?.addEventListener('click', async () => {
+      if (!await confirm(`Roll back to ${_shortSha(d.commit_sha)}?`, escHtml(d.commit_message || '') + '<br><br>The app is rebuilt from this commit and rolled out. Auto-deploy puts newer commits live again on the next push.')) return;
+      deployCommit(d.commit_sha, 'rollback');
+    });
+    row.querySelector('[data-act="retry"]')?.addEventListener('click', () => deployCommit(d.commit_sha, 'manual'));
+    const pre = row.querySelector('[data-log]');
+    if (pre) {
+      api.getDeployment(APP_ID, d.id).then(full => {
+        pre.textContent = full.log || (d.status === 'running' ? 'Waiting for output…' : 'No output recorded.');
+        pre.scrollTop = pre.scrollHeight;
+      }).catch(e => { pre.textContent = e.message; });
+    }
+  });
+}
+
+/** Deploy a specific commit with the app's strategy (rollback / retry). */
+async function deployCommit(commit, trigger = 'manual') {
+  const strategy = app.deploy_strategy || 'rolling';
+  const dlg = openActionLogsDialog(trigger === 'rollback' ? `Roll back to ${_shortSha(commit)}` : `Deploy ${_shortSha(commit)}`);
+  try {
+    const res = await api.streamAction(`/apps/${APP_ID}/deploy/stream`, { commit, strategy, trigger }, line => dlg.append(line));
+    dlg.setStatus('Done');
+    toast(res?.message || 'Deploy finished');
+  } catch (e) {
+    dlg.append(`[Error] ${e.message}`);
+    dlg.setStatus('Failed');
+    toast(e.message, 'error');
+  } finally {
+    try { app = await api.getApp(APP_ID); updateHeaderStatus(); } catch { /* keep header */ }
+    if (activeTab === 'deployments') loadDeployments();
+  }
+}
+
 async function pullAndDeploy(strategy) {
   const commit = await openCommitPicker();
   if (commit === null) return;

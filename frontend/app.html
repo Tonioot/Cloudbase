@@ -109,6 +109,7 @@
       <nav class="tabs" aria-label="Application sections">
         <button class="tab-btn" id="tab-logs">Logs</button>
         <button class="tab-btn" id="tab-instances">Instances</button>
+        <button class="tab-btn" id="tab-deployments">Deployments</button>
         <button class="tab-btn" id="tab-stats">Metrics</button>
         <button class="tab-btn" id="tab-files">Files</button>
         <button class="tab-btn" id="tab-settings">Settings</button>
@@ -425,6 +426,44 @@
               </div>
             </div>
 
+            <!-- Auto-deploy -->
+            <div class="settings-group" id="autodeploy-section" data-perm="apps.configure">
+              <div class="settings-group-hd">
+                <div class="settings-group-title">Auto-deploy</div>
+                <div class="settings-group-sub">Deploy new commits automatically. Cloudbase checks the branch for new commits and rolls them out.</div>
+              </div>
+              <div class="settings-group-bd">
+                <div class="field">
+                  <label class="toggle-row">
+                    <span class="field-label" style="margin-bottom:0">Deploy new commits automatically</span>
+                    <label class="toggle"><input type="checkbox" id="cfg-autodeploy" /><span class="toggle-slider"></span></label>
+                  </label>
+                </div>
+                <div id="autodeploy-options">
+                  <div class="field">
+                    <label class="field-label" for="cfg-deploy-branch">Branch</label>
+                    <select class="input" id="cfg-deploy-branch" style="max-width:320px"><option value="">Loading branches…</option></select>
+                  </div>
+                  <div class="field">
+                    <label class="field-label">Strategy</label>
+                    <div class="segmented" id="cfg-deploy-strategy" role="radiogroup">
+                      <button type="button" data-value="rolling" role="radio">Rolling</button>
+                      <button type="button" data-value="blue_green" role="radio">Blue/green</button>
+                    </div>
+                    <div class="field-hint" id="cfg-deploy-strategy-hint">Rolling replaces instances one by one; blue/green switches all at once.</div>
+                  </div>
+                  <div class="field">
+                    <label class="field-label" for="cfg-deploy-interval">Check for new commits every</label>
+                    <select class="input" id="cfg-deploy-interval" style="max-width:200px">
+                      <option value="60">minute</option>
+                      <option value="300">5 minutes</option>
+                      <option value="900">15 minutes</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <!-- Network -->
             <div class="settings-group">
               <div class="settings-group-hd">
@@ -596,6 +635,14 @@
           </div>
         </div>
       </div><!-- /panel-instances -->
+
+      <!-- DEPLOYMENTS -->
+      <div class="tab-panel" id="panel-deployments">
+        <div class="deploys-head">
+          <div class="deploys-auto" id="deploys-auto"></div>
+        </div>
+        <div id="deploys-list" class="deploys-list"><div class="apps-empty">Loading…</div></div>
+      </div><!-- /panel-deployments -->
 
       <!-- ACTIVITY -->
       <div class="tab-panel" id="panel-activity">

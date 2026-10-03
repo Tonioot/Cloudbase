@@ -170,6 +170,15 @@ export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panel
   }
 
   /* ── 2. DNS ──────────────────────────────────────────────────────────── */
+  // Visitors and Let's Encrypt connect on ports 80 and 443
+  function portsNote() {
+    const sv = state.server || {};
+    if (sv.behind_nat && sv.local_ip) {
+      return `<div class="dw-ports"><strong>This server is behind a router.</strong> Forward ports <code>80</code> and <code>443</code> on your router to <span class="dw-copyable" data-copy="${esc(sv.local_ip)}"><code>${esc(sv.local_ip)}</code>${ICON.copy}</span> — otherwise nothing reaches it from the internet.</div>`;
+    }
+    return '<div class="dw-ports">Ports <code>80</code> and <code>443</code> must reach this server. Open them in its firewall (and in your hosting provider’s firewall, if it has one).</div>';
+  }
+
   function renderDns() {
     const { name, zone } = splitDomain(state.domain);
     const ip = state.server?.ip;
@@ -189,6 +198,7 @@ export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panel
             <span class="dw-copyable" data-copy="${esc(r.value || '')}"><span class="dw-mono">${esc(r.value || 'IP unknown')}</span>${ICON.copy}</span>
           </div>`).join('')}
       </div>
+      ${portsNote()}
       <div class="dw-hint">Leave <em>TTL</em> on its default. Using Cloudflare? The proxy (orange cloud) can stay on as long as <em>Always Use HTTPS</em> is off. If the check below stays red, set the record to <em>DNS only</em> (grey) for a moment.</div>
       <div class="dw-status" id="dw-status"></div>`;
 

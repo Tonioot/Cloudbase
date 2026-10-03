@@ -65,6 +65,7 @@ export const GUIDES = [
   body: `
 <h2>Checklist for a new setup</h2>
 <ol class="guide-steps">
+  <li><strong>Make ports 80 and 443 reachable.</strong> All web traffic and HTTPS certificates go through them. Open them in the server’s firewall and your hosting provider’s firewall. Server at home? Forward both ports on your router to the server’s local IP address — the domain wizard shows which one.</li>
   <li><strong>Start on boot.</strong> Run <code>cloudbase enable</code> on the server once, so Cloudbase and its apps come back after a reboot. <code>cloudbase status</code> shows whether the service is installed and running.</li>
   <li><strong>Serve the panel over HTTPS.</strong> Point a domain at the server, enter it under <a href="/settings?s=domain">Domain &amp; SSL</a> and click <strong>Set up HTTPS</strong> — the certificate is free and renews itself. Until then the panel is plain HTTP on port 7823.</li>
   <li><strong>Close port 7823.</strong> Once the panel has a domain, only ports 80, 443 and 22 need to be open — see <a href="/guides?g=system-settings">System settings</a>.</li>
@@ -251,8 +252,8 @@ SESSION_SECRET=change-me</pre>
   slug: 'deploying',
   group: 'Apps',
   title: 'Deploying updates',
-  summary: 'Pull & deploy, rolling vs. blue/green, rebuilds and what happens when a deploy fails.',
-  keywords: 'deploy rolling blue green zero downtime pull commit rebuild health check rollback',
+  summary: 'Auto-deploy on push, rolling vs. blue/green, deploy history, rollbacks and failed deploys.',
+  keywords: 'deploy rolling blue green zero downtime pull commit rebuild health check rollback auto-deploy cd continuous history branch',
   lead: 'The <strong>Deploy</strong> menu in the app header brings new code live. You choose where the code comes from and how running instances are replaced.',
   body: `
 <h2>The Deploy menu</h2>
@@ -290,8 +291,22 @@ SESSION_SECRET=change-me</pre>
 <h2>When a deploy fails</h2>
 <p>If a new instance doesn’t become healthy, the deploy stops and is rolled back: new instances are removed and the old ones keep serving. Nothing is switched in nginx until the new code proves it works. Read the reason in the deploy log, fix it, and deploy again.</p>
 
+<h2>Auto-deploy</h2>
+<p>Turn on <strong>Auto-deploy</strong> in the app’s settings and every new commit on the chosen branch is put live by itself, with the strategy you pick. Cloudbase checks the branch every minute (or every 5 or 15 minutes) by asking the Git host for its latest commit — that’s tiny and works from anywhere, also when the panel isn’t reachable from the internet. No webhook or extra GitHub permission is needed.</p>
+<ul>
+  <li>Several pushes in a row deploy only the newest commit.</li>
+  <li>A push during a running deploy waits; the next check picks it up.</li>
+  <li>Only commits that were never deployed before go out automatically. A commit whose deploy failed isn’t retried over and over — push a fix, or click <strong>Retry</strong>.</li>
+  <li>An app that isn’t running is only built; it starts with the new code next time.</li>
+  <li>Apps without a domain, like background workers, can’t be swapped through nginx: their image is rebuilt and the running instances restarted.</li>
+</ul>
+
+<h2>Deploy history and rollbacks</h2>
+<p>The <strong>Deployments</strong> tab lists every deploy — automatic, from the Deploy menu, or a rollback — with the commit, who or what started it, how long it took and its full log. The deploy that is currently live is marked <em>Live</em>.</p>
+<p><strong>Roll back to this</strong> on an older deploy builds that commit again and rolls it out the same way. The rollback stays live until the next push — auto-deploy doesn’t put the newer commit back by itself.</p>
+
 <h2>Following a deploy</h2>
-<p>Deploys open a live log of every step: git, the image build and each instance replacement. The same lines are kept in the app’s <strong>Logs</strong> tab under <em>All instances</em>, so you can close the dialog and come back later. Only one deploy runs per app at a time.</p>
+<p>Deploys from the menu open a live log of every step: git, the image build and each instance replacement. The same log is kept in the <strong>Deployments</strong> tab, so you can close the dialog and come back later. Only one deploy runs per app at a time.</p>
 
 <div class="callout callout--tip"><p>Want a maintenance page during a deploy that changes the database? Turn on <strong>update mode</strong> first (<a href="/guides?g=maintenance-pages">Maintenance pages</a>), deploy, then turn it off.</p></div>
 `,
@@ -445,7 +460,9 @@ systemctl list-timers | grep certbot</pre>
 <p>Behind the proxy, Cloudflare’s 526 error means the server showed a certificate Cloudflare doesn’t accept for that name — usually because the app has no certificate of its own yet. Set up HTTPS for it as above.</p>
 
 <h2>Servers at home</h2>
-<p>Behind a home router, the server often can’t reach its own public address (no “NAT loopback”). The wizard detects this and checks nginx locally instead; the real test happens when Let’s Encrypt connects from outside. Make sure ports 80 and 443 are forwarded to the server.</p>
+<p>Behind a home router, visitors reach your public IP address — the router has to pass ports <strong>80</strong> and <strong>443</strong> on to the server (port forwarding). The wizard notices when the server is behind a router and shows the local address to forward to, for example <code>192.168.1.20</code>. Give the server a fixed local address in the router, so the forwarding keeps working after a restart.</p>
+<p>Such a server often can’t reach its own public address (no “NAT loopback”). The wizard then checks nginx locally instead; the real test happens when Let’s Encrypt connects from outside.</p>
+<p>If your home connection’s public IP changes now and then, the DNS records need to follow it — use your provider’s dynamic DNS, or Cloudflare with a DDNS updater.</p>
 
 <h2>Unknown hostnames</h2>
 <p>A hostname that reaches the server but isn’t linked to any app gets a neutral “Nothing is deployed here” page, instead of accidentally showing another app.</p>
@@ -693,7 +710,7 @@ cloudbase import ~/cloudbase-backup.tar.gz</pre>
 </table>
 
 <h2>Firewall</h2>
-<p>Only these ports need to be open to the internet on the primary: <code>80</code> and <code>443</code> for nginx, and <code>22</code> for SSH. Port <code>7823</code> can be closed once the panel has a domain. Instance and tunnel ports don’t need to be public — nginx reaches them locally. Remote nodes need no inbound ports at all.</p>
+<p>Only these ports need to be open to the internet on the primary: <code>80</code> and <code>443</code> for nginx, and <code>22</code> for SSH. At home, forward <code>80</code> and <code>443</code> on your router to the primary. Port <code>7823</code> can be closed once the panel has a domain. Instance and tunnel ports don’t need to be public — nginx reaches them locally. Remote nodes need no inbound ports at all.</p>
 
 <h2>The config file</h2>
 <pre>~/.cloudbase/config.yaml</pre>

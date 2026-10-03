@@ -157,3 +157,8 @@
 .net-cert-warn { color: var(--yellow); }
 .net-cert-bad { color: var(--red); }
 .net-cert-own { color: var(--text-2); }
+
+.dw-ports { font-size: 12.5px; line-height: 1.6; color: var(--text-2); padding: 10px 12px; border-radius: var(--radius-sm); background: var(--field); }
+.dw-ports strong { color: var(--text); font-weight: 500; }
+.dw-ports code { font-size: 12px; color: var(--text); background: var(--hover); padding: 1px 5px; border-radius: 4px; }
+.dw-ports .dw-copyable { margin: 0; padding: 0 2px; display: inline-flex; vertical-align: middle; }

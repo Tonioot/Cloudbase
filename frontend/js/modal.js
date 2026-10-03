@@ -131,7 +131,7 @@ export function openDeployModal(onSuccess) {
         return false;
       }
       if (!repo) {
-        errEl.textContent = 'GitHub repository URL is required.';
+        errEl.textContent = 'Repository URL is required.';
         errEl.style.display = 'block';
         return false;
       }
@@ -148,8 +148,52 @@ export function openDeployModal(onSuccess) {
   });
 
   // ── Next / Back ────────────────────────────────────────────────────────────
-  modal.querySelector('#btn-next').addEventListener('click', () => {
+  // The Source step checks the repository (and token) before moving on, so
+  // a typo or missing token shows up now instead of as a failed first build
+  let repoChecked = null;  // "<url>|<token>" that last passed
+  const repoKey = () => [
+    modal.querySelector('#f-repo').value.trim(),
+    modal.querySelector('#f-token-id').value.trim() || modal.querySelector('#f-token').value.trim(),
+  ].join('|');
+
+  async function checkRepository() {
+    if (repoChecked === repoKey()) return true;
+    const next = modal.querySelector('#btn-next');
+    const errEl = modal.querySelector('#modal-error');
+    const hint = modal.querySelector('#f-repo-hint');
+    const label = next.innerHTML;
+    next.disabled = true;
+    next.textContent = 'Checking repository…';
+    try {
+      const tokenId = modal.querySelector('#f-token-id').value.trim();
+      const res = await api.checkRepo({
+        repo_url: modal.querySelector('#f-repo').value.trim(),
+        github_token_id: tokenId || null,
+        github_token: tokenId ? null : (modal.querySelector('#f-token').value.trim() || null),
+      });
+      if (!res.ok) {
+        errEl.textContent = res.message;
+        errEl.style.display = 'block';
+        hint.textContent = '';
+        return false;
+      }
+      modal.querySelector('#f-repo').value = res.repo_url;
+      hint.innerHTML = `<span class="repo-ok">Repository found</span> · default branch <code>${res.default_branch}</code>`;
+      repoChecked = repoKey();
+      return true;
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.style.display = 'block';
+      return false;
+    } finally {
+      next.disabled = false;
+      next.innerHTML = label;
+    }
+  }
+
+  modal.querySelector('#btn-next').addEventListener('click', async () => {
     if (!validateStep(currentStep)) return;
+    if (currentStep === 1 && !await checkRepository()) return;
     showStep(currentStep + 1);
   });
 
@@ -203,7 +247,7 @@ function modalHTML() {
       <div class="modal-header">
         <div>
           <div class="modal-title">Deploy Application</div>
-          <div class="modal-sub">Launch from GitHub with safe defaults</div>
+          <div class="modal-sub">Launch from a Git repository with safe defaults</div>
         </div>
         <button class="modal-close" id="modal-close">${icon.x}</button>
       </div>
@@ -250,14 +294,15 @@ function modalHTML() {
                 <input class="input" id="f-name" placeholder="my-app" required autocomplete="off" />
               </div>
               <div class="field deploy-field-span-2">
-                <label class="field-label">GitHub Repository URL <span class="req">*</span></label>
+                <label class="field-label">Repository URL <span class="req">*</span></label>
                 <div class="input-icon-wrap">
                   <span class="icon">${icon.github}</span>
                   <input class="input" id="f-repo" placeholder="https://github.com/user/repo" required />
                 </div>
+                <div class="field-hint" id="f-repo-hint">Any Git host over HTTPS — GitHub, GitLab, Bitbucket, Gitea…</div>
               </div>
               <div class="field deploy-field-span-2 deploy-token-field">
-                <label class="field-label">GitHub Token <span class="hint">optional for private repositories</span></label>
+                <label class="field-label">Access token <span class="hint">only for private repositories</span></label>
                 <div class="deploy-token-row">
                   <div class="input-icon-wrap deploy-input-grow">
                     <span class="icon">${icon.lock}</span>

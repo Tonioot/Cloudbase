@@ -91,9 +91,6 @@ function renderDomain(root) {
     ${group('App subdomains',
       'Give every app an automatic address like <code>myapp.apps.example.com</code>, before or instead of its own domain.',
       `<div class="https-card" id="base-card"><span class="settings-note">Loading…</span></div>`)}
-    ${group('Status pages',
-      'The page nginx shows while Cloudbase restarts, and the page for hostnames that aren’t linked to an app, follow the panel domain.',
-      `<div class="settings-note">Nothing to configure here.</div>`)}
   `;
 
   const live = { domain: null, cert: null, base: null, baseCert: null };

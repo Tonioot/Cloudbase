@@ -74,6 +74,16 @@ async def _server_ip() -> Optional[str]:
     return ip
 
 
+def _local_ipv4() -> Optional[str]:
+    """The address this server uses on its own network (no traffic is sent)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("1.1.1.1", 80))
+            return sock.getsockname()[0]
+    except OSError:
+        return None
+
+
 def _local_ipv6_addresses() -> set[str]:
     try:
         import psutil
@@ -166,8 +176,18 @@ def _fetch_via(ip: str, domain: str, path: str, timeout: float = 6.0) -> tuple[i
 @router.get("/server")
 async def server_info(_user: dict = Depends(_auth.require_permission("apps.view"))):
     ok, reason = certs.capability()
+    public_ip = await _server_ip()
+    local_ip = _local_ipv4()
+    behind_nat = False
+    try:
+        behind_nat = bool(local_ip and public_ip and local_ip != public_ip and ipaddress.ip_address(local_ip).is_private)
+    except ValueError:
+        pass
     return {
-        "ip": await _server_ip(),
+        "ip": public_ip,
+        "local_ip": local_ip,
+        # Behind a router: ports 80/443 have to be forwarded to local_ip
+        "behind_nat": behind_nat,
         "https_available": ok,
         "https_reason": reason,
         "email": certs.acme_email(),

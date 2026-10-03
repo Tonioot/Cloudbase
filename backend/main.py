@@ -1000,6 +1000,8 @@ async def lifespan(app: FastAPI):
     autoscaler_task    = asyncio.create_task(_autoscaler())
     orphan_task        = asyncio.create_task(_orphan_replica_cleanup())
     overview_task      = asyncio.create_task(_overview_sampler())
+    import deploys as _deploys
+    auto_deploy_task   = asyncio.create_task(_deploys.auto_deploy_loop())
 
     # Start node agent if configured (as an integrated background task)
     agent_task = None
@@ -1008,7 +1010,7 @@ async def lifespan(app: FastAPI):
         agent_task = asyncio.create_task(node_agent.start_agent())
 
     yield
-    for task in (monitor_task, stats_task, node_task, history_task, remote_stats_task, cleanup_task, autoscaler_task, orphan_task, overview_task, agent_task):
+    for task in (monitor_task, stats_task, node_task, history_task, remote_stats_task, cleanup_task, autoscaler_task, orphan_task, overview_task, auto_deploy_task, agent_task):
         if not task: continue
         task.cancel()
         try:

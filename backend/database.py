@@ -72,6 +72,10 @@ async def init_db():
             ("autoscale_min_replicas", "INTEGER NOT NULL DEFAULT 1"),
             ("autoscale_max_replicas", "INTEGER NOT NULL DEFAULT 4"),
             ("autoscale_cpu_target",   "FLOAT NOT NULL DEFAULT 70.0"),
+            ("auto_deploy",            "BOOLEAN NOT NULL DEFAULT 0"),
+            ("deploy_branch",          "VARCHAR(200)"),
+            ("deploy_strategy",        "VARCHAR(20) NOT NULL DEFAULT 'rolling'"),
+            ("auto_deploy_interval",   "INTEGER NOT NULL DEFAULT 60"),
         ]:
             if col in existing_columns:
                 continue

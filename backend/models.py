@@ -57,6 +57,11 @@ class Application(Base):
     app_type = Column(String(50), nullable=True)
     start_command = Column(String(500), nullable=True)
     build_command = Column(String(500), nullable=True)  # runs once during `docker build` (e.g. npm run build)
+    # Auto-deploy: poll the branch and roll out new commits
+    auto_deploy          = Column(Boolean, default=False, nullable=False)
+    deploy_branch        = Column(String(200), nullable=True)   # None = the branch that is checked out
+    deploy_strategy      = Column(String(20), default="rolling", nullable=False)  # rolling | blue_green
+    auto_deploy_interval = Column(Integer, default=60, nullable=False)  # seconds between checks
     port          = Column(Integer, nullable=True)   # internal port (inside container)
     external_port = Column(Integer, nullable=True)   # host port (auto-assigned 8000–8999)
     status = Column(String(20), default="stopped")
@@ -228,3 +233,23 @@ class SystemConfig(Base):
     id = Column(Integer, primary_key=True, index=True)
     key = Column(String(100), unique=True, nullable=False, index=True)
     value = Column(Text, nullable=True)
+
+
+class Deployment(Base):
+    """One deploy of an app: what was deployed, how it started and how it went."""
+    __tablename__ = "deployments"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    app_id         = Column(Integer, ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    commit_sha     = Column(String(64), nullable=True)
+    commit_message = Column(String(500), nullable=True)
+    commit_author  = Column(String(200), nullable=True)
+    branch         = Column(String(200), nullable=True)
+    trigger        = Column(String(20), nullable=False, default="manual")   # manual | auto | rollback
+    strategy       = Column(String(20), nullable=False, default="rolling")  # rolling | blue_green | rebuild | restart
+    status         = Column(String(20), nullable=False, default="running")  # running | success | failed
+    error          = Column(Text, nullable=True)
+    log            = Column(Text, nullable=True)
+    actor          = Column(String(100), nullable=True)
+    created_at     = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    finished_at    = Column(DateTime, nullable=True)

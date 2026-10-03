@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db, AsyncSessionLocal
 import datetime as _dt
-from models import Application, ApplicationReplica, Node, StatsHistory, NodeCommand, AuditLog
+from models import Application, ApplicationReplica, Node, StatsHistory, NodeCommand, AuditLog, Deployment
 import process_manager as pm
 import nginx_manager as nm
 import certificates as certs
@@ -128,6 +128,10 @@ class UpdateRequest(BaseModel):
     autoscale_min_replicas: Optional[int]   = None
     autoscale_max_replicas: Optional[int]   = None
     autoscale_cpu_target:   Optional[float] = None
+    auto_deploy:            Optional[bool]  = None
+    deploy_branch:          Optional[str]   = None   # "" = the checked-out branch
+    deploy_strategy:        Optional[str]   = None   # rolling | blue_green
+    auto_deploy_interval:   Optional[int]   = None   # seconds
 
 
 class MaintenancePageConfig(BaseModel):
@@ -204,6 +208,7 @@ async def _cleanup_app_dependencies(db: AsyncSession, app_id: int) -> None:
     )
     await db.execute(delete(StatsHistory).where(StatsHistory.app_id == app_id))
     await db.execute(delete(ApplicationReplica).where(ApplicationReplica.app_id == app_id))
+    await db.execute(delete(Deployment).where(Deployment.app_id == app_id))
 
 
 def _best_effort_remove_app_nginx(app_name: str) -> None:
@@ -765,9 +770,86 @@ async def _request_can_manage_apps(request: Request) -> bool:
 
 
 def _build_clone_url(repo_url: str, token: Optional[str]) -> str:
-    if token and "github.com" in repo_url:
-        repo_url = repo_url.replace("https://", f"https://{token}@")
-    return repo_url
+    """Put an access token in an HTTPS clone URL, in the form each host expects."""
+    if not token or not repo_url.startswith("https://"):
+        return repo_url
+    from urllib.parse import quote
+    host = repo_url[len("https://"):].split("/")[0].lower()
+    if "@" in host:
+        return repo_url  # credentials already in the URL
+    if host == "github.com" or host.endswith(".github.com"):
+        userinfo = quote(token, safe="")
+    elif "gitlab" in host:
+        userinfo = f"oauth2:{quote(token, safe='')}"
+    elif host == "bitbucket.org":
+        userinfo = f"x-token-auth:{quote(token, safe='')}"
+    else:  # Gitea, Forgejo, Codeberg and most others accept the token as password
+        userinfo = f"git:{quote(token, safe='')}"
+    return repo_url.replace("https://", f"https://{userinfo}@", 1)
+
+
+class CheckRepoRequest(BaseModel):
+    repo_url: str
+    github_token: Optional[str] = None
+    github_token_id: Optional[str] = None
+
+
+def _normalize_repo_url(value: str) -> str:
+    """Accept what people paste: github.com/user/repo, a browser URL with
+    /tree/main, a trailing slash or .git."""
+    url = (value or "").strip()
+    if url and "://" not in url and not url.startswith("git@"):
+        url = "https://" + url
+    url = re.sub(r"/(tree|blob)/.*$", "", url).rstrip("/")
+    return url
+
+
+def _ls_remote(url: str, token: Optional[str]) -> tuple[bool, str, Optional[str], list[str]]:
+    """(ok, message, default_branch, branches) — talks to the remote without cloning."""
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "echo"}
+    try:
+        r = subprocess.run(
+            ["git", "ls-remote", "--symref", _build_clone_url(url, token), "HEAD", "refs/heads/*"],
+            capture_output=True, text=True, timeout=20, env=env,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "The repository didn’t answer within 20 seconds. Check the URL.", None, []
+    except FileNotFoundError:
+        return False, "git isn’t installed on the server.", None, []
+    if r.returncode != 0:
+        low = (r.stderr or "").lower()
+        if "could not read username" in low or "authentication failed" in low or "terminal prompts disabled" in low:
+            msg = ("This repository is private or doesn’t exist. Add a token with read access."
+                   if not token else "The token doesn’t give access to this repository, or the repository doesn’t exist.")
+        elif "not found" in low or "does not appear to be a git repository" in low:
+            msg = "Repository not found. Check the URL — and the token if the repository is private."
+        elif "could not resolve host" in low:
+            msg = "That host doesn’t exist. Check the URL."
+        else:
+            msg = (r.stderr or "Couldn’t read the repository.").strip().splitlines()[-1]
+        return False, msg, None, []
+    default_branch, branches = None, []
+    for line in r.stdout.splitlines():
+        if line.startswith("ref: refs/heads/") and line.endswith("\tHEAD"):
+            default_branch = line[len("ref: refs/heads/"):].split("\t")[0]
+        elif "\trefs/heads/" in line:
+            branches.append(line.split("\trefs/heads/", 1)[1])
+    if not branches:
+        return False, "The repository is empty — push a commit first.", None, []
+    return True, "", default_branch or branches[0], sorted(branches)
+
+
+@router.post("/check-repo")
+async def check_repo(req: CheckRepoRequest, _user: dict = Depends(_auth.require_permission("apps.deploy"))):
+    """Validate a repository URL (and token) before an app is created."""
+    url = _normalize_repo_url(req.repo_url)
+    if url.startswith("git@"):
+        return {"ok": False, "repo_url": url, "message": "SSH links aren’t supported. Use the HTTPS link, e.g. https://github.com/user/repo."}
+    if not re.match(r"^https?://[^/\s]+/[^\s]+$", url):
+        return {"ok": False, "repo_url": url, "message": "That doesn’t look like a repository link, e.g. https://github.com/user/repo."}
+    token = _resolve_token(req.github_token, req.github_token_id)
+    ok, msg, default_branch, branches = await asyncio.to_thread(_ls_remote, url, token)
+    return {"ok": ok, "repo_url": url, "message": msg, "default_branch": default_branch, "branches": branches[:200]}
 
 
 def _friendly_git_clone_error(stderr: str) -> str:
@@ -775,10 +857,10 @@ def _friendly_git_clone_error(stderr: str) -> str:
     low = raw.lower()
 
     if "could not read username for" in low or "authentication failed" in low:
-        return "Git clone failed: authentication required for this repository. Add a valid GitHub token and try again."
+        return "Git clone failed: authentication required for this repository. Add a valid access token and try again."
 
     if "repository not found" in low and "github.com" in low:
-        return "Git clone failed: repository not found or access denied. Check the repo URL and GitHub token permissions."
+        return "Git clone failed: repository not found or access denied. Check the repo URL and the token’s permissions."
 
     if "permission denied" in low:
         return "Git clone failed: permission denied. Verify repository access and deploy credentials."
@@ -1453,6 +1535,19 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.source_revision = req.source_revision
     if req.image_revision is not None:
         app.image_revision = req.image_revision
+    if req.auto_deploy is not None:
+        app.auto_deploy = req.auto_deploy
+    if req.deploy_branch is not None:
+        branch = req.deploy_branch.strip()
+        if branch and not re.match(r"^[A-Za-z0-9._/-]{1,200}$", branch):
+            raise HTTPException(400, "Invalid branch name")
+        app.deploy_branch = branch or None
+    if req.deploy_strategy is not None:
+        if req.deploy_strategy not in ("rolling", "blue_green"):
+            raise HTTPException(400, "deploy_strategy must be rolling or blue_green")
+        app.deploy_strategy = req.deploy_strategy
+    if req.auto_deploy_interval is not None:
+        app.auto_deploy_interval = max(30, min(int(req.auto_deploy_interval), 3600))
     if req.autoscale_enabled is not None:
         app.autoscale_enabled = req.autoscale_enabled
     if req.autoscale_min_replicas is not None:
@@ -3570,17 +3665,26 @@ async def _queue_get_or_heartbeat(queue: asyncio.Queue):
 _SSE_PING = object()
 
 
-async def _sync_app_source(app: Application, app_dir: str, target_commit: Optional[str], log) -> tuple[str, Optional[str]]:
+async def _sync_app_source(app: Application, app_dir: str, target_commit: Optional[str], log, branch: Optional[str] = None) -> tuple[str, Optional[str]]:
     """Fetch and hard-reset the app's working tree to target_commit (or the
-    branch head). Updates app.source_revision; returns (commit_info, revision)."""
+    branch head). With `branch`, switch to that branch first.
+    Updates app.source_revision; returns (commit_info, revision)."""
     github_token = _decrypt_github_token(app.github_token)
     if github_token:
         url = _build_clone_url(app.repo_url, github_token)
         await asyncio.to_thread(subprocess.run, ["git", "remote", "set-url", "origin", url], cwd=app_dir, capture_output=True)
 
-    branch = _current_branch(app_dir)
+    current = _current_branch(app_dir)
+    branch = branch or current
     log(f"[Git] Fetching from origin ({branch})…")
     await asyncio.to_thread(_fetch_origin, app_dir, branch)
+    if branch != current:
+        log(f"[Git] Switching branch {current} → {branch}…")
+        co = await asyncio.to_thread(
+            subprocess.run, ["git", "checkout", "-B", branch, f"origin/{branch}"], cwd=app_dir, capture_output=True, text=True,
+        )
+        if co.returncode != 0:
+            raise HTTPException(500, f"Git checkout of {branch} failed: {co.stderr.strip()}")
 
     target = target_commit or f"origin/{branch}"
     log(f"[Git] Resetting to {target}…")
@@ -3979,6 +4083,10 @@ def _app_to_dict(
         "created_at": app.created_at.isoformat() if app.created_at else None,
         "updated_at": app.updated_at.isoformat() if app.updated_at else None,
         "app_url": _app_url,
+        "auto_deploy": bool(getattr(app, "auto_deploy", False)),
+        "deploy_branch": getattr(app, "deploy_branch", None),
+        "deploy_strategy": getattr(app, "deploy_strategy", None) or "rolling",
+        "auto_deploy_interval": getattr(app, "auto_deploy_interval", None) or 60,
         "replicas": replicas if replicas is not None else [],
         "replica_count": len(replicas) if replicas is not None else 0,
     }
@@ -4320,9 +4428,58 @@ async def nginx_debug(app_id: int, db: AsyncSession = Depends(get_db), _user: di
 
 # ── Pull & deploy (one streaming action) ──────────────────────────────────────
 
+def _deployment_dict(d: Deployment, with_log: bool = False) -> dict:
+    out = {
+        "id": d.id,
+        "commit_sha": d.commit_sha,
+        "commit_message": d.commit_message,
+        "commit_author": d.commit_author,
+        "branch": d.branch,
+        "trigger": d.trigger,
+        "strategy": d.strategy,
+        "status": d.status,
+        "error": d.error,
+        "actor": d.actor,
+        "created_at": d.created_at.isoformat() + "Z" if d.created_at else None,
+        "finished_at": d.finished_at.isoformat() + "Z" if d.finished_at else None,
+    }
+    if with_log:
+        out["log"] = d.log or ""
+    return out
+
+
+@router.get("/{app_id}/deployments")
+async def list_deployments(app_id: int, limit: int = 50, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.view"))):
+    await _get_or_404(app_id, db)
+    rows = (await db.execute(
+        select(Deployment).where(Deployment.app_id == app_id)
+        .order_by(Deployment.created_at.desc(), Deployment.id.desc()).limit(max(1, min(limit, 200)))
+    )).scalars().all()
+    return {"deployments": [_deployment_dict(d) for d in rows], "in_progress": app_id in _deploys_in_progress}
+
+
+@router.get("/{app_id}/deployments/{deployment_id}")
+async def get_deployment(app_id: int, deployment_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.view"))):
+    d = await db.get(Deployment, deployment_id)
+    if not d or d.app_id != app_id:
+        raise HTTPException(404, "Deployment not found")
+    return _deployment_dict(d, with_log=True)
+
+
+@router.get("/{app_id}/branches")
+async def list_branches(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.view"))):
+    """Branches of the app's repository, for the auto-deploy branch picker."""
+    app = await _get_or_404(app_id, db)
+    token = _decrypt_github_token(app.github_token)
+    ok, msg, default_branch, branches = await asyncio.to_thread(_ls_remote, app.repo_url, token)
+    current = await asyncio.to_thread(_current_branch, app.working_dir) if app.working_dir and os.path.exists(app.working_dir) else None
+    return {"ok": ok, "message": msg, "branches": branches, "default_branch": default_branch, "current_branch": current}
+
+
 class GitDeployRequest(BaseModel):
     commit: Optional[str] = None          # None = latest on the current branch
     strategy: str = "rebuild"             # rebuild | rolling | blue_green
+    trigger: str = "manual"               # manual | rollback
 
 
 _DEPLOY_STREAM_DONE = object()
@@ -4352,8 +4509,6 @@ async def deploy_stream(
     app = await _get_or_404(app_id, db)
     if not app.working_dir or not os.path.exists(app.working_dir):
         raise HTTPException(400, "No working directory — deploy the app first")
-    if strategy != "rebuild" and not _has_public_nginx_domain(app):
-        raise HTTPException(400, "Rolling and blue/green deploys need a custom domain or a base domain")
     if app_id in _deploys_in_progress:
         raise HTTPException(409, "A deploy is already in progress for this app — wait for it to finish.")
 
@@ -4366,39 +4521,12 @@ async def deploy_stream(
         pm._push_line(app_id, str(line))
 
     async def _run() -> None:
+        import deploys
         try:
-            with _single_deploy(app_id):
-                async with AsyncSessionLocal() as tdb:
-                    tapp = await _get_or_404(app_id, tdb)
-                    commit_info, source_revision = await _sync_app_source(tapp, tapp.working_dir, target_commit, log)
-                    await tdb.commit()
-
-                    if strategy == "rolling":
-                        log("[Deploy] Starting rolling deploy…")
-                        res = await _do_rolling_deploy(app_id, tdb, actor)
-                        message = f"Rolled out {commit_info}"
-                    elif strategy == "blue_green":
-                        log("[Deploy] Starting blue/green deploy…")
-                        local_node = await ensure_local_node(tdb)
-                        res = await _do_zero_downtime_deploy(app_id, tdb, local_node, actor)
-                        message = f"Switched to {commit_info}"
-                    else:
-                        log("[Docker] Rebuilding image…")
-                        await asyncio.to_thread(
-                            dm.build_image,
-                            app_id, tapp.name, tapp.working_dir, lambda _aid, line: log(line),
-                            tapp.app_type or "unknown", tapp.start_command or "", tapp.port or 8000,
-                            **_image_build_kwargs(tapp),
-                        )
-                        tapp.docker_image = dm.image_name(app_id, tapp.name)
-                        if source_revision:
-                            tapp.image_revision = source_revision
-                        await log_audit(tdb, "app.pull", actor=actor, app_id=app_id, detail={"name": tapp.name, "commit": commit_info})
-                        await tdb.commit()
-                        log("[Docker] Image rebuilt. Restart or deploy to put it live.")
-                        res = {}
-                        message = f"Built {commit_info}"
-                    result_holder["result"] = {"message": message, "commit": commit_info, "strategy": strategy, **(res or {})}
+            result_holder["result"] = await deploys.run_deploy(
+                app_id, commit=target_commit, strategy=strategy,
+                trigger="rollback" if payload.trigger == "rollback" else "manual", actor=actor,
+            )
         except HTTPException as exc:
             result_holder["error"] = exc.detail
         except Exception as exc:
