@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="css/components.css" />
   <link rel="stylesheet" href="css/pages.css" />
   <link rel="stylesheet" href="css/detail.css" />
+  <link rel="stylesheet" href="css/visitor-pages.css" />
 </head>
 <body>
 
@@ -762,95 +763,142 @@
 
 </script>
 
-<!-- ── Maintenance page editor modal ──────────────────────────────────────── -->
-<div id="maint-modal-backdrop" class="modal-backdrop" style="display:none">
-  <div class="modal maint-modal">
+<!-- ── Visitor page editor ─────────────────────────────────────────────────── -->
+<div id="vp-backdrop" class="dialog-backdrop vp-backdrop" style="display:none">
+  <div class="vp" role="dialog" aria-modal="true" aria-labelledby="vp-title">
 
-    <div class="modal-header">
-      <div>
-        <div class="modal-title" id="maint-modal-title">Downtime Page</div>
-        <div class="modal-sub" id="maint-modal-sub">Customize what visitors see when your app is offline</div>
+    <header class="vp-head">
+      <div class="vp-head-text">
+        <div class="vp-title" id="vp-title">Visitor pages</div>
+        <div class="vp-sub">What visitors see while the app can’t serve them. Served by nginx, so they work even when every instance is down.</div>
       </div>
-      <button class="modal-close" id="maint-modal-close">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      <button type="button" class="btn btn-icon btn-ghost" id="vp-close" aria-label="Close">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
       </button>
-    </div>
+    </header>
 
-    <div class="modal-body">
+    <nav class="vp-tabs" role="tablist" aria-label="Page">
+      <button type="button" role="tab" data-page="downtime">Downtime<span class="vp-tab-state" data-state="downtime"></span></button>
+      <button type="button" role="tab" data-page="update">Update<span class="vp-tab-state" data-state="update"></span></button>
+      <button type="button" role="tab" data-page="restart">Restart<span class="vp-tab-state">Auto</span></button>
+      <button type="button" role="tab" data-page="starting">Starting<span class="vp-tab-state">Auto</span></button>
+    </nav>
 
-      <div class="modal-section">
-        <div class="field">
-          <label class="field-label">Title</label>
-          <input class="input" id="maint-modal-title-input" placeholder="Down for Maintenance" />
-        </div>
-        <div class="field">
-          <label class="field-label">Message</label>
-          <textarea class="input" id="maint-modal-message" rows="3" placeholder="We'll be back shortly. Thanks for your patience."></textarea>
-        </div>
-        <div class="field">
-          <label class="field-label">Status Page URL <span class="hint">(optional)</span></label>
-          <input class="input input-mono" id="maint-modal-status-url" type="url" placeholder="https://status.example.com" />
-          <div class="field-hint">If set, a &ldquo;View status page&rdquo; link appears on the page</div>
-        </div>
-        <div class="field">
-          <label class="field-label">Accent Color</label>
-          <div class="maint-color-row">
-            <input type="color" id="maint-modal-color-picker" class="maint-color-swatch" />
-            <input class="input input-mono" id="maint-modal-color" style="max-width:110px" placeholder="#e5484d" />
+    <div class="vp-body">
+      <form class="vp-form" id="vp-form" autocomplete="off" onsubmit="return false">
+        <p class="vp-when" id="vp-when"></p>
+
+        <section class="vp-section" id="vp-fields">
+          <h3>Content</h3>
+          <div class="field">
+            <label class="field-label" for="vp-f-title">Title</label>
+            <input class="input" id="vp-f-title" data-key="title" />
           </div>
-        </div>
-        <div class="field">
-          <label class="field-label">Appearance</label>
-          <div class="segmented" id="maint-modal-theme" role="radiogroup" aria-label="Appearance">
-            <button type="button" data-theme="auto" role="radio">Automatic</button>
-            <button type="button" data-theme="light" role="radio">Light</button>
-            <button type="button" data-theme="dark" role="radio">Dark</button>
+          <div class="field">
+            <label class="field-label" for="vp-f-message">Message</label>
+            <textarea class="input" id="vp-f-message" data-key="message" rows="4"></textarea>
           </div>
-          <div class="field-hint">Automatic follows the visitor's light or dark system setting.</div>
-        </div>
-        <div class="field">
-          <label class="field-label">Logo <span class="hint">(optional &mdash; shown above the title)</span></label>
-          <div id="maint-modal-logo-preview" style="display:none;margin-bottom:8px">
-            <img id="maint-modal-logo-img" src="" alt="Logo" style="max-height:48px;max-width:180px;object-fit:contain;border:1px solid var(--border);border-radius:6px;padding:4px;background:#fff" />
+          <div class="field">
+            <label class="field-label" for="vp-f-status">Status page link <span class="hint">optional</span></label>
+            <input class="input input-mono" id="vp-f-status" data-key="status_url" type="url" placeholder="https://status.example.com" />
           </div>
-          <div style="display:flex;gap:6px;align-items:center">
-            <button type="button" class="btn btn-secondary btn-sm" id="btn-maint-logo-upload">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              Upload Logo
-            </button>
-            <button type="button" class="btn btn-secondary btn-sm" id="btn-maint-logo-clear" style="display:none">Remove</button>
+        </section>
+
+        <section class="vp-section" id="vp-brand">
+          <div class="vp-section-head">
+            <h3>Branding</h3>
+            <button type="button" class="vp-link" id="vp-apply-all" title="Copy logo, name, colour, appearance and background to all four pages">Apply to all pages</button>
           </div>
-          <input type="file" id="maint-modal-logo-file" accept="image/*" style="display:none">
-        </div>
-        <div class="field">
-          <label class="toggle-row">
-            <span class="field-label" style="margin-bottom:0">Custom HTML</span>
-            <label class="toggle"><input type="checkbox" id="maint-modal-custom-toggle" /><span class="toggle-slider"></span></label>
+          <div class="field">
+            <label class="field-label">Logo <span class="hint">optional · max 512 KB</span></label>
+            <div class="vp-logo">
+              <div class="vp-logo-thumb" id="vp-logo-thumb"><span>No logo</span></div>
+              <div class="vp-logo-actions">
+                <button type="button" class="btn btn-sm" id="vp-logo-upload">Upload</button>
+                <button type="button" class="btn btn-sm btn-ghost" id="vp-logo-remove" hidden>Remove</button>
+              </div>
+              <input type="file" id="vp-logo-file" accept="image/png,image/svg+xml,image/jpeg,image/webp" hidden>
+            </div>
+          </div>
+          <div class="field">
+            <label class="field-label" for="vp-f-brand">Name <span class="hint">optional · shown next to the logo</span></label>
+            <input class="input" id="vp-f-brand" data-key="brand_name" maxlength="60" placeholder="Your product" />
+          </div>
+        </section>
+
+        <section class="vp-section" id="vp-style">
+          <h3>Style</h3>
+          <div class="field">
+            <label class="field-label">Accent colour</label>
+            <div class="vp-swatches" id="vp-swatches">
+              <button type="button" data-color="#e5484d" style="--c:#e5484d" aria-label="Red"></button>
+              <button type="button" data-color="#f5a524" style="--c:#f5a524" aria-label="Amber"></button>
+              <button type="button" data-color="#30a46c" style="--c:#30a46c" aria-label="Green"></button>
+              <button type="button" data-color="#3b82f6" style="--c:#3b82f6" aria-label="Blue"></button>
+              <button type="button" data-color="#8e4ec6" style="--c:#8e4ec6" aria-label="Purple"></button>
+              <button type="button" data-color="#71717a" style="--c:#71717a" aria-label="Grey"></button>
+              <span class="vp-swatch-custom">
+                <input type="color" id="vp-color-picker" aria-label="Custom colour" />
+                <input class="input input-mono" id="vp-f-color" data-key="color" maxlength="7" spellcheck="false" aria-label="Hex colour" />
+              </span>
+            </div>
+          </div>
+          <div class="field">
+            <label class="field-label">Appearance</label>
+            <div class="segmented vp-seg" data-key="theme" role="radiogroup" aria-label="Appearance">
+              <button type="button" data-value="auto" role="radio">Automatic</button>
+              <button type="button" data-value="light" role="radio">Light</button>
+              <button type="button" data-value="dark" role="radio">Dark</button>
+            </div>
+          </div>
+          <div class="field">
+            <label class="field-label">Background</label>
+            <div class="segmented vp-seg" data-key="background" role="radiogroup" aria-label="Background">
+              <button type="button" data-value="none" role="radio">Plain</button>
+              <button type="button" data-value="glow" role="radio">Glow</button>
+              <button type="button" data-value="grid" role="radio">Grid</button>
+            </div>
+          </div>
+        </section>
+
+        <details class="vp-section vp-advanced" id="vp-advanced">
+          <summary><span>Custom HTML</span><span class="hint">replaces the whole page</span></summary>
+          <label class="vp-custom-toggle">
+            <span>Use my own HTML for this page</span>
+            <span class="toggle"><input type="checkbox" id="vp-custom-on" /><span class="toggle-slider"></span></span>
           </label>
-          <div id="maint-modal-custom-wrap" style="display:none;margin-top:10px">
-            <textarea class="input input-mono" id="maint-modal-custom-html" rows="12" placeholder="&lt;!DOCTYPE html&gt;&#10;&lt;html&gt;&#10;  ...&#10;&lt;/html&gt;"></textarea>
-            <div class="field-hint">Overrides all fields above &mdash; full control over the page</div>
+          <textarea class="input input-mono vp-custom-html" id="vp-f-custom" rows="12" spellcheck="false" placeholder="&lt;!DOCTYPE html&gt;&#10;&lt;html&gt;…&lt;/html&gt;"></textarea>
+          <div class="field-hint">Served exactly as written. Inline your CSS and images — nothing else is reachable while the app is down.</div>
+        </details>
+      </form>
+
+      <div class="vp-preview">
+        <div class="vp-preview-bar">
+          <div class="segmented" id="vp-device" aria-label="Preview size">
+            <button type="button" data-device="desktop" class="active">Desktop</button>
+            <button type="button" data-device="mobile">Mobile</button>
+          </div>
+          <div class="segmented" id="vp-scheme" aria-label="Preview colour scheme" title="Only applies when Appearance is Automatic">
+            <button type="button" data-scheme="light" class="active">Light</button>
+            <button type="button" data-scheme="dark">Dark</button>
+          </div>
+        </div>
+        <div class="vp-stage">
+          <div class="vp-browser" id="vp-browser">
+            <div class="vp-browser-bar"><i></i><i></i><i></i><div class="vp-url" id="vp-url"></div></div>
+            <iframe id="vp-frame" title="Page preview" sandbox=""></iframe>
           </div>
         </div>
       </div>
-
-    </div><!-- /modal-body -->
-
-    <div class="modal-footer">
-      <button class="btn btn-secondary" id="maint-modal-preview">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-        Preview
-      </button>
-      <div style="flex:1"></div>
-      <button class="btn btn-secondary" id="maint-modal-cancel">Cancel</button>
-      <button class="btn btn-primary" id="maint-modal-save">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/><polyline points="7,3 7,8 15,8"/></svg>
-        Save Page
-      </button>
     </div>
 
+    <footer class="vp-foot">
+      <span class="vp-dirty" id="vp-dirty"></span>
+      <button type="button" class="btn" id="vp-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="vp-save">Save pages</button>
+    </footer>
   </div>
-</div><!-- /maint-modal-backdrop -->
+</div>
 
 </body>
 </html>

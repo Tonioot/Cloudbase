@@ -70,23 +70,34 @@ def generate_maintenance_html(
     page_type: str = "downtime",
     logo_data: str = None,
     theme: str = "auto",
+    brand_name: str = None,
+    background: str = "none",
+    preview: bool = False,
 ) -> str:
-    """Return a full HTML page for downtime or update mode. Uses custom_html if provided."""
+    """Return a full HTML page for one of an app's visitor pages. Uses custom_html if provided."""
     if custom_html:
         return custom_html
 
-    safe_title   = (title or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    safe_message = (message or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    safe_color   = color if color and color.startswith("#") and len(color) in (4, 7) else "#f85149"
-    # Validate URL to prevent injection
     import re as _re
-    safe_status_url = status_url if status_url and _re.match(r'^https?://', status_url) else None
-    # Validate logo: must be a data-URL with an image MIME type
-    safe_logo_data = logo_data if logo_data and _re.match(r'^data:image/[a-zA-Z0-9+/.-]+;base64,', logo_data) else None
+    def esc(v):
+        return (v or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+    safe_color = color if color and _re.match(r"^#(?:[0-9a-fA-F]{3}){1,2}$", color) else "#f85149"
+    safe_status_url = esc(status_url) if status_url and _re.match(r"^https?://", status_url) else None
+    # Logo must be a data URL with an image MIME type
+    safe_logo_data = logo_data if logo_data and _re.match(r"^data:image/[a-zA-Z0-9+/.-]+;base64,[A-Za-z0-9+/=]+$", logo_data) else None
 
-    kind = page_type if page_type in _APP_PAGE_KINDS else "update"
-    safe_theme = theme if theme in ("light", "dark") else "auto"
-    return _app_status_page(kind, safe_title, safe_message, safe_color, safe_status_url, safe_logo_data, safe_theme)
+    return _app_status_page(
+        kind=page_type if page_type in _APP_PAGE_KINDS else "update",
+        title=esc(title),
+        message=esc(message),
+        color=safe_color,
+        status_url=safe_status_url,
+        logo_data=safe_logo_data,
+        theme=theme if theme in ("light", "dark") else "auto",
+        brand_name=esc((brand_name or "").strip()[:60]),
+        background=background if background in ("glow", "grid") else "none",
+        preview=preview,
+    )
 
 
 def _cloudbase_logo_data_uri() -> str | None:
@@ -201,7 +212,7 @@ PAGE_DEFAULTS = {
 }
 
 
-def render_app_page(page_type: str, cfg: dict | None) -> str:
+def render_app_page(page_type: str, cfg: dict | None, preview: bool = False) -> str:
     """HTML for one of an app's visitor pages, filling in defaults for empty fields."""
     cfg = cfg or {}
     d = PAGE_DEFAULTS[page_type]
@@ -214,6 +225,9 @@ def render_app_page(page_type: str, cfg: dict | None) -> str:
         page_type,
         logo_data=cfg.get("logo_data"),
         theme=cfg.get("theme") or "auto",
+        brand_name=cfg.get("brand_name"),
+        background=cfg.get("background") or "none",
+        preview=preview,
     )
 
 
@@ -223,16 +237,27 @@ def render_app_page(page_type: str, cfg: dict | None) -> str:
 # the visitor's system setting. Everything is inline — nginx serves the file
 # while the app itself may be down.
 _APP_PAGE_KINDS = {
-    "downtime": {"label": "Temporarily unavailable", "refresh": 30, "busy": False},
-    "update":   {"label": "Scheduled maintenance",   "refresh": 30, "busy": True},
-    "restart":  {"label": "Restarting",              "refresh": 8,  "busy": True},
-    "starting": {"label": "Starting up",             "refresh": 8,  "busy": True},
+    "downtime": {"label": "Temporarily unavailable", "refresh": 30, "check": 15, "busy": False},
+    "update":   {"label": "Scheduled maintenance",   "refresh": 30, "check": 10, "busy": True},
+    "restart":  {"label": "Restarting",              "refresh": 8,  "check": 4,  "busy": True},
+    "starting": {"label": "Starting up",             "refresh": 8,  "check": 4,  "busy": True},
 }
 
 
-def _app_status_page(kind: str, title: str, message: str, color: str, status_url: str = None, logo_data: str = None, theme: str = "auto") -> str:
+def _app_status_page(*, kind: str, title: str, message: str, color: str, status_url: str = None,
+                     logo_data: str = None, theme: str = "auto", brand_name: str = "",
+                     background: str = "none", preview: bool = False) -> str:
     meta = _APP_PAGE_KINDS[kind]
-    logo = f'<img class="logo" src="{logo_data}" alt="">' if logo_data else ""
+
+    # Header bar with the logo and/or brand name, like the site's own navigation
+    brand = ""
+    if logo_data or brand_name:
+        brand = (
+            '<header><div class="brand">'
+            + (f'<img class="logo" src="{logo_data}" alt="">' if logo_data else "")
+            + (f'<span class="brand-name">{brand_name}</span>' if brand_name else "")
+            + "</div></header>"
+        )
     link = (
         f'<a class="link" href="{status_url}" target="_blank" rel="noopener noreferrer">'
         'View status page'
@@ -240,9 +265,37 @@ def _app_status_page(kind: str, title: str, message: str, color: str, status_url
         '</a>'
     ) if status_url else ""
     busy = '<div class="progress" aria-hidden="true"><span></span></div>' if meta["busy"] else ""
-    refresh = meta["refresh"]
-    light = "color-scheme: light; --bg: #fbfbfa; --text: #111214; --text-2: #4a4f57; --muted: #7a7f88; --line: #e8e8e5;"
-    dark = "color-scheme: dark; --bg: #0a0b0c; --text: #edeef0; --text-2: #a9aeb6; --muted: #7a7f88; --line: #1d1f22;"
+
+    # Live check: request the same URL in the background and reload as soon as
+    # it no longer answers with an error (nginx serves these pages as 503).
+    # The meta refresh is only a fallback for visitors without JavaScript.
+    interval_ms = meta["check"] * 1000
+    live_js = "" if preview else f"""
+  <script>
+    (function () {{
+      var el = document.getElementById('check'), last = Date.now(), pending = false;
+      function label() {{
+        var s = Math.round((Date.now() - last) / 1000);
+        el.textContent = 'Checking automatically · last checked ' + (s < 2 ? 'just now' : s + 's ago');
+      }}
+      function check() {{
+        if (pending) return;
+        pending = true;
+        fetch(location.href, {{ cache: 'no-store', redirect: 'manual' }})
+          .then(function (r) {{ if (r.type === 'opaqueredirect' || (r.status > 0 && r.status < 500)) location.reload(); }})
+          .catch(function () {{}})
+          .then(function () {{ last = Date.now(); pending = false; label(); }});
+      }}
+      setInterval(check, {interval_ms});
+      setInterval(label, 1000);
+      label();
+    }})();
+  </script>"""
+    refresh_meta = "" if preview else f'<noscript><meta http-equiv="refresh" content="{meta["refresh"]}"></noscript>'
+    check_text = "Preview — automatic checking is off" if preview else "Checking automatically"
+
+    light = "color-scheme: light; --bg: #fbfbfa; --text: #111214; --text-2: #4a4f57; --muted: #7a7f88; --line: #e8e8e5; --grid: rgba(17,18,20,.06);"
+    dark = "color-scheme: dark; --bg: #0a0b0c; --text: #edeef0; --text-2: #a9aeb6; --muted: #7a7f88; --line: #1d1f22; --grid: rgba(237,238,240,.06);"
     if theme == "light":
         theme_css = f":root {{ {light} --accent: {color}; }}"
     elif theme == "dark":
@@ -250,12 +303,25 @@ def _app_status_page(kind: str, title: str, message: str, color: str, status_url
     else:
         theme_css = (f":root {{ {light} --accent: {color}; }}\n"
                      f"    @media (prefers-color-scheme: dark) {{ :root {{ {dark} }} }}")
+
+    if background == "glow":
+        bg_css = ("body::before { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;"
+                  " background: radial-gradient(55% 45% at 50% 45%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 75%); }")
+    elif background == "grid":
+        bg_css = ("body::before { content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;"
+                  " background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);"
+                  " background-size: 32px 32px; background-position: center;"
+                  " -webkit-mask-image: radial-gradient(65% 60% at 50% 45%, #000 25%, transparent 80%);"
+                  " mask-image: radial-gradient(65% 60% at 50% 45%, #000 25%, transparent 80%); }")
+    else:
+        bg_css = ""
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="refresh" content="{refresh}">
+  {refresh_meta}
   <meta name="robots" content="noindex">
   <title>{title}</title>
   <style>
@@ -264,16 +330,20 @@ def _app_status_page(kind: str, title: str, message: str, color: str, status_url
     body {{
       min-height: 100vh;
       display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 32px 20px;
+      flex-direction: column;
       background: var(--bg);
       color: var(--text);
       font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       -webkit-font-smoothing: antialiased;
     }}
+    {bg_css}
+    header, .wrap {{ position: relative; z-index: 1; }}
+    header {{ display: flex; align-items: center; height: 72px; padding: 0 32px; border-bottom: 1px solid var(--line); background: var(--bg); }}
+    .brand {{ display: flex; align-items: center; gap: 10px; min-width: 0; }}
+    .logo {{ display: block; height: 28px; max-width: 160px; object-fit: contain; }}
+    .brand-name {{ font-size: 16px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .wrap {{ flex: 1; display: flex; align-items: center; justify-content: center; padding: 48px 20px; }}
     main {{ width: 100%; max-width: 440px; }}
-    .logo {{ display: block; max-width: 140px; max-height: 40px; object-fit: contain; margin-bottom: 40px; }}
     .status {{ display: flex; align-items: center; gap: 10px; margin-bottom: 16px; font-size: 13px; color: var(--text-2); }}
     .dot {{
       width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
@@ -293,20 +363,21 @@ def _app_status_page(kind: str, title: str, message: str, color: str, status_url
       border-bottom: 1px solid var(--line); padding-bottom: 2px;
     }}
     .link:hover {{ border-bottom-color: var(--text); }}
-    footer {{ margin-top: 32px; font-size: 12px; color: var(--muted); }}
+    footer {{ margin-top: 32px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }}
+    @media (max-width: 520px) {{ header {{ height: 60px; padding: 0 20px; }} }}
     @media (prefers-reduced-motion: reduce) {{ .progress span {{ animation: none; left: 0; width: 100%; opacity: .35; }} }}
   </style>
 </head>
 <body>
-  <main>
-    {logo}
+  {brand}
+  <div class="wrap"><main>
     <div class="status"><span class="dot"></span>{meta["label"]}</div>
     <h1>{title}</h1>
     <p>{message}</p>
     {busy}
     {link}
-    <footer>This page refreshes automatically every {refresh} seconds.</footer>
-  </main>
+    <footer id="check">{check_text}</footer>
+  </main></div>{live_js}
 </body>
 </html>
 """

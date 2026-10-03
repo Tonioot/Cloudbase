@@ -1559,9 +1559,29 @@ function _enableSettingsForEditor() {
   delete panel.dataset.viewerLocked;
 }
 
-/* ─── Maintenance pages settings ────────────────────────────────────────── */
-let _maintModalType = 'downtime'; // currently open card type
-let _maintLogoData  = null;       // base64 data-URL or null (no logo)
+/* ─── Visitor pages (maintenance pages) ─────────────────────────────────── */
+
+const VP_PAGES = ['downtime', 'update', 'restart', 'starting'];
+
+// Defaults the server uses for empty fields (nginx_manager.PAGE_DEFAULTS)
+const MAINT_PAGE_DEFAULTS = {
+  downtime: { title: "Down for Maintenance", message: "We'll be back shortly.", color: '#e5484d' },
+  update: { title: "Updating…", message: "We’re deploying a new version. Check back soon.", color: '#f5a524' },
+  restart: { title: "Restarting…", message: "The server is restarting. This only takes a moment.", color: '#3b82f6' },
+  starting: { title: "Starting…", message: "The service is starting up. This only takes a moment.", color: '#3b82f6' },
+};
+
+const VP_WHEN = {
+  downtime: 'Shown when <strong>downtime mode</strong> is on, and automatically when no instance answers (crash, stop, 502/503).',
+  update:   'Shown while <strong>update mode</strong> is on — for planned maintenance and longer deploys.',
+  restart:  'Shown automatically while the app restarts, until it answers again.',
+  starting: 'Shown automatically while the app starts for the first time, until it answers.',
+};
+
+// Branding & style fields that “Apply to all pages” copies
+const VP_SHARED_KEYS = ['logo_data', 'brand_name', 'color', 'theme', 'background'];
+
+let _vp = null; // { page, drafts, saved, previewTimer, device, scheme }
 
 // Maintenance pages are served by Cloudbase's nginx on the app's domain, so
 // they need one: a custom domain, or the automatic subdomain from the base
@@ -1586,254 +1606,336 @@ function refreshMaintenanceUiState() {
   const noNginxText = document.getElementById('maint-no-nginx-text');
   if (noNginxText && !canServeMaintenance) noNginxText.textContent = getMaintenanceToggleDisabledReason();
 
-  const openButtons = [
-    ['btn-open-downtime-modal', 'Edit Downtime Page'],
-    ['btn-open-update-modal', 'Edit Update Page'],
-    ['btn-open-restart-modal', 'Edit Restart Page'],
-    ['btn-open-starting-modal', 'Edit Starting Page'],
-  ];
-  openButtons.forEach(([id, enabledTitle]) => {
-    const btn = document.getElementById(id);
+  ['downtime', 'update', 'restart', 'starting'].forEach(type => {
+    const btn = document.getElementById(`btn-open-${type}-modal`);
     if (!btn) return;
     btn.disabled = false;
     btn.title = canServeMaintenance
-      ? enabledTitle
+      ? `Edit the ${type} page`
       : 'You can edit these pages now; they will be served once nginx/domain routing is configured';
   });
 }
 
 function initMaintenanceSettings() {
-  // Status badges
   _updateMaintBadges();
   refreshMaintenanceUiState();
-
-  // Wire open buttons
-  document.getElementById('btn-open-downtime-modal').addEventListener('click',  () => openMaintModal('downtime'));
-  document.getElementById('btn-open-update-modal').addEventListener('click',    () => openMaintModal('update'));
-  document.getElementById('btn-open-restart-modal').addEventListener('click',   () => openMaintModal('restart'));
-  document.getElementById('btn-open-starting-modal').addEventListener('click',  () => openMaintModal('starting'));
+  VP_PAGES.forEach(type => {
+    document.getElementById(`btn-open-${type}-modal`)?.addEventListener('click', () => openMaintModal(type));
+  });
 }
 
-function _setMaintTheme(theme) {
-  document.querySelectorAll('#maint-modal-theme button').forEach(b => {
-    const on = b.dataset.theme === theme;
+function _vpPageFromApp(type) {
+  const c = app[`${type}_page`] || {};
+  return {
+    title: c.title || '',
+    message: c.message || '',
+    color: c.color || MAINT_PAGE_DEFAULTS[type].color,
+    status_url: c.status_url || '',
+    custom_html: c.custom_html || '',
+    logo_data: c.logo_data || null,
+    theme: c.theme || 'auto',
+    background: c.background || 'none',
+    brand_name: c.brand_name || '',
+  };
+}
+
+function _vpPayloadPage(d) {
+  return {
+    title: d.title.trim() || null,
+    message: d.message.trim() || null,
+    color: /^#[0-9a-fA-F]{6}$/.test(d.color) ? d.color : null,
+    status_url: d.status_url.trim() || null,
+    custom_html: d.custom_html.trim() ? d.custom_html : null,
+    logo_data: d.logo_data || null,
+    theme: d.theme,
+    background: d.background,
+    brand_name: d.brand_name.trim() || null,
+  };
+}
+
+function openMaintModal(type = 'downtime') {
+  const drafts = Object.fromEntries(VP_PAGES.map(t => [t, _vpPageFromApp(t)]));
+  _vp = {
+    page: type,
+    drafts,
+    saved: JSON.stringify(drafts),
+    previewTimer: null,
+    device: _vp?.device || 'desktop',
+    scheme: _vp?.scheme || (document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light'),
+  };
+  document.getElementById('vp-url').textContent = (app.app_url || (app.domain ? `https://${app.domain}` : `${app.name}.example.com`)).replace(/^https?:\/\//, '');
+  document.getElementById('vp-backdrop').style.display = 'flex';
+  _vpSetDevice(_vp.device);
+  _vpSetScheme(_vp.scheme);
+  _vpShowPage(type);
+  document.getElementById('vp-f-title').focus();
+}
+
+function _vpShowPage(type) {
+  _vp.page = type;
+  const d = _vp.drafts[type];
+  const defaults = MAINT_PAGE_DEFAULTS[type];
+
+  document.querySelectorAll('.vp-tabs [data-page]').forEach(b => {
+    const on = b.dataset.page === type;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', String(on));
+  });
+  document.getElementById('vp-when').innerHTML = VP_WHEN[type];
+
+  const title = document.getElementById('vp-f-title');
+  title.value = d.title;
+  title.placeholder = defaults.title;
+  const msg = document.getElementById('vp-f-message');
+  msg.value = d.message;
+  msg.placeholder = defaults.message;
+  document.getElementById('vp-f-status').value = d.status_url;
+  document.getElementById('vp-f-brand').value = d.brand_name;
+  _vpSetColor(d.color, false);
+  document.querySelectorAll('.vp-seg').forEach(seg => _vpSetSeg(seg, d[seg.dataset.key]));
+  _vpRenderLogo();
+
+  const customOn = !!d.custom_html;
+  document.getElementById('vp-custom-on').checked = customOn;
+  document.getElementById('vp-f-custom').value = d.custom_html;
+  document.getElementById('vp-advanced').open = customOn;
+  _vpSyncCustom();
+
+  _vpUpdateDirty();
+  _vpSyncScheme();
+  _vpPreview(true);
+}
+
+function _vpSetSeg(seg, value) {
+  seg.querySelectorAll('button').forEach(b => {
+    const on = b.dataset.value === value;
     b.classList.toggle('active', on);
     b.setAttribute('aria-checked', String(on));
   });
 }
-document.getElementById('maint-modal-theme')?.addEventListener('click', e => {
-  const b = e.target.closest('button[data-theme]');
-  if (b) _setMaintTheme(b.dataset.theme);
-});
 
-// Defaults the server uses for empty fields (nginx_manager.PAGE_DEFAULTS)
-const MAINT_PAGE_DEFAULTS = {
-  downtime: { title: "Down for Maintenance", message: "We'll be back shortly.", color: '#e5484d' },
-  update: { title: "Updating…", message: "We’re deploying a new version. Check back soon.", color: '#f5a524' },
-  restart: { title: "Restarting…", message: "The server is restarting. This only takes a moment.", color: '#3b82f6' },
-  starting: { title: "Starting…", message: "The service is starting up. This only takes a moment.", color: '#3b82f6' },
-};
-
-function openMaintModal(type) {
-  _maintModalType = type;
-  let cfg;
-  if (type === 'downtime')       cfg = app.downtime_page  || {};
-  else if (type === 'restart')   cfg = app.restart_page   || {};
-  else if (type === 'starting')  cfg = app.starting_page  || {};
-  else                           cfg = app.update_page    || {};
-  const isDown     = type === 'downtime';
-  const isRestart  = type === 'restart';
-  const isStarting = type === 'starting';
-
-  const backdrop = document.getElementById('maint-modal-backdrop');
-  backdrop.style.display = '';
-
-  document.getElementById('maint-modal-title').textContent =
-    isDown ? 'Downtime Page' : isRestart ? 'Restart Page' : isStarting ? 'Starting Page' : 'Update Page';
-  document.getElementById('maint-modal-sub').textContent = isDown
-    ? 'Shown automatically on 502/503 (crash or stop) and when Downtime mode is on'
-    : isRestart
-    ? 'Shown automatically whenever the Restart button is pressed - clears when the app is back up'
-    : isStarting
-    ? 'Shown automatically whenever the Start button is pressed - clears when the app is online'
-    : 'Shown when Update mode is manually enabled - ideal for planned deployments';
-
-  const defaults = MAINT_PAGE_DEFAULTS[type] || MAINT_PAGE_DEFAULTS.update;
-  const color = cfg.color || defaults.color;
-  document.getElementById('maint-modal-title-input').value  = cfg.title   || '';
-  document.getElementById('maint-modal-title-input').placeholder = defaults.title;
-  document.getElementById('maint-modal-message').value      = cfg.message || '';
-  document.getElementById('maint-modal-message').placeholder = defaults.message;
-  document.getElementById('maint-modal-status-url').value   = cfg.status_url || '';
-  document.getElementById('maint-modal-color').value        = color;
-  document.getElementById('maint-modal-color-picker').value = color;
-  _setMaintTheme(cfg.theme || 'auto');
-
-  _maintLogoData = cfg.logo_data || null;
-  const logoPreview = document.getElementById('maint-modal-logo-preview');
-  const btnLogoClr  = document.getElementById('btn-maint-logo-clear');
-  if (_maintLogoData) {
-    document.getElementById('maint-modal-logo-img').src = _maintLogoData;
-    logoPreview.style.display = '';
-    btnLogoClr.style.display  = '';
-  } else {
-    logoPreview.style.display = 'none';
-    btnLogoClr.style.display  = 'none';
+function _vpSetColor(color, store = true) {
+  const valid = /^#[0-9a-fA-F]{6}$/.test(color);
+  document.getElementById('vp-f-color').value = color;
+  if (valid) document.getElementById('vp-color-picker').value = color;
+  document.querySelectorAll('#vp-swatches [data-color]').forEach(b => b.classList.toggle('active', b.dataset.color.toLowerCase() === color.toLowerCase()));
+  if (store) {
+    _vp.drafts[_vp.page].color = color;
+    _vpChanged();
   }
+}
 
-  const hasCustom = !!cfg.custom_html;
-  document.getElementById('maint-modal-custom-toggle').checked     = hasCustom;
-  document.getElementById('maint-modal-custom-wrap').style.display = hasCustom ? '' : 'none';
-  document.getElementById('maint-modal-custom-html').value         = cfg.custom_html || '';
+function _vpRenderLogo() {
+  const data = _vp.drafts[_vp.page].logo_data;
+  const thumb = document.getElementById('vp-logo-thumb');
+  thumb.innerHTML = data ? `<img src="${escAttr(data)}" alt="Logo">` : '<span>No logo</span>';
+  thumb.classList.toggle('has-logo', !!data);
+  document.getElementById('vp-logo-remove').hidden = !data;
+  document.getElementById('vp-logo-upload').textContent = data ? 'Replace' : 'Upload';
+}
+
+function _vpSyncCustom() {
+  const on = document.getElementById('vp-custom-on').checked;
+  document.getElementById('vp-f-custom').hidden = !on;
+  // Custom HTML replaces the template, so the other fields don't apply
+  ['vp-fields', 'vp-brand', 'vp-style'].forEach(id => document.getElementById(id).classList.toggle('vp-muted', on));
+}
+
+function _vpChanged() {
+  _vpUpdateDirty();
+  _vpSyncScheme();
+  _vpPreview();
+}
+
+// The light/dark preview switch only matters when the page follows the visitor
+function _vpSyncScheme() {
+  document.getElementById('vp-scheme').hidden = _vp.drafts[_vp.page].theme !== 'auto';
+}
+
+function _vpUpdateDirty() {
+  const dirty = JSON.stringify(_vp.drafts) !== _vp.saved;
+  const el = document.getElementById('vp-dirty');
+  el.textContent = dirty ? 'Unsaved changes' : '';
+  document.getElementById('vp-save').disabled = !dirty;
+  // Mark tabs whose page differs from what is saved
+  const saved = JSON.parse(_vp.saved);
+  document.querySelectorAll('.vp-tabs [data-page]').forEach(b => {
+    b.classList.toggle('edited', JSON.stringify(_vp.drafts[b.dataset.page]) !== JSON.stringify(saved[b.dataset.page]));
+  });
+}
+
+function _vpPreview(now = false) {
+  clearTimeout(_vp.previewTimer);
+  _vp.previewTimer = setTimeout(async () => {
+    const page = _vp.page;
+    const body = _vpPayloadPage(_vp.drafts[page]);
+    // "Automatic" follows the visitor's system; preview it in the chosen scheme
+    if (body.theme === 'auto') body.theme = _vp.scheme;
+    try {
+      const html = await api.renderMaintenancePage(APP_ID, page, body);
+      if (_vp.page === page) document.getElementById('vp-frame').srcdoc = html;
+    } catch { /* keep the last preview */ }
+  }, now ? 0 : 250);
+}
+
+function _vpSetDevice(device) {
+  _vp.device = device;
+  document.querySelectorAll('#vp-device button').forEach(b => b.classList.toggle('active', b.dataset.device === device));
+  document.getElementById('vp-browser').classList.toggle('mobile', device === 'mobile');
+}
+
+function _vpSetScheme(scheme) {
+  _vp.scheme = scheme;
+  document.querySelectorAll('#vp-scheme button').forEach(b => b.classList.toggle('active', b.dataset.scheme === scheme));
+}
+
+async function _vpClose() {
+  if (_vp && JSON.stringify(_vp.drafts) !== _vp.saved) {
+    if (!await confirm('Discard changes?', 'Your edits to the visitor pages are not saved.')) return;
+  }
+  document.getElementById('vp-backdrop').style.display = 'none';
 }
 
 function _initMaintModal() {
-  const backdrop = document.getElementById('maint-modal-backdrop');
+  const backdrop = document.getElementById('vp-backdrop');
   if (!backdrop) return;
 
-  // Close on backdrop click or cancel button
-  const close = () => { backdrop.style.display = 'none'; };
-  backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
-  document.getElementById('maint-modal-close').addEventListener('click', close);
-  document.getElementById('maint-modal-cancel').addEventListener('click', close);
+  backdrop.addEventListener('mousedown', e => { if (e.target === backdrop) _vpClose(); });
+  backdrop.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); _vpClose(); } });
+  document.getElementById('vp-close').onclick = _vpClose;
+  document.getElementById('vp-cancel').onclick = _vpClose;
 
-  // Color picker ↔ hex sync
-  const picker = document.getElementById('maint-modal-color-picker');
-  const hex    = document.getElementById('maint-modal-color');
-  picker.addEventListener('input', () => { hex.value = picker.value; });
-  hex.addEventListener('input', () => {
-    if (/^#[0-9a-fA-F]{6}$/.test(hex.value)) picker.value = hex.value;
+  document.querySelector('.vp-tabs').addEventListener('click', e => {
+    const b = e.target.closest('[data-page]');
+    if (b) _vpShowPage(b.dataset.page);
   });
 
-  // Custom HTML toggle
-  document.getElementById('maint-modal-custom-toggle').addEventListener('change', e => {
-    document.getElementById('maint-modal-custom-wrap').style.display = e.target.checked ? '' : 'none';
+  // Text fields
+  document.querySelectorAll('#vp-form [data-key]').forEach(el => {
+    if (el.classList.contains('segmented')) return;
+    el.addEventListener('input', () => {
+      if (el.dataset.key === 'color') {
+        _vpSetColor(el.value.trim());
+        return;
+      }
+      _vp.drafts[_vp.page][el.dataset.key] = el.value;
+      _vpChanged();
+    });
   });
 
-  // Preview
-  document.getElementById('maint-modal-preview').addEventListener('click', () => {
-    window.open(`/api/apps/${APP_ID}/maintenance-pages/preview/${_maintModalType}`, '_blank');
+  // Colour
+  document.getElementById('vp-swatches').addEventListener('click', e => {
+    const b = e.target.closest('[data-color]');
+    if (b) _vpSetColor(b.dataset.color);
   });
+  document.getElementById('vp-color-picker').addEventListener('input', e => _vpSetColor(e.target.value));
 
-  // Logo upload
-  document.getElementById('btn-maint-logo-upload').addEventListener('click', () => {
-    document.getElementById('maint-modal-logo-file').click();
-  });
-  document.getElementById('maint-modal-logo-file').addEventListener('change', e => {
-    const file = e.target.files[0];
+  // Segmented controls
+  document.querySelectorAll('.vp-seg').forEach(seg => seg.addEventListener('click', e => {
+    const b = e.target.closest('button[data-value]');
+    if (!b) return;
+    _vpSetSeg(seg, b.dataset.value);
+    _vp.drafts[_vp.page][seg.dataset.key] = b.dataset.value;
+    _vpChanged();
+  }));
+
+  // Logo
+  const fileInput = document.getElementById('vp-logo-file');
+  document.getElementById('vp-logo-upload').onclick = () => fileInput.click();
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0];
+    fileInput.value = '';
     if (!file) return;
     if (file.size > 512 * 1024) { toast('Logo must be under 512 KB', 'error'); return; }
     const reader = new FileReader();
-    reader.onload = evt => {
-      _maintLogoData = evt.target.result;
-      document.getElementById('maint-modal-logo-img').src = _maintLogoData;
-      document.getElementById('maint-modal-logo-preview').style.display = '';
-      document.getElementById('btn-maint-logo-clear').style.display = '';
+    reader.onload = () => {
+      _vp.drafts[_vp.page].logo_data = reader.result;
+      _vpRenderLogo();
+      _vpChanged();
     };
     reader.readAsDataURL(file);
-    e.target.value = ''; // allow re-selecting same file
   });
-  document.getElementById('btn-maint-logo-clear').addEventListener('click', () => {
-    _maintLogoData = null;
-    document.getElementById('maint-modal-logo-preview').style.display = 'none';
-    document.getElementById('btn-maint-logo-clear').style.display = 'none';
+  document.getElementById('vp-logo-remove').onclick = () => {
+    _vp.drafts[_vp.page].logo_data = null;
+    _vpRenderLogo();
+    _vpChanged();
+  };
+
+  // Apply branding & style to every page
+  document.getElementById('vp-apply-all').onclick = () => {
+    const src = _vp.drafts[_vp.page];
+    VP_PAGES.forEach(t => VP_SHARED_KEYS.forEach(k => { _vp.drafts[t][k] = src[k]; }));
+    _vpUpdateDirty();
+    toast('Branding and style copied to all four pages');
+  };
+
+  // Custom HTML
+  document.getElementById('vp-custom-on').addEventListener('change', e => {
+    const d = _vp.drafts[_vp.page];
+    if (!e.target.checked) d.custom_html = '';
+    else d.custom_html = document.getElementById('vp-f-custom').value;
+    _vpSyncCustom();
+    _vpChanged();
+  });
+  document.getElementById('vp-f-custom').addEventListener('input', e => {
+    _vp.drafts[_vp.page].custom_html = e.target.value;
+    _vpChanged();
   });
 
-  // Save
-  document.getElementById('maint-modal-save').addEventListener('click', () => saveMaintenancePage(_maintModalType));
+  // Preview controls
+  document.getElementById('vp-device').addEventListener('click', e => {
+    const b = e.target.closest('[data-device]');
+    if (b) _vpSetDevice(b.dataset.device);
+  });
+  document.getElementById('vp-scheme').addEventListener('click', e => {
+    const b = e.target.closest('[data-scheme]');
+    if (!b) return;
+    _vpSetScheme(b.dataset.scheme);
+    _vpPreview(true);
+  });
+
+  document.getElementById('vp-save').onclick = saveMaintenancePages;
 }
 
 function _updateMaintBadges() {
-  const downtimeBadge  = document.getElementById('maint-downtime-badge');
-  const updateBadge    = document.getElementById('maint-update-badge');
-  const restartBadge   = document.getElementById('maint-restart-badge');
-  const startingBadge  = document.getElementById('maint-starting-badge');
-  if (!downtimeBadge || !updateBadge) return;
-
-  const isMaint  = !!app.maintenance_mode;
+  const isMaint = !!app.maintenance_mode;
   const isUpdate = !!app.update_mode;
+  const set = (id, text, cls) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text;
+    el.className = `maint-row-badge ${cls}`;
+  };
+  set('maint-downtime-badge', isMaint ? 'On' : 'Off', isMaint ? 'maint-badge--red' : 'maint-badge--off');
+  set('maint-update-badge', isUpdate ? 'On' : 'Off', isUpdate ? 'maint-badge--orange' : 'maint-badge--off');
+  set('maint-restart-badge', 'Auto', 'maint-badge--blue');
+  set('maint-starting-badge', 'Auto', 'maint-badge--blue');
 
-  downtimeBadge.textContent = isMaint  ? 'On' : 'Off';
-  downtimeBadge.className   = `maint-row-badge ${isMaint  ? 'maint-badge--red'    : 'maint-badge--off'}`;
-
-  updateBadge.textContent   = isUpdate ? 'On' : 'Off';
-  updateBadge.className     = `maint-row-badge ${isUpdate ? 'maint-badge--orange' : 'maint-badge--off'}`;
-
-  if (restartBadge) {
-    restartBadge.textContent = 'Auto';
-    restartBadge.className   = 'maint-row-badge maint-badge--blue';
-  }
-  if (startingBadge) {
-    startingBadge.textContent = 'Auto';
-    startingBadge.className   = 'maint-row-badge maint-badge--blue';
-  }
+  const tabState = { downtime: isMaint ? 'On' : '', update: isUpdate ? 'On' : '' };
+  document.querySelectorAll('.vp-tab-state[data-state]').forEach(el => {
+    el.textContent = tabState[el.dataset.state];
+    el.classList.toggle('on', !!tabState[el.dataset.state]);
+  });
 }
 
-async function saveMaintenancePage(type) {
-  // Required field validation (skip when custom HTML is used)
-  const isCustom = document.getElementById('maint-modal-custom-toggle')?.checked;
-  if (!isCustom) {
-    const titleVal = document.getElementById('maint-modal-title-input').value.trim();
-    const msgVal   = document.getElementById('maint-modal-message').value.trim();
-    if (!titleVal) {
-      document.getElementById('maint-modal-title-input').focus();
-      toast('Title is required', 'error');
-      return;
-    }
-    if (!msgVal) {
-      document.getElementById('maint-modal-message').focus();
-      toast('Message is required', 'error');
-      return;
-    }
-  }
-
-  const btn  = document.getElementById('maint-modal-save');
-  const prev = btn.innerHTML;
+async function saveMaintenancePages() {
+  const btn = document.getElementById('vp-save');
   btn.disabled = true;
-  btn.innerHTML = `${spinner} Saving…`;
-
-  const getVal = id => document.getElementById(id)?.value ?? '';
-
-  const pageData = {
-    title:      getVal('maint-modal-title-input').trim()  || null,
-    message:    getVal('maint-modal-message').trim()      || null,
-    color:      getVal('maint-modal-color').trim()        || null,
-    status_url: getVal('maint-modal-status-url').trim()   || null,
-    logo_data:  _maintLogoData,
-    theme:      document.querySelector('#maint-modal-theme button.active')?.dataset.theme || 'auto',
-    custom_html: document.getElementById('maint-modal-custom-toggle')?.checked
-                   ? getVal('maint-modal-custom-html') || null
-                   : null,
-  };
-
-  // Build full settings payload (preserve the other page's existing data)
-  const currentDt = app.downtime_page  || {};
-  const currentUp = app.update_page    || {};
-  const currentRe = app.restart_page   || {};
-  const currentSt = app.starting_page  || {};
-  const _pick = (o) => ({ title: o.title, message: o.message, color: o.color, status_url: o.status_url, custom_html: o.custom_html, logo_data: o.logo_data, theme: o.theme || 'auto' });
-  const payload = {
-    downtime_page:  type === 'downtime'  ? pageData : _pick(currentDt),
-    update_page:    type === 'update'    ? pageData : _pick(currentUp),
-    restart_page:   type === 'restart'   ? pageData : _pick(currentRe),
-    starting_page:  type === 'starting'  ? pageData : _pick(currentSt),
-  };
-
+  btn.textContent = 'Saving…';
+  const payload = Object.fromEntries(VP_PAGES.map(t => [`${t}_page`, _vpPayloadPage(_vp.drafts[t])]));
   try {
     const res = await api.saveMaintenancePages(APP_ID, payload);
-    if (res.ok) {
-      app = await api.getApp(APP_ID);
-      _updateMaintBadges();
-      toast(`${{ downtime: 'Downtime', restart: 'Restart', starting: 'Starting', update: 'Update' }[type]} page saved`);
-      document.getElementById('maint-modal-backdrop').style.display = 'none';
-    } else {
-      toast(res.message || 'Save failed', 'error');
-    }
+    app = await api.getApp(APP_ID);
+    _vp.saved = JSON.stringify(_vp.drafts);
+    _updateMaintBadges();
+    _vpUpdateDirty();
+    if (res.ok) toast('Visitor pages saved');
+    else toast(`Saved, but nginx wasn't updated: ${res.message || 'unknown error'}`, 'warn');
   } catch (e) {
     toast(e.message, 'error');
-  } finally {
     btn.disabled = false;
-    btn.innerHTML = prev;
+  } finally {
+    btn.textContent = 'Save pages';
   }
 }
 

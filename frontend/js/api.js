@@ -134,6 +134,16 @@ export const api = {
   saveNginxConfig:(id, content) => request('PUT', `/apps/${id}/nginx-config`, { content }),
   getMaintenancePages:   (id)       => request('GET',  `/apps/${id}/maintenance-pages`),
   saveMaintenancePages:  (id, data) => request('PUT',  `/apps/${id}/maintenance-pages`, data),
+  renderMaintenancePage: async (id, pageType, page) => {
+    const res = await fetch(`${BASE}/apps/${id}/maintenance-pages/render`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ page_type: pageType, page }),
+    });
+    if (!res.ok) throw new Error(`Preview failed (HTTP ${res.status})`);
+    return res.text();
+  },
   toggleMaintenanceMode: (id)       => request('POST', `/apps/${id}/maintenance-mode/toggle`),
   toggleUpdateMode:      (id)       => request('POST', `/apps/${id}/update-mode/toggle`),
   getAuditLog: (appId, limit, offset) => request('GET', `/audit-log?limit=${limit || 100}&offset=${offset || 0}${appId ? `&app_id=${appId}` : ''}`),

@@ -136,6 +136,8 @@ class MaintenancePageConfig(BaseModel):
     custom_html: Optional[str] = None
     logo_data: Optional[str] = None    # base64 data-URL for logo image
     theme: Optional[str] = "auto"      # auto (visitor's system) | light | dark
+    brand_name: Optional[str] = None   # shown next to the logo in the header
+    background: Optional[str] = "none" # none | glow | grid
 
 
 class ExportRequest(BaseModel):
@@ -4113,6 +4115,27 @@ async def toggle_update_mode(app_id: int, _user: dict = Depends(_auth.require_pe
     return _app_to_dict(app)
 
 
+class RenderPageRequest(BaseModel):
+    page_type: str
+    page: MaintenancePageConfig
+
+
+@router.post("/{app_id}/maintenance-pages/render")
+async def render_maintenance_page(
+    app_id: int,
+    req: RenderPageRequest,
+    _user: dict = Depends(_auth.require_permission("apps.view")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Render unsaved page settings, for the editor's live preview."""
+    from fastapi.responses import HTMLResponse
+
+    if req.page_type not in ("downtime", "update", "restart", "starting"):
+        raise HTTPException(400, "page_type must be 'downtime', 'update', 'restart', or 'starting'")
+    await _get_or_404(app_id, db)
+    return HTMLResponse(content=nm.render_app_page(req.page_type, req.page.model_dump(), preview=True))
+
+
 @router.get("/{app_id}/maintenance-pages/preview/{page_type}")
 async def preview_maintenance_page(
     app_id: int,
@@ -4138,13 +4161,13 @@ async def preview_maintenance_page(
     cfg = json.loads(raw or "{}")
 
     if page_type == "downtime":
-        html = nm.render_app_page("downtime", cfg)
+        html = nm.render_app_page("downtime", cfg, preview=True)
     elif page_type == "restart":
-        html = nm.render_app_page("restart", cfg)
+        html = nm.render_app_page("restart", cfg, preview=True)
     elif page_type == "starting":
-        html = nm.render_app_page("starting", cfg)
+        html = nm.render_app_page("starting", cfg, preview=True)
     else:
-        html = nm.render_app_page("update", cfg)
+        html = nm.render_app_page("update", cfg, preview=True)
     return HTMLResponse(content=html)
 
 
