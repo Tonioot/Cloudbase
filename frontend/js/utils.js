@@ -62,6 +62,9 @@ export function badge(status) {
     stopping: 'Stopping…',
     restarting:'Restarting…',
     pending:   'Pending…',
+    creating:  'Creating…',
+    unhealthy: 'Unhealthy',
+    node_offline: 'Node offline',
   };
   return `<span class="badge badge-${status}">${labels[status] || 'Unknown'}</span>`;
 }

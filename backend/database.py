@@ -213,6 +213,12 @@ async def init_db():
         ("nodes.add",         "Add new nodes and create node invites"),
         ("nodes.configure",   "Rename, enable and disable nodes"),
         ("nodes.delete",      "Delete nodes"),
+        # Databases
+        ("databases.view",        "View databases, their status, logs and statistics"),
+        ("databases.create",      "Create new databases"),
+        ("databases.manage",      "Start, stop and restart databases, change limits and link them to apps"),
+        ("databases.credentials", "View database passwords and connection strings"),
+        ("databases.delete",      "Delete databases"),
         # Observability
         ("audit.view",        "View audit logs"),
         # System & users
@@ -290,7 +296,7 @@ async def init_db():
         # Built-in roles are reset to their canonical permission set on every startup
         # so they cannot drift from the source of truth.
         from sqlalchemy import delete as _delete
-        viewer_perms = ["apps.view", "nodes.view", "audit.view"]
+        viewer_perms = ["apps.view", "nodes.view", "databases.view", "audit.view"]
         admin_perms  = [p for p, _ in ALL_PERMISSIONS]
 
         for role_name, role_desc, perms in [

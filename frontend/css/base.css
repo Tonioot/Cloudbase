@@ -111,9 +111,6 @@ code, kbd, pre, .mono { font-family: var(--font-mono); }
 .sb-item:hover { background: var(--hover); color: var(--text); }
 .sb-item.active { background: var(--hover); color: var(--text); }
 .sb-item.active svg { color: var(--text); }
-.sb-item--soon, .sb-item--soon:hover { color: var(--faint); background: none; cursor: default; }
-.sb-item--soon svg { color: var(--faint); }
-.sb-tag { font-size: 10px; color: var(--muted); border: 1px solid var(--line-strong); border-radius: var(--radius-xs); padding: 0 5px; flex: none !important; }
 
 .sb-section {
   display: flex;

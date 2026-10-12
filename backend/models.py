@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, Float, Table
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, Float, Table, UniqueConstraint
 from database import Base
 
 
@@ -253,3 +253,39 @@ class Deployment(Base):
     actor          = Column(String(100), nullable=True)
     created_at     = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     finished_at    = Column(DateTime, nullable=True)
+
+
+class Database(Base):
+    """A managed database: one container with its own data volume on one fixed node."""
+    __tablename__ = "databases"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    name            = Column(String(40), unique=True, nullable=False, index=True)
+    engine          = Column(String(20), nullable=False)    # postgres | mysql | mariadb | redis | valkey | mongodb
+    version         = Column(String(20), nullable=False)
+    node_id         = Column(Integer, ForeignKey("nodes.id"), nullable=False, index=True)  # fixed, never moved automatically
+    status          = Column(String(20), default="creating", nullable=False)
+    # creating | starting | running | unhealthy | stopping | stopped | error | node_offline
+    desired_state   = Column(String(10), default="running", nullable=False)  # running | stopped
+    last_error      = Column(Text, nullable=True)
+    container_id    = Column(String(200), nullable=True)
+    credentials     = Column(Text, nullable=False)          # encrypted JSON: user, password, db_name
+    cpu_limit       = Column(Float, nullable=True)
+    memory_limit_mb = Column(Integer, nullable=True)
+    # Set after the first successful start. From then on a missing data volume is an
+    # error and never a reason to initialise a fresh, empty database.
+    initialized_at  = Column(DateTime, nullable=True)
+    created_at      = Column(DateTime, default=datetime.utcnow)
+    updated_at      = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DatabaseLink(Base):
+    """Injects a database's connection URL into an app as an environment variable."""
+    __tablename__ = "database_links"
+    __table_args__ = (UniqueConstraint("app_id", "env_var_name", name="uq_database_links_app_env"),)
+
+    id           = Column(Integer, primary_key=True, index=True)
+    database_id  = Column(Integer, ForeignKey("databases.id", ondelete="CASCADE"), nullable=False, index=True)
+    app_id       = Column(Integer, ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    env_var_name = Column(String(100), nullable=False)
+    created_at   = Column(DateTime, default=datetime.utcnow)

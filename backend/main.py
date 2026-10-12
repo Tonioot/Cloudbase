@@ -24,6 +24,7 @@ from database import AsyncSessionLocal, init_db, get_db
 from models import Application, User, Role, Permission, role_permissions
 from routers import applications, files, logs, stats, nodes, audit as audit_router
 from routers import roles as roles_router
+from routers import databases as databases_router
 from routers import domains as domains_router
 from env_crypto import decrypt_env
 from audit import log_audit
@@ -31,6 +32,7 @@ import auth
 import nginx_manager as nm
 import process_manager as pm
 import docker_manager as dm
+import db_links
 import token_vault
 import node_agent
 import config as _cfg
@@ -133,6 +135,7 @@ def _docker_runtime_options(app: Application) -> dict:
         "tmpfs_enabled": bool(app.docker_tmpfs_enabled),
         "tmpfs_size_mb": app.docker_tmpfs_size_mb,
         "restart_policy": app.restart_policy or "no",
+        **db_links.runtime_options(app.id),
     }
 
 
@@ -1019,6 +1022,7 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(_orphan_replica_cleanup()),
             asyncio.create_task(_overview_sampler()),
             asyncio.create_task(_deploys.auto_deploy_loop()),
+            asyncio.create_task(databases_router.database_monitor()),
         ]
 
     yield
@@ -1047,6 +1051,7 @@ _PUBLIC = {
 _PERMISSION_WRITE_MAP = (
     ("/api/apps",      "apps.configure"),  # safest fallback; granular checks on endpoints
     ("/api/nodes",     "nodes.configure"),
+    ("/api/databases", "databases.manage"),
     ("/api/system",    "system.manage"),
     ("/api/users",     "users.manage"),
     ("/api/roles",     "roles.manage"),
@@ -1056,6 +1061,7 @@ _PERMISSION_WRITE_MAP = (
 _PERMISSION_READ_MAP = (
     ("/api/apps",      "apps.view"),
     ("/api/nodes",     "nodes.view"),
+    ("/api/databases", "databases.view"),
     ("/api/system",    "system.manage"),
     ("/api/users",     "users.manage"),
     ("/api/roles",     "roles.manage"),
@@ -1089,6 +1095,10 @@ _PERMISSION_PREFIX_OVERRIDES: tuple[tuple[str, str, str | None], ...] = (
     ("PUT",    "/api/nodes/",                "nodes.view"),
     ("DELETE", "/api/nodes/",                "nodes.view"),
     ("PATCH",  "/api/nodes/",                "nodes.view"),
+    # Databases: create / manage / delete are checked per endpoint
+    ("POST",   "/api/databases",             "databases.view"),
+    ("PATCH",  "/api/databases/",            "databases.view"),
+    ("DELETE", "/api/databases/",            "databases.view"),
 )
 
 # Sub-path → permission overrides for /api/apps/* endpoints based on URL segments.
@@ -1858,6 +1868,7 @@ app.include_router(stats.router)
 app.include_router(audit_router.router)
 app.include_router(roles_router.router)
 app.include_router(domains_router.router)
+app.include_router(databases_router.router)
 
 
 # ── App preview reverse proxy ────────────────────────────────────────────────────────────────
@@ -1976,6 +1987,16 @@ if os.path.isdir(FRONTEND_DIR):
     @app.get("/node", include_in_schema=False)
     async def node_page():
         return FileResponse(os.path.join(FRONTEND_DIR, "node.html"))
+
+    @app.get("/databases.html", include_in_schema=False)
+    @app.get("/databases", include_in_schema=False)
+    async def databases_page():
+        return FileResponse(os.path.join(FRONTEND_DIR, "databases.html"))
+
+    @app.get("/database.html", include_in_schema=False)
+    @app.get("/database", include_in_schema=False)
+    async def database_page():
+        return FileResponse(os.path.join(FRONTEND_DIR, "database.html"))
 
     @app.get("/audit.html", include_in_schema=False)
     @app.get("/audit", include_in_schema=False)

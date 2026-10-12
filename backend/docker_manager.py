@@ -45,6 +45,33 @@ def _assert_image_local(client, img: str) -> None:
         )
 
 
+_network_lock = threading.Lock()
+
+
+def ensure_network(name: str) -> None:
+    """Create the user-defined bridge network if it does not exist yet."""
+    import docker  # type: ignore
+    client = _get_client()
+    with _network_lock:
+        try:
+            client.networks.get(name)
+        except docker.errors.NotFound:
+            client.networks.create(name, driver="bridge", labels={"cloudbase.managed": "true"})
+            log.info("[docker] Created network %s", name)
+
+
+def _apply_linked_databases(run_kwargs: dict, docker_options: dict) -> None:
+    """Attach the container to the database network and add the URLs of linked
+    databases. The app's own env vars win when a name is set in both places."""
+    linked_env = docker_options.get("linked_env") or {}
+    if linked_env:
+        run_kwargs["environment"] = {**linked_env, **(run_kwargs.get("environment") or {})}
+    network = docker_options.get("network")
+    if network:
+        ensure_network(network)
+        run_kwargs["network"] = network
+
+
 def _get_build_lock(app_id: int) -> threading.Lock:
     with _build_locks_guard:
         lock = _build_locks.get(app_id)
@@ -711,6 +738,7 @@ def run_container(
             tmpfs_opts.append(f"size={int(tmpfs_size_mb)}m")
         run_kwargs["tmpfs"] = {"/tmp": ",".join(tmpfs_opts)}
 
+    _apply_linked_databases(run_kwargs, docker_options)
     _assert_image_local(client, img)
     container = client.containers.run(
         img,
@@ -1001,6 +1029,7 @@ def run_container_for_slot(
         if docker_options.get("tmpfs_size_mb"):
             tmpfs_opts.append(f"size={int(docker_options['tmpfs_size_mb'])}m")
         run_kwargs["tmpfs"] = {"/tmp": ",".join(tmpfs_opts)}
+    _apply_linked_databases(run_kwargs, docker_options)
     _assert_image_local(client, img)
     container = client.containers.run(img, **run_kwargs)
     push_line_fn(app_id, f"[ZD] Slot container started: {container.short_id} on :{external_port}")
@@ -1114,6 +1143,7 @@ def run_replica_container(
             tmpfs_opts.append(f"size={int(tmpfs_size_mb)}m")
         run_kwargs["tmpfs"] = {"/tmp": ",".join(tmpfs_opts)}
 
+    _apply_linked_databases(run_kwargs, docker_options)
     _assert_image_local(client, img)
     # Retry on transient Docker errors: port still releasing or container name
     # still being removed after a force-remove.

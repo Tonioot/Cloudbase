@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cloudbase — Database</title>
+  <link rel="icon" type="image/png" href="/cloudbase.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="css/variables.css" />
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/components.css" />
+  <link rel="stylesheet" href="css/pages.css" />
+  <link rel="stylesheet" href="css/detail.css" />
+</head>
+<body>
+
+<div class="shell">
+
+  <aside class="rail" id="rail"></aside>
+
+  <!-- ─── Main ─────────────────────────────────────────────────────────── -->
+  <main class="main-content">
+    <div class="page page--detail">
+
+    <!-- Header -->
+    <section class="detail-head" aria-label="Database">
+      <div class="detail-status-line">
+        <span id="db-status-badge"></span>
+        <span class="detail-status-meta" id="db-status-meta"></span>
+      </div>
+      <div class="detail-head-row">
+        <div class="detail-head-id">
+          <div class="detail-title-row">
+            <h1 class="detail-name" id="db-name">Loading…</h1>
+          </div>
+          <div class="detail-links"><span class="detail-repo" id="db-meta">—</span></div>
+        </div>
+        <div class="detail-actions">
+          <button class="btn" id="btn-start" data-perm="databases.manage" style="display:none">Start</button>
+          <button class="btn" id="btn-restart" data-perm="databases.manage">Restart</button>
+          <button class="btn" id="btn-stop" data-perm="databases.manage">Stop</button>
+        </div>
+      </div>
+      <div class="db-error" id="db-error" style="display:none"></div>
+    </section>
+
+    <section class="settings-group" aria-labelledby="conn-title">
+      <div class="settings-group-hd">
+        <div class="settings-group-title" id="conn-title">Connection</div>
+        <div class="settings-group-sub">Reachable by app containers on the same node over the internal <code>cloudbase</code> network. No port is exposed to the internet.</div>
+      </div>
+      <div>
+        <div class="info-row"><span class="label">Host</span><code class="value" id="c-host">—</code></div>
+        <div class="info-row"><span class="label">Port</span><code class="value" id="c-port">—</code></div>
+        <div class="info-row"><span class="label">Database</span><code class="value" id="c-database">—</code></div>
+        <div class="info-row"><span class="label">User</span><code class="value" id="c-user">—</code></div>
+        <div class="info-row"><span class="label">Password</span><code class="value" id="c-password">••••••••••••</code></div>
+        <div class="info-row"><span class="label">Connection URL</span><code class="value" id="c-url">••••••••••••</code></div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn btn-sm" id="btn-reveal" data-perm="databases.credentials">Show credentials</button>
+          <button class="btn btn-sm" id="btn-copy-url" data-perm="databases.credentials">Copy URL</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-group" aria-labelledby="links-title">
+      <div class="settings-group-hd">
+        <div class="settings-group-title" id="links-title">Linked apps</div>
+        <div class="settings-group-sub">A linked app gets the connection URL as an environment variable. Restart the app after linking or unlinking.</div>
+      </div>
+      <div>
+        <div id="links-list" class="db-links"></div>
+        <button class="btn btn-sm" id="btn-link" data-perm="databases.manage" style="margin-top:12px">Link app</button>
+      </div>
+    </section>
+
+    <section class="settings-group" aria-labelledby="res-title">
+      <div class="settings-group-hd">
+        <div class="settings-group-title" id="res-title">Resources</div>
+        <div class="settings-group-sub">The memory limit also sizes the database's caches. Changing limits replaces the container; the data stays.</div>
+      </div>
+      <div>
+        <div class="info-row"><span class="label">CPU</span><code class="value" id="s-cpu">—</code></div>
+        <div class="info-row"><span class="label">Memory</span><code class="value" id="s-mem">—</code></div>
+        <div class="info-row"><span class="label">Data size</span><code class="value" id="s-disk">—</code></div>
+        <div class="info-row"><span class="label">Uptime</span><code class="value" id="s-uptime">—</code></div>
+        <div class="form-pair" style="margin-top:16px" data-perm="databases.manage">
+          <label class="unit-input"><span class="sr-only">CPU limit</span>
+            <input id="lim-cpu" class="input" type="number" min="0.1" step="0.1" placeholder="no limit" />
+            <span class="unit">CPU</span>
+          </label>
+          <label class="unit-input"><span class="sr-only">Memory limit</span>
+            <input id="lim-mem" class="input" type="number" min="32" step="64" placeholder="no limit" />
+            <span class="unit">MB</span>
+          </label>
+        </div>
+        <button class="btn btn-sm" id="btn-save-limits" data-perm="databases.manage" style="margin-top:12px">Save limits</button>
+      </div>
+    </section>
+
+    <section class="section" aria-labelledby="logs-title" style="border-top:1px solid var(--line)">
+      <div class="section-head">
+        <h2 id="logs-title">Logs</h2>
+        <button class="btn btn-sm" id="btn-refresh-logs">Refresh</button>
+      </div>
+      <div class="node-log-frame">
+        <pre id="db-logs" class="node-log-view"></pre>
+      </div>
+    </section>
+
+    <section class="settings-group settings-group--danger" aria-labelledby="danger-title" data-perm="databases.delete">
+      <div class="settings-group-hd">
+        <div class="settings-group-title" id="danger-title">Danger zone</div>
+        <div class="settings-group-sub">Deleting cannot be undone unless you keep the data volume.</div>
+      </div>
+      <div class="danger-row">
+        <div class="danger-row-text">
+          <div class="title">Delete database</div>
+          <div class="sub">Removes the container and, unless you keep it, all data.</div>
+        </div>
+        <button class="btn btn-danger" id="btn-delete">Delete</button>
+      </div>
+    </section>
+
+    </div>
+  </main>
+</div>
+
+<div id="toast-container"></div>
+
+<script type="module">
+  import { api } from './js/api.js';
+  import { initDatabasePage } from './js/database.js';
+  import { initSidebar } from './js/sidebar.js';
+
+  try {
+    await api.checkAuth();
+  } catch {
+    location.href = '/login';
+  }
+
+  await initSidebar();
+  initDatabasePage();
+
+</script>
+</body>
+</html>

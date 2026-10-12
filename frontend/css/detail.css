@@ -654,3 +654,23 @@ button.s3-link:hover { background: var(--hover); }
   .s3-ctl { width: 100%; }
   .s3-row--sub { padding-left: 18px; }
 }
+
+/* ─── Database detail ───────────────────────────────────────────────────── */
+.db-error {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--red) 35%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--red) 8%, transparent);
+  color: var(--red);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.db-links { display: flex; flex-direction: column; }
+.db-links-empty { font-size: 13px; color: var(--muted); padding: 9px 0; }
+.db-link-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+.db-link-row:last-child { border-bottom: none; }
+.db-link-main { min-width: 0; font-size: 13px; }
+.db-link-app { font-weight: 500; color: var(--text); margin-right: 8px; }
+.db-link-env { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+.db-link-warn { font-size: 12px; color: var(--yellow); margin-top: 3px; }

@@ -393,6 +393,35 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
 `,
 },
 
+{
+  slug: 'databases',
+  group: 'Apps',
+  title: 'Databases',
+  summary: 'Run PostgreSQL, MySQL, MariaDB, Redis, Valkey or MongoDB next to your apps and link them.',
+  keywords: 'database postgres postgresql mysql mariadb redis valkey mongodb volume link DATABASE_URL',
+  lead: 'A managed database is one container with its own data volume on one node you choose. Cloudbase creates the credentials, keeps it running and hands the connection URL to the apps you link.',
+  body: `
+<h2>Creating a database</h2>
+<p>Open <strong>Databases</strong> in the sidebar and click <strong>New database</strong>. Pick the engine, a version, the node and the resources. The official Docker image is pulled the first time, so the first start can take a minute.</p>
+<p>The memory limit does more than cap memory: Cloudbase also sizes the engine's caches from it (PostgreSQL <code>shared_buffers</code>, the InnoDB buffer pool, Redis <code>maxmemory</code>, the MongoDB WiredTiger cache). Without a limit the engine's own defaults apply.</p>
+
+<h2>Where the data lives</h2>
+<p>The data is stored in a Docker volume named <code>cloudbase-db-&lt;id&gt;-data</code> on the chosen node. The container itself is disposable: changing limits or restarting replaces it, and the volume stays.</p>
+<div class="callout callout--warn"><p>A database never moves to another node by itself. If its node goes offline, the database is shown as <em>node offline</em> until the node is back. Cloudbase also never creates an empty database over a missing volume: that shows an error instead.</p></div>
+
+<h2>Linking an app</h2>
+<p>On the database page, click <strong>Link app</strong>. The app gets the connection URL as an environment variable — <code>DATABASE_URL</code> for PostgreSQL, MySQL and MariaDB, <code>REDIS_URL</code> for Redis and Valkey, <code>MONGODB_URL</code> for MongoDB — after its next restart. You can pick another name. If the app already sets that variable itself, its own value wins.</p>
+<p>Apps reach the database over an internal Docker network called <code>cloudbase</code>, using the host name <code>cloudbase-db-&lt;id&gt;</code>. No port is published on the server, so the database is not reachable from the internet.</p>
+<div class="callout"><p>For now only instances on the same node as the database can reach it. Run the linked app's instances on that node; the database page warns when a linked app has instances elsewhere.</p></div>
+
+<h2>Credentials</h2>
+<p>Passwords are generated when the database is created and stored encrypted. Users with the <code>databases.credentials</code> permission can show them and copy the connection URL; every view is written to the audit log.</p>
+
+<h2>Deleting</h2>
+<p>Deleting removes the container and, unless you choose <strong>Keep the data volume</strong>, all data. A node that has databases on it cannot be removed until those databases are deleted.</p>
+`,
+},
+
 /* ─── Networking ───────────────────────────────────────────────────────── */
 
 {

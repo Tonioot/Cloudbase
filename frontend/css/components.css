@@ -124,12 +124,12 @@
 
 .badge-stopped  { color: var(--muted); }
 
-.badge-error { color: var(--red); }
-.badge-error::before { background: var(--red); box-shadow: 0 0 0 3px var(--red-halo); }
+.badge-error, .badge-unhealthy, .badge-node_offline { color: var(--red); }
+.badge-error::before, .badge-unhealthy::before, .badge-node_offline::before { background: var(--red); box-shadow: 0 0 0 3px var(--red-halo); }
 
-.badge-deploying, .badge-starting, .badge-stopping, .badge-restarting, .badge-pending { color: var(--yellow); }
+.badge-deploying, .badge-starting, .badge-stopping, .badge-restarting, .badge-pending, .badge-creating { color: var(--yellow); }
 .badge-deploying::before, .badge-starting::before, .badge-stopping::before,
-.badge-restarting::before, .badge-pending::before {
+.badge-restarting::before, .badge-pending::before, .badge-creating::before {
   background: var(--yellow);
   animation: pulse 1.1s ease-in-out infinite;
 }

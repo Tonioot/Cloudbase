@@ -37,8 +37,8 @@ export const ICONS = {
 const STATUS_COLOR = {
   running: 'var(--green)', online: 'var(--green)',
   stopped: 'var(--faint)',
-  error: 'var(--red)', crashed: 'var(--red)', offline: 'var(--red)',
-  deploying: 'var(--yellow)', starting: 'var(--yellow)', stopping: 'var(--yellow)', restarting: 'var(--yellow)',
+  error: 'var(--red)', crashed: 'var(--red)', offline: 'var(--red)', unhealthy: 'var(--red)', node_offline: 'var(--red)',
+  deploying: 'var(--yellow)', starting: 'var(--yellow)', stopping: 'var(--yellow)', restarting: 'var(--yellow)', creating: 'var(--yellow)',
 };
 export const statusColor = s => STATUS_COLOR[s] || 'var(--faint)';
 
@@ -46,6 +46,7 @@ export const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&l
 
 function currentSection() {
   const p = location.pathname;
+  if (p.startsWith('/database')) return 'databases';
   if (p.startsWith('/app')) return 'apps';
   if (p.startsWith('/node')) return 'nodes';
   if (p.startsWith('/audit')) return 'audit';
@@ -59,6 +60,7 @@ const DEFAULT_CRUMBS = {
   apps: ['Apps'],
   nodes: ['Nodes'],
   audit: ['Audit log'],
+  databases: ['Databases'],
   settings: ['Settings'],
   guides: ['Guides'],
 };
@@ -66,8 +68,8 @@ const DEFAULT_CRUMBS = {
 /* ─── Sidebar ───────────────────────────────────────────────────────────── */
 
 function railHTML(active) {
-  const nav = (key, href, label, extra = '') =>
-    `<a class="sb-item${active === key ? ' active' : ''}" href="${href}" ${extra}>${ICONS[key]}<span>${label}</span></a>`;
+  const nav = (key, href, label, extra = '', iconKey = key) =>
+    `<a class="sb-item${active === key ? ' active' : ''}" href="${href}" ${extra}>${ICONS[iconKey]}<span>${label}</span></a>`;
   const settingKey = active === 'settings' ? (new URLSearchParams(location.search).get('s') || 'domain') : null;
   const setting = (id, key, icon, label, extra = '') =>
     `<a class="sb-item${settingKey === key ? ' active' : ''}" id="${id}" href="/settings?s=${key}" ${extra}>${ICONS[icon]}<span>${label}</span></a>`;
@@ -83,7 +85,7 @@ function railHTML(active) {
     <nav class="sb-nav" aria-label="Main">
       ${nav('overview', '/', 'Overview')}
       ${nav('audit', '/audit', 'Audit log', 'data-perm="audit.view"')}
-      <span class="sb-item sb-item--soon" aria-disabled="true">${ICONS.database}<span>Databases</span><span class="sb-tag">Soon</span></span>
+      ${nav('databases', '/databases', 'Databases', 'data-perm="databases.view"', 'database')}
 
       <div class="sb-section"><span>Apps</span><span class="sb-count" id="rail-apps-count"></span></div>
       <div class="sb-list" id="rail-apps-list"><div class="flyout-empty">Loading…</div></div>
@@ -245,6 +247,7 @@ function paletteCommands() {
     { group: 'Actions', label: 'Add node', icon: ICONS.nodes, run: onDashboard && document.getElementById('btn-add-node') ? click('btn-add-node') : go('/?action=add-node'), keywords: 'server invite' },
     { group: 'Actions', label: 'Toggle theme', icon: ICONS.moon, run: () => { window.cbTheme?.cycle(); syncThemeButton(); }, keywords: 'dark light appearance' },
     { group: 'Go to', label: 'Overview', icon: ICONS.overview, run: go('/'), keywords: 'dashboard home' },
+    { group: 'Go to', label: 'Databases', icon: ICONS.database, run: go('/databases'), keywords: 'postgres mysql mariadb redis valkey mongodb' },
     { group: 'Go to', label: 'Audit log', icon: ICONS.audit, run: go('/audit'), keywords: 'history events' },
     { group: 'Go to', label: 'Guides', icon: ICONS.guides, run: go('/guides'), keywords: 'docs documentation help how' },
   ];

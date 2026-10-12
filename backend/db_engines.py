@@ -1,0 +1,207 @@
+"""Managed database engines: everything engine-specific lives here, as plain data.
+
+Each engine describes its official Docker image, the versions offered in the panel,
+how the container is configured (environment, command, healthcheck, data directory)
+and how apps connect to it. Memory-based tuning is derived from the container's
+memory limit so a database performs well without any manual configuration.
+
+Credentials are a dict with `user`, `password` and `db_name`.
+"""
+
+from dataclasses import dataclass
+from typing import Callable, Optional
+
+
+@dataclass(frozen=True)
+class Engine:
+    key: str
+    label: str
+    image: str                 # image repository; the tag is the version
+    versions: tuple[str, ...]  # newest first; the first one is the default
+    port: int
+    env_var: str               # default env var name when linking to an app
+    container_env: Callable[[dict], dict]
+    command: Callable[[dict, Optional[int]], Optional[list[str]]]  # (credentials, memory_limit_mb)
+    healthcheck: str           # CMD-SHELL test; secrets come from the container env
+    data_dir: Callable[[str], str]
+    url: Callable[[dict, str], str]  # (credentials, host)
+
+    def image_ref(self, version: str) -> str:
+        return f"{self.image}:{version}"
+
+
+# ── Tuning helpers ────────────────────────────────────────────────────────────
+
+def _postgres_command(_creds: dict, mem_mb: Optional[int]) -> Optional[list[str]]:
+    if not mem_mb:
+        return None
+    return [
+        "postgres",
+        "-c", f"shared_buffers={max(mem_mb // 4, 32)}MB",
+        "-c", f"effective_cache_size={max(mem_mb * 3 // 4, 64)}MB",
+    ]
+
+
+def _innodb_command(_creds: dict, mem_mb: Optional[int]) -> Optional[list[str]]:
+    # Arguments starting with "-" are appended to mysqld/mariadbd by the image entrypoint.
+    if not mem_mb:
+        return None
+    return [f"--innodb-buffer-pool-size={max(mem_mb // 2, 16)}M"]
+
+
+def _redis_command(server: str):
+    def build(creds: dict, mem_mb: Optional[int]) -> list[str]:
+        cmd = [server, "--requirepass", creds["password"], "--appendonly", "yes"]
+        if mem_mb:
+            cmd += ["--maxmemory", f"{max(mem_mb * 4 // 5, 16)}mb", "--maxmemory-policy", "noeviction"]
+        return cmd
+    return build
+
+
+def _mongo_command(_creds: dict, mem_mb: Optional[int]) -> Optional[list[str]]:
+    if not mem_mb:
+        return None
+    # MongoDB's own default: 50% of (RAM - 1 GB), at least 0.25 GB.
+    cache_gb = max(0.25, round((mem_mb - 1024) / 1024 * 0.5, 2))
+    return ["mongod", "--wiredTigerCacheSizeGB", str(cache_gb)]
+
+
+def _postgres_data_dir(version: str) -> str:
+    # From PostgreSQL 18 the image keeps PGDATA in a versioned subdirectory and
+    # declares /var/lib/postgresql itself as the volume.
+    try:
+        major = int(version.split(".")[0])
+    except ValueError:
+        major = 0
+    return "/var/lib/postgresql" if major >= 18 else "/var/lib/postgresql/data"
+
+
+# ── Registry ──────────────────────────────────────────────────────────────────
+
+ENGINES: dict[str, Engine] = {
+    "postgres": Engine(
+        key="postgres",
+        label="PostgreSQL",
+        image="postgres",
+        versions=("18", "17", "16", "15"),
+        port=5432,
+        env_var="DATABASE_URL",
+        container_env=lambda c: {
+            "POSTGRES_USER": c["user"],
+            "POSTGRES_PASSWORD": c["password"],
+            "POSTGRES_DB": c["db_name"],
+        },
+        command=_postgres_command,
+        healthcheck='pg_isready -q -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
+        data_dir=_postgres_data_dir,
+        url=lambda c, host: f"postgresql://{c['user']}:{c['password']}@{host}:5432/{c['db_name']}",
+    ),
+    "mysql": Engine(
+        key="mysql",
+        label="MySQL",
+        image="mysql",
+        versions=("8.4", "9"),
+        port=3306,
+        env_var="DATABASE_URL",
+        container_env=lambda c: {
+            "MYSQL_ROOT_PASSWORD": c["root_password"],
+            "MYSQL_DATABASE": c["db_name"],
+            "MYSQL_USER": c["user"],
+            "MYSQL_PASSWORD": c["password"],
+        },
+        command=_innodb_command,
+        # 127.0.0.1 only answers once the real server runs (init uses --skip-networking).
+        healthcheck='mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent',
+        data_dir=lambda _v: "/var/lib/mysql",
+        url=lambda c, host: f"mysql://{c['user']}:{c['password']}@{host}:3306/{c['db_name']}",
+    ),
+    "mariadb": Engine(
+        key="mariadb",
+        label="MariaDB",
+        image="mariadb",
+        versions=("11.8", "11.4", "10.11"),
+        port=3306,
+        env_var="DATABASE_URL",
+        container_env=lambda c: {
+            "MARIADB_ROOT_PASSWORD": c["root_password"],
+            "MARIADB_DATABASE": c["db_name"],
+            "MARIADB_USER": c["user"],
+            "MARIADB_PASSWORD": c["password"],
+        },
+        command=_innodb_command,
+        healthcheck="healthcheck.sh --connect --innodb_initialized",
+        data_dir=lambda _v: "/var/lib/mysql",
+        url=lambda c, host: f"mysql://{c['user']}:{c['password']}@{host}:3306/{c['db_name']}",
+    ),
+    "redis": Engine(
+        key="redis",
+        label="Redis",
+        image="redis",
+        versions=("8", "7.4"),
+        port=6379,
+        env_var="REDIS_URL",
+        container_env=lambda c: {"REDISCLI_AUTH": c["password"]},
+        command=_redis_command("redis-server"),
+        healthcheck="redis-cli ping | grep -q PONG",
+        data_dir=lambda _v: "/data",
+        url=lambda c, host: f"redis://default:{c['password']}@{host}:6379/0",
+    ),
+    "valkey": Engine(
+        key="valkey",
+        label="Valkey",
+        image="valkey/valkey",
+        versions=("9", "8"),
+        port=6379,
+        env_var="REDIS_URL",
+        container_env=lambda c: {"VALKEYCLI_AUTH": c["password"], "REDISCLI_AUTH": c["password"]},
+        command=_redis_command("valkey-server"),
+        healthcheck="valkey-cli ping | grep -q PONG",
+        data_dir=lambda _v: "/data",
+        url=lambda c, host: f"redis://default:{c['password']}@{host}:6379/0",
+    ),
+    "mongodb": Engine(
+        key="mongodb",
+        label="MongoDB",
+        image="mongo",
+        versions=("8.0", "7.0"),
+        port=27017,
+        env_var="MONGODB_URL",
+        container_env=lambda c: {
+            "MONGO_INITDB_ROOT_USERNAME": c["user"],
+            "MONGO_INITDB_ROOT_PASSWORD": c["password"],
+            "MONGO_INITDB_DATABASE": c["db_name"],
+        },
+        command=_mongo_command,
+        healthcheck="mongosh --quiet --eval \"db.adminCommand('ping').ok\" | grep -q 1",
+        data_dir=lambda _v: "/data/db",
+        url=lambda c, host: f"mongodb://{c['user']}:{c['password']}@{host}:27017/{c['db_name']}?authSource=admin",
+    ),
+}
+
+# Names that collide with built-in users or databases of one of the engines.
+RESERVED_NAMES = {
+    "root", "admin", "mysql", "mariadb", "postgres", "template0", "template1",
+    "sys", "information-schema", "performance-schema", "local", "config", "test", "default",
+}
+
+
+def get_engine(key: str) -> Engine:
+    engine = ENGINES.get(key)
+    if engine is None:
+        raise ValueError(f"Unknown database engine: {key!r}")
+    return engine
+
+
+def catalog() -> list[dict]:
+    """Engines and versions for the panel."""
+    return [
+        {
+            "key": e.key,
+            "label": e.label,
+            "versions": list(e.versions),
+            "default_version": e.versions[0],
+            "port": e.port,
+            "env_var": e.env_var,
+        }
+        for e in ENGINES.values()
+    ]

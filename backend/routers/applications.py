@@ -25,6 +25,7 @@ import nginx_manager as nm
 import certificates as certs
 import token_vault
 import docker_manager as dm
+import db_links
 from routers.nodes import ensure_local_node, queue_node_command, wait_for_node_command
 from env_crypto import encrypt_env, decrypt_env, encrypt_text, decrypt_text
 from audit import log_audit
@@ -294,6 +295,7 @@ def _docker_runtime_options(app: Application) -> dict:
         "tmpfs_enabled": bool(app.docker_tmpfs_enabled),
         "tmpfs_size_mb": app.docker_tmpfs_size_mb,
         "restart_policy": app.restart_policy or "no",
+        **db_links.runtime_options(app.id),
     }
 
 

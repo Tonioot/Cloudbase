@@ -836,9 +836,63 @@ async def cmd_refresh_source(client, state, main_id, payload, _headers):
     return {"ok": True, "app_dir": app_dir}
 
 
+# ─── Managed databases ────────────────────────────────────────────────────────
+# Thin wrappers: db_manager does the work, the primary keeps the state.
+
+async def cmd_db_ensure(_client, _state, _main_id, payload, _headers):
+    import db_manager
+    return await asyncio.to_thread(db_manager.ensure_running, payload["spec"])
+
+
+async def cmd_db_recreate(_client, _state, _main_id, payload, _headers):
+    import db_manager
+    return await asyncio.to_thread(db_manager.recreate, payload["spec"])
+
+
+async def cmd_db_restart(_client, _state, _main_id, payload, _headers):
+    import db_manager
+    return await asyncio.to_thread(db_manager.restart, payload["spec"])
+
+
+async def cmd_db_stop(_client, _state, _main_id, payload, _headers):
+    import db_manager
+    return await asyncio.to_thread(db_manager.stop, int(payload["database_id"]))
+
+
+async def cmd_db_remove(_client, _state, _main_id, payload, _headers):
+    import db_manager
+    return await asyncio.to_thread(
+        db_manager.remove, int(payload["database_id"]), bool(payload.get("keep_volume", True))
+    )
+
+
+async def cmd_db_states(_client, _state, _main_id, payload, _headers):
+    import db_manager
+    return {"states": await asyncio.to_thread(db_manager.states, payload.get("database_ids") or [])}
+
+
+async def cmd_db_stats(_client, _state, _main_id, payload, _headers):
+    import db_manager
+    return await asyncio.to_thread(db_manager.stats, int(payload["database_id"]), payload.get("data_dir"))
+
+
+async def cmd_db_logs(_client, _state, _main_id, payload, _headers):
+    import db_manager
+    lines = await asyncio.to_thread(db_manager.logs, int(payload["database_id"]), int(payload.get("lines", 300)))
+    return {"lines": lines}
+
+
 # ─── Command Dispatcher ───────────────────────────────────────────────────────
 
 COMMAND_HANDLERS: Dict[str, Callable] = {
+    "db_ensure": cmd_db_ensure,
+    "db_recreate": cmd_db_recreate,
+    "db_restart": cmd_db_restart,
+    "db_stop": cmd_db_stop,
+    "db_remove": cmd_db_remove,
+    "db_states": cmd_db_states,
+    "db_stats": cmd_db_stats,
+    "db_logs": cmd_db_logs,
     "get_logs_tail": cmd_get_logs_tail,
     "get_replica_logs": cmd_get_replica_logs,
     "get_stats": cmd_get_stats,

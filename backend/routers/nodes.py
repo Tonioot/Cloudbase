@@ -1185,16 +1185,23 @@ async def delete_node(node_id: int, db: AsyncSession = Depends(get_db), _user: d
         select(func.count()).where(ApplicationReplica.node_id == node_id)
     )
     replica_count = replica_count_result.scalar() or 0
-    if app_count > 0 or replica_count > 0:
+    from models import Database
+    database_count_result = await db.execute(
+        select(func.count()).where(Database.node_id == node_id)
+    )
+    database_count = database_count_result.scalar() or 0
+    if app_count > 0 or replica_count > 0 or database_count > 0:
         details = []
         if app_count > 0:
             details.append(f"{app_count} app{'s' if app_count != 1 else ''}")
         if replica_count > 0:
             details.append(f"{replica_count} instance{'s' if replica_count != 1 else ''}")
+        if database_count > 0:
+            details.append(f"{database_count} database{'s' if database_count != 1 else ''}")
         raise HTTPException(
             400,
             f"Cannot remove node: {', '.join(details)} still assigned to it. "
-            "Move or delete all apps and instances first."
+            "Move or delete all apps, instances and databases first."
         )
     node_name = node.name
     await db.execute(delete(NodeCommand).where(NodeCommand.node_id == node_id))

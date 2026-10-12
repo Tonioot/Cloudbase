@@ -8,6 +8,8 @@ It turns a Git repository into running Docker containers on one or more of your 
 
 > Full documentation is built into the panel under **Guides** (`/guides`). This README is a summary.
 
+> **Early-stage project.** Cloudbase is new and is not a professional or managed service. It comes without any guarantee of uptime, support or fitness for a particular purpose, and you use it at your own risk. See [Disclaimer](#disclaimer).
+
 ---
 
 ## Philosophy
@@ -201,6 +203,19 @@ Cloudbase listens on port `7823`. Instances use host ports `10000–19999`, tunn
 * NGINX for routing, TLS termination and load balancing
 * certbot / Let's Encrypt for certificates
 * Git for source retrieval and deployments
+
+---
+
+## Disclaimer
+
+Cloudbase is a new, independent project in active development. It is not a professional, commercial or managed hosting service.
+
+* **No guarantees.** Cloudbase is provided "as is". There is no guarantee that it works correctly, stays available, or is free of bugs or security issues.
+* **No liability.** The authors and contributors are not responsible for any damage or loss caused by using Cloudbase, including downtime, data loss, security incidents or costs.
+* **No support obligation.** Help is given on a best-effort basis, without any promised response time.
+* **Your responsibility.** You operate your own servers and apps. Keep independent backups of your data, test updates before relying on them, and review Cloudbase yourself before using it for anything important.
+
+This comes on top of the warranty disclaimer and limitation of liability in the license (sections 15 and 16 of the AGPL-3.0).
 
 ---
 
