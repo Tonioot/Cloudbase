@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 import logging
 import logging.handlers
@@ -13,7 +14,7 @@ import psutil
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -54,6 +55,10 @@ logging.basicConfig(
 log = logging.getLogger("cloudbase.main")
 
 PORT = _cfg.get_server_port()
+# A node-only server is managed from the primary's panel; it serves no panel of
+# its own. `cloudbase connect` / `disconnect` restart the service, so reading
+# the mode once at startup is enough.
+NODE_ONLY = node_agent.is_node_only()
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
 _COOKIE_NAME = "pdm_token"
 _COOKIE_OPTS = dict(httponly=True, samesite="strict", path="/")
@@ -982,7 +987,8 @@ async def lifespan(app: FastAPI):
     # First-run: generate a password if none exists. This must happen before
     # init_db(), which seeds the admin user from the credentials file —
     # otherwise the printed password only works after a second start.
-    if not auth.load_hashed_password():
+    # A node-only server has no panel to log in to.
+    if not NODE_ONLY and not auth.load_hashed_password():
         import secrets
         import string
         alphabet = string.ascii_letters + string.digits
@@ -1008,9 +1014,8 @@ async def lifespan(app: FastAPI):
     # A node-only server is driven by the primary through the agent; the panel
     # loops would only work on its empty local DB, and the orphan cleanup would
     # remove the instances the primary started here.
-    node_only = node_agent.is_node_only()
     tasks: list[asyncio.Task] = []
-    if node_only:
+    if NODE_ONLY:
         log.info("INIT: node-only mode, starting the node agent only")
     else:
         await _startup_recovery()
@@ -1147,10 +1152,41 @@ def _resolve_required_permission(method: str, path: str) -> tuple[bool, str | No
     return False, None
 
 
+def _node_only_page() -> str:
+    state = node_agent._load_state()
+    primary = html.escape(state.main_url) if state else ""
+    link = f'<a href="{primary}">{primary}</a>' if primary else "the primary's panel"
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cloudbase node</title>
+<style>
+  :root {{ color-scheme: light dark; }}
+  body {{ margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px;
+         font: 15px/1.5 system-ui, sans-serif; background: Canvas; color: CanvasText; }}
+  main {{ max-width: 28rem; }}
+  h1 {{ font-size: 1.25rem; margin: 0 0 .5rem; }}
+  p {{ margin: 0; opacity: .8; }}
+</style></head>
+<body><main>
+  <h1>This server is a Cloudbase node</h1>
+  <p>It runs instances for a primary and has no panel of its own. Manage its apps from {link}.</p>
+</main></body></html>"""
+
+
 class _AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
         method = request.method
+
+        # Node-only: the only clients are this server's own agent (X-Agent-Token,
+        # also on its local log/stats WebSockets) and health checks.
+        if NODE_ONLY:
+            agent_token = request.headers.get("X-Agent-Token", "")
+            if path == "/api/health" or (agent_token and auth.verify_agent_token(agent_token)):
+                return await call_next(request)
+            if path.startswith("/api/") or path.startswith("/ws/"):
+                return JSONResponse({"detail": "This server is a Cloudbase node; use the primary's panel"}, status_code=403)
+            return HTMLResponse(_node_only_page(), status_code=403)
 
         # Node-agent endpoints use X-Node-Token / hello message auth — bypass cookie auth
         if path.startswith("/api/nodes/agent/") or path.startswith("/api/nodes/ws/agent"):
