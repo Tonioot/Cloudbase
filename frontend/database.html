@@ -36,7 +36,7 @@
             <span id="db-engine-icon"></span>
             <h1 class="detail-name" id="db-name">Loading…</h1>
           </div>
-          <div class="detail-links"><span class="detail-repo" id="db-meta">—</span></div>
+          <div class="db-meta" id="db-meta"></div>
         </div>
         <div class="detail-actions">
           <button class="btn" id="btn-start" data-perm="databases.manage" style="display:none">Start</button>
@@ -45,73 +45,96 @@
         </div>
       </div>
       <div class="db-error" id="db-error" style="display:none"></div>
+
+      <dl class="db-stats" aria-label="Usage">
+        <div><dt>CPU</dt><dd id="s-cpu">—</dd></div>
+        <div><dt>Memory</dt><dd id="s-mem">—</dd></div>
+        <div><dt>Data</dt><dd id="s-disk">—</dd></div>
+        <div><dt>Uptime</dt><dd id="s-uptime">—</dd></div>
+        <div><dt>Linked apps</dt><dd id="s-links">—</dd></div>
+      </dl>
+
+      <nav class="tabs" aria-label="Database sections">
+        <button class="tab-btn" data-tab="overview">Overview</button>
+        <button class="tab-btn" data-tab="access">Access</button>
+        <button class="tab-btn" data-tab="logs">Logs</button>
+        <button class="tab-btn" data-tab="settings">Settings</button>
+      </nav>
     </section>
 
-    <section class="settings-group" aria-labelledby="conn-title">
-      <div class="settings-group-hd">
-        <div class="settings-group-title" id="conn-title">Connection</div>
-        <div class="settings-group-sub">Linked apps on the same node connect directly over the internal <code>cloudbase</code> network; apps on other nodes connect through the primary. No port is exposed to the internet.</div>
+    <!-- Overview: connection + linked apps -->
+    <div class="tab-panel" id="panel-overview">
+      <div class="db-grid">
+        <section class="db-card" aria-labelledby="conn-title">
+          <div class="db-card-head">
+            <h2 id="conn-title">Connection</h2>
+            <span class="db-card-sub">Internal; not reachable from the internet</span>
+          </div>
+          <div class="db-kv" id="conn-rows"></div>
+        </section>
+
+        <section class="db-card" aria-labelledby="links-title">
+          <div class="db-card-head">
+            <h2 id="links-title">Linked apps</h2>
+            <button class="btn btn-sm" id="btn-link" data-perm="databases.manage">Link app</button>
+          </div>
+          <div id="links-list" class="db-list"></div>
+          <p class="db-card-foot">A linked app gets the connection URL as an environment variable after its next restart. Instances on other nodes connect through the primary.</p>
+        </section>
       </div>
-      <div>
-        <div class="info-row"><span class="label">Host</span><code class="value" id="c-host">—</code></div>
-        <div class="info-row"><span class="label">Port</span><code class="value" id="c-port">—</code></div>
-        <div class="info-row"><span class="label">Database</span><code class="value" id="c-database">—</code></div>
-        <div class="info-row"><span class="label">User</span><code class="value" id="c-user">—</code></div>
-        <div class="info-row"><span class="label">Password</span><code class="value" id="c-password">••••••••••••</code></div>
-        <div class="info-row"><span class="label">Connection URL</span><code class="value" id="c-url">••••••••••••</code></div>
-        <div style="display:flex;gap:8px;margin-top:12px">
-          <button class="btn btn-sm" id="btn-reveal" data-perm="databases.credentials">Show credentials</button>
-          <button class="btn btn-sm" id="btn-copy-url" data-perm="databases.credentials">Copy URL</button>
+    </div>
+
+    <!-- Access: public access -->
+    <div class="tab-panel" id="panel-access">
+      <section class="db-card" aria-labelledby="public-title">
+        <div class="db-card-head">
+          <h2 id="public-title">Public access</h2>
+          <label class="toggle" title="Allow connections from the internet">
+            <input type="checkbox" id="pub-enabled" data-perm="databases.manage" aria-label="Allow connections from the internet" />
+            <span class="toggle-slider"></span>
+          </label>
         </div>
-      </div>
-    </section>
+        <p class="db-card-sub" id="pub-intro">Reach this database from your own computer, for example with pgAdmin or TablePlus. Connections go through the primary and always need the password.</p>
 
-    <section class="settings-group" aria-labelledby="public-title">
-      <div class="settings-group-hd">
-        <div class="settings-group-title" id="public-title">Public access</div>
-        <div class="settings-group-sub">Reach this database from outside the server, for example with pgAdmin or TablePlus. Connections go through the primary; the password is always required.</div>
-      </div>
-      <div class="db-public">
-        <label class="toggle-row form-toggle">
-          <span><span class="field-label">Allow connections from the internet</span><span class="field-hint" id="pub-endpoint">Off</span></span>
-          <span class="toggle"><input type="checkbox" id="pub-enabled" data-perm="databases.manage" /><span class="toggle-slider"></span></span>
-        </label>
-        <div class="field" style="margin:0">
-          <label class="field-label" for="pub-allowlist">Allowed IP addresses <span class="hint">one IP or range (CIDR) per line</span></label>
-          <textarea id="pub-allowlist" class="input input-mono db-allowlist" rows="3" spellcheck="false" placeholder="203.0.113.7&#10;198.51.100.0/24"></textarea>
-          <div class="field-hint" id="pub-allow-hint"></div>
+        <div id="pub-on">
+          <div class="db-kv" id="pub-rows"></div>
+
+          <div class="db-subhead">
+            <h3>Allowed IP addresses</h3>
+            <span class="db-card-sub" id="allow-count"></span>
+          </div>
+          <div id="allow-list" class="db-list"></div>
+          <form class="allow-add" id="allow-form" data-perm="databases.manage" autocomplete="off">
+            <input id="allow-input" class="input input-mono" placeholder="IP or range, e.g. 198.51.100.0/24" spellcheck="false" aria-label="IP address or range" />
+            <button class="btn" type="submit">Add</button>
+            <button class="btn" type="button" id="allow-my-ip">Add my IP</button>
+          </form>
+          <p class="db-card-foot" id="allow-hint"></p>
+
+          <div class="db-note" id="pub-note"></div>
         </div>
-        <div class="db-public-note" id="pub-note"></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-sm" id="pub-my-ip" data-perm="databases.manage">Add my IP</button>
-          <button class="btn btn-sm btn-primary" id="pub-save" data-perm="databases.manage">Save</button>
-          <button class="btn btn-sm" id="pub-copy" data-perm="databases.credentials" style="display:none">Copy public URL</button>
+      </section>
+    </div>
+
+    <!-- Logs -->
+    <div class="tab-panel" id="panel-logs">
+      <section class="db-card" aria-labelledby="logs-title">
+        <div class="db-card-head">
+          <h2 id="logs-title">Logs</h2>
+          <button class="btn btn-sm" id="btn-refresh-logs">Refresh</button>
         </div>
-      </div>
-    </section>
+        <pre id="db-logs" class="db-logs"></pre>
+      </section>
+    </div>
 
-    <section class="settings-group" aria-labelledby="links-title">
-      <div class="settings-group-hd">
-        <div class="settings-group-title" id="links-title">Linked apps</div>
-        <div class="settings-group-sub">A linked app gets the connection URL as an environment variable. Restart the app after linking or unlinking.</div>
-      </div>
-      <div>
-        <div id="links-list" class="db-links"></div>
-        <button class="btn btn-sm" id="btn-link" data-perm="databases.manage" style="margin-top:12px">Link app</button>
-      </div>
-    </section>
-
-    <section class="settings-group" aria-labelledby="res-title">
-      <div class="settings-group-hd">
-        <div class="settings-group-title" id="res-title">Resources</div>
-        <div class="settings-group-sub">The memory limit also sizes the database's caches. Changing limits replaces the container; the data stays.</div>
-      </div>
-      <div>
-        <div class="info-row"><span class="label">CPU</span><code class="value" id="s-cpu">—</code></div>
-        <div class="info-row"><span class="label">Memory</span><code class="value" id="s-mem">—</code></div>
-        <div class="info-row"><span class="label">Data size</span><code class="value" id="s-disk">—</code></div>
-        <div class="info-row"><span class="label">Uptime</span><code class="value" id="s-uptime">—</code></div>
-        <div class="form-pair" style="margin-top:16px" data-perm="databases.manage">
+    <!-- Settings -->
+    <div class="tab-panel" id="panel-settings">
+      <section class="db-card" aria-labelledby="res-title">
+        <div class="db-card-head">
+          <h2 id="res-title">Resources</h2>
+        </div>
+        <p class="db-card-sub">The memory limit also sizes the database's caches. Saving replaces the container; the data stays.</p>
+        <form class="db-limits" id="limits-form" data-perm="databases.manage">
           <label class="unit-input"><span class="sr-only">CPU limit</span>
             <input id="lim-cpu" class="input" type="number" min="0.1" step="0.1" placeholder="no limit" />
             <span class="unit">CPU</span>
@@ -120,34 +143,20 @@
             <input id="lim-mem" class="input" type="number" min="32" step="64" placeholder="no limit" />
             <span class="unit">MB</span>
           </label>
-        </div>
-        <button class="btn btn-sm" id="btn-save-limits" data-perm="databases.manage" style="margin-top:12px">Save limits</button>
-      </div>
-    </section>
+          <button class="btn" type="submit" id="btn-save-limits">Save</button>
+        </form>
+      </section>
 
-    <section class="section" aria-labelledby="logs-title" style="border-top:1px solid var(--line)">
-      <div class="section-head">
-        <h2 id="logs-title">Logs</h2>
-        <button class="btn btn-sm" id="btn-refresh-logs">Refresh</button>
-      </div>
-      <div class="node-log-frame">
-        <pre id="db-logs" class="node-log-view"></pre>
-      </div>
-    </section>
-
-    <section class="settings-group settings-group--danger" aria-labelledby="danger-title" data-perm="databases.delete">
-      <div class="settings-group-hd">
-        <div class="settings-group-title" id="danger-title">Danger zone</div>
-        <div class="settings-group-sub">Deleting cannot be undone unless you keep the data volume.</div>
-      </div>
-      <div class="danger-row">
-        <div class="danger-row-text">
-          <div class="title">Delete database</div>
-          <div class="sub">Removes the container and, unless you keep it, all data.</div>
+      <section class="db-card db-card--danger" aria-labelledby="danger-title" data-perm="databases.delete">
+        <div class="danger-row">
+          <div class="danger-row-text">
+            <div class="title" id="danger-title">Delete database</div>
+            <div class="sub">Removes the container and, unless you keep it, all data.</div>
+          </div>
+          <button class="btn btn-danger" id="btn-delete">Delete</button>
         </div>
-        <button class="btn btn-danger" id="btn-delete">Delete</button>
-      </div>
-    </section>
+      </section>
+    </div>
 
     </div>
   </main>

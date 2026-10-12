@@ -223,27 +223,28 @@ def _safe_public_port(database_id: int) -> Optional[int]:
         return None
 
 
-_local_public_host: Optional[str] = None
+# The primary's public IP, refreshed by push_proxies(). Public database ports are
+# always given as this IP: the panel domain may sit behind a proxy such as
+# Cloudflare, which only carries web traffic, so database clients would time out.
+_public_ip: Optional[str] = None
 
 
 def _public_host() -> str:
-    """Where public database ports are reached: the panel domain, else the primary's IP."""
-    try:
-        import main
-        domain = main.read_panel_nginx().get("domain")
-        if domain and domain != "_":
-            return domain
-    except Exception:
-        pass
-    return _local_public_host or ""
+    return _public_ip or ""
 
 
 def _client_ip(request: Request) -> str:
-    """The browser's IP, also when the panel sits behind the local nginx."""
+    """The browser's public IP, also behind the local nginx or Cloudflare. Only used
+    to prefill the allowlist, never to grant access, so forwarded headers are fine."""
     host = request.client.host if request.client else ""
     if host in ("127.0.0.1", "::1"):
-        forwarded = request.headers.get("x-forwarded-for") or request.headers.get("x-real-ip") or ""
-        host = forwarded.split(",")[0].strip() or host
+        forwarded = (
+            request.headers.get("cf-connecting-ip")
+            or (request.headers.get("x-forwarded-for") or "").split(",")[0]
+            or request.headers.get("x-real-ip")
+            or ""
+        ).strip()
+        host = forwarded or host
     return host
 
 
@@ -411,7 +412,9 @@ async def get_database(
     database = await _get_or_404(database_id, db)
     node = await db.get(Node, database.node_id)
     links = await _links_for(database_id, db)
-    return {**_as_dict(database, node, len(links)), "links": links}
+    creds = db_links.decrypt_credentials(database)
+    # User and database name are not secret; the password only comes from /credentials.
+    return {**_as_dict(database, node, len(links)), "links": links, "user": creds["user"], "db_name": creds["db_name"]}
 
 
 @router.patch("/{database_id}")
@@ -615,7 +618,8 @@ async def set_public_access(
     await db.commit()
     await push_proxies()
     node = await db.get(Node, database.node_id)
-    return _as_dict(database, node)
+    links = await _links_for(database.id, db)
+    return {**_as_dict(database, node, len(links)), "links": links}
 
 
 @router.get("/{database_id}/logs")
@@ -871,8 +875,8 @@ async def push_proxies() -> None:
     async with AsyncSessionLocal() as db:
         public = (await db.execute(select(Database).where(Database.public_enabled == True))).scalars().all()
         local = (await db.execute(select(Node).where(Node.is_local == True))).scalar_one_or_none()
-    global _local_public_host
-    _local_public_host = local.public_host if local else None
+    global _public_ip
+    _public_ip = local.public_host if local else None
     await db_proxy.reconcile_public([{"database_id": d.id, "allowlist": _allowlist(d)} for d in public])
     for node_id in list(_control):
         await _send_control(node_id, {"type": "proxies", "database_ids": sorted(_desired_proxies.get(node_id, set()))})

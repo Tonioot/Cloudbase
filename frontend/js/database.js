@@ -5,11 +5,22 @@ import { engineIcon } from './engine-icons.js';
 
 const DB_ID = parseInt(new URLSearchParams(location.search).get('id'), 10);
 const TRANSITIONAL = ['creating', 'starting', 'stopping'];
+const TABS = ['overview', 'access', 'logs', 'settings'];
+
+const ICON = {
+  copy: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  eye: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>',
+  eyeOff: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 19c-7 0-11-7-11-7a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 7 11 7a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
+  remove: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+};
+const MASK = '••••••••••••';
 
 let database = null;
-let credentials = null;
+let credentials = null;     // fetched on demand; every fetch is audit-logged
+let revealed = false;
+let myIp = null;
 let pollTimer = null;
-let publicDirty = false;  // unsaved edits in the public access form
+let logsTimer = null;
 
 // How well a public connection is protected, per engine.
 function encryptionNote(d) {
@@ -22,26 +33,48 @@ function encryptionNote(d) {
 export async function initDatabasePage() {
   if (!DB_ID) { location.href = '/'; return; }
 
+  document.querySelectorAll('.tab-btn[data-tab]').forEach(btn => {
+    btn.addEventListener('click', () => showTab(btn.dataset.tab));
+  });
   document.getElementById('btn-start').onclick = () => lifecycle('start');
   document.getElementById('btn-stop').onclick = () => lifecycle('stop');
   document.getElementById('btn-restart').onclick = () => lifecycle('restart');
-  document.getElementById('btn-reveal').onclick = toggleCredentials;
-  document.getElementById('btn-copy-url').onclick = copyUrl;
   document.getElementById('btn-link').onclick = openLinkDialog;
-  document.getElementById('btn-save-limits').onclick = saveLimits;
+  document.getElementById('limits-form').addEventListener('submit', e => { e.preventDefault(); saveLimits(); });
   document.getElementById('btn-refresh-logs').onclick = loadLogs;
   document.getElementById('btn-delete').onclick = deleteDatabase;
-  document.getElementById('pub-save').onclick = savePublic;
-  document.getElementById('pub-my-ip').onclick = addMyIp;
-  document.getElementById('pub-copy').onclick = copyPublicUrl;
-  document.getElementById('pub-allowlist').addEventListener('input', () => { publicDirty = true; renderPublic(); });
-  document.getElementById('pub-enabled').addEventListener('change', () => { publicDirty = true; renderPublic(); });
+  document.getElementById('pub-enabled').addEventListener('change', togglePublic);
+  document.getElementById('allow-form').addEventListener('submit', e => { e.preventDefault(); addAllowEntry(); });
+  document.getElementById('allow-my-ip').onclick = () => addAllowEntry(myIp);
+  // Copy / reveal buttons are rendered into the key-value rows.
+  document.addEventListener('click', e => {
+    const btn = e.target.closest('[data-copy], [data-reveal]');
+    if (!btn) return;
+    if (btn.dataset.reveal !== undefined) toggleReveal();
+    else copyValue(btn.dataset.copy);
+  });
 
+  api.getMyIp().then(r => { myIp = r.ip || null; if (database) renderAccess(); }).catch(() => {});
   await load();
+  showTab(TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'overview', false);
   loadStats();
-  loadLogs();
   setInterval(loadStats, 10000);
 }
+
+/* ─── Tabs ──────────────────────────────────────────────────────────────── */
+
+function showTab(name, updateHash = true) {
+  document.querySelectorAll('.tab-btn[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  TABS.forEach(t => document.getElementById(`panel-${t}`).classList.toggle('active', t === name));
+  if (updateHash) history.replaceState(null, '', `#${name}`);
+  clearInterval(logsTimer);
+  if (name === 'logs') {
+    loadLogs();
+    logsTimer = setInterval(loadLogs, 5000);
+  }
+}
+
+/* ─── Data ──────────────────────────────────────────────────────────────── */
 
 async function load() {
   try {
@@ -57,6 +90,26 @@ async function load() {
   pollTimer = setTimeout(load, busy ? 2500 : 10000);
 }
 
+async function getCredentials() {
+  if (!credentials) credentials = await api.getDatabaseCredentials(DB_ID);
+  return credentials;
+}
+
+/* ─── Rendering ─────────────────────────────────────────────────────────── */
+
+function kvRow(label, value, { copy = null, secret = false } = {}) {
+  const shown = secret && !revealed ? MASK : value;
+  return `
+    <div class="db-kv-row">
+      <span class="db-kv-label">${esc(label)}</span>
+      <code class="db-kv-value${secret && !revealed ? ' masked' : ''}">${esc(shown ?? '—')}</code>
+      <span class="db-kv-actions">
+        ${secret ? `<button type="button" class="icon-btn" data-reveal data-perm="databases.credentials" title="${revealed ? 'Hide' : 'Show'}" aria-label="${revealed ? 'Hide' : 'Show'} ${esc(label.toLowerCase())}">${revealed ? ICON.eyeOff : ICON.eye}</button>` : ''}
+        ${copy ? `<button type="button" class="icon-btn" data-copy="${esc(copy)}" ${secret ? 'data-perm="databases.credentials"' : ''} title="Copy" aria-label="Copy ${esc(label.toLowerCase())}">${ICON.copy}</button>` : ''}
+      </span>
+    </div>`;
+}
+
 function render() {
   const d = database;
   document.title = `Cloudbase — ${d.name}`;
@@ -64,7 +117,8 @@ function render() {
 
   document.getElementById('db-name').textContent = d.name;
   document.getElementById('db-engine-icon').innerHTML = engineIcon(d.engine, 36);
-  document.getElementById('db-meta').textContent = `${d.engine_label} ${d.version} · on ${d.node_name || 'unknown node'}`;
+  document.getElementById('db-meta').innerHTML =
+    `<span>${esc(d.engine_label)} ${esc(d.version)}</span><span>${esc(d.node_name || 'unknown node')}</span><code>${esc(d.host)}:${d.port}</code>`;
   document.getElementById('db-status-badge').innerHTML = badge(d.status);
   document.getElementById('db-status-meta').textContent = d.busy && !TRANSITIONAL.includes(d.status) ? 'Working…' : '';
 
@@ -80,13 +134,16 @@ function render() {
   ['btn-start', 'btn-stop', 'btn-restart', 'btn-save-limits'].forEach(id => {
     document.getElementById(id).disabled = blocked;
   });
+  document.getElementById('s-links').textContent = d.link_count || '0';
 
-  document.getElementById('c-host').textContent = d.host;
-  document.getElementById('c-port').textContent = d.port;
-  if (!credentials) {
-    document.getElementById('c-database').textContent = '—';
-    document.getElementById('c-user').textContent = '—';
-  }
+  document.getElementById('conn-rows').innerHTML = [
+    kvRow('Host', d.host, { copy: 'host' }),
+    kvRow('Port', d.port, { copy: 'port' }),
+    kvRow('Database', d.db_name, { copy: 'db_name' }),
+    kvRow('User', d.user, { copy: 'user' }),
+    kvRow('Password', credentials?.password, { copy: 'password', secret: true }),
+    kvRow('URL', credentials?.url, { copy: 'url', secret: true }),
+  ].join('');
 
   const cpuIn = document.getElementById('lim-cpu');
   const memIn = document.getElementById('lim-mem');
@@ -94,97 +151,25 @@ function render() {
   if (document.activeElement !== memIn) memIn.value = d.memory_limit_mb ?? '';
 
   renderLinks();
-  renderPublic();
+  renderAccess();
   if (window._applyPermVisibility) window._applyPermVisibility(document.body);
-}
-
-function readAllowlist() {
-  return document.getElementById('pub-allowlist').value.split('\n').map(s => s.trim()).filter(Boolean);
-}
-
-function renderPublic() {
-  const d = database;
-  const enabledIn = document.getElementById('pub-enabled');
-  const listIn = document.getElementById('pub-allowlist');
-  if (!publicDirty) {
-    enabledIn.checked = !!d.public_enabled;
-    listIn.value = (d.public_allowlist || []).join('\n');
-  }
-  const enabled = enabledIn.checked;
-  const where = d.public_host ? `${d.public_host}:${d.public_port}` : `port ${d.public_port} on the primary`;
-  const endpoint = document.getElementById('pub-endpoint');
-  if (!d.public_enabled) endpoint.textContent = 'Off';
-  else if (d.public_listening) endpoint.innerHTML = `Reachable at <code>${esc(where)}</code>`;
-  else endpoint.textContent = `Enabled, but port ${d.public_port} could not be opened on the primary. Check the server log.`;
-
-  const empty = readAllowlist().length === 0;
-  const hint = document.getElementById('pub-allow-hint');
-  hint.style.color = enabled && empty ? 'var(--yellow)' : '';
-  hint.textContent = enabled && empty
-    ? 'Empty: anyone on the internet can try to log in. Add your own IP unless you really need this.'
-    : 'Connections from other addresses are refused before they reach the database.';
-
-  const note = encryptionNote(d);
-  const noteEl = document.getElementById('pub-note');
-  noteEl.className = `db-public-note${note.warn ? ' warn' : ''}`;
-  noteEl.innerHTML = `<p>${note.text}</p><p>Open TCP port <code>${d.public_port}</code> in the firewall of the primary (or the security group of your cloud provider).</p>`;
-  noteEl.style.display = enabled ? '' : 'none';
-
-  document.getElementById('pub-copy').style.display = d.public_enabled ? '' : 'none';
-  document.getElementById('pub-save').disabled = !publicDirty;
-}
-
-async function savePublic() {
-  const enabled = document.getElementById('pub-enabled').checked;
-  const allowlist = readAllowlist();
-  if (enabled && !allowlist.length) {
-    const ok = await confirm('Open to everyone?', 'Without an allowlist anyone on the internet can try to log in to this database. The password is still required.');
-    if (!ok) return;
-  }
-  try {
-    database = { ...database, ...(await api.setDatabasePublic(DB_ID, { enabled, allowlist })) };
-    publicDirty = false;
-    toast(enabled ? 'Public access saved' : 'Public access turned off');
-    render();
-  } catch (e) { toast(e.message, 'error'); }
-}
-
-async function addMyIp() {
-  try {
-    const { ip } = await api.getMyIp();
-    if (!ip) return;
-    const list = readAllowlist();
-    if (list.includes(ip)) { toast(`${ip} is already in the list`); return; }
-    document.getElementById('pub-allowlist').value = [...list, ip].join('\n');
-    publicDirty = true;
-    renderPublic();
-  } catch (e) { toast(e.message, 'error'); }
-}
-
-async function copyPublicUrl() {
-  try {
-    const creds = await api.getDatabaseCredentials(DB_ID);
-    if (!creds.public_url) { toast('Public access is not active', 'error'); return; }
-    await navigator.clipboard.writeText(creds.public_url);
-    toast('Public URL copied');
-  } catch (e) { toast(e.message, 'error'); }
 }
 
 function renderLinks() {
   const list = document.getElementById('links-list');
   const links = database.links || [];
   if (!links.length) {
-    list.innerHTML = '<div class="db-links-empty">No apps linked yet.</div>';
+    list.innerHTML = '<div class="db-list-empty">No apps linked yet.</div>';
     return;
   }
   list.innerHTML = links.map(l => `
-    <div class="db-link-row">
-      <div class="db-link-main">
-        <a href="/app?id=${l.app_id}" class="db-link-app">${esc(l.app_name)}</a>
-        <code class="db-link-env">${esc(l.env_var_name)}</code>
-        ${l.instances_elsewhere ? `<div class="db-link-note">Instances on other nodes connect through the primary (a few ms extra per query).</div>` : ''}
+    <div class="db-list-row">
+      <div class="db-list-main">
+        <a href="/app?id=${l.app_id}" class="db-list-title">${esc(l.app_name)}</a>
+        <code class="db-list-meta">${esc(l.env_var_name)}</code>
+        ${l.instances_elsewhere ? '<span class="db-tag" title="Instances on other nodes connect through the primary (a few ms extra per query)">via primary</span>' : ''}
       </div>
-      <button class="btn btn-sm btn-ghost" data-unlink="${l.id}" data-perm="databases.manage">Unlink</button>
+      <button type="button" class="icon-btn" data-unlink="${l.id}" data-perm="databases.manage" title="Unlink" aria-label="Unlink ${esc(l.app_name)}">${ICON.remove}</button>
     </div>`).join('');
   list.querySelectorAll('[data-unlink]').forEach(btn => {
     btn.onclick = async () => {
@@ -201,6 +186,145 @@ function renderLinks() {
   });
 }
 
+/* ─── Access ────────────────────────────────────────────────────────────── */
+
+function describeEntry(entry) {
+  const m = entry.match(/\/(\d+)$/);
+  if (!m) return 'Single address';
+  const bits = parseInt(m[1], 10);
+  const total = (entry.includes(':') ? 128 : 32) - bits;
+  if (total === 0) return 'Single address';
+  return total > 24 ? 'Large range' : `Range of ${(2 ** total).toLocaleString()} addresses`;
+}
+
+function renderAccess() {
+  const d = database;
+  const on = !!d.public_enabled;
+  document.getElementById('pub-enabled').checked = on;
+  document.getElementById('pub-on').style.display = on ? '' : 'none';
+  document.getElementById('pub-intro').style.display = on ? 'none' : '';
+  if (!on) return;
+
+  const endpoint = d.public_host ? `${d.public_host}:${d.public_port}` : `<primary>:${d.public_port}`;
+  document.getElementById('pub-rows').innerHTML = [
+    d.public_listening
+      ? kvRow('Address', endpoint, { copy: 'public_endpoint' })
+      : `<div class="db-kv-row"><span class="db-kv-label">Address</span><span class="db-kv-warn">Port ${d.public_port} could not be opened on the primary. Check the server log.</span></div>`,
+    kvRow('URL', credentials?.public_url, { copy: 'public_url', secret: true }),
+  ].join('');
+
+  const entries = d.public_allowlist || [];
+  document.getElementById('allow-count').textContent = entries.length ? `${entries.length} allowed` : '';
+  document.getElementById('allow-list').innerHTML = entries.length
+    ? entries.map(entry => `
+        <div class="db-list-row">
+          <div class="db-list-main">
+            <code class="db-list-title">${esc(entry)}</code>
+            ${entry === myIp ? '<span class="db-tag db-tag--you">you</span>' : ''}
+            <span class="db-list-meta">${esc(describeEntry(entry))}</span>
+          </div>
+          <button type="button" class="icon-btn" data-allow-remove="${esc(entry)}" data-perm="databases.manage" title="Remove" aria-label="Remove ${esc(entry)}">${ICON.remove}</button>
+        </div>`).join('')
+    : '<div class="db-list-empty db-list-empty--warn">No restrictions: anyone on the internet can try to log in.</div>';
+  document.querySelectorAll('[data-allow-remove]').forEach(btn => {
+    btn.onclick = () => removeAllowEntry(btn.dataset.allowRemove);
+  });
+
+  const myBtn = document.getElementById('allow-my-ip');
+  myBtn.textContent = myIp ? `Add my IP (${myIp})` : 'Add my IP';
+  myBtn.disabled = !myIp || entries.includes(myIp);
+  document.getElementById('allow-hint').textContent = myIp
+    ? `Your IP as seen by this panel is ${myIp}. If your database client connects through a VPN or another network (IPv4 or IPv6), add that address too.`
+    : '';
+
+  const note = encryptionNote(d);
+  const noteEl = document.getElementById('pub-note');
+  noteEl.className = `db-note${note.warn ? ' db-note--warn' : ''}`;
+  noteEl.innerHTML = `<p>${note.text}</p><p>Make TCP port <code>${d.public_port}</code> reachable on the primary: open it in its firewall or your cloud provider's security group, and forward it on your router if the server is behind one.</p>`;
+}
+
+async function savePublic(enabled, allowlist, message) {
+  try {
+    database = { ...database, ...(await api.setDatabasePublic(DB_ID, { enabled, allowlist })) };
+    credentials = null;
+    revealed = false;
+    render();
+    if (message) toast(message);
+    return true;
+  } catch (e) {
+    toast(e.message, 'error');
+    render();
+    return false;
+  }
+}
+
+async function togglePublic(e) {
+  const enable = e.target.checked;
+  let list = database.public_allowlist || [];
+  if (enable && !list.length && myIp) {
+    // Safe default: start with only this browser's address.
+    list = [myIp];
+    await savePublic(true, list, `Public access on. Only ${myIp} is allowed; add more addresses below.`);
+    return;
+  }
+  if (enable && !list.length) {
+    const ok = await confirm('Open to everyone?', 'Without an allowlist anyone on the internet can try to log in to this database. The password is still required.');
+    if (!ok) { e.target.checked = false; return; }
+  }
+  await savePublic(enable, list, enable ? 'Public access on' : 'Public access off');
+}
+
+function looksLikeIp(value) {
+  const v4 = /^(\d{1,3}\.){3}\d{1,3}(\/(3[0-2]|[12]?\d))?$/;
+  const v6 = /^[0-9a-fA-F:]+:[0-9a-fA-F:.]*(\/(12[0-8]|1[01]\d|\d{1,2}))?$/;
+  return (v4.test(value) && value.split('/')[0].split('.').every(n => +n <= 255)) || v6.test(value);
+}
+
+async function addAllowEntry(value) {
+  const input = document.getElementById('allow-input');
+  const entry = (value ?? input.value).trim();
+  if (!entry) return;
+  if (!looksLikeIp(entry)) { toast(`"${entry}" is not an IP address or range`, 'error'); return; }
+  const list = database.public_allowlist || [];
+  if (list.includes(entry)) { toast(`${entry} is already allowed`); return; }
+  if (await savePublic(database.public_enabled, [...list, entry], `${entry} allowed`)) input.value = '';
+}
+
+async function removeAllowEntry(entry) {
+  const list = (database.public_allowlist || []).filter(e => e !== entry);
+  if (!list.length && database.public_enabled) {
+    const ok = await confirm('Remove the last address?', 'With an empty allowlist anyone on the internet can try to log in. Turn public access off instead if you no longer need it.');
+    if (!ok) return;
+  }
+  await savePublic(database.public_enabled, list, `${entry} removed`);
+}
+
+/* ─── Copy / reveal ─────────────────────────────────────────────────────── */
+
+async function toggleReveal() {
+  if (!revealed) {
+    try { await getCredentials(); } catch (e) { toast(e.message, 'error'); return; }
+  }
+  revealed = !revealed;
+  render();
+}
+
+async function copyValue(key) {
+  const d = database;
+  const plain = {
+    host: d.host, port: String(d.port), db_name: d.db_name, user: d.user,
+    public_endpoint: d.public_host ? `${d.public_host}:${d.public_port}` : String(d.public_port),
+  };
+  try {
+    const value = key in plain ? plain[key] : (await getCredentials())[key];
+    if (!value) { toast('Nothing to copy', 'error'); return; }
+    await navigator.clipboard.writeText(value);
+    toast('Copied');
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+/* ─── Actions ───────────────────────────────────────────────────────────── */
+
 async function lifecycle(action) {
   if (action === 'stop' || action === 'restart') {
     const ok = await confirm(`${action === 'stop' ? 'Stop' : 'Restart'} ${esc(database.name)}?`,
@@ -215,43 +339,15 @@ async function lifecycle(action) {
   } catch (e) { toast(e.message, 'error'); }
 }
 
-async function toggleCredentials() {
-  const btn = document.getElementById('btn-reveal');
-  if (credentials) {
-    credentials = null;
-    document.getElementById('c-password').textContent = '••••••••••••';
-    document.getElementById('c-url').textContent = '••••••••••••';
-    btn.textContent = 'Show credentials';
-    render();
-    return;
-  }
-  try {
-    credentials = await api.getDatabaseCredentials(DB_ID);
-  } catch (e) { toast(e.message, 'error'); return; }
-  document.getElementById('c-database').textContent = credentials.database;
-  document.getElementById('c-user').textContent = credentials.user;
-  document.getElementById('c-password').textContent = credentials.password;
-  document.getElementById('c-url').textContent = credentials.url;
-  btn.textContent = 'Hide credentials';
-}
-
-async function copyUrl() {
-  try {
-    const creds = credentials || await api.getDatabaseCredentials(DB_ID);
-    await navigator.clipboard.writeText(creds.url);
-    toast('Connection URL copied');
-  } catch (e) { toast(e.message, 'error'); }
-}
-
 async function loadStats() {
   if (!database || database.status === 'node_offline') return;
   const set = (id, v) => { document.getElementById(id).textContent = v; };
   try {
     const s = await api.getDatabaseStats(DB_ID);
     if (!s || s.cpu_percent === undefined) { ['s-cpu', 's-mem', 's-disk', 's-uptime'].forEach(id => set(id, '—')); return; }
-    const limit = database.memory_limit_mb ? ` / ${database.memory_limit_mb} MB` : '';
+    const limit = database.memory_limit_mb ? ` / ${database.memory_limit_mb}` : '';
     set('s-cpu', `${s.cpu_percent.toFixed(1)}%`);
-    set('s-mem', `${Math.round(s.memory_mb)} MB${limit}`);
+    set('s-mem', `${Math.round(s.memory_mb)}${limit} MB`);
     set('s-disk', s.disk_mb !== undefined ? (s.disk_mb >= 1024 ? `${(s.disk_mb / 1024).toFixed(2)} GB` : `${s.disk_mb} MB`) : '—');
     set('s-uptime', fmtUptime(s.uptime_seconds || 0));
   } catch {
@@ -290,6 +386,8 @@ async function saveLimits() {
     load();
   } catch (e) { toast(e.message, 'error'); }
 }
+
+/* ─── Dialogs ───────────────────────────────────────────────────────────── */
 
 async function openLinkDialog() {
   let apps;

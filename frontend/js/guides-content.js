@@ -420,6 +420,20 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
 <p>For chatty workloads, run the app's instances on the database's node.</p>
 <div class="callout callout--warn"><p>With a host firewall such as ufw enabled on a node, allow containers to reach the database proxies: <code>sudo ufw allow in on cloudbase0 proto tcp to any port 30000:30999</code>.</p></div>
 
+<h2>Public access</h2>
+<p>To reach a database from your own computer, for example with pgAdmin, TablePlus or DBeaver, turn on <strong>Public access</strong> on its page. The primary then listens on port <code>31000 + &lt;id&gt;</code> and forwards connections to the database, on whichever node it runs. <strong>Copy public URL</strong> gives the full connection string.</p>
+<ul>
+  <li>The database password is always required.</li>
+  <li>Add your own IP to the allowlist (<strong>Add my IP</strong>). Connections from other addresses are refused before they reach the database. An empty list lets anyone try to log in.</li>
+  <li>Open the port in the firewall of the primary, or in the security group of your cloud provider.</li>
+</ul>
+<table>
+  <tr><th>Engine</th><th>Encryption over the internet</th></tr>
+  <tr><td>MySQL, MariaDB 11.4+</td><td>Encrypted with the server's self-signed certificate. Use <code>ssl-mode=REQUIRED</code> in your client.</td></tr>
+  <tr><td>PostgreSQL, MongoDB</td><td>Login is protected (SCRAM), but queries and data are not encrypted.</td></tr>
+  <tr><td>Redis, Valkey, MariaDB 10.11</td><td>Not encrypted, including the password. Use a tight allowlist or an SSH tunnel.</td></tr>
+</table>
+
 <h2>Credentials</h2>
 <p>Passwords are generated when the database is created and stored encrypted. Users with the <code>databases.credentials</code> permission can show them and copy the connection URL; every view is written to the audit log.</p>
 
