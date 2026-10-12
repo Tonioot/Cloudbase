@@ -14,7 +14,7 @@ import time
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
@@ -24,13 +24,16 @@ import auth as _auth
 import db_engines
 import db_links
 import db_manager
+import db_proxy
 from audit import log_audit
 from database import get_db, AsyncSessionLocal
 from env_crypto import encrypt_text, decrypt_env
 from models import Application, ApplicationReplica, Database, DatabaseLink, Node
-from routers.nodes import queue_node_command, wait_for_node_command
+from routers.nodes import queue_node_command, wait_for_node_command, get_node_by_token_or_401
 
 router = APIRouter(prefix="/api/databases", tags=["databases"])
+# Node-facing WebSockets for database connections across nodes.
+relay_router = APIRouter(prefix="/api/nodes/ws", tags=["databases"])
 log = logging.getLogger("cloudbase.databases")
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}[a-z0-9]$")
@@ -44,9 +47,16 @@ COMMAND_TIMEOUT_SECONDS = 120
 MONITOR_INTERVAL_SECONDS = 30
 HEAL_BACKOFF_SECONDS = 120
 
+DIAL_TIMEOUT_SECONDS = 10
+
 # Databases with an operation in flight; the monitor leaves them alone.
 _busy: set[int] = set()
 _last_heal: dict[int, float] = {}
+
+# Cross-node connections: control channel per node, dials waiting for their node.
+_control: dict[int, tuple[WebSocket, asyncio.Lock]] = {}
+_pending_dials: dict[str, tuple[asyncio.Future, int]] = {}
+_desired_proxies: dict[int, set[int]] = {}  # node id -> database ids it proxies
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -497,6 +507,7 @@ async def delete_database(
     })
     await db.commit()
     await db_links.refresh(db)
+    await push_proxies()
     return {"ok": True}
 
 
@@ -598,6 +609,7 @@ async def create_link(
     })
     await db.commit()
     await db_links.refresh(db)
+    await push_proxies()
     return {"ok": True, "id": link.id, "env_var_name": env_var, "restart_required": True}
 
 
@@ -618,6 +630,7 @@ async def delete_link(
     })
     await db.commit()
     await db_links.refresh(db)
+    await push_proxies()
     return {"ok": True, "restart_required": True}
 
 
@@ -700,12 +713,182 @@ async def database_monitor() -> None:
     """Keep database statuses in sync with Docker on every node (primary only)."""
     async with AsyncSessionLocal() as db:
         await db_links.refresh(db)
+    db_proxy.configure(asyncio.get_running_loop(), open_db_stream)
     await asyncio.sleep(10)
     while True:
         try:
             await _monitor_tick()
+            await push_proxies()
         except asyncio.CancelledError:
             return
         except Exception as e:
             log.warning("[db-monitor] error: %s", e)
         await asyncio.sleep(MONITOR_INTERVAL_SECONDS)
+
+
+# ── Connections across nodes ──────────────────────────────────────────────────
+#
+#   app on node X ─► proxy on X ─WS─► primary ─► database on the primary
+#                                             └─WS (dial)─► database on node Y
+#
+# One WebSocket per database connection, binary frames, no multiplexing.
+
+async def _compute_desired_proxies() -> dict[int, set[int]]:
+    """Which databases each node must proxy: those linked to an app with an
+    instance on that node, when the database itself lives elsewhere."""
+    async with AsyncSessionLocal() as db:
+        rows = (await db.execute(
+            select(DatabaseLink.app_id, Database.id, Database.node_id)
+            .join(Database, Database.id == DatabaseLink.database_id)
+        )).all()
+        if not rows:
+            return {}
+        app_ids = {r[0] for r in rows}
+        replica_rows = (await db.execute(
+            select(ApplicationReplica.app_id, ApplicationReplica.node_id).where(ApplicationReplica.app_id.in_(app_ids))
+        )).all()
+        app_rows = (await db.execute(
+            select(Application.id, Application.node_id).where(Application.id.in_(app_ids))
+        )).all()
+    nodes_by_app: dict[int, set[int]] = {}
+    for app_id, node_id in replica_rows:
+        if node_id is not None:
+            nodes_by_app.setdefault(app_id, set()).add(node_id)
+    for app_id, node_id in app_rows:
+        if node_id is not None and app_id not in nodes_by_app:
+            nodes_by_app[app_id] = {node_id}
+    desired: dict[int, set[int]] = {}
+    for app_id, db_id, db_node_id in rows:
+        for node_id in nodes_by_app.get(app_id, ()):
+            if node_id != db_node_id:
+                desired.setdefault(node_id, set()).add(db_id)
+    return desired
+
+
+async def _send_control(node_id: int, message: dict) -> bool:
+    entry = _control.get(node_id)
+    if entry is None:
+        return False
+    ws, lock = entry
+    try:
+        async with lock:
+            await ws.send_text(json.dumps(message))
+        return True
+    except Exception:
+        return False
+
+
+async def push_proxies() -> None:
+    """Send every node (and the primary itself) the proxies it should run."""
+    global _desired_proxies
+    _desired_proxies = await _compute_desired_proxies()
+    local_id = db_proxy.local_node_id()
+    if local_id is not None:
+        await db_proxy.reconcile(sorted(_desired_proxies.get(local_id, set())))
+    for node_id in list(_control):
+        await _send_control(node_id, {"type": "proxies", "database_ids": sorted(_desired_proxies.get(node_id, set()))})
+
+
+async def open_db_stream(database_id: int) -> db_proxy.Stream:
+    """A byte stream to a database, wherever it runs."""
+    async with AsyncSessionLocal() as db:
+        database = await db.get(Database, database_id)
+        node = await db.get(Node, database.node_id) if database else None
+    if database is None or node is None:
+        raise RuntimeError(f"Database {database_id} not found")
+
+    if node.is_local:
+        host, port = await asyncio.to_thread(db_manager.container_address, database_id)
+        reader, writer = await asyncio.open_connection(host, port)
+        return db_proxy.TcpStream(reader, writer)
+
+    token = secrets.token_urlsafe(18)
+    future = asyncio.get_running_loop().create_future()
+    _pending_dials[token] = (future, node.id)
+    try:
+        if not await _send_control(node.id, {"type": "dial", "token": token, "database_id": database_id}):
+            raise RuntimeError(f"Node '{node.name}' has no database control connection")
+        return await asyncio.wait_for(future, timeout=DIAL_TIMEOUT_SECONDS)
+    finally:
+        _pending_dials.pop(token, None)
+
+
+async def _authorize_node(websocket: WebSocket) -> Optional[Node]:
+    token = websocket.headers.get("x-node-token") or websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=1008, reason="Missing node token")
+        return None
+    async with AsyncSessionLocal() as db:
+        try:
+            return await get_node_by_token_or_401(token, db)
+        except HTTPException:
+            await websocket.close(code=1008, reason="Invalid node token")
+            return None
+
+
+@relay_router.websocket("/db-control")
+async def db_control_ws(websocket: WebSocket):
+    """Per-node control channel: proxy lists and dial requests go out here."""
+    node = await _authorize_node(websocket)
+    if node is None:
+        return
+    await websocket.accept()
+    old = _control.get(node.id)
+    _control[node.id] = (websocket, asyncio.Lock())
+    if old is not None:
+        try:
+            await old[0].close(code=1012)
+        except Exception:
+            pass
+    log.info("[db-relay] control channel of node %s connected", node.name)
+    try:
+        await push_proxies()  # fresh list, e.g. after the node restarted
+        while True:
+            msg = await websocket.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+    except Exception:
+        pass
+    finally:
+        current = _control.get(node.id)
+        if current is not None and current[0] is websocket:
+            _control.pop(node.id, None)
+        log.info("[db-relay] control channel of node %s disconnected", node.name)
+
+
+@relay_router.websocket("/db-dial/{token}")
+async def db_dial_ws(token: str, websocket: WebSocket):
+    """A database's node answering a dial: this socket carries one connection."""
+    node = await _authorize_node(websocket)
+    if node is None:
+        return
+    pending = _pending_dials.get(token)
+    if pending is None or pending[1] != node.id or pending[0].done():
+        await websocket.close(code=1008, reason="Unknown or expired dial")
+        return
+    await websocket.accept()
+    stream = db_proxy.ServerWebSocketStream(websocket)
+    pending[0].set_result(stream)
+    await stream.closed.wait()
+
+
+@relay_router.websocket("/db-proxy/{database_id}")
+async def db_proxy_ws(database_id: int, websocket: WebSocket):
+    """One database connection from an app instance on a node."""
+    node = await _authorize_node(websocket)
+    if node is None:
+        return
+    if database_id not in _desired_proxies.get(node.id, set()):
+        await push_proxies()  # an instance may have started since the last push
+        if database_id not in _desired_proxies.get(node.id, set()):
+            await websocket.close(code=1008, reason="No linked app on this node uses this database")
+            return
+    await websocket.accept()
+    client = db_proxy.ServerWebSocketStream(websocket)
+    try:
+        upstream = await open_db_stream(database_id)
+    except Exception as e:
+        log.warning("[db-relay] database %s for node %s: %s", database_id, node.name, e)
+        await client.close()
+        return
+    await db_proxy.pipe(client, upstream)

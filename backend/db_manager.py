@@ -215,6 +215,20 @@ def states(database_ids: list[int]) -> dict[str, dict]:
     return out
 
 
+def container_address(database_id: int) -> tuple[str, int]:
+    """IP on the cloudbase network and port of a running database container."""
+    client = dm._get_client()
+    container = _get_container(client, database_id)
+    if container is None:
+        raise RuntimeError(f"Database container {container_name(database_id)} does not exist on this node")
+    container.reload()
+    ip = ((container.attrs.get("NetworkSettings") or {}).get("Networks") or {}).get(NETWORK, {}).get("IPAddress")
+    if not ip:
+        raise RuntimeError(f"{container_name(database_id)} is not running")
+    engine = db_engines.get_engine(container.labels.get("cloudbase.engine", ""))
+    return ip, engine.port
+
+
 def stats(database_id: int, data_dir: Optional[str] = None) -> dict:
     data = dm.get_container_stats_by_name(container_name(database_id))
     if data and data_dir:

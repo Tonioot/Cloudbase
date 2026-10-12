@@ -24,7 +24,7 @@ class Engine:
     command: Callable[[dict, Optional[int]], Optional[list[str]]]  # (credentials, memory_limit_mb)
     healthcheck: str           # CMD-SHELL test; secrets come from the container env
     data_dir: Callable[[str], str]
-    url: Callable[[dict, str], str]  # (credentials, host)
+    url: Callable[[dict, str, int], str]  # (credentials, host, port)
 
     def image_ref(self, version: str) -> str:
         return f"{self.image}:{version}"
@@ -94,7 +94,7 @@ ENGINES: dict[str, Engine] = {
         command=_postgres_command,
         healthcheck='pg_isready -q -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
         data_dir=_postgres_data_dir,
-        url=lambda c, host: f"postgresql://{c['user']}:{c['password']}@{host}:5432/{c['db_name']}",
+        url=lambda c, host, port: f"postgresql://{c['user']}:{c['password']}@{host}:{port}/{c['db_name']}",
     ),
     "mysql": Engine(
         key="mysql",
@@ -113,7 +113,7 @@ ENGINES: dict[str, Engine] = {
         # 127.0.0.1 only answers once the real server runs (init uses --skip-networking).
         healthcheck='mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent',
         data_dir=lambda _v: "/var/lib/mysql",
-        url=lambda c, host: f"mysql://{c['user']}:{c['password']}@{host}:3306/{c['db_name']}",
+        url=lambda c, host, port: f"mysql://{c['user']}:{c['password']}@{host}:{port}/{c['db_name']}",
     ),
     "mariadb": Engine(
         key="mariadb",
@@ -131,7 +131,7 @@ ENGINES: dict[str, Engine] = {
         command=_innodb_command,
         healthcheck="healthcheck.sh --connect --innodb_initialized",
         data_dir=lambda _v: "/var/lib/mysql",
-        url=lambda c, host: f"mysql://{c['user']}:{c['password']}@{host}:3306/{c['db_name']}",
+        url=lambda c, host, port: f"mysql://{c['user']}:{c['password']}@{host}:{port}/{c['db_name']}",
     ),
     "redis": Engine(
         key="redis",
@@ -144,7 +144,7 @@ ENGINES: dict[str, Engine] = {
         command=_redis_command("redis-server"),
         healthcheck="redis-cli ping | grep -q PONG",
         data_dir=lambda _v: "/data",
-        url=lambda c, host: f"redis://default:{c['password']}@{host}:6379/0",
+        url=lambda c, host, port: f"redis://default:{c['password']}@{host}:{port}/0",
     ),
     "valkey": Engine(
         key="valkey",
@@ -157,7 +157,7 @@ ENGINES: dict[str, Engine] = {
         command=_redis_command("valkey-server"),
         healthcheck="valkey-cli ping | grep -q PONG",
         data_dir=lambda _v: "/data",
-        url=lambda c, host: f"redis://default:{c['password']}@{host}:6379/0",
+        url=lambda c, host, port: f"redis://default:{c['password']}@{host}:{port}/0",
     ),
     "mongodb": Engine(
         key="mongodb",
@@ -174,7 +174,7 @@ ENGINES: dict[str, Engine] = {
         command=_mongo_command,
         healthcheck="mongosh --quiet --eval \"db.adminCommand('ping').ok\" | grep -q 1",
         data_dir=lambda _v: "/data/db",
-        url=lambda c, host: f"mongodb://{c['user']}:{c['password']}@{host}:27017/{c['db_name']}?authSource=admin",
+        url=lambda c, host, port: f"mongodb://{c['user']}:{c['password']}@{host}:{port}/{c['db_name']}?authSource=admin",
     ),
 }
 

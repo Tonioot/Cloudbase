@@ -1869,6 +1869,7 @@ app.include_router(audit_router.router)
 app.include_router(roles_router.router)
 app.include_router(domains_router.router)
 app.include_router(databases_router.router)
+app.include_router(databases_router.relay_router)
 
 
 # ── App preview reverse proxy ────────────────────────────────────────────────────────────────

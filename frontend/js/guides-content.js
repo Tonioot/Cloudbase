@@ -411,8 +411,14 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
 
 <h2>Linking an app</h2>
 <p>On the database page, click <strong>Link app</strong>. The app gets the connection URL as an environment variable — <code>DATABASE_URL</code> for PostgreSQL, MySQL and MariaDB, <code>REDIS_URL</code> for Redis and Valkey, <code>MONGODB_URL</code> for MongoDB — after its next restart. You can pick another name. If the app already sets that variable itself, its own value wins.</p>
-<p>Apps reach the database over an internal Docker network called <code>cloudbase</code>, using the host name <code>cloudbase-db-&lt;id&gt;</code>. No port is published on the server, so the database is not reachable from the internet.</p>
-<div class="callout"><p>For now only instances on the same node as the database can reach it. Run the linked app's instances on that node; the database page warns when a linked app has instances elsewhere.</p></div>
+<p>Apps reach the database with the host name <code>cloudbase-db-&lt;id&gt;</code>. No port is published on the server, so the database is not reachable from the internet.</p>
+<table>
+  <tr><th>Where the instance runs</th><th>How it connects</th></tr>
+  <tr><td>Same node as the database</td><td>Directly over the internal Docker network <code>cloudbase</code>. Fastest.</td></tr>
+  <tr><td>Another node</td><td>Through a small proxy on its own node and a WebSocket to the primary, which forwards to the database. Adds roughly one to two round trips between the servers per query.</td></tr>
+</table>
+<p>For chatty workloads, run the app's instances on the database's node.</p>
+<div class="callout callout--warn"><p>With a host firewall such as ufw enabled on a node, allow containers to reach the database proxies: <code>sudo ufw allow in on cloudbase0 proto tcp to any port 30000:30999</code>.</p></div>
 
 <h2>Credentials</h2>
 <p>Passwords are generated when the database is created and stored encrypted. Users with the <code>databases.credentials</code> permission can show them and copy the connection URL; every view is written to the audit log.</p>

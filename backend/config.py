@@ -31,6 +31,10 @@ _DEFAULTS = {
         "instance_max": 17999,
         "tunnel_min": 18000,
         "tunnel_max": 27999,
+        # Database proxies for app instances on another node than the database
+        # (port = db_proxy_min + database id). Bound to the cloudbase Docker network only.
+        "db_proxy_min": 30000,
+        "db_proxy_max": 30999,
     },
     "limits": {
         "max_apps": 1000,

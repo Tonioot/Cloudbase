@@ -93,7 +93,7 @@ function renderLinks() {
       <div class="db-link-main">
         <a href="/app?id=${l.app_id}" class="db-link-app">${esc(l.app_name)}</a>
         <code class="db-link-env">${esc(l.env_var_name)}</code>
-        ${l.instances_elsewhere ? `<div class="db-link-warn">Some instances run on another node and cannot reach this database yet.</div>` : ''}
+        ${l.instances_elsewhere ? `<div class="db-link-note">Instances on other nodes connect through the primary (a few ms extra per query).</div>` : ''}
       </div>
       <button class="btn btn-sm btn-ghost" data-unlink="${l.id}" data-perm="databases.manage">Unlink</button>
     </div>`).join('');
@@ -225,7 +225,7 @@ async function openLinkDialog() {
         <div class="field" style="margin:0">
           <label class="field-label" for="link-env">Environment variable</label>
           <input id="link-env" class="input input-mono" value="${esc(database.default_env_var)}" spellcheck="false" autocomplete="off" />
-          <div class="field-hint">Only instances on <strong>${esc(database.node_name || 'the same node')}</strong> can reach this database for now.</div>
+          <div class="field-hint">Instances on <strong>${esc(database.node_name || 'the same node')}</strong> connect directly; instances on other nodes go through the primary.</div>
         </div>
         <div class="field-hint" id="link-error" style="color:var(--red);display:none;margin:0"></div>
       </div>

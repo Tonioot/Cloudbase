@@ -56,16 +56,25 @@ def ensure_network(name: str) -> None:
         try:
             client.networks.get(name)
         except docker.errors.NotFound:
-            client.networks.create(name, driver="bridge", labels={"cloudbase.managed": "true"})
+            # A fixed bridge name makes firewall rules for the database proxies simple.
+            client.networks.create(
+                name, driver="bridge", labels={"cloudbase.managed": "true"},
+                options={"com.docker.network.bridge.name": f"{name[:10]}0"},
+            )
             log.info("[docker] Created network %s", name)
 
 
 def _apply_linked_databases(run_kwargs: dict, docker_options: dict) -> None:
     """Attach the container to the database network and add the URLs of linked
-    databases. The app's own env vars win when a name is set in both places."""
-    linked_env = docker_options.get("linked_env") or {}
-    if linked_env:
+    databases: direct on the database's node, through a local proxy elsewhere.
+    The app's own env vars win when a name is set in both places."""
+    linked = docker_options.get("linked_databases") or []
+    if linked:
+        import db_proxy
+        linked_env, hosts = db_proxy.resolve_links(linked)
         run_kwargs["environment"] = {**linked_env, **(run_kwargs.get("environment") or {})}
+        if hosts:
+            run_kwargs["extra_hosts"] = hosts
     network = docker_options.get("network")
     if network:
         ensure_network(network)

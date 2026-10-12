@@ -673,4 +673,4 @@ button.s3-link:hover { background: var(--hover); }
 .db-link-main { min-width: 0; font-size: 13px; }
 .db-link-app { font-weight: 500; color: var(--text); margin-right: 8px; }
 .db-link-env { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
-.db-link-warn { font-size: 12px; color: var(--yellow); margin-top: 3px; }
+.db-link-note { font-size: 12px; color: var(--muted); margin-top: 3px; }

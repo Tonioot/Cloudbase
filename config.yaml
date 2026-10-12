@@ -23,6 +23,11 @@ ports:
   tunnel_min: 20000
   tunnel_max: 29999
 
+  # Database proxies: let app instances reach a database on another node.
+  # Port = db_proxy_min + database id; only reachable from containers on the server.
+  db_proxy_min: 30000
+  db_proxy_max: 30999
+
 limits:
   # Maximum number of apps that can be deployed
   max_apps: 1000

@@ -882,6 +882,69 @@ async def cmd_db_logs(_client, _state, _main_id, payload, _headers):
     return {"lines": lines}
 
 
+# ─── Database connections across nodes ───────────────────────────────────────
+# A separate control WebSocket, so database connections are never held up by a
+# long command (e.g. an image pull) in the main command loop.
+
+def _primary_ws_base(state: AgentState) -> str:
+    url = _normalize_url(state.main_url)
+    return url.replace("https://", "wss://") if url.startswith("https") else url.replace("http://", "ws://")
+
+
+async def _open_db_proxy_ws(state: AgentState, database_id: int):
+    """Upstream for a local database proxy: one binary WebSocket to the primary."""
+    import db_proxy
+    ws = await websockets.connect(
+        f"{_primary_ws_base(state)}/api/nodes/ws/db-proxy/{database_id}",
+        additional_headers={"x-node-token": state.auth_token},
+        ping_interval=20, ping_timeout=30,
+    )
+    return db_proxy.ClientWebSocketStream(ws)
+
+
+async def _db_dial(state: AgentState, msg: dict) -> None:
+    """The primary asks for a connection to a database container on this node."""
+    import db_manager
+    import db_proxy
+    database_id, token = int(msg["database_id"]), msg["token"]
+    ws = await websockets.connect(
+        f"{_primary_ws_base(state)}/api/nodes/ws/db-dial/{token}",
+        additional_headers={"x-node-token": state.auth_token},
+        ping_interval=20, ping_timeout=30,
+    )
+    upstream = db_proxy.ClientWebSocketStream(ws)
+    try:
+        host, port = await asyncio.to_thread(db_manager.container_address, database_id)
+        reader, writer = await asyncio.open_connection(host, port)
+    except Exception as e:
+        _agent_log(f"[db-dial] database {database_id}: {e}")
+        await upstream.close()
+        return
+    await db_proxy.pipe(db_proxy.TcpStream(reader, writer), upstream)
+
+
+async def _db_control_loop(state: AgentState) -> None:
+    import db_proxy
+    db_proxy.configure(asyncio.get_running_loop(), lambda db_id: _open_db_proxy_ws(state, db_id), state.node_id)
+    url = f"{_primary_ws_base(state)}/api/nodes/ws/db-control"
+    while True:
+        try:
+            async with websockets.connect(
+                url, additional_headers={"x-node-token": state.auth_token}, ping_interval=20, ping_timeout=30,
+            ) as ws:
+                async for raw in ws:
+                    msg = json.loads(raw)
+                    if msg.get("type") == "proxies":
+                        asyncio.create_task(db_proxy.reconcile(msg.get("database_ids") or []))
+                    elif msg.get("type") == "dial":
+                        asyncio.create_task(_db_dial(state, msg))
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            _agent_log(f"[db-control] disconnected ({type(e).__name__}: {e}), reconnecting in 5s")
+        await asyncio.sleep(5)
+
+
 # ─── Command Dispatcher ───────────────────────────────────────────────────────
 
 COMMAND_HANDLERS: Dict[str, Callable] = {
@@ -1068,9 +1131,13 @@ async def start_agent(main_url=None, invite_code=None, node_name=None, public_ho
         _agent_log(f"[agent] Already registered as '{state.node_name}' (id={state.node_id}), skipping re-registration")
         return
     
-    async with httpx.AsyncClient() as client:
-        await _drain_stale_commands(client, state)
-        await _run_websocket_loop(client, state)
+    db_control = asyncio.create_task(_db_control_loop(state))
+    try:
+        async with httpx.AsyncClient() as client:
+            await _drain_stale_commands(client, state)
+            await _run_websocket_loop(client, state)
+    finally:
+        db_control.cancel()
 
 async def _drain_stale_commands(client: httpx.AsyncClient, state: AgentState) -> None:
     """Fail any queued commands that were left over from a previous session."""
