@@ -232,7 +232,7 @@ write_service_file() {
     sudo tee "$SERVICE_FILE" > /dev/null <<EOF
 [Unit]
 Description=${APP_NAME}
-After=network.target
+After=network.target docker.service
 
 [Service]
 Type=simple
@@ -243,6 +243,7 @@ Restart=on-failure
 RestartSec=5
 KillMode=process
 TimeoutStopSec=15
+Delegate=yes
 
 [Install]
 WantedBy=multi-user.target

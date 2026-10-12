@@ -452,7 +452,7 @@ function openAddNodeModal() {
         <div class="dialog-body" style="padding-top:4px">
 
           <p style="margin:0 0 18px;font-size:13px;color:var(--text-secondary);line-height:1.6">
-            Run this command on your remote server. The agent will automatically register and appear in your dashboard.
+            Run this on the new server as root. It installs Cloudbase if needed and connects it as a node — it appears here within a few seconds.
           </p>
 
           <div style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:16px">
@@ -518,7 +518,7 @@ function openAddNodeModal() {
       const prevIds = new Set(nodesData.map(n => n.id));
       const invite = await api.createNodeInvite({ note: 'New Node', ttl_minutes: 30 });
 
-      const cmd = `cloudbase connect --main-url ${location.origin} --invite-code ${invite.code} --mode node-only`;
+      const cmd = `curl -fsSL https://raw.githubusercontent.com/Tonioot/Cloudbase/main/install.sh | sudo bash -s -- --node --main-url ${location.origin} --invite-code ${invite.code}`;
       modal.querySelector('#node-invite-cmd').textContent = cmd;
 
       const expiresAt = new Date(invite.expires_at);

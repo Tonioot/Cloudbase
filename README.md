@@ -100,8 +100,8 @@ When a node goes offline, its instances are marked `node offline` and taken out 
 
 ### Requirements
 
-* Linux with systemd (Ubuntu, Debian, RHEL, Arch, openSUSE)
-* A user with `sudo`
+* Linux with systemd (Ubuntu, Debian, Fedora, RHEL, Arch, openSUSE)
+* Root access (`sudo`)
 * Ports 80 and 443 reachable from the internet for domains and HTTPS
 
 The installer adds Python 3, Git, Docker, NGINX and certbot if they're missing.
@@ -109,28 +109,29 @@ The installer adds Python 3, Git, Docker, NGINX and certbot if they're missing.
 ### Installation
 
 ```bash
-git clone https://github.com/Tonioot/Cloudbase
-cd Cloudbase
-sudo bash install.sh
+curl -fsSL https://raw.githubusercontent.com/Tonioot/Cloudbase/main/install.sh | sudo bash
 ```
+
+The installer checks the system, asks whether the server becomes the primary or a node, and puts the code in `/opt/cloudbase`. Cloudbase runs as the user that ran `sudo`, with its data in that user's `~/.cloudbase`. It starts on boot.
+
+Prefer a clone? `git clone https://github.com/Tonioot/Cloudbase && sudo bash Cloudbase/install.sh` installs from that directory instead. Run `install.sh --help` for all options.
 
 ### After installation
 
-1. Store the generated admin password securely.
+1. Store the admin password the installer shows.
 2. Open the panel at `http://<server-ip>:7823` and log in.
-3. Run `cloudbase enable` so Cloudbase and its apps start on boot.
-4. Connect a domain to the panel under **Settings → Domain & SSL** for HTTPS, then close port 7823.
-5. Optionally set up app subdomains, so every app gets an address with HTTPS automatically.
+3. Connect a domain to the panel under **Settings → Domain & SSL** for HTTPS, then close port 7823.
+4. Optionally set up app subdomains, so every app gets an address with HTTPS automatically.
 
 ### Adding a node
 
-Install Cloudbase on the new server, click **Add node** in the panel and run the command it shows:
+Click **Add node** in the panel and run the command it shows on the new server. It installs Cloudbase and connects it in one go:
 
 ```bash
-cloudbase connect --main-url https://panel.example.com --invite-code <code> --mode node-only
+curl -fsSL https://raw.githubusercontent.com/Tonioot/Cloudbase/main/install.sh | sudo bash -s -- --node --main-url https://panel.example.com --invite-code <code>
 ```
 
-Modes: `node-only` (the usual choice) or `panel+node`.
+A node only runs the agent: no panel, no nginx, no open ports.
 
 ### Updating
 

@@ -511,16 +511,12 @@ systemctl list-timers | grep certbot</pre>
   body: `
 <h2>Connecting a node</h2>
 <ol class="guide-steps">
-  <li>Install Cloudbase on the new server — Linux with systemd and a <code>sudo</code> user; the installer adds Docker, nginx, Git and Python if they’re missing:
-<pre>git clone https://github.com/Tonioot/Cloudbase
-cd Cloudbase
-sudo bash install.sh</pre></li>
   <li>On the overview, click <strong>Add node</strong>. Cloudbase creates an invite code that’s valid for 30 minutes and shows the command to run.</li>
-  <li>Run that command on the new server:
-<pre>cloudbase connect --main-url https://panel.example.com --invite-code &lt;code&gt; --mode node-only</pre></li>
+  <li>Run that command as root on the new server — any Linux with systemd. It installs Docker, Python and Cloudbase, and connects the server as a node:
+<pre>curl -fsSL https://raw.githubusercontent.com/Tonioot/Cloudbase/main/install.sh | sudo bash -s -- --node --main-url https://panel.example.com --invite-code &lt;code&gt;</pre></li>
   <li>The node appears in the sidebar under <em>Nodes</em> and turns online within a few seconds.</li>
 </ol>
-<p>The node registers once with the invite code and gets its own long-lived token. The code can’t be used again. Use <code>--node-name</code> to choose its name; by default it’s the server’s hostname.</p>
+<p>The node registers once with the invite code and gets its own long-lived token. The code can’t be used again. Add <code>--node-name &lt;name&gt;</code> to choose its name; by default it’s the server’s hostname. On a server that already has Cloudbase, <code>cloudbase connect --main-url … --invite-code …</code> does the same without reinstalling.</p>
 
 <h2>Modes</h2>
 <ul>
