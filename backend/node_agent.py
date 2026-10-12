@@ -1053,14 +1053,30 @@ async def main():
     parser.add_argument("--heartbeat-interval", type=int, default=15)
     parser.add_argument("--exit-after-registration", action="store_true")
     args = parser.parse_args()
-    await start_agent(
-        args.main_url, 
-        args.invite_code, 
-        args.node_name, 
-        args.public_host, 
-        args.heartbeat_interval,
-        exit_after_registration=args.exit_after_registration
-    )
+    try:
+        await start_agent(
+            args.main_url,
+            args.invite_code,
+            args.node_name,
+            args.public_host,
+            args.heartbeat_interval,
+            exit_after_registration=args.exit_after_registration
+        )
+    except httpx.HTTPStatusError as e:
+        # The installer shows the last log lines; make the primary's reason the last one.
+        try:
+            detail = e.response.json().get("detail") or e.response.text
+        except Exception:
+            detail = e.response.text
+        print(f"The primary refused the registration: {detail}")
+        if "already exists" in str(detail):
+            print("Choose another name with --node-name <name>, or remove the old node in the panel.")
+        elif "used" in str(detail) or "expired" in str(detail):
+            print("Click \"Add node\" in the panel again for a new invite code.")
+        raise SystemExit(1)
+    except httpx.HTTPError as e:
+        print(f"Couldn't reach the primary at {args.main_url}: {e}")
+        raise SystemExit(1)
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -604,11 +604,19 @@ step_register() {
     echo "No new invite given — keeping the existing registration"
     return 0
   fi
+  # An invite works only once. Running again with the same one (after a later
+  # step failed) keeps the registration it already made.
+  local invite_file="$DATA_DIR/.node-invite"
+  if [[ -f agent_state.json && -f "$invite_file" && "$(cat "$invite_file")" == "$INVITE_CODE" ]]; then
+    echo "Already registered with this invite"
+    return 0
+  fi
   # A new invite replaces an earlier connection.
   rm -f agent_state.json
   as_user venv/bin/python node_agent.py --main-url "$MAIN_URL" --invite-code "$INVITE_CODE" \
     --node-name "$NODE_NAME" --exit-after-registration
   [[ -f agent_state.json ]]
+  printf '%s' "$INVITE_CODE" | as_user tee "$invite_file" > /dev/null
 }
 
 step_service() {
@@ -636,7 +644,7 @@ Delegate=yes
 WantedBy=multi-user.target
 EOF
   if $DISCONNECT_NODE; then
-    rm -f "$AGENT_STATE" "$DATA_DIR/mode"
+    rm -f "$AGENT_STATE" "$DATA_DIR/mode" "$DATA_DIR/.node-invite"
   fi
 
   systemctl daemon-reload
@@ -657,9 +665,31 @@ EOF
   return 1
 }
 
-add_step "Installing system packages" step_packages
-add_step "Installing Docker" step_docker
-[[ "$ROLE" == "primary" ]] && add_step "Installing nginx and certbot" step_web
+# Steps for system software only run when something is missing, so connecting,
+# disconnecting and updating don't reinstall what's already there.
+packages_ok() {
+  local c
+  for c in curl git lsof sudo python3; do command -v "$c" &>/dev/null || return 1; done
+  python3 -c "import ensurepip, venv" &>/dev/null
+}
+docker_ok() {
+  command -v docker &>/dev/null && docker info &>/dev/null || return 1
+  [[ "$RUN_USER" == "root" ]] || id -nG "$RUN_USER" | grep -qw docker || return 1
+  local f
+  for f in /boot/firmware/cmdline.txt /boot/cmdline.txt; do
+    [[ -f "$f" ]] && ! grep -q "cgroup_enable=memory" "$f" && return 1
+  done
+  return 0
+}
+web_ok() {
+  command -v nginx &>/dev/null && command -v certbot &>/dev/null && systemctl is-active --quiet nginx
+}
+
+packages_ok || add_step "Installing system packages" step_packages
+docker_ok || add_step "Installing Docker" step_docker
+if [[ "$ROLE" == "primary" ]] && ! web_ok; then
+  add_step "Installing nginx and certbot" step_web
+fi
 # A clone the installer was started from is used as it is, except when updating.
 if ! $IN_PLACE || { [[ "$ACTION" == "update" ]] && [[ -d "$INSTALL_DIR/.git" ]]; }; then
   add_step "Getting Cloudbase ($BRANCH)" step_code
