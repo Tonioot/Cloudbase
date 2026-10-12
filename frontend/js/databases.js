@@ -1,21 +1,13 @@
 import { api } from './api.js';
 import { toast } from './utils.js';
 import { esc, statusColor } from './shell.js';
+import { engineIcon } from './engine-icons.js';
 
 // Suggested memory per engine: enough to run comfortably, and the limit drives tuning.
 const DEFAULT_MEMORY_MB = { postgres: 512, mysql: 512, mariadb: 512, mongodb: 1024, redis: 256, valkey: 256 };
 const ENGINE_KIND = {
   postgres: 'Relational', mysql: 'Relational', mariadb: 'Relational',
   mongodb: 'Document', redis: 'Key-value', valkey: 'Key-value',
-};
-// Small preview tile per engine: monogram in the engine's own colour.
-const ENGINE_MARK = {
-  postgres: { text: 'Pg', color: '#336791' },
-  mysql:    { text: 'My', color: '#00758f' },
-  mariadb:  { text: 'Ma', color: '#c0765a' },
-  redis:    { text: 'Rd', color: '#dc382d' },
-  valkey:   { text: 'Vk', color: '#6a5acd' },
-  mongodb:  { text: 'Mg', color: '#47a248' },
 };
 // What a linked app receives, shown live in the dialog (password masked).
 const URL_PREVIEW = {
@@ -50,7 +42,7 @@ function rowHTML(d) {
           </span>
         </div>
       </td>
-      <td class="cell-muted">${esc(d.engine_label)} ${esc(d.version)}</td>
+      <td class="cell-muted"><span class="engine-cell">${engineIcon(d.engine, 22)}${esc(d.engine_label)} ${esc(d.version)}</span></td>
       <td class="cell-mono">${esc(d.node_name || '—')}</td>
       <td class="cell-muted">${esc(limits || 'No limits')}</td>
       <td class="num">${d.link_count || '—'}</td>
@@ -107,16 +99,13 @@ export async function openCreateDatabaseDialog() {
         <fieldset class="form-block">
           <legend>Engine</legend>
           <div class="engine-grid" role="radiogroup">
-            ${engines.map((e, i) => {
-              const mark = ENGINE_MARK[e.key] || { text: e.label.slice(0, 2), color: 'var(--muted)' };
-              return `
+            ${engines.map((e, i) => `
               <label class="engine-card">
                 <input type="radio" name="db-engine" value="${esc(e.key)}" ${i === 0 ? 'checked' : ''} class="sr-only" />
-                <span class="engine-mark" style="--engine:${mark.color}" aria-hidden="true">${esc(mark.text)}</span>
+                ${engineIcon(e.key, 32)}
                 <span class="engine-name">${esc(e.label)}</span>
                 <span class="engine-kind">${esc(ENGINE_KIND[e.key] || '')} · ${e.port}</span>
-              </label>`;
-            }).join('')}
+              </label>`).join('')}
           </div>
         </fieldset>
 

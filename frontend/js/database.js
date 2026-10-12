@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { badge, toast, confirm, fmtUptime } from './utils.js';
 import { esc, setCrumbs } from './shell.js';
+import { engineIcon } from './engine-icons.js';
 
 const DB_ID = parseInt(new URLSearchParams(location.search).get('id'), 10);
 const TRANSITIONAL = ['creating', 'starting', 'stopping'];
@@ -8,6 +9,15 @@ const TRANSITIONAL = ['creating', 'starting', 'stopping'];
 let database = null;
 let credentials = null;
 let pollTimer = null;
+let publicDirty = false;  // unsaved edits in the public access form
+
+// How well a public connection is protected, per engine.
+function encryptionNote(d) {
+  const tlsDefault = d.engine === 'mysql' || (d.engine === 'mariadb' && parseFloat(d.version) >= 11.4);
+  if (tlsDefault) return { warn: false, text: `${esc(d.engine_label)} encrypts connections with its own self-signed certificate. Use <code>ssl-mode=REQUIRED</code> (or "require SSL") in your client.` };
+  if (d.engine === 'postgres' || d.engine === 'mongodb') return { warn: false, text: 'The login is protected (SCRAM), so the password is never sent readable, but queries and data are not encrypted. Keep the allowlist tight.' };
+  return { warn: true, text: `${esc(d.engine_label)} sends the password and all data unencrypted. Only use this with a tight allowlist, or connect over an SSH tunnel instead.` };
+}
 
 export async function initDatabasePage() {
   if (!DB_ID) { location.href = '/'; return; }
@@ -21,6 +31,11 @@ export async function initDatabasePage() {
   document.getElementById('btn-save-limits').onclick = saveLimits;
   document.getElementById('btn-refresh-logs').onclick = loadLogs;
   document.getElementById('btn-delete').onclick = deleteDatabase;
+  document.getElementById('pub-save').onclick = savePublic;
+  document.getElementById('pub-my-ip').onclick = addMyIp;
+  document.getElementById('pub-copy').onclick = copyPublicUrl;
+  document.getElementById('pub-allowlist').addEventListener('input', () => { publicDirty = true; renderPublic(); });
+  document.getElementById('pub-enabled').addEventListener('change', () => { publicDirty = true; renderPublic(); });
 
   await load();
   loadStats();
@@ -48,6 +63,7 @@ function render() {
   setCrumbs([{ label: 'Databases', href: '/#databases-section' }, d.name]);
 
   document.getElementById('db-name').textContent = d.name;
+  document.getElementById('db-engine-icon').innerHTML = engineIcon(d.engine, 36);
   document.getElementById('db-meta').textContent = `${d.engine_label} ${d.version} · on ${d.node_name || 'unknown node'}`;
   document.getElementById('db-status-badge').innerHTML = badge(d.status);
   document.getElementById('db-status-meta').textContent = d.busy && !TRANSITIONAL.includes(d.status) ? 'Working…' : '';
@@ -78,7 +94,80 @@ function render() {
   if (document.activeElement !== memIn) memIn.value = d.memory_limit_mb ?? '';
 
   renderLinks();
+  renderPublic();
   if (window._applyPermVisibility) window._applyPermVisibility(document.body);
+}
+
+function readAllowlist() {
+  return document.getElementById('pub-allowlist').value.split('\n').map(s => s.trim()).filter(Boolean);
+}
+
+function renderPublic() {
+  const d = database;
+  const enabledIn = document.getElementById('pub-enabled');
+  const listIn = document.getElementById('pub-allowlist');
+  if (!publicDirty) {
+    enabledIn.checked = !!d.public_enabled;
+    listIn.value = (d.public_allowlist || []).join('\n');
+  }
+  const enabled = enabledIn.checked;
+  const where = d.public_host ? `${d.public_host}:${d.public_port}` : `port ${d.public_port} on the primary`;
+  const endpoint = document.getElementById('pub-endpoint');
+  if (!d.public_enabled) endpoint.textContent = 'Off';
+  else if (d.public_listening) endpoint.innerHTML = `Reachable at <code>${esc(where)}</code>`;
+  else endpoint.textContent = `Enabled, but port ${d.public_port} could not be opened on the primary. Check the server log.`;
+
+  const empty = readAllowlist().length === 0;
+  const hint = document.getElementById('pub-allow-hint');
+  hint.style.color = enabled && empty ? 'var(--yellow)' : '';
+  hint.textContent = enabled && empty
+    ? 'Empty: anyone on the internet can try to log in. Add your own IP unless you really need this.'
+    : 'Connections from other addresses are refused before they reach the database.';
+
+  const note = encryptionNote(d);
+  const noteEl = document.getElementById('pub-note');
+  noteEl.className = `db-public-note${note.warn ? ' warn' : ''}`;
+  noteEl.innerHTML = `<p>${note.text}</p><p>Open TCP port <code>${d.public_port}</code> in the firewall of the primary (or the security group of your cloud provider).</p>`;
+  noteEl.style.display = enabled ? '' : 'none';
+
+  document.getElementById('pub-copy').style.display = d.public_enabled ? '' : 'none';
+  document.getElementById('pub-save').disabled = !publicDirty;
+}
+
+async function savePublic() {
+  const enabled = document.getElementById('pub-enabled').checked;
+  const allowlist = readAllowlist();
+  if (enabled && !allowlist.length) {
+    const ok = await confirm('Open to everyone?', 'Without an allowlist anyone on the internet can try to log in to this database. The password is still required.');
+    if (!ok) return;
+  }
+  try {
+    database = { ...database, ...(await api.setDatabasePublic(DB_ID, { enabled, allowlist })) };
+    publicDirty = false;
+    toast(enabled ? 'Public access saved' : 'Public access turned off');
+    render();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function addMyIp() {
+  try {
+    const { ip } = await api.getMyIp();
+    if (!ip) return;
+    const list = readAllowlist();
+    if (list.includes(ip)) { toast(`${ip} is already in the list`); return; }
+    document.getElementById('pub-allowlist').value = [...list, ip].join('\n');
+    publicDirty = true;
+    renderPublic();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function copyPublicUrl() {
+  try {
+    const creds = await api.getDatabaseCredentials(DB_ID);
+    if (!creds.public_url) { toast('Public access is not active', 'error'); return; }
+    await navigator.clipboard.writeText(creds.public_url);
+    toast('Public URL copied');
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 function renderLinks() {

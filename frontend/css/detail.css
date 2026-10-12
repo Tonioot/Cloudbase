@@ -674,3 +674,8 @@ button.s3-link:hover { background: var(--hover); }
 .db-link-app { font-weight: 500; color: var(--text); margin-right: 8px; }
 .db-link-env { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
 .db-link-note { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.db-public { display: flex; flex-direction: column; gap: 16px; }
+.db-allowlist { height: auto; min-height: 76px; padding: 8px 12px; line-height: 1.5; resize: vertical; }
+.db-public-note { font-size: 12px; line-height: 1.5; color: var(--muted); }
+.db-public-note.warn { color: var(--yellow); }
+.db-public-note p { margin: 0 0 4px; }

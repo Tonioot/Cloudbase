@@ -125,6 +125,18 @@ async def init_db():
                 f"ALTER TABLE node_commands ADD COLUMN {col} {definition}"
             )
 
+        result = await conn.exec_driver_sql("PRAGMA table_info(databases)")
+        existing_db_cols = {row[1] for row in result.fetchall()}
+        for col, definition in [
+            ("public_enabled",   "BOOLEAN NOT NULL DEFAULT 0"),
+            ("public_allowlist", "TEXT"),
+        ]:
+            if col in existing_db_cols:
+                continue
+            await conn.exec_driver_sql(
+                f"ALTER TABLE databases ADD COLUMN {col} {definition}"
+            )
+
         # nodes — index auth_token for fast per-request token lookups
         await conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS ix_nodes_auth_token ON nodes (auth_token)"

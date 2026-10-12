@@ -66,6 +66,8 @@ export const api = {
   stopDatabase:        (id)        => request('POST',   `/databases/${id}/stop`),
   restartDatabase:     (id)        => request('POST',   `/databases/${id}/restart`),
   getDatabaseCredentials: (id)     => request('GET',    `/databases/${id}/credentials`),
+  setDatabasePublic:   (id, data)  => request('PUT',    `/databases/${id}/public`, data),
+  getMyIp:             ()          => request('GET',    '/databases/my-ip'),
   getDatabaseLogs:     (id, lines = 300) => request('GET', `/databases/${id}/logs?lines=${lines}`),
   getDatabaseStats:    (id)        => request('GET',    `/databases/${id}/stats`),
   linkDatabase:        (id, appId, envVarName) => request('POST', `/databases/${id}/links`, { app_id: appId, env_var_name: envVarName || null }),

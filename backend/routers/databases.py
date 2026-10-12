@@ -14,7 +14,7 @@ import time
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
@@ -209,6 +209,44 @@ async def _links_for(database_id: int, db: AsyncSession) -> list[dict]:
     return links
 
 
+def _allowlist(database: Database) -> list[str]:
+    try:
+        return json.loads(database.public_allowlist or "[]")
+    except ValueError:
+        return []
+
+
+def _safe_public_port(database_id: int) -> Optional[int]:
+    try:
+        return db_proxy.public_port(database_id)
+    except RuntimeError:
+        return None
+
+
+_local_public_host: Optional[str] = None
+
+
+def _public_host() -> str:
+    """Where public database ports are reached: the panel domain, else the primary's IP."""
+    try:
+        import main
+        domain = main.read_panel_nginx().get("domain")
+        if domain and domain != "_":
+            return domain
+    except Exception:
+        pass
+    return _local_public_host or ""
+
+
+def _client_ip(request: Request) -> str:
+    """The browser's IP, also when the panel sits behind the local nginx."""
+    host = request.client.host if request.client else ""
+    if host in ("127.0.0.1", "::1"):
+        forwarded = request.headers.get("x-forwarded-for") or request.headers.get("x-real-ip") or ""
+        host = forwarded.split(",")[0].strip() or host
+    return host
+
+
 def _as_dict(database: Database, node: Optional[Node], link_count: int = 0) -> dict:
     engine = db_engines.ENGINES.get(database.engine)
     return {
@@ -230,6 +268,11 @@ def _as_dict(database: Database, node: Optional[Node], link_count: int = 0) -> d
         "default_env_var": engine.env_var if engine else "DATABASE_URL",
         "initialized": database.initialized_at is not None,
         "busy": database.id in _busy,
+        "public_enabled": bool(database.public_enabled),
+        "public_allowlist": _allowlist(database),
+        "public_port": _safe_public_port(database.id),
+        "public_host": _public_host(),
+        "public_listening": db_proxy.public_listening(database.id),
         "link_count": link_count,
         "created_at": database.created_at.isoformat() if database.created_at else None,
     }
@@ -262,6 +305,11 @@ class UpdateDatabaseRequest(BaseModel):
     clear_memory_limit: bool = False
 
 
+class PublicAccessRequest(BaseModel):
+    enabled: bool
+    allowlist: list[str] = Field(default_factory=list, max_length=100)
+
+
 class LinkRequest(BaseModel):
     app_id: int
     env_var_name: Optional[str] = Field(default=None, max_length=100)
@@ -272,6 +320,11 @@ class LinkRequest(BaseModel):
 @router.get("/engines")
 async def list_engines(_user: dict = Depends(_auth.require_permission("databases.view"))):
     return db_engines.catalog()
+
+
+@router.get("/my-ip")
+async def my_ip(request: Request, _user: dict = Depends(_auth.require_permission("databases.view"))):
+    return {"ip": _client_ip(request)}
 
 
 @router.get("")
@@ -532,7 +585,37 @@ async def get_credentials(
     }
     if database.engine in ("mysql", "mariadb"):
         result["root_password"] = creds["root_password"]
+    public_port = _safe_public_port(database.id)
+    if database.public_enabled and public_port and _public_host():
+        result["public_url"] = db_engines.get_engine(database.engine).url(creds, _public_host(), public_port)
     return result
+
+
+@router.put("/{database_id}/public")
+async def set_public_access(
+    database_id: int,
+    req: PublicAccessRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("databases.manage")),
+    actor: str = Depends(_auth.get_current_actor),
+):
+    database = await _get_or_404(database_id, db)
+    entries = [e.strip() for e in req.allowlist if e.strip()]
+    try:
+        db_proxy.parse_allowlist(entries)
+    except ValueError as e:
+        raise HTTPException(400, f"Invalid IP address or range: {e}")
+    if req.enabled and _safe_public_port(database.id) is None:
+        raise HTTPException(409, "This database id is outside the db_public port range in config.yaml")
+    database.public_enabled = req.enabled
+    database.public_allowlist = json.dumps(entries)
+    await log_audit(db, "database.public_access", actor=actor, detail={
+        "database_id": database.id, "name": database.name, "enabled": req.enabled, "allowlist": entries,
+    })
+    await db.commit()
+    await push_proxies()
+    node = await db.get(Node, database.node_id)
+    return _as_dict(database, node)
 
 
 @router.get("/{database_id}/logs")
@@ -785,6 +868,12 @@ async def push_proxies() -> None:
     local_id = db_proxy.local_node_id()
     if local_id is not None:
         await db_proxy.reconcile(sorted(_desired_proxies.get(local_id, set())))
+    async with AsyncSessionLocal() as db:
+        public = (await db.execute(select(Database).where(Database.public_enabled == True))).scalars().all()
+        local = (await db.execute(select(Node).where(Node.is_local == True))).scalar_one_or_none()
+    global _local_public_host
+    _local_public_host = local.public_host if local else None
+    await db_proxy.reconcile_public([{"database_id": d.id, "allowlist": _allowlist(d)} for d in public])
     for node_id in list(_control):
         await _send_control(node_id, {"type": "proxies", "database_ids": sorted(_desired_proxies.get(node_id, set()))})
 

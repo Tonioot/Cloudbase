@@ -16,6 +16,7 @@ the bytes travel as binary frames.
 """
 
 import asyncio
+import ipaddress
 import logging
 from typing import Awaitable, Callable, Optional
 
@@ -30,6 +31,9 @@ _connector: Optional[Callable[[int], Awaitable["Stream"]]] = None
 _local_node_id: Optional[int] = None
 _listeners: dict[int, asyncio.base_events.Server] = {}
 _listener_lock = asyncio.Lock()
+# Public access (primary only): database id → server, and its allowed networks.
+_public: dict[int, asyncio.base_events.Server] = {}
+_public_allow: dict[int, list] = {}
 _gateway_ip: Optional[str] = None
 
 
@@ -241,6 +245,74 @@ def _container_here(database_id: int) -> bool:
         return db_manager._get_container(dm._get_client(), database_id) is not None
     except Exception:
         return False
+
+
+# ── Public access (primary) ───────────────────────────────────────────────────
+
+def public_port(database_id: int) -> int:
+    port = _cfg.get_port("db_public_min") + int(database_id)
+    if port > _cfg.get_port("db_public_max"):
+        raise RuntimeError(f"Database id {database_id} is outside the db_public port range in config.yaml")
+    return port
+
+
+def parse_allowlist(entries: list[str]) -> list:
+    """IPs and CIDRs → networks. Raises ValueError on an invalid entry."""
+    return [ipaddress.ip_network(e.strip(), strict=False) for e in entries if e.strip()]
+
+
+def _allowed(database_id: int, peer_ip: str) -> bool:
+    networks = _public_allow.get(database_id) or []
+    if not networks:
+        return True
+    try:
+        ip = ipaddress.ip_address(peer_ip)
+    except ValueError:
+        return False
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return any(ip in net for net in networks)
+
+
+async def _serve_public(database_id: int, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    peer = (writer.get_extra_info("peername") or ("?",))[0]
+    if not _allowed(database_id, peer):
+        log.info("[db-public] database %s: refused %s (not in allowlist)", database_id, peer)
+        writer.close()
+        return
+    await _serve(database_id, reader, writer)
+
+
+async def reconcile_public(specs: list[dict]) -> None:
+    """Run exactly the public listeners in `specs` ({database_id, allowlist})."""
+    wanted = {int(s["database_id"]): s.get("allowlist") or [] for s in specs}
+    async with _listener_lock:
+        for db_id in list(_public):
+            if db_id not in wanted:
+                _public.pop(db_id).close()
+                _public_allow.pop(db_id, None)
+                log.info("[db-public] database %s: public access closed", db_id)
+        for db_id, allowlist in wanted.items():
+            try:
+                _public_allow[db_id] = parse_allowlist(allowlist)
+            except ValueError as e:
+                log.warning("[db-public] database %s: invalid allowlist, refusing everyone: %s", db_id, e)
+                _public_allow[db_id] = [ipaddress.ip_network("0.0.0.0/32")]
+            if db_id in _public:
+                continue
+            try:
+                port = public_port(db_id)
+                server = await asyncio.start_server(
+                    lambda r, w, i=db_id: _serve_public(i, r, w), host=None, port=port,
+                )
+                _public[db_id] = server
+                log.info("[db-public] database %s: public on port %s", db_id, port)
+            except Exception as e:
+                log.warning("[db-public] database %s: cannot open public port: %s", db_id, e)
+
+
+def public_listening(database_id: int) -> bool:
+    return database_id in _public
 
 
 def resolve_links(linked: list[dict]) -> tuple[dict, dict]:

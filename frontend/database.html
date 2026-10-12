@@ -33,6 +33,7 @@
       <div class="detail-head-row">
         <div class="detail-head-id">
           <div class="detail-title-row">
+            <span id="db-engine-icon"></span>
             <h1 class="detail-name" id="db-name">Loading…</h1>
           </div>
           <div class="detail-links"><span class="detail-repo" id="db-meta">—</span></div>
@@ -61,6 +62,30 @@
         <div style="display:flex;gap:8px;margin-top:12px">
           <button class="btn btn-sm" id="btn-reveal" data-perm="databases.credentials">Show credentials</button>
           <button class="btn btn-sm" id="btn-copy-url" data-perm="databases.credentials">Copy URL</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="settings-group" aria-labelledby="public-title">
+      <div class="settings-group-hd">
+        <div class="settings-group-title" id="public-title">Public access</div>
+        <div class="settings-group-sub">Reach this database from outside the server, for example with pgAdmin or TablePlus. Connections go through the primary; the password is always required.</div>
+      </div>
+      <div class="db-public">
+        <label class="toggle-row form-toggle">
+          <span><span class="field-label">Allow connections from the internet</span><span class="field-hint" id="pub-endpoint">Off</span></span>
+          <span class="toggle"><input type="checkbox" id="pub-enabled" data-perm="databases.manage" /><span class="toggle-slider"></span></span>
+        </label>
+        <div class="field" style="margin:0">
+          <label class="field-label" for="pub-allowlist">Allowed IP addresses <span class="hint">one IP or range (CIDR) per line</span></label>
+          <textarea id="pub-allowlist" class="input input-mono db-allowlist" rows="3" spellcheck="false" placeholder="203.0.113.7&#10;198.51.100.0/24"></textarea>
+          <div class="field-hint" id="pub-allow-hint"></div>
+        </div>
+        <div class="db-public-note" id="pub-note"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-sm" id="pub-my-ip" data-perm="databases.manage">Add my IP</button>
+          <button class="btn btn-sm btn-primary" id="pub-save" data-perm="databases.manage">Save</button>
+          <button class="btn btn-sm" id="pub-copy" data-perm="databases.credentials" style="display:none">Copy public URL</button>
         </div>
       </div>
     </section>

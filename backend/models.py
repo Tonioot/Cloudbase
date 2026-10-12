@@ -275,6 +275,9 @@ class Database(Base):
     # Set after the first successful start. From then on a missing data volume is an
     # error and never a reason to initialise a fresh, empty database.
     initialized_at  = Column(DateTime, nullable=True)
+    # Public access through the primary (port = db_public_min + id).
+    public_enabled   = Column(Boolean, default=False, nullable=False)
+    public_allowlist = Column(Text, nullable=True)  # JSON list of IPs / CIDRs; empty = everyone
     created_at      = Column(DateTime, default=datetime.utcnow)
     updated_at      = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

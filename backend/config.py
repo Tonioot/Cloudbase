@@ -35,6 +35,9 @@ _DEFAULTS = {
         # (port = db_proxy_min + database id). Bound to the cloudbase Docker network only.
         "db_proxy_min": 30000,
         "db_proxy_max": 30999,
+        # Public database access on the primary (port = db_public_min + database id).
+        "db_public_min": 31000,
+        "db_public_max": 31999,
     },
     "limits": {
         "max_apps": 1000,
