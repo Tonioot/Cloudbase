@@ -1961,6 +1961,18 @@ async def preview_app(
     )
 
 # ── Static / SPA ──────────────────────────────────────────────────────────────
+@app.middleware("http")
+async def _revalidate_frontend(request: Request, call_next):
+    """Make browsers revalidate panel pages and assets (ETag → 304) instead of
+    using cached copies after an update. Without it a fresh page could run an
+    older cached script, e.g. a button without its click handler."""
+    response = await call_next(request)
+    path = request.url.path
+    if not path.startswith(("/api/", "/ws/")):
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
+
+
 if os.path.isdir(FRONTEND_DIR):
     app.mount("/css", StaticFiles(directory=os.path.join(FRONTEND_DIR, "css")), name="css")
     app.mount("/js",  StaticFiles(directory=os.path.join(FRONTEND_DIR, "js")),  name="js")

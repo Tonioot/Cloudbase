@@ -580,6 +580,10 @@ def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_cache_bypass $http_upgrade;
         proxy_intercept_errors on;
+        # Declaring error_page here stops the server-level ones from being inherited,
+        # so only upstream outages are intercepted. The app's own 404s pass through
+        # instead of turning into the unknown-host page meant for the host guard.
+        error_page 502 503 504 =503 /_pdm_maintenance;
     }}"""
 
     # Build server_name lists
