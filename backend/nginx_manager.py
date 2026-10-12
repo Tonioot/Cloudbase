@@ -172,6 +172,7 @@ def _cloudbase_status_page(title: str, message: str, meta: str, tone: str, refre
     .dot {{ width: 7px; height: 7px; border-radius: 50%; background: var(--tone); box-shadow: 0 0 0 4px var(--halo); }}
     h1 {{ font-size: 28px; font-weight: 400; line-height: 1.15; letter-spacing: -0.03em; margin-bottom: 12px; }}
     p {{ font-size: 14px; line-height: 1.6; color: var(--text-2); }}
+    p a {{ color: var(--text); text-underline-offset: 3px; }}
     .meta {{
       margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--line);
       font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; font-size: 12px; color: var(--muted);
@@ -210,6 +211,19 @@ def generate_cloudbase_unknown_host_html(domain: str | None = None) -> str:
         title="Nothing is deployed here",
         message="This hostname points to a Cloudbase server, but it is not linked to any app.",
         meta=f"Unknown host{f' · panel at {safe_domain}' if safe_domain else ''}",
+        tone="#7a7f88",
+    )
+
+
+def generate_cloudbase_node_html(primary_url: str | None = None, node_name: str | None = None) -> str:
+    """Shown on a node-only server, which runs instances for a primary but has no panel."""
+    esc = lambda v: (v or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+    safe_url, safe_name = esc(primary_url), esc(node_name)
+    where = f'<a href="{safe_url}">{safe_url}</a>' if safe_url else "the primary’s panel"
+    return _cloudbase_status_page(
+        title="This server is a node",
+        message=f"It runs instances for a Cloudbase primary and has no panel of its own. Manage its apps from {where}.",
+        meta=f"Node{f' · {safe_name}' if safe_name else ''}",
         tone="#7a7f88",
     )
 
