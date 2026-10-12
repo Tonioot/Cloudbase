@@ -68,8 +68,8 @@ const DEFAULT_CRUMBS = {
 /* ─── Sidebar ───────────────────────────────────────────────────────────── */
 
 function railHTML(active) {
-  const nav = (key, href, label, extra = '', iconKey = key) =>
-    `<a class="sb-item${active === key ? ' active' : ''}" href="${href}" ${extra}>${ICONS[iconKey]}<span>${label}</span></a>`;
+  const nav = (key, href, label, extra = '') =>
+    `<a class="sb-item${active === key ? ' active' : ''}" href="${href}" ${extra}>${ICONS[key]}<span>${label}</span></a>`;
   const settingKey = active === 'settings' ? (new URLSearchParams(location.search).get('s') || 'domain') : null;
   const setting = (id, key, icon, label, extra = '') =>
     `<a class="sb-item${settingKey === key ? ' active' : ''}" id="${id}" href="/settings?s=${key}" ${extra}>${ICONS[icon]}<span>${label}</span></a>`;
@@ -85,10 +85,12 @@ function railHTML(active) {
     <nav class="sb-nav" aria-label="Main">
       ${nav('overview', '/', 'Overview')}
       ${nav('audit', '/audit', 'Audit log', 'data-perm="audit.view"')}
-      ${nav('databases', '/databases', 'Databases', 'data-perm="databases.view"', 'database')}
 
       <div class="sb-section"><span>Apps</span><span class="sb-count" id="rail-apps-count"></span></div>
       <div class="sb-list" id="rail-apps-list"><div class="flyout-empty">Loading…</div></div>
+
+      <div class="sb-section" data-perm="databases.view"><span>Databases</span><span class="sb-count" id="rail-databases-count"></span></div>
+      <div class="sb-list" id="rail-databases-list" data-perm="databases.view"><div class="flyout-empty">Loading…</div></div>
 
       <div class="sb-section"><span>Nodes</span><span class="sb-count" id="rail-nodes-count"></span></div>
       <div class="sb-list" id="rail-nodes-list"><div class="flyout-empty">Loading…</div></div>
@@ -196,11 +198,11 @@ export function setCrumbs(items) {
 
 /* ─── Shared index of apps & nodes (rail flyouts + palette) ─────────────── */
 
-let index = { apps: [], nodes: [], loaded: false };
+let index = { apps: [], nodes: [], databases: [], loaded: false };
 
-/** Called by sidebar.js whenever apps/nodes are (re)loaded. */
-export function updateIndex(apps, nodes) {
-  index = { apps: apps || [], nodes: nodes || [], loaded: true };
+/** Called by sidebar.js whenever apps/nodes/databases are (re)loaded. */
+export function updateIndex(apps, nodes, databases) {
+  index = { apps: apps || [], nodes: nodes || [], databases: databases || [], loaded: true };
   const section = currentSection();
   const q = new URLSearchParams(location.search);
   const currentId = parseInt(q.get('id'), 10);
@@ -216,6 +218,19 @@ export function updateIndex(apps, nodes) {
             <span class="menu-item-meta">${esc(a.no_web ? 'worker' : a.app_type === 'static' ? 'static' : a.app_type || '')}</span>
           </a>`).join('')
       : '<div class="flyout-empty">No apps yet</div>';
+  }
+
+  const dbsEl = document.getElementById('rail-databases-list');
+  if (dbsEl) {
+    document.getElementById('rail-databases-count').textContent = index.databases.length || '';
+    dbsEl.innerHTML = index.databases.length
+      ? index.databases.map(d => `
+          <a class="menu-item${section === 'databases' && d.id === currentId ? ' active' : ''}" href="/database?id=${d.id}">
+            <span class="dot" style="background:${statusColor(d.status)}"></span>
+            <span class="menu-item-label">${esc(d.name)}</span>
+            <span class="menu-item-meta">${esc(d.engine)}</span>
+          </a>`).join('')
+      : '<div class="flyout-empty">No databases yet</div>';
   }
 
   const nodesEl = document.getElementById('rail-nodes-list');
@@ -244,15 +259,18 @@ function paletteCommands() {
   const onDashboard = currentSection() === 'overview';
   const cmds = [
     { group: 'Actions', label: 'New app', icon: ICONS.plus, run: onDashboard && document.getElementById('btn-deploy') ? click('btn-deploy') : go('/?action=new-app'), keywords: 'deploy create application' },
+    { group: 'Actions', label: 'New database', icon: ICONS.database, run: onDashboard && document.getElementById('btn-new-database') ? click('btn-new-database') : go('/?action=new-database'), keywords: 'create postgres mysql mariadb redis valkey mongodb' },
     { group: 'Actions', label: 'Add node', icon: ICONS.nodes, run: onDashboard && document.getElementById('btn-add-node') ? click('btn-add-node') : go('/?action=add-node'), keywords: 'server invite' },
     { group: 'Actions', label: 'Toggle theme', icon: ICONS.moon, run: () => { window.cbTheme?.cycle(); syncThemeButton(); }, keywords: 'dark light appearance' },
     { group: 'Go to', label: 'Overview', icon: ICONS.overview, run: go('/'), keywords: 'dashboard home' },
-    { group: 'Go to', label: 'Databases', icon: ICONS.database, run: go('/databases'), keywords: 'postgres mysql mariadb redis valkey mongodb' },
     { group: 'Go to', label: 'Audit log', icon: ICONS.audit, run: go('/audit'), keywords: 'history events' },
     { group: 'Go to', label: 'Guides', icon: ICONS.guides, run: go('/guides'), keywords: 'docs documentation help how' },
   ];
   for (const a of index.apps) {
     cmds.push({ group: 'Apps', label: a.name, dot: statusColor(a.status), meta: a.status || '', run: go(`/app?id=${a.id}`), keywords: `${a.domain || ''} ${a.app_type || ''}` });
+  }
+  for (const d of index.databases) {
+    cmds.push({ group: 'Databases', label: d.name, dot: statusColor(d.status), meta: `${d.engine_label} ${d.version}`, run: go(`/database?id=${d.id}`), keywords: d.engine });
   }
   for (const n of index.nodes) {
     cmds.push({ group: 'Nodes', label: n.is_local ? 'primary' : n.name, dot: statusColor(n.status), meta: n.status || '', run: go(`/node?id=${n.id}`), keywords: n.public_host || '' });
@@ -338,8 +356,8 @@ export function openPalette() {
   renderPalette();
   input.focus();
   if (!index.loaded) {
-    Promise.allSettled([api.listApps(), api.listNodes()]).then(([a, n]) => {
-      updateIndex(a.status === 'fulfilled' ? a.value : [], n.status === 'fulfilled' ? n.value : []);
+    Promise.allSettled([api.listApps(), api.listNodes(), api.listDatabases()]).then(([a, n, d]) => {
+      updateIndex(a.status === 'fulfilled' ? a.value : [], n.status === 'fulfilled' ? n.value : [], d.status === 'fulfilled' ? d.value : []);
       if (palette.classList.contains('open')) renderPalette();
     });
   }

@@ -1988,11 +1988,6 @@ if os.path.isdir(FRONTEND_DIR):
     async def node_page():
         return FileResponse(os.path.join(FRONTEND_DIR, "node.html"))
 
-    @app.get("/databases.html", include_in_schema=False)
-    @app.get("/databases", include_in_schema=False)
-    async def databases_page():
-        return FileResponse(os.path.join(FRONTEND_DIR, "databases.html"))
-
     @app.get("/database.html", include_in_schema=False)
     @app.get("/database", include_in_schema=False)
     async def database_page():

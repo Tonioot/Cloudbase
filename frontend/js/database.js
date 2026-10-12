@@ -10,7 +10,7 @@ let credentials = null;
 let pollTimer = null;
 
 export async function initDatabasePage() {
-  if (!DB_ID) { location.href = '/databases'; return; }
+  if (!DB_ID) { location.href = '/'; return; }
 
   document.getElementById('btn-start').onclick = () => lifecycle('start');
   document.getElementById('btn-stop').onclick = () => lifecycle('stop');
@@ -33,7 +33,7 @@ async function load() {
     database = await api.getDatabase(DB_ID);
   } catch (e) {
     toast(e.message, 'error');
-    setTimeout(() => { location.href = '/databases'; }, 1500);
+    setTimeout(() => { location.href = '/'; }, 1500);
     return;
   }
   render();
@@ -45,7 +45,7 @@ async function load() {
 function render() {
   const d = database;
   document.title = `Cloudbase — ${d.name}`;
-  setCrumbs([{ label: 'Databases', href: '/databases' }, d.name]);
+  setCrumbs([{ label: 'Databases', href: '/#databases-section' }, d.name]);
 
   document.getElementById('db-name').textContent = d.name;
   document.getElementById('db-meta').textContent = `${d.engine_label} ${d.version} · on ${d.node_name || 'unknown node'}`;
@@ -291,7 +291,7 @@ async function deleteDatabase() {
     const keep = !!backdrop.querySelector('#del-keep')?.checked;
     try {
       await api.deleteDatabase(DB_ID, keep, !d.node_online);
-      location.href = '/databases';
+      location.href = '/#databases-section';
     } catch (e) {
       close();
       const force = await confirm('Remove from Cloudbase anyway?',
@@ -299,7 +299,7 @@ async function deleteDatabase() {
       if (!force) return;
       try {
         await api.deleteDatabase(DB_ID, keep, true);
-        location.href = '/databases';
+        location.href = '/#databases-section';
       } catch (e2) { toast(e2.message, 'error'); }
     }
   };

@@ -29,6 +29,7 @@
         <span class="page-title-meta" id="overview-meta"></span>
         <div class="page-title-actions">
           <button class="btn" id="btn-add-node" data-perm="nodes.add">Add node</button>
+          <button class="btn" id="btn-new-database" data-perm="databases.create">New database</button>
           <button class="btn btn-primary" id="btn-deploy" data-perm="apps.deploy">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
             New app
@@ -67,6 +68,16 @@
           </div>
         </div>
         <div class="apps-table-wrap" id="apps-grid">
+          <div class="skeleton" style="width:100%;height:44px;margin-top:8px"></div>
+        </div>
+      </section>
+
+      <!-- Databases -->
+      <section class="section" id="databases-section" aria-labelledby="databases-heading" data-perm="databases.view">
+        <div class="section-head">
+          <h2 id="databases-heading">Databases</h2>
+        </div>
+        <div class="apps-table-wrap" id="databases-grid">
           <div class="skeleton" style="width:100%;height:44px;margin-top:8px"></div>
         </div>
       </section>

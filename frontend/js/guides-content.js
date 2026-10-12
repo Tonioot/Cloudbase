@@ -402,7 +402,7 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
   lead: 'A managed database is one container with its own data volume on one node you choose. Cloudbase creates the credentials, keeps it running and hands the connection URL to the apps you link.',
   body: `
 <h2>Creating a database</h2>
-<p>Open <strong>Databases</strong> in the sidebar and click <strong>New database</strong>. Pick the engine, a version, the node and the resources. The official Docker image is pulled the first time, so the first start can take a minute.</p>
+<p>Click <strong>New database</strong> on the Overview (or search for it with Ctrl K). Pick the engine, a version, the node and the resources. The official Docker image is pulled the first time, so the first start can take a minute.</p>
 <p>The memory limit does more than cap memory: Cloudbase also sizes the engine's caches from it (PostgreSQL <code>shared_buffers</code>, the InnoDB buffer pool, Redis <code>maxmemory</code>, the MongoDB WiredTiger cache). Without a limit the engine's own defaults apply.</p>
 
 <h2>Where the data lives</h2>

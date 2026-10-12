@@ -1,12 +1,14 @@
 import { api, wsNodeEvents, PermissionError } from './api.js';
 import { icon, toast, confirm } from './utils.js';
 import { openDeployModal } from './modal.js';
+import { renderDatabasesTable, openCreateDatabaseDialog } from './databases.js';
 import { statusColor, esc } from './shell.js';
 
 let appsData = [];
 let nodesData = [];
 let _noAppsPermission  = false;
 let _noNodesPermission = false;
+let _databasesTimer = null;
 let _appFilter = 'all';
 const _appStats = new Map();      // app id → { cpu, mem }
 const _nodePing = new Map();      // node id → latency text
@@ -25,6 +27,7 @@ export async function initDashboard() {
   });
   document.getElementById('btn-deploy').addEventListener('click', openDeploy);
   document.getElementById('btn-add-node')?.addEventListener('click', () => openAddNodeModal());
+  document.getElementById('btn-new-database')?.addEventListener('click', () => openCreateDatabaseDialog());
 
   document.getElementById('apps-filter')?.addEventListener('click', e => {
     const btn = e.target.closest('[data-filter]');
@@ -40,10 +43,11 @@ export async function initDashboard() {
     history.replaceState(null, '', '/');
     if (action === 'new-app') openDeploy();
     if (action === 'add-node') openAddNodeModal();
+    if (action === 'new-database') openCreateDatabaseDialog();
   }
 
   // Load independently — a 403 on one must not block the other
-  await Promise.all([loadApps(), loadNodes()]);
+  await Promise.all([loadApps(), loadNodes(), loadDatabases()]);
   loadAppStats();
   await loadOverviewHistory();
   setInterval(loadOverviewHistory, 30000);
@@ -83,6 +87,26 @@ async function loadNodes() {
       console.error('Failed to load nodes:', e);
     }
   }
+}
+
+async function loadDatabases() {
+  clearTimeout(_databasesTimer);
+  let databases;
+  try {
+    databases = await api.listDatabases();
+  } catch (e) {
+    if (e instanceof PermissionError) {
+      document.getElementById('databases-section')?.style.setProperty('display', 'none');
+      return;
+    }
+    console.error('Failed to load databases:', e);
+    _databasesTimer = setTimeout(loadDatabases, 15000);
+    return;
+  }
+  renderDatabasesTable(document.getElementById('databases-grid'), databases);
+  // Poll faster while a database is being created, started or stopped.
+  const busy = databases.some(d => d.busy || ['creating', 'starting', 'stopping'].includes(d.status));
+  _databasesTimer = setTimeout(loadDatabases, busy ? 3000 : 10000);
 }
 
 // CPU / memory per app, summed over its instances. Only for running apps.

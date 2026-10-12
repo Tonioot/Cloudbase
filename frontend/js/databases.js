@@ -1,4 +1,4 @@
-import { api, PermissionError } from './api.js';
+import { api } from './api.js';
 import { toast } from './utils.js';
 import { esc, statusColor } from './shell.js';
 
@@ -10,13 +10,6 @@ const ENGINE_KIND = {
 };
 
 let engines = [];
-let pollTimer = null;
-
-export async function initDatabasesPage() {
-  document.getElementById('btn-new-database')?.addEventListener('click', openCreateDialog);
-  if (new URLSearchParams(location.search).get('action') === 'new') openCreateDialog();
-  await loadDatabases();
-}
 
 function statusLine(d) {
   if (d.status === 'error' || d.status === 'unhealthy') return { text: d.last_error || 'Needs attention', cls: 'error' };
@@ -46,33 +39,22 @@ function rowHTML(d) {
     </tr>`;
 }
 
-async function loadDatabases() {
-  const wrap = document.getElementById('databases-wrap');
-  let databases;
-  try {
-    databases = await api.listDatabases();
-  } catch (e) {
-    const msg = e instanceof PermissionError ? 'You do not have access to databases (databases.view required).' : e.message;
-    wrap.innerHTML = `<div class="apps-empty" style="color:var(--red)">${esc(msg)}</div>`;
-    return;
-  }
-
+/** Render the databases table (or its empty state) into `wrap`. */
+export function renderDatabasesTable(wrap, databases) {
   if (!databases.length) {
     wrap.innerHTML = `
       <div class="apps-empty">
         <strong>No databases yet</strong>
         Create PostgreSQL, MySQL, MariaDB, Redis, Valkey or MongoDB on any node and link it to your apps.
-        <div style="margin-top:18px"><button class="btn btn-primary" id="empty-new-database" data-perm="databases.create">New database</button></div>
+        <div style="margin-top:18px"><button class="btn" id="empty-new-database" data-perm="databases.create">New database</button></div>
       </div>`;
-    document.getElementById('empty-new-database')?.addEventListener('click', openCreateDialog);
+    document.getElementById('empty-new-database')?.addEventListener('click', openCreateDatabaseDialog);
   } else {
     wrap.innerHTML = `
-      <div class="apps-table-wrap">
-        <table class="table apps-table">
-          <thead><tr><th>Name</th><th>Engine</th><th>Node</th><th>Limits</th><th class="num">Linked apps</th></tr></thead>
-          <tbody>${databases.map(rowHTML).join('')}</tbody>
-        </table>
-      </div>`;
+      <table class="table apps-table">
+        <thead><tr><th>Name</th><th>Engine</th><th>Node</th><th>Limits</th><th class="num">Linked apps</th></tr></thead>
+        <tbody>${databases.map(rowHTML).join('')}</tbody>
+      </table>`;
     wrap.querySelectorAll('tr[data-db-id]').forEach(tr => {
       tr.addEventListener('click', e => {
         if (e.target.closest('a')) return;
@@ -81,14 +63,9 @@ async function loadDatabases() {
     });
   }
   if (window._applyPermVisibility) window._applyPermVisibility(wrap);
-
-  // Poll faster while something is in progress.
-  clearTimeout(pollTimer);
-  const busy = databases.some(d => ['creating', 'starting', 'stopping'].includes(d.status) || d.busy);
-  pollTimer = setTimeout(loadDatabases, busy ? 3000 : 15000);
 }
 
-async function openCreateDialog() {
+export async function openCreateDatabaseDialog() {
   let nodes;
   try {
     [engines, nodes] = await Promise.all([
