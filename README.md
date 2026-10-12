@@ -131,7 +131,7 @@ Click **Add node** in the panel and run the command it shows on the new server. 
 curl -fsSL https://raw.githubusercontent.com/Tonioot/Cloudbase/main/install.sh | sudo bash -s -- --node --main-url https://panel.example.com --invite-code <code>
 ```
 
-A node only runs the agent: no panel, no nginx, no open ports.
+A node only runs the agent: no panel, no nginx, no open ports. To turn a node into a primary later, run `cloudbase disconnect` on it.
 
 ### Updating
 
@@ -151,7 +151,7 @@ cloudbase start | stop | restart | status | logs
 cloudbase enable                 # systemd service + start on boot
 cloudbase disable
 cloudbase update
-cloudbase uninstall
+cloudbase uninstall [--keep-data]
 
 # Information
 cloudbase apps
@@ -159,8 +159,8 @@ cloudbase nodes
 cloudbase password               # set a new admin password
 
 # Nodes
-cloudbase connect --main-url <url> --invite-code <code> [--node-name <name>] [--mode node-only|panel+node]
-cloudbase disconnect
+cloudbase connect --main-url <url> --invite-code <code> [--node-name <name>]
+cloudbase disconnect             # leave the primary and become a primary
 cloudbase node-status
 
 # NGINX

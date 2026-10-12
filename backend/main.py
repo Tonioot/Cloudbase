@@ -54,10 +54,9 @@ logging.basicConfig(
 log = logging.getLogger("cloudbase.main")
 
 PORT = _cfg.get_server_port()
-# A node-only server is managed from the primary's panel; it serves no panel of
-# its own. `cloudbase connect` / `disconnect` restart the service, so reading
-# the mode once at startup is enough.
-NODE_ONLY = node_agent.is_node_only()
+# A node is managed from its primary's panel and serves no panel of its own.
+# Becoming or leaving a node restarts the service, so checking once is enough.
+IS_NODE = node_agent.is_node()
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
 _COOKIE_NAME = "pdm_token"
 _COOKIE_OPTS = dict(httponly=True, samesite="strict", path="/")
@@ -686,18 +685,7 @@ async def _orphan_replica_cleanup():
     await asyncio.sleep(120)
     while True:
         try:
-            # In panel+node mode the primary also runs instances here through the
-            # agent. Those have no row in this DB; the agent cleans them up itself.
-            primary_ids: set[int] = set()
-            if node_agent._load_state() is not None:
-                managed = node_agent.managed_replica_ids()
-                if managed is None:
-                    log.info("[orphan-cleanup] skipped: agent hasn't heard from the primary yet")
-                    await asyncio.sleep(120)
-                    continue
-                primary_ids = managed
             containers = await asyncio.to_thread(_dm.list_replica_containers)
-            containers = [c for c in containers if c["replica_id"] not in primary_ids]
             if containers:
                 async with AsyncSessionLocal() as db:
                     # Local node id — we only manage local containers here.
@@ -986,8 +974,8 @@ async def lifespan(app: FastAPI):
     # First-run: generate a password if none exists. This must happen before
     # init_db(), which seeds the admin user from the credentials file —
     # otherwise the printed password only works after a second start.
-    # A node-only server has no panel to log in to.
-    if not NODE_ONLY and not auth.load_hashed_password():
+    # A node has no panel to log in to.
+    if not IS_NODE and not auth.load_hashed_password():
         import secrets
         import string
         alphabet = string.ascii_letters + string.digits
@@ -1010,12 +998,13 @@ async def lifespan(app: FastAPI):
     # Ensure internal agent token exists (used by node_agent.py)
     auth.get_or_create_agent_token()
 
-    # A node-only server is driven by the primary through the agent; the panel
-    # loops would only work on its empty local DB, and the orphan cleanup would
-    # remove the instances the primary started here.
+    # A node is driven by the primary through the agent; the panel loops would
+    # only work on its empty local DB, and the orphan cleanup would remove the
+    # instances the primary started here.
     tasks: list[asyncio.Task] = []
-    if NODE_ONLY:
-        log.info("INIT: node-only mode, starting the node agent only")
+    if IS_NODE:
+        log.info("INIT: running as a node, starting the node agent only")
+        tasks.append(asyncio.create_task(node_agent.start_agent()))
     else:
         await _startup_recovery()
         import deploys as _deploys
@@ -1031,11 +1020,6 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(_overview_sampler()),
             asyncio.create_task(_deploys.auto_deploy_loop()),
         ]
-
-    # Start node agent if configured (as an integrated background task)
-    if node_agent._load_state() is not None:
-        log.debug("INIT: Node state detected, starting integrated agent task")
-        tasks.append(asyncio.create_task(node_agent.start_agent()))
 
     yield
     for task in tasks:
@@ -1156,9 +1140,9 @@ class _AuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         method = request.method
 
-        # Node-only: the only clients are this server's own agent (X-Agent-Token,
+        # On a node, the only clients are this server's own agent (X-Agent-Token,
         # also on its local log/stats WebSockets) and health checks.
-        if NODE_ONLY:
+        if IS_NODE:
             agent_token = request.headers.get("X-Agent-Token", "")
             if path == "/api/health" or (agent_token and auth.verify_agent_token(agent_token)):
                 return await call_next(request)

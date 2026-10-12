@@ -16,7 +16,6 @@ PORT="$(awk '/^server:/{s=1;next} /^[^[:space:]#]/{s=0} s && $1=="port:"{print $
 [[ "$PORT" =~ ^[0-9]+$ ]] || PORT=7823
 CREDS="$HOME/.cloudbase/credentials"
 APP_NAME="Cloudbase"
-CLI_NAME="cloudbase"
 SERVICE_NAME="cloudbase"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 NGINX_SITE_NAME="cloudbase"
@@ -79,8 +78,8 @@ Core:
   logs               Show service logs
   enable             Install systemd autostart and start now
   disable            Disable systemd autostart and stop service
-  update             Pull latest changes, reinstall deps, restart
-  uninstall          Completely remove Cloudbase from this system
+  update             Update to the latest version
+  uninstall          Remove Cloudbase from this server [--keep-data]
 
 Info:
   apps               List all deployed applications
@@ -90,11 +89,10 @@ Account:
   password           Change the administrator password
 
 Node:
-  connect            Connect as a node to a main Cloudbase instance
-                       --main-url <url>  --invite-code <code>
-                       [--node-name <name>]  [--mode node-only|panel+node]
-  disconnect         Remove node connection state (return to local-only)
-  node-status        Show current node agent connection state
+  connect            Make this server a node of a primary
+                       --main-url <url>  --invite-code <code>  [--node-name <name>]
+  disconnect         Leave the primary and make this server a primary itself
+  node-status        Show which primary this node is connected to
 
 Data:
   export [file]      Export database + credentials to .tar.gz
@@ -742,66 +740,14 @@ cmd_import() {
     success "Import complete — restart Cloudbase to apply: cloudbase restart"
 }
 
-cmd_update() {
-    if ! command -v git >/dev/null 2>&1; then
-        err "git is not installed"
-        exit 1
-    fi
-    cd "$INSTALL_DIR"
-    info "Fetching latest changes"
-    git fetch origin
-    info "Hard resetting to origin/main"
-    git reset --hard origin/main
-    git clean -fd --exclude="backend/agent_state.json" --exclude="backend/node_agent.log" --exclude="backend/venv/" --exclude="*.db"
-    info "Reinstalling Python dependencies"
-    "$VENV_PATH/bin/pip" install --quiet --upgrade pip
-    "$VENV_PATH/bin/pip" install --quiet -r "$BACKEND_DIR/requirements.txt"
-    success "Dependencies updated"
-    ensure_certbot
-    if command -v nginx >/dev/null 2>&1; then
-        info "Refreshing nginx and certificate permissions"
-        bash "$INSTALL_DIR/scripts/setup-nginx-permissions.sh" "$(service_run_user)" >/dev/null \
-            && success "Permissions refreshed" \
-            || warn "Could not refresh permissions — run: cloudbase nginx permissions"
-    fi
-    info "Restarting Cloudbase"
-    if service_installed && command -v systemctl >/dev/null 2>&1; then
-        info "Refreshing systemd service file"
-        write_service_file
-        sudo systemctl daemon-reload
-        sudo systemctl restart "$SERVICE_NAME"
-        success "Cloudbase updated and restarted"
-    else
-        stop_foreground_instance
-        run_runtime
-    fi
+# update, connect, disconnect and uninstall are done by the installer, so they
+# look and behave the same as installing.
+run_installer() {
+    exec sudo bash "$INSTALL_DIR/install.sh" "$@"
 }
 
-
-cmd_disconnect() {
-    local state_file="$BACKEND_DIR/agent_state.json"
-    local mode_file="$HOME/.cloudbase/mode"
-
-    if [[ -f "$state_file" ]]; then
-        rm -f "$state_file"
-        success "Removed saved node connection state"
-    else
-        warn "No saved node connection state found"
-    fi
-
-    if [[ -f "$mode_file" ]]; then
-        rm -f "$mode_file"
-        info "Cleared saved node mode"
-    fi
-
-    if service_installed && command -v systemctl >/dev/null 2>&1; then
-        info "Restarting Cloudbase service to apply disconnect"
-        sudo systemctl restart "$SERVICE_NAME"
-        success "Disconnected from main node and restarted locally"
-    else
-        success "Disconnected from main node"
-        info "Run 'cloudbase restart' to apply mode changes in this session"
-    fi
+is_node() {
+    [[ -f "$BACKEND_DIR/agent_state.json" ]]
 }
 
 
@@ -855,8 +801,8 @@ PYEOF
 }
 
 
-run_node_only_runtime() {
-    info "Running in node-only mode (agent integrated in API on 127.0.0.1)"
+run_node_runtime() {
+    info "Running as a node (agent inside the API, listening on 127.0.0.1 only)"
 
     if ! command -v python3 >/dev/null 2>&1 || ! python3 -m venv --help >/dev/null 2>&1 || ! command -v lsof >/dev/null 2>&1; then
         warn "Missing runtime dependencies detected. Installing them now."
@@ -931,7 +877,7 @@ case "$COMMAND" in
             success "Cloudbase service restarted"
         else
             stop_foreground_instance
-            run_runtime
+            if is_node; then run_node_runtime; else run_runtime; fi
         fi
         ;;
     logs)
@@ -947,7 +893,7 @@ case "$COMMAND" in
         cmd_import "$@"
         ;;
     update)
-        cmd_update
+        run_installer --update "$@"
         ;;
     nginx)
         handle_nginx_command "$@"
@@ -956,104 +902,26 @@ case "$COMMAND" in
         handle_cert_command "$@"
         ;;
     connect)
-        # Parse --main-url, --invite-code, --node-name, --mode flags
-        _MAIN_URL=""
-        _INVITE_CODE=""
-        _NODE_NAME="$(hostname)"
-        _MODE="node-only"
-        while [[ $# -gt 0 ]]; do
-            case "$1" in
-                --main-url)    _MAIN_URL="$2";    shift 2 ;;
-                --invite-code) _INVITE_CODE="$2"; shift 2 ;;
-                --node-name)   _NODE_NAME="$2";   shift 2 ;;
-                --mode)        _MODE="$2";        shift 2 ;;
-                *) shift ;;
-            esac
-        done
-        if [[ "$_MODE" != "node-only" && "$_MODE" != "panel+node" ]]; then
-            err "Unknown mode '$_MODE' — use node-only or panel+node"
-            exit 1
-        fi
-        if [[ -z "$_MAIN_URL" || -z "$_INVITE_CODE" ]]; then
-            # Check if already registered (saved state exists)
-            if [[ ! -f "$BACKEND_DIR/agent_state.json" ]]; then
-                err "Usage: cloudbase connect --main-url <url> --invite-code <code> [--node-name <name>] [--mode <node-only|panel+node>]"
-                exit 1
-            fi
-            # Load previous mode if available
-            if [[ -f "$HOME/.cloudbase/mode" ]]; then
-                _MODE=$(cat "$HOME/.cloudbase/mode")
-            fi
-        else
-            # New connection params provided — auto-disconnect if already connected
-            if [[ -f "$BACKEND_DIR/agent_state.json" ]]; then
-                info "Already connected — disconnecting first before reconnecting..."
-                cmd_disconnect
-            fi
-        fi
-        cd "$BACKEND_DIR"
-        if [[ ! -d "$VENV_PATH" ]]; then
-            err "Cloudbase not installed. Run install.sh first, then cloudbase connect."
-            exit 1
-        fi
-        # Save mode for future starts
-        mkdir -p "$HOME/.cloudbase"
-        echo "$_MODE" > "$HOME/.cloudbase/mode"
-        info "Connecting to main Cloudbase${_MAIN_URL:+ at $_MAIN_URL} (mode: $_MODE)"
-        CONNECT_ARGS=()
-        [[ -n "$_MAIN_URL" ]]    && CONNECT_ARGS+=(--main-url    "$_MAIN_URL")
-        [[ -n "$_INVITE_CODE" ]] && CONNECT_ARGS+=(--invite-code "$_INVITE_CODE")
-        [[ -n "$_NODE_NAME" ]]   && CONNECT_ARGS+=(--node-name   "$_NODE_NAME")
-
-        if [[ "$_MODE" == "node-only" ]]; then
-            # Only register if no saved state exists yet
-            if [[ -n "$_MAIN_URL" && ! -f "$BACKEND_DIR/agent_state.json" ]]; then
-                info "Performing initial node registration..."
-                "$VENV_PATH/bin/python" node_agent.py "${CONNECT_ARGS[@]}" --exit-after-registration
-            elif [[ -f "$BACKEND_DIR/agent_state.json" ]]; then
-                info "Already registered — skipping re-registration"
-            fi
-
-            # Start/Restart service or run in foreground
-            if service_installed && command -v systemctl >/dev/null 2>&1; then
-                sudo systemctl restart "$SERVICE_NAME"
-                success "Cloudbase node connected and service restarted"
-            else
-                run_node_only_runtime
-            fi
-            exit 0
-        else
-            # Panel + Node mode: run panel + agent integrated
-            if [[ -n "$_MAIN_URL" && ! -f "$BACKEND_DIR/agent_state.json" ]]; then
-                info "Performing initial node registration..."
-                "$VENV_PATH/bin/python" node_agent.py "${CONNECT_ARGS[@]}" --exit-after-registration
-            elif [[ -f "$BACKEND_DIR/agent_state.json" ]]; then
-                info "Already registered — skipping re-registration"
-            fi
-
-            if service_installed && command -v systemctl >/dev/null 2>&1; then
-                sudo systemctl restart "$SERVICE_NAME"
-                success "Cloudbase service restarted with node integration"
-            else
-                exec "$VENV_PATH/bin/uvicorn" main:app --host 0.0.0.0 --port "$PORT" --timeout-graceful-shutdown 8
-            fi
-        fi
+        run_installer --node "$@"
         ;;
     disconnect)
-        cmd_disconnect
+        if ! is_node; then
+            warn "This server isn't connected to a primary."
+            exit 0
+        fi
+        # The installer disconnects it and sets it up as a primary.
+        run_installer --primary "$@"
         ;;
     node-status)
         state_file="$BACKEND_DIR/agent_state.json"
         if [[ ! -f "$state_file" ]]; then
-            warn "Not connected to any main node (no agent_state.json)"
+            warn "This server isn't a node — it's a primary, or not connected yet"
         else
             node_id=$(python3 -c "import json; d=json.load(open('$state_file')); print(d.get('node_id','?'))" 2>/dev/null)
             node_name=$(python3 -c "import json; d=json.load(open('$state_file')); print(d.get('node_name','?'))" 2>/dev/null)
             main_url=$(python3 -c "import json; d=json.load(open('$state_file')); print(d.get('main_url','?'))" 2>/dev/null)
-            node_mode=$(cat "$HOME/.cloudbase/mode" 2>/dev/null || echo "panel+node")
             info "Registered as: $node_name (id=$node_id)"
-            info "Main node:     $main_url"
-            info "Mode:          $node_mode"
+            info "Primary:       $main_url"
             # The agent runs inside the Cloudbase service, not as its own process
             if [[ -n "$(port_owner_pid)" ]]; then
                 success "Cloudbase (with agent): running on port $PORT"
@@ -1072,72 +940,14 @@ case "$COMMAND" in
             sudo systemctl start "$SERVICE_NAME"
             success "Cloudbase service started"
         else
-            # Check if running as a node
-            if [[ -f "$HOME/.cloudbase/mode" && "$(cat $HOME/.cloudbase/mode)" == "node-only" ]]; then
-                run_node_only_runtime
-            else
-                run_runtime
-            fi
+            if is_node; then run_node_runtime; else run_runtime; fi
         fi
         ;;
     run)
-        # Check if running as a node
-        if [[ -f "$HOME/.cloudbase/mode" && "$(cat $HOME/.cloudbase/mode)" == "node-only" ]]; then
-            run_node_only_runtime
-        else
-            run_runtime
-        fi
+        if is_node; then run_node_runtime; else run_runtime; fi
         ;;
     uninstall)
-        printf '%b\n' "${RED}WARNING: This will permanently remove Cloudbase from this system.${RESET}"
-        printf '%b\n' "${RED}The following will be deleted:${RESET}"
-        printf '  - Systemd service (%s)\n' "$SERVICE_FILE"
-        printf '  - Cloudbase install directory (%s)\n' "$INSTALL_DIR"
-        printf '  - Cloudbase data directory (%s)\n' "$HOME/.cloudbase"
-        printf '  - Nginx config (if present)\n'
-        printf '  - cloudbase symlink in /usr/local/bin (if present)\n'
-        printf '\n'
-        read -r -p "Type 'yes' to confirm uninstall: " confirm
-        if [[ "$confirm" != "yes" ]]; then
-            warn "Uninstall cancelled"
-            exit 0
-        fi
-
-        # Stop and remove systemd service
-        if service_installed && command -v systemctl >/dev/null 2>&1; then
-            info "Stopping and disabling Cloudbase service"
-            sudo systemctl stop "$SERVICE_NAME" 2>/dev/null || true
-            sudo systemctl disable "$SERVICE_NAME" 2>/dev/null || true
-            sudo rm -f "$SERVICE_FILE"
-            sudo systemctl daemon-reload
-        else
-            stop_foreground_instance 2>/dev/null || true
-        fi
-
-        # Remove nginx config
-        if command -v nginx >/dev/null 2>&1; then
-            if sudo test -f "$NGINX_CONFIG_PATH" || sudo test -f "$NGINX_ENABLED_PATH"; then
-                info "Removing nginx config"
-                sudo rm -f "$NGINX_ENABLED_PATH" "$NGINX_CONFIG_PATH"
-                sudo nginx -t 2>/dev/null && sudo systemctl reload nginx 2>/dev/null || true
-            fi
-        fi
-
-        # Remove cloudbase symlink
-        if [[ -L "/usr/local/bin/$CLI_NAME" ]]; then
-            info "Removing /usr/local/bin/$CLI_NAME symlink"
-            sudo rm -f "/usr/local/bin/$CLI_NAME"
-        fi
-
-        # Remove install directory first (this script is inside it — use sudo for root-owned venv files)
-        printf '[%s] [INFO] Removing install directory %s\n' "$(timestamp)" "$INSTALL_DIR"
-        sudo rm -rf "$INSTALL_DIR"
-
-        # Remove data directory last — log file is inside it so no more logging after this
-        printf '[%s] [INFO] Removing data directory %s\n' "$(timestamp)" "$HOME/.cloudbase"
-        sudo rm -rf "$HOME/.cloudbase"
-
-        printf '[%s] [OK] Cloudbase has been completely removed from this system\n' "$(timestamp)"
+        run_installer --uninstall "$@"
         ;;
     apps)
         cmd_apps

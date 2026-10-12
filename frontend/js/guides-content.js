@@ -76,7 +76,7 @@ export const GUIDES = [
 
 <h2>Updating Cloudbase</h2>
 <pre>cloudbase update</pre>
-<p>This pulls the latest Cloudbase code, reinstalls dependencies and restarts the service. Running apps are not rebuilt; their containers keep running while the panel restarts. During the restart, visitors of the panel see the “Cloudbase is restarting” page.</p>
+<p>This runs the installer in update mode: it pulls the latest Cloudbase code, installs anything new it needs and restarts the service. Running apps are not rebuilt; their containers keep running while the panel restarts. During the restart, visitors of the panel see the “Cloudbase is restarting” page.</p>
 <p>Update remote nodes as well — the agent code lives on each node. Run <code>cloudbase update</code> there too. Instances on a node are recovered automatically after its agent restarts (<a href="/guides?g=node-outages">Node outages &amp; recovery</a>).</p>
 
 <h2>The service</h2>
@@ -100,7 +100,8 @@ cloudbase stop</pre>
 
 <h2>Removing Cloudbase</h2>
 <pre>cloudbase uninstall</pre>
-<p>Removes the service and the install directory. Export your apps first if you want to keep their configuration (<a href="/guides?g=backups">Backups &amp; moving apps</a>).</p>
+<p>Shows what will be removed and asks for confirmation. It removes the service, the app containers and their images, the nginx sites Cloudbase created, the code and <code>~/.cloudbase</code>. Docker, nginx, certbot and your certificates stay installed. Add <code>--keep-data</code> to keep <code>~/.cloudbase</code> for a later reinstall.</p>
+<p>Export your apps first if you want to keep their configuration (<a href="/guides?g=backups">Backups &amp; moving apps</a>).</p>
 `,
 },
 
@@ -505,8 +506,8 @@ systemctl list-timers | grep certbot</pre>
   slug: 'nodes',
   group: 'Nodes',
   title: 'Adding nodes',
-  summary: 'Connect more servers, how tunnels work, and node-only vs. panel+node mode.',
-  keywords: 'node add connect invite agent tunnel remote server mode',
+  summary: 'Connect more servers, how tunnels work, and turning a node into a primary.',
+  keywords: 'node add connect invite agent tunnel remote server disconnect primary convert',
   lead: 'A node is an extra server that runs instances for the primary. Nodes are controlled by a small agent and don’t need any inbound ports.',
   body: `
 <h2>Connecting a node</h2>
@@ -518,11 +519,8 @@ systemctl list-timers | grep certbot</pre>
 </ol>
 <p>The node registers once with the invite code and gets its own long-lived token. The code can’t be used again. Add <code>--node-name &lt;name&gt;</code> to choose its name; by default it’s the server’s hostname. On a server that already has Cloudbase, <code>cloudbase connect --main-url … --invite-code …</code> does the same without reinstalling.</p>
 
-<h2>Modes</h2>
-<ul>
-  <li><strong>node-only</strong> (default) — just the agent and the local runtime, listening on <code>127.0.0.1</code> only. None of the panel’s background work runs. The usual choice for extra servers.</li>
-  <li><strong>panel+node</strong> — the node also runs its own panel, reachable on port 7823. Only useful in special setups.</li>
-</ul>
+<h2>Primary or node</h2>
+<p>Every server is one or the other. A node runs only the agent and its instances: it has no panel of its own (opening it in a browser shows where its primary is), listens on <code>127.0.0.1</code> only and needs no nginx.</p>
 
 <h2>How the connection works</h2>
 <p>The agent keeps an outbound WebSocket open to the primary. Over it, the primary sends commands (start, stop, build, fetch logs or stats) and the agent reports heartbeats with CPU, memory and disk usage.</p>
@@ -535,7 +533,12 @@ systemctl list-timers | grep certbot</pre>
 <p>Click a node in the sidebar to see its CPU, memory and disk over time, the instances it runs, the commands the primary sent it, and the agent’s own log. Rename, disable or remove the node from there.</p>
 
 <h2>Removing a node</h2>
-<p>Move or remove all instances on the node first — a node with instances can’t be deleted. Then remove it in the panel and run <code>cloudbase disconnect</code> on the server.</p>
+<p>Move or remove all instances on the node first — a node with instances can’t be deleted. Then remove it in the panel, and run <code>cloudbase uninstall</code> on the server.</p>
+
+<h2>Turning a node into a primary</h2>
+<pre>cloudbase disconnect</pre>
+<p>Run this on the node. It asks for confirmation, disconnects the server from its primary and sets it up as a primary of its own: nginx, certbot and an admin account are added, and the summary shows the panel address and password. Afterwards, remove the server under <em>Nodes</em> on the old primary.</p>
+<p>The other way round works too: <code>cloudbase connect</code> with a new invite turns a primary into a node, as long as it has no apps left.</p>
 `,
 },
 
@@ -734,8 +737,8 @@ cloudbase import ~/cloudbase-backup.tar.gz</pre>
   <tr><td><code>cloudbase logs</code></td><td>Follow the service log</td></tr>
   <tr><td><code>cloudbase enable</code></td><td>Install the systemd service and start on boot</td></tr>
   <tr><td><code>cloudbase disable</code></td><td>Remove autostart and stop the service</td></tr>
-  <tr><td><code>cloudbase update</code></td><td>Pull the latest Cloudbase, reinstall dependencies, restart</td></tr>
-  <tr><td><code>cloudbase uninstall</code></td><td>Remove Cloudbase from the server</td></tr>
+  <tr><td><code>cloudbase update</code></td><td>Update to the latest version and restart</td></tr>
+  <tr><td><code>cloudbase uninstall</code></td><td>Remove Cloudbase from the server. Option: <code>--keep-data</code></td></tr>
 </table>
 
 <h2>Information</h2>
@@ -749,8 +752,8 @@ cloudbase import ~/cloudbase-backup.tar.gz</pre>
 <h2>Nodes</h2>
 <table>
   <tr><th>Command</th><th>Does</th></tr>
-  <tr><td><code>cloudbase connect --main-url &lt;url&gt; --invite-code &lt;code&gt;</code></td><td>Connect this server as a node. Options: <code>--node-name</code>, <code>--mode node-only|panel+node</code></td></tr>
-  <tr><td><code>cloudbase disconnect</code></td><td>Forget the connection to the primary</td></tr>
+  <tr><td><code>cloudbase connect --main-url &lt;url&gt; --invite-code &lt;code&gt;</code></td><td>Make this server a node of a primary. Option: <code>--node-name</code></td></tr>
+  <tr><td><code>cloudbase disconnect</code></td><td>Leave the primary and make this server a primary itself</td></tr>
   <tr><td><code>cloudbase node-status</code></td><td>Show the node’s registration and whether the agent runs</td></tr>
 </table>
 

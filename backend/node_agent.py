@@ -21,7 +21,6 @@ import config as _cfg
 # Configuration
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_PATH = os.path.join(_BASE_DIR, "agent_state.json")
-MODE_PATH = os.path.expanduser("~/.cloudbase/mode")
 AGENT_LOG_FILE = os.path.expanduser("~/.cloudbase/logs/node-agent.log")
 _LOCAL_PORT = _cfg.get_server_port()
 _LOCAL_API_BASE = f"http://127.0.0.1:{_LOCAL_PORT}"
@@ -85,15 +84,9 @@ def _load_state() -> Optional[AgentState]:
         _agent_log(f"[agent] Error loading state: {e}")
         return None
 
-def is_node_only() -> bool:
-    """True when this server is registered as a node and runs no panel of its own."""
-    if not os.path.exists(STATE_PATH):
-        return False
-    try:
-        with open(MODE_PATH) as f:
-            return f.read().strip() == "node-only"
-    except OSError:
-        return False
+def is_node() -> bool:
+    """True when this server is registered as a node of a primary."""
+    return os.path.exists(STATE_PATH)
 
 def _save_state(state: AgentState) -> None:
     try:
@@ -414,17 +407,6 @@ async def _stop_tunnel_task(replica_id: int) -> None:
 _ORPHAN_MIN_AGE_SECONDS = 120
 # Replica IDs found orphaned on the previous check; removed only if still orphaned now.
 _orphan_suspects: set[int] = set()
-# Replica IDs the primary expects on this node, from the last successful check.
-# None until the primary has answered once.
-_primary_replica_ids: Optional[set[int]] = None
-
-
-def managed_replica_ids() -> Optional[set[int]]:
-    """Replica IDs whose containers belong to the primary, so a local panel
-    (panel+node mode) must leave them alone. None while still unknown."""
-    if _primary_replica_ids is None:
-        return None
-    return _primary_replica_ids | set(_active_tunnels)
 
 
 def _parse_docker_created(value: str) -> Optional[float]:
@@ -469,8 +451,6 @@ async def _cleanup_orphaned_replica_containers(client: httpx.AsyncClient, state:
             _agent_log(f"[cleanup] my-replicas returned HTTP {resp.status_code}, skipping orphan check")
             return
         live_ids: set[int] = {r["id"] for r in resp.json().get("replicas", [])}
-        global _primary_replica_ids
-        _primary_replica_ids = live_ids
 
         # Enumerate local replica containers through the Docker API (same access
         # the node uses to start them — the docker CLI may not be on the PATH
