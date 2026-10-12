@@ -187,20 +187,46 @@ STEPS=()
 add_step() { STEPS+=("$1|$2"); }
 add_warning() { printf '%s\n' "$1" >> "$STATE_DIR/warnings"; }
 
+kill_tree() {
+  local child
+  for child in $(pgrep -P "$1" 2>/dev/null); do kill_tree "$child"; done
+  kill -TERM "$1" 2>/dev/null || true
+}
+
+# Background steps don't get Ctrl+C, so the installer must not leave one running
+# on its own: the first Ctrl+C lets the step finish (stopping apt or pip halfway
+# can leave the system broken), a second one stops it right away.
+STEP_PID=""
+STOP_REQUESTED=false
+on_interrupt() {
+  if $STOP_REQUESTED || [[ -z "$STEP_PID" ]]; then
+    [[ -n "$STEP_PID" ]] && kill_tree "$STEP_PID"
+    printf '\n\n  %b✗%b Stopped. Run it again to continue.\n\n' "$RED" "$RESET"
+    exit 130
+  fi
+  STOP_REQUESTED=true
+  printf '\n  %b!%b Stopping after this step, so nothing is left half-installed. Press Ctrl+C again to stop now.\n' "$YELLOW" "$RESET"
+}
+
 # Each step runs in a background subshell with its output in the log, so `set -e`
 # applies inside it. Anything a later step or the summary needs goes to $STATE_DIR.
 run_steps() {
   local total=${#STEPS[@]} n=0 entry title fn pid spin='|/-\' i
+  trap on_interrupt INT TERM
   for entry in "${STEPS[@]}"; do
     title="${entry%%|*}"; fn="${entry##*|}"; n=$((n + 1)); i=0
     printf '\n── [%d/%d] %s\n' "$n" "$total" "$title" >> "$LOG_FILE"
     ( set -e; "$fn" ) >> "$LOG_FILE" 2>&1 < /dev/null &
     pid=$!
-    if [[ -t 1 ]]; then
-      while kill -0 "$pid" 2>/dev/null; do
-        printf '\r  %b%s%b  %s' "$DIM" "${spin:i++%4:1}" "$RESET" "$title"
-        sleep 0.15
-      done
+    STEP_PID=$pid
+    while kill -0 "$pid" 2>/dev/null; do
+      [[ -t 1 ]] && printf '\r  %b%s%b  %s' "$DIM" "${spin:i++%4:1}" "$RESET" "$title"
+      sleep 0.15
+    done
+    STEP_PID=""
+    if $STOP_REQUESTED; then
+      printf '\r  %b–%b  %s\n\n  Stopped after this step. Run it again to continue.\n\n' "$YELLOW" "$RESET" "$title"
+      exit 130
     fi
     if wait "$pid"; then
       printf '\r  %b✓%b  %s%b  %d/%d%b\n' "$GREEN" "$RESET" "$title" "$DIM" "$n" "$total" "$RESET"
@@ -463,18 +489,40 @@ fi
 # ── Install steps ─────────────────────────────────────────────────────────────
 export DEBIAN_FRONTEND=noninteractive
 
-pkg_install() {
+# apt waits for a lock held by e.g. unattended-upgrades instead of failing.
+APT_OPTS=(-o DPkg::Lock::Timeout=600)
+
+pkg_installed() {
   case "$PKG_MGR" in
-    apt)    apt-get install -y "$@" ;;
-    dnf)    dnf install -y "$@" ;;
-    yum)    yum install -y "$@" ;;
-    pacman) pacman -S --needed --noconfirm "$@" ;;
-    zypper) zypper --non-interactive install "$@" ;;
+    apt)            dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "ok installed" ;;
+    dnf|yum|zypper) rpm -q "$1" &>/dev/null ;;
+    pacman)         pacman -Qi "$1" &>/dev/null ;;
+  esac
+}
+
+# Installs only the packages that are missing; installed ones are never upgraded.
+pkg_install() {
+  local p missing=()
+  for p in "$@"; do pkg_installed "$p" || missing+=("$p"); done
+  if (( ${#missing[@]} == 0 )); then
+    echo "Already installed: $*"
+    return 0
+  fi
+  case "$PKG_MGR" in
+    apt)
+      if [[ ! -f "$STATE_DIR/apt-updated" ]]; then
+        apt-get "${APT_OPTS[@]}" update
+        touch "$STATE_DIR/apt-updated"
+      fi
+      apt-get "${APT_OPTS[@]}" install -y "${missing[@]}" ;;
+    dnf)    dnf install -y "${missing[@]}" ;;
+    yum)    yum install -y "${missing[@]}" ;;
+    pacman) pacman -S --needed --noconfirm "${missing[@]}" ;;
+    zypper) zypper --non-interactive install "${missing[@]}" ;;
   esac
 }
 
 step_packages() {
-  [[ "$PKG_MGR" == "apt" ]] && apt-get update
   case "$PKG_MGR" in
     apt)    pkg_install ca-certificates curl git lsof sudo iproute2 python3 python3-venv python3-pip ;;
     pacman) pkg_install ca-certificates curl git lsof sudo iproute2 python python-pip ;;
@@ -668,9 +716,12 @@ EOF
 # Steps for system software only run when something is missing, so connecting,
 # disconnecting and updating don't reinstall what's already there.
 packages_ok() {
-  local c
-  for c in curl git lsof sudo python3; do command -v "$c" &>/dev/null || return 1; done
-  python3 -c "import ensurepip, venv" &>/dev/null
+  local c missing=()
+  for c in curl git lsof sudo python3; do command -v "$c" &>/dev/null || missing+=("$c"); done
+  python3 -c "import ensurepip, venv" &>/dev/null || missing+=("python3-venv")
+  (( ${#missing[@]} == 0 )) && return 0
+  echo "Missing system packages: ${missing[*]}" >> "$LOG_FILE"
+  return 1
 }
 docker_ok() {
   command -v docker &>/dev/null && docker info &>/dev/null || return 1
