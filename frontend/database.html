@@ -57,6 +57,7 @@
       <nav class="tabs" aria-label="Database sections">
         <button class="tab-btn" data-tab="overview">Overview</button>
         <button class="tab-btn" data-tab="access">Access</button>
+        <button class="tab-btn" data-tab="backups">Backups</button>
         <button class="tab-btn" data-tab="logs">Logs</button>
         <button class="tab-btn" data-tab="settings">Settings</button>
       </nav>
@@ -113,6 +114,61 @@
 
           <div class="db-note" id="pub-note"></div>
         </div>
+      </section>
+    </div>
+
+    <!-- Backups -->
+    <div class="tab-panel" id="panel-backups">
+      <div class="db-restore-banner" id="restore-banner" style="display:none"></div>
+
+      <section class="db-card" aria-labelledby="backups-title">
+        <div class="db-card-head">
+          <h2 id="backups-title">Backups</h2>
+          <div class="db-card-actions" data-perm="databases.backup">
+            <label class="btn btn-sm" id="btn-upload-label">
+              <input type="file" id="backup-upload" class="sr-only" />
+              <span id="btn-upload-text">Upload dump</span>
+            </label>
+            <button class="btn btn-sm btn-primary" id="btn-backup-now">Back up now</button>
+          </div>
+        </div>
+        <p class="db-card-sub">Stored on the primary in <code>~/.cloudbase/backups</code>, also for databases on other nodes. Backups are kept when the database is deleted.</p>
+        <div id="backup-list" class="db-list" style="margin-top:12px"></div>
+        <p class="db-card-foot" id="backup-restore-note"></p>
+
+        <details class="db-other-backups" id="other-backups" style="display:none">
+          <summary>Backups of other or deleted databases</summary>
+          <div id="other-backup-list" class="db-list"></div>
+        </details>
+      </section>
+
+      <section class="db-card" aria-labelledby="schedule-title">
+        <div class="db-card-head">
+          <h2 id="schedule-title">Schedule</h2>
+          <span class="db-card-sub" id="schedule-state"></span>
+        </div>
+        <form class="db-schedule" id="schedule-form" data-perm="databases.backup">
+          <label class="field" style="margin:0">
+            <span class="field-label">Automatic backups</span>
+            <select id="sch-schedule" class="input">
+              <option value="off">Off</option>
+              <option value="hourly">Every hour</option>
+              <option value="daily">Every day</option>
+            </select>
+          </label>
+          <label class="field" style="margin:0" id="sch-hour-field">
+            <span class="field-label">At</span>
+            <select id="sch-hour" class="input"></select>
+          </label>
+          <label class="field" style="margin:0">
+            <span class="field-label">Keep</span>
+            <span class="unit-input">
+              <input id="sch-retention" class="input" type="number" min="1" max="365" />
+              <span class="unit">backups</span>
+            </span>
+          </label>
+        </form>
+        <p class="db-card-foot">Server time. Older automatic backups are removed once there are more than this; manual backups and uploads stay until you delete them.</p>
       </section>
     </div>
 

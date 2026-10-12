@@ -5,12 +5,15 @@ import { engineIcon } from './engine-icons.js';
 
 const DB_ID = parseInt(new URLSearchParams(location.search).get('id'), 10);
 const TRANSITIONAL = ['creating', 'starting', 'stopping'];
-const TABS = ['overview', 'access', 'logs', 'settings'];
+const TABS = ['overview', 'access', 'backups', 'logs', 'settings'];
+const TRIGGER_LABEL = { manual: 'manual', scheduled: 'scheduled', pre_delete: 'before delete', pre_restore: 'before restore', upload: 'uploaded' };
 
 const ICON = {
   copy: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
   eye: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg>',
   eyeOff: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 19c-7 0-11-7-11-7a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 7 11 7a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
+  download: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+  restore: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><polyline points="3 3 3 8 8 8"/></svg>',
   remove: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
 };
 const MASK = '••••••••••••';
@@ -21,6 +24,8 @@ let revealed = false;
 let myIp = null;
 let pollTimer = null;
 let logsTimer = null;
+let backups = null;       // last /backups response
+let backupsTimer = null;
 
 // How well a public connection is protected, per engine.
 function encryptionNote(d) {
@@ -46,6 +51,10 @@ export async function initDatabasePage() {
   document.getElementById('pub-enabled').addEventListener('change', togglePublic);
   document.getElementById('allow-form').addEventListener('submit', e => { e.preventDefault(); addAllowEntry(); });
   document.getElementById('allow-my-ip').onclick = () => addAllowEntry(myIp);
+  document.getElementById('btn-backup-now').onclick = backupNow;
+  document.getElementById('backup-upload').addEventListener('change', uploadDump);
+  document.getElementById('sch-hour').innerHTML = Array.from({ length: 24 }, (_, h) => `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`).join('');
+  ['sch-schedule', 'sch-hour', 'sch-retention'].forEach(id => document.getElementById(id).addEventListener('change', saveSchedule));
   // Copy / reveal buttons are rendered into the key-value rows.
   document.addEventListener('click', e => {
     const btn = e.target.closest('[data-copy], [data-reveal]');
@@ -68,10 +77,12 @@ function showTab(name, updateHash = true) {
   TABS.forEach(t => document.getElementById(`panel-${t}`).classList.toggle('active', t === name));
   if (updateHash) history.replaceState(null, '', `#${name}`);
   clearInterval(logsTimer);
+  clearTimeout(backupsTimer);
   if (name === 'logs') {
     loadLogs();
     logsTimer = setInterval(loadLogs, 5000);
   }
+  if (name === 'backups') loadBackups();
 }
 
 /* ─── Data ──────────────────────────────────────────────────────────────── */
@@ -120,7 +131,7 @@ function render() {
   document.getElementById('db-meta').innerHTML =
     `<span>${esc(d.engine_label)} ${esc(d.version)}</span><span>${esc(d.node_name || 'unknown node')}</span><code>${esc(d.host)}:${d.port}</code>`;
   document.getElementById('db-status-badge').innerHTML = badge(d.status);
-  document.getElementById('db-status-meta').textContent = d.busy && !TRANSITIONAL.includes(d.status) ? 'Working…' : '';
+  document.getElementById('db-status-meta').textContent = d.operation || (d.busy && !TRANSITIONAL.includes(d.status) ? 'Working…' : '');
 
   const err = document.getElementById('db-error');
   const showErr = d.last_error && ['error', 'unhealthy'].includes(d.status);
@@ -387,6 +398,208 @@ async function saveLimits() {
   } catch (e) { toast(e.message, 'error'); }
 }
 
+/* ─── Backups ───────────────────────────────────────────────────────────── */
+
+function fmtBytes(n) {
+  if (n == null) return '—';
+  if (n < 1024) return `${n} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let v = n / 1024, i = 0;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
+}
+
+function fmtWhen(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso.endsWith('Z') ? iso : `${iso}Z`);
+  return d.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function backupRow(b, { own }) {
+  const canRestore = backups.can_restore && b.status === 'success';
+  const status = b.status === 'running'
+    ? '<span class="db-tag db-tag--busy">running…</span>'
+    : b.status === 'failed' ? `<span class="db-tag db-tag--failed" title="${esc(b.error || '')}">failed</span>` : '';
+  return `
+    <div class="db-list-row">
+      <div class="db-list-main">
+        <span class="db-list-title">${esc(fmtWhen(b.created_at))}</span>
+        ${own ? '' : `<span class="db-list-meta">${esc(b.database_name)}${b.database_id ? '' : ' (deleted)'}</span>`}
+        <span class="db-tag">${esc(TRIGGER_LABEL[b.trigger] || b.trigger)}</span>
+        ${status}
+        <span class="db-list-meta">${b.status === 'success' ? esc(fmtBytes(b.size_bytes)) : ''}</span>
+        ${b.status === 'failed' && b.error ? `<span class="db-list-error">${esc(b.error.split('\n')[0].slice(0, 160))}</span>` : ''}
+      </div>
+      <span class="db-kv-actions">
+        ${canRestore ? `<button type="button" class="icon-btn" data-restore="${b.id}" data-perm="databases.backup" title="Restore" aria-label="Restore this backup">${ICON.restore}</button>` : ''}
+        ${own && b.status === 'success' ? `<a class="icon-btn" href="${api.backupDownloadUrl(DB_ID, b.id)}" download data-perm="databases.backup" title="Download" aria-label="Download this backup">${ICON.download}</a>` : ''}
+        ${own && b.status !== 'running' ? `<button type="button" class="icon-btn" data-backup-delete="${b.id}" data-perm="databases.backup" title="Delete" aria-label="Delete this backup">${ICON.remove}</button>` : ''}
+      </span>
+    </div>`;
+}
+
+async function loadBackups() {
+  clearTimeout(backupsTimer);
+  try {
+    backups = await api.listBackups(DB_ID);
+  } catch (e) {
+    document.getElementById('backup-list').innerHTML = `<div class="db-list-empty">${esc(e.message)}</div>`;
+    return;
+  }
+  renderBackups();
+  const active = backups.operation || backups.backups.some(b => b.status === 'running') || backups.restore?.state === 'running';
+  if (document.getElementById('panel-backups').classList.contains('active')) {
+    backupsTimer = setTimeout(loadBackups, active ? 2000 : 15000);
+  }
+  if (!active && database?.busy) load();  // refresh the header once an operation ends
+}
+
+function renderBackups() {
+  const b = backups;
+  const list = document.getElementById('backup-list');
+  list.innerHTML = b.backups.length
+    ? b.backups.map(x => backupRow(x, { own: true })).join('')
+    : '<div class="db-list-empty">No backups yet.</div>';
+
+  const others = document.getElementById('other-backups');
+  others.style.display = b.can_restore && b.others.length ? '' : 'none';
+  document.getElementById('other-backup-list').innerHTML = b.others.map(x => backupRow(x, { own: false })).join('');
+
+  document.getElementById('backup-restore-note').textContent = b.can_restore ? '' :
+    `Restoring ${database.engine_label} backups from the panel comes later. You can download a backup and load it yourself.`;
+
+  const banner = document.getElementById('restore-banner');
+  const r = b.restore;
+  if (r) {
+    banner.style.display = '';
+    banner.className = `db-restore-banner db-restore-banner--${r.state}`;
+    banner.textContent = r.state === 'running' ? (r.message || 'Restoring…')
+      : r.state === 'success' ? `Restore finished (${fmtWhen(r.at)}).`
+      : `Restore failed: ${r.message || 'unknown error'}`;
+  } else {
+    banner.style.display = 'none';
+  }
+
+  const busy = !!b.operation || !database.node_online || !['running', 'unhealthy'].includes(database.status);
+  const now = document.getElementById('btn-backup-now');
+  now.disabled = busy;
+  now.textContent = b.operation === 'Backing up…' ? 'Backing up…' : 'Back up now';
+
+  const sched = document.getElementById('sch-schedule');
+  const hour = document.getElementById('sch-hour');
+  const keep = document.getElementById('sch-retention');
+  if (![sched, hour, keep].includes(document.activeElement)) {
+    sched.value = b.schedule;
+    hour.value = String(b.hour);
+    keep.value = b.retention;
+  }
+  document.getElementById('sch-hour-field').style.display = sched.value === 'daily' ? '' : 'none';
+  const last = b.backups.find(x => x.trigger === 'scheduled' && x.status === 'success');
+  document.getElementById('schedule-state').textContent = b.schedule === 'off' ? 'Off'
+    : last ? `Last automatic backup ${fmtWhen(last.created_at)}` : 'No automatic backup yet';
+
+  document.querySelectorAll('[data-restore]').forEach(btn => {
+    btn.onclick = () => openRestoreDialog([...b.backups, ...b.others].find(x => x.id === +btn.dataset.restore));
+  });
+  document.querySelectorAll('[data-backup-delete]').forEach(btn => {
+    btn.onclick = () => deleteBackup(b.backups.find(x => x.id === +btn.dataset.backupDelete));
+  });
+  if (window._applyPermVisibility) window._applyPermVisibility(document.getElementById('panel-backups'));
+}
+
+async function backupNow() {
+  try {
+    await api.createBackup(DB_ID);
+    toast('Backup started');
+    loadBackups();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function uploadDump(e) {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  const label = document.getElementById('btn-upload-text');
+  try {
+    await api.uploadBackup(DB_ID, file, p => { label.textContent = `Uploading ${Math.round(p * 100)}%`; });
+    toast(`${file.name} uploaded. Restore it from the list.`);
+    loadBackups();
+  } catch (err) {
+    toast(err.message, 'error');
+  } finally {
+    label.textContent = 'Upload dump';
+  }
+}
+
+async function saveSchedule() {
+  const schedule = document.getElementById('sch-schedule').value;
+  document.getElementById('sch-hour-field').style.display = schedule === 'daily' ? '' : 'none';
+  try {
+    await api.updateBackupSettings(DB_ID, {
+      schedule,
+      hour: parseInt(document.getElementById('sch-hour').value, 10),
+      retention: Math.max(1, parseInt(document.getElementById('sch-retention').value, 10) || 7),
+    });
+    toast('Backup schedule saved');
+    loadBackups();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+async function deleteBackup(b) {
+  const ok = await confirm('Delete this backup?', `The backup of ${esc(fmtWhen(b.created_at))} (${esc(fmtBytes(b.size_bytes))}) is removed for good.`);
+  if (!ok) return;
+  try {
+    await api.deleteBackup(DB_ID, b.id);
+    toast('Backup deleted');
+    loadBackups();
+  } catch (e) { toast(e.message, 'error'); }
+}
+
+function openRestoreDialog(b) {
+  const d = database;
+  const from = b.database_id === DB_ID ? '' : ` of <strong>${esc(b.database_name)}</strong>`;
+  const backdrop = document.createElement('div');
+  backdrop.className = 'dialog-backdrop';
+  backdrop.innerHTML = `
+    <div class="dialog dialog-modern form-dialog" role="dialog" aria-modal="true" aria-labelledby="rs-title">
+      <div class="dialog-title" id="rs-title">Restore ${esc(d.name)}</div>
+      <div class="dialog-body">
+        <p class="form-dialog-intro">Loads the backup${from} from <strong>${esc(fmtWhen(b.created_at))}</strong> into <strong>${esc(d.name)}</strong>. Data in the backup replaces the current data; linked apps keep running but see the restored data.</p>
+        <label class="toggle-row form-toggle">
+          <span><span class="field-label">Make a safety backup first</span><span class="field-hint">So you can go back to the current data</span></span>
+          <span class="toggle"><input type="checkbox" id="rs-safety" checked /><span class="toggle-slider"></span></span>
+        </label>
+        <div class="field" style="margin:0">
+          <label class="field-label" for="rs-name">Type <strong>${esc(d.name)}</strong> to confirm</label>
+          <input id="rs-name" class="input input-mono" autocomplete="off" spellcheck="false" />
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn" id="rs-cancel">Cancel</button>
+        <button class="btn btn-danger" id="rs-ok" disabled>Restore</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  const close = () => backdrop.remove();
+  const ok = backdrop.querySelector('#rs-ok');
+  backdrop.querySelector('#rs-name').addEventListener('input', e => { ok.disabled = e.target.value.trim() !== d.name; });
+  backdrop.querySelector('#rs-cancel').onclick = close;
+  backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
+  ok.onclick = async () => {
+    ok.disabled = true;
+    try {
+      await api.restoreBackup(DB_ID, b.id, backdrop.querySelector('#rs-safety').checked);
+      close();
+      toast('Restore started');
+      loadBackups();
+      load();
+    } catch (e) {
+      toast(e.message, 'error');
+      ok.disabled = false;
+    }
+  };
+}
+
 /* ─── Dialogs ───────────────────────────────────────────────────────────── */
 
 async function openLinkDialog() {
@@ -451,6 +664,11 @@ async function deleteDatabase() {
       <div class="dialog-title" id="del-dlg-title">Delete ${esc(d.name)}</div>
       <div class="dialog-body">
         <p class="form-dialog-intro">This removes the database container${d.link_count ? ` and the links to ${d.link_count} app${d.link_count === 1 ? '' : 's'}` : ''}.${d.node_online ? '' : ` <strong>Node ${esc(d.node_name || '')} is offline</strong>: only the entry in Cloudbase is removed; the container and its data stay on the node.`}</p>
+        ${d.node_online && ['running', 'unhealthy'].includes(d.status) ? `
+        <label class="toggle-row form-toggle">
+          <span><span class="field-label">Make a final backup first</span><span class="field-hint">Kept on the primary after the database is gone</span></span>
+          <span class="toggle"><input type="checkbox" id="del-backup" checked /><span class="toggle-slider"></span></span>
+        </label>` : ''}
         ${d.node_online ? `
         <label class="toggle-row form-toggle">
           <span><span class="field-label">Keep the data volume</span><span class="field-hint">Leaves <code>cloudbase-db-${d.id}-data</code> on the node</span></span>
@@ -474,10 +692,11 @@ async function deleteDatabase() {
   backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
   ok.onclick = async () => {
     ok.disabled = true;
-    ok.textContent = 'Deleting…';
     const keep = !!backdrop.querySelector('#del-keep')?.checked;
+    const finalBackup = !!backdrop.querySelector('#del-backup')?.checked;
+    ok.textContent = finalBackup ? 'Backing up…' : 'Deleting…';
     try {
-      await api.deleteDatabase(DB_ID, keep, !d.node_online);
+      await api.deleteDatabase(DB_ID, keep, !d.node_online, finalBackup);
       location.href = '/#databases-section';
     } catch (e) {
       close();

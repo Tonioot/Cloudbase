@@ -10,7 +10,13 @@ calls work locally and through the node agent:
     {database_id, name, engine, version, credentials, cpu_limit, memory_limit_mb, initialized}
 """
 
+import gzip
+import hashlib
 import logging
+import os
+import shutil
+import tarfile
+import time
 from typing import Optional
 
 import db_engines
@@ -23,6 +29,10 @@ STOP_TIMEOUT_SECONDS = 60  # databases need time for a clean shutdown
 
 
 class VolumeMissingError(RuntimeError):
+    pass
+
+
+class VolumeConflictError(RuntimeError):
     pass
 
 
@@ -136,6 +146,7 @@ def ensure_running(spec: dict) -> dict:
             container.start()
         return {"container_id": container.id, "state": _container_state(container)}
 
+    token = spec.get("volume_token") or ""
     if not _volume_exists(client, db_id):
         if spec.get("initialized"):
             raise VolumeMissingError(
@@ -144,9 +155,19 @@ def ensure_running(spec: dict) -> dict:
             )
         client.volumes.create(
             volume_name(db_id),
-            labels={"cloudbase.database_id": str(db_id), "cloudbase.engine": spec["engine"]},
+            labels={"cloudbase.database_id": str(db_id), "cloudbase.engine": spec["engine"],
+                    "cloudbase.volume_token": token},
         )
         log.info("[db] Created volume %s", volume_name(db_id))
+    elif not spec.get("initialized"):
+        # A new database must start empty. A volume left by another (deleted) database
+        # would bring its data and its old credentials along.
+        labels = client.volumes.get(volume_name(db_id)).attrs.get("Labels") or {}
+        if labels.get("cloudbase.volume_token") != token:
+            raise VolumeConflictError(
+                f"Data volume {volume_name(db_id)} already exists on this node and belongs to an earlier "
+                f"database. Remove it (docker volume rm {volume_name(db_id)}) or keep it and delete this database."
+            )
 
     container = _run_container(client, spec)
     log.info("[db] Started %s (%s %s)", container_name(db_id), spec["engine"], spec["version"])
@@ -245,3 +266,121 @@ def stats(database_id: int, data_dir: Optional[str] = None) -> dict:
 
 def logs(database_id: int, lines: int = 300) -> list[str]:
     return dm.get_recent_container_logs_by_name(container_name(database_id), lines)
+
+
+# ── Backups ───────────────────────────────────────────────────────────────────
+# Dumps and restores run inside the database container (its own client tools,
+# its own credentials from the environment). Files are streamed, never held in
+# memory, so large databases work.
+
+RESTORE_PATH = "/tmp/cb-restore"
+
+
+def _running_container(database_id: int):
+    container = _get_container(dm._get_client(), database_id)
+    if container is None or _container_state(container) == "stopped":
+        raise RuntimeError("The database must be running to back it up or restore it")
+    return container
+
+
+def _sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _tail(data: bytes, limit: int = 1500) -> str:
+    text = data.decode("utf-8", errors="replace").strip()
+    return text[-limit:] if len(text) > limit else text
+
+
+def backup_to_file(spec: dict, out_path: str) -> dict:
+    """Dump the database to `out_path`. Returns {size_bytes, sha256}."""
+    engine = db_engines.get_engine(spec["engine"])
+    if not engine.backup:
+        raise RuntimeError(f"{engine.label} backups are not supported")
+    container = _running_container(int(spec["database_id"]))
+    api = container.client.api
+
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    part = out_path + ".part"
+    exec_id = api.exec_create(container.id, ["sh", "-c", engine.backup["dump"]], stdout=True, stderr=True)["Id"]
+    stderr = bytearray()
+    try:
+        with open(part, "wb") as raw:
+            out = gzip.GzipFile(fileobj=raw, mode="wb", compresslevel=6, mtime=0) if engine.backup["gzip"] else raw
+            for chunk_out, chunk_err in api.exec_start(exec_id, stream=True, demux=True):
+                if chunk_out:
+                    out.write(chunk_out)
+                if chunk_err:
+                    stderr += chunk_err
+                    del stderr[:-8192]
+            if out is not raw:
+                out.close()
+        code = api.exec_inspect(exec_id).get("ExitCode")
+        if code != 0:
+            raise RuntimeError(f"Dump failed (exit {code}): {_tail(bytes(stderr)) or 'no output'}")
+        os.replace(part, out_path)
+    finally:
+        if os.path.exists(part):
+            os.remove(part)
+    os.chmod(out_path, 0o600)  # a dump holds all data
+    return {"size_bytes": os.path.getsize(out_path), "sha256": _sha256(out_path)}
+
+
+def _tar_stream(path: str, name: str):
+    """A one-file tar archive, generated on the fly for put_archive."""
+    size = os.path.getsize(path)
+    info = tarfile.TarInfo(name=name)
+    info.size = size
+    info.mode = 0o644
+    info.mtime = int(time.time())
+    yield info.tobuf(format=tarfile.GNU_FORMAT)
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            yield chunk
+    yield b"\0" * ((512 - size % 512) % 512) + b"\0" * 1024
+
+
+def restore_from_file(spec: dict, in_path: str, source_db_name: Optional[str] = None) -> dict:
+    """Load a dump into the database, replacing what the dump contains."""
+    engine = db_engines.get_engine(spec["engine"])
+    if engine.restore is None:
+        raise RuntimeError(f"Restoring {engine.label} backups is not supported yet; download the backup instead")
+    container = _running_container(int(spec["database_id"]))
+    api = container.client.api
+
+    with open(in_path, "rb") as f:
+        head = f.read(8)
+    is_gzip = head[:2] == b"\x1f\x8b"
+    prepared = in_path
+    unpacked = None
+    try:
+        if is_gzip and engine.key != "mongodb":  # mongorestore reads gzip itself
+            unpacked = in_path + ".unpacked"
+            with gzip.open(in_path, "rb") as src, open(unpacked, "wb") as dst:
+                shutil.copyfileobj(src, dst, 1024 * 1024)
+            prepared, is_gzip = unpacked, False
+            with open(prepared, "rb") as f:
+                head = f.read(8)
+
+        container.put_archive(os.path.dirname(RESTORE_PATH), _tar_stream(prepared, os.path.basename(RESTORE_PATH)))
+        ctx = {
+            "path": RESTORE_PATH,
+            "gzip": is_gzip,
+            "pg_custom": head.startswith(b"PGDMP"),
+            "ns_from": source_db_name,
+            "ns_to": spec["credentials"].get("db_name"),
+        }
+        cmd = f"{engine.restore(ctx)}; rc=$?; rm -f {RESTORE_PATH}; exit $rc"
+        exec_id = api.exec_create(container.id, ["sh", "-c", cmd], stdout=True, stderr=True)["Id"]
+        out, err = api.exec_start(exec_id, demux=True)
+        code = api.exec_inspect(exec_id).get("ExitCode")
+    finally:
+        if unpacked and os.path.exists(unpacked):
+            os.remove(unpacked)
+    if code != 0:
+        raise RuntimeError(f"Restore failed (exit {code}): {_tail((err or b'') + (out or b'')) or 'no output'}")
+    return {"ok": True}

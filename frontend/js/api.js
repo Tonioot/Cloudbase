@@ -61,12 +61,39 @@ export const api = {
   getDatabase:         (id)        => request('GET',    `/databases/${id}`),
   createDatabase:      (data)      => request('POST',   '/databases', data),
   updateDatabase:      (id, data)  => request('PATCH',  `/databases/${id}`, data),
-  deleteDatabase:      (id, keepData, force = false) => request('DELETE', `/databases/${id}?keep_data=${keepData ? 'true' : 'false'}&force=${force ? 'true' : 'false'}`),
+  deleteDatabase:      (id, keepData, force = false, finalBackup = false) => request('DELETE', `/databases/${id}?keep_data=${keepData}&force=${force}&final_backup=${finalBackup}`),
   startDatabase:       (id)        => request('POST',   `/databases/${id}/start`),
   stopDatabase:        (id)        => request('POST',   `/databases/${id}/stop`),
   restartDatabase:     (id)        => request('POST',   `/databases/${id}/restart`),
   getDatabaseCredentials: (id)     => request('GET',    `/databases/${id}/credentials`),
   setDatabasePublic:   (id, data)  => request('PUT',    `/databases/${id}/public`, data),
+  listBackups:         (id)        => request('GET',    `/databases/${id}/backups`),
+  createBackup:        (id)        => request('POST',   `/databases/${id}/backups`),
+  deleteBackup:        (id, bid)   => request('DELETE', `/databases/${id}/backups/${bid}`),
+  restoreBackup:       (id, backupId, safetyBackup = true) => request('POST', `/databases/${id}/restore`, { backup_id: backupId, safety_backup: safetyBackup }),
+  updateBackupSettings:(id, data)  => request('PUT',    `/databases/${id}/backup-settings`, data),
+  backupDownloadUrl:   (id, bid)   => `${BASE}/databases/${id}/backups/${bid}/download`,
+  /** Upload a dump file with progress (0–1) reported to onProgress. */
+  uploadBackup(id, file, onProgress) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${BASE}/databases/${id}/backups/upload`);
+      xhr.withCredentials = true;
+      xhr.upload.onprogress = e => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+      xhr.onload = () => {
+        let data = {};
+        try { data = JSON.parse(xhr.responseText); } catch {}
+        if (xhr.status === 401) { redirectToLogin(); return; }
+        if (xhr.status === 403) { reject(new PermissionError(data.detail)); return; }
+        if (xhr.status >= 400) { reject(new Error(data.detail || `HTTP ${xhr.status}`)); return; }
+        resolve(data);
+      };
+      xhr.onerror = () => reject(new Error('Upload failed'));
+      const form = new FormData();
+      form.append('file', file);
+      xhr.send(form);
+    });
+  },
   getMyIp:             ()          => request('GET',    '/databases/my-ip'),
   getDatabaseLogs:     (id, lines = 300) => request('GET', `/databases/${id}/logs?lines=${lines}`),
   getDatabaseStats:    (id)        => request('GET',    `/databases/${id}/stats`),

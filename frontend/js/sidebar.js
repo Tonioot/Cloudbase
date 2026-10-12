@@ -248,7 +248,7 @@ async function initRoleBasedUI() {
       const ALL_KNOWN_PERMS = [
         'apps.view','apps.deploy','apps.start','apps.stop','apps.restart','apps.pull','apps.scale','apps.configure','apps.delete',
         'nodes.view','nodes.add','nodes.configure','nodes.delete',
-        'databases.view','databases.create','databases.manage','databases.credentials','databases.delete',
+        'databases.view','databases.create','databases.manage','databases.credentials','databases.backup','databases.delete',
         'system.manage',
         'users.manage','roles.manage',
         'audit.view','tokens.manage',

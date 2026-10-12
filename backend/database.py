@@ -130,6 +130,9 @@ async def init_db():
         for col, definition in [
             ("public_enabled",   "BOOLEAN NOT NULL DEFAULT 0"),
             ("public_allowlist", "TEXT"),
+            ("backup_schedule",  "VARCHAR(10) NOT NULL DEFAULT 'daily'"),
+            ("backup_hour",      "INTEGER NOT NULL DEFAULT 3"),
+            ("backup_retention", "INTEGER NOT NULL DEFAULT 7"),
         ]:
             if col in existing_db_cols:
                 continue
@@ -230,6 +233,7 @@ async def init_db():
         ("databases.create",      "Create new databases"),
         ("databases.manage",      "Start, stop and restart databases, change limits and link them to apps"),
         ("databases.credentials", "View database passwords and connection strings"),
+        ("databases.backup",      "Create, download, upload and restore database backups"),
         ("databases.delete",      "Delete databases"),
         # Observability
         ("audit.view",        "View audit logs"),

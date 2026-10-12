@@ -25,6 +25,7 @@ from models import Application, User, Role, Permission, role_permissions
 from routers import applications, files, logs, stats, nodes, audit as audit_router
 from routers import roles as roles_router
 from routers import databases as databases_router
+from routers import database_backups as database_backups_router
 from routers import domains as domains_router
 from env_crypto import decrypt_env
 from audit import log_audit
@@ -1023,6 +1024,7 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(_overview_sampler()),
             asyncio.create_task(_deploys.auto_deploy_loop()),
             asyncio.create_task(databases_router.database_monitor()),
+            asyncio.create_task(database_backups_router.backup_scheduler()),
         ]
 
     yield
@@ -1870,6 +1872,8 @@ app.include_router(roles_router.router)
 app.include_router(domains_router.router)
 app.include_router(databases_router.router)
 app.include_router(databases_router.relay_router)
+app.include_router(database_backups_router.router)
+app.include_router(database_backups_router.agent_router)
 
 
 # ── App preview reverse proxy ────────────────────────────────────────────────────────────────

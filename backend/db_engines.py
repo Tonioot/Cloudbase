@@ -25,6 +25,12 @@ class Engine:
     healthcheck: str           # CMD-SHELL test; secrets come from the container env
     data_dir: Callable[[str], str]
     url: Callable[[dict, str, int], str]  # (credentials, host, port)
+    # Backups run inside the container with `sh -c`; secrets come from its env.
+    # backup: {"ext", "dump" (writes the dump to stdout), "gzip" (compress it here)}
+    backup: Optional[dict] = None
+    # restore(ctx) -> shell command restoring ctx["path"]; None = not supported yet.
+    # ctx: path, gzip (file is gzipped), pg_custom (pg_dump -Fc), ns_from / ns_to (database names)
+    restore: Optional[Callable[[dict], str]] = None
 
     def image_ref(self, version: str) -> str:
         return f"{self.image}:{version}"
@@ -76,6 +82,36 @@ def _postgres_data_dir(version: str) -> str:
     return "/var/lib/postgresql" if major >= 18 else "/var/lib/postgresql/data"
 
 
+# ── Backup commands ───────────────────────────────────────────────────────────
+
+def _pg_restore(ctx: dict) -> str:
+    if ctx["pg_custom"]:
+        return (f'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists '
+                f'--no-owner --no-privileges {ctx["path"]}')
+    return f'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f {ctx["path"]}'
+
+
+_MONGO_AUTH = '--username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin'
+# Never dump or restore users and internals: restoring admin.* with --drop would
+# replace this database's own login.
+_MONGO_SYSTEM = '--nsExclude "admin.*" --nsExclude "config.*" --nsExclude "local.*"'
+
+
+def _mongo_restore(ctx: dict) -> str:
+    cmd = f'mongorestore --quiet --drop --archive={ctx["path"]} {_MONGO_AUTH} {_MONGO_SYSTEM}'
+    if ctx["gzip"]:
+        cmd += " --gzip"
+    if ctx.get("ns_from") and ctx.get("ns_to") and ctx["ns_from"] != ctx["ns_to"]:
+        # A backup of another database: move its data into this one's database name.
+        cmd += f' --nsFrom "{ctx["ns_from"]}.*" --nsTo "{ctx["ns_to"]}.*"'
+    return cmd
+
+
+def _redis_dump(cli: str) -> str:
+    return (f"{cli} --rdb /tmp/cb-backup.rdb >&2 && cat /tmp/cb-backup.rdb; "
+            "rc=$?; rm -f /tmp/cb-backup.rdb; exit $rc")
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 
 ENGINES: dict[str, Engine] = {
@@ -95,6 +131,9 @@ ENGINES: dict[str, Engine] = {
         healthcheck='pg_isready -q -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
         data_dir=_postgres_data_dir,
         url=lambda c, host, port: f"postgresql://{c['user']}:{c['password']}@{host}:{port}/{c['db_name']}",
+        backup={"ext": "dump", "gzip": False,
+                "dump": 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc --no-owner'},
+        restore=_pg_restore,
     ),
     "mysql": Engine(
         key="mysql",
@@ -114,6 +153,10 @@ ENGINES: dict[str, Engine] = {
         healthcheck='mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent',
         data_dir=lambda _v: "/var/lib/mysql",
         url=lambda c, host, port: f"mysql://{c['user']}:{c['password']}@{host}:{port}/{c['db_name']}",
+        backup={"ext": "sql.gz", "gzip": True,
+                "dump": 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -uroot --single-transaction --routines '
+                        '--triggers --events --set-gtid-purged=OFF "$MYSQL_DATABASE"'},
+        restore=lambda ctx: f'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot "$MYSQL_DATABASE" < {ctx["path"]}',
     ),
     "mariadb": Engine(
         key="mariadb",
@@ -132,6 +175,10 @@ ENGINES: dict[str, Engine] = {
         healthcheck="healthcheck.sh --connect --innodb_initialized",
         data_dir=lambda _v: "/var/lib/mysql",
         url=lambda c, host, port: f"mysql://{c['user']}:{c['password']}@{host}:{port}/{c['db_name']}",
+        backup={"ext": "sql.gz", "gzip": True,
+                "dump": 'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb-dump -uroot --single-transaction --routines '
+                        '--triggers --events "$MARIADB_DATABASE"'},
+        restore=lambda ctx: f'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb -uroot "$MARIADB_DATABASE" < {ctx["path"]}',
     ),
     "redis": Engine(
         key="redis",
@@ -145,6 +192,7 @@ ENGINES: dict[str, Engine] = {
         healthcheck="redis-cli ping | grep -q PONG",
         data_dir=lambda _v: "/data",
         url=lambda c, host, port: f"redis://default:{c['password']}@{host}:{port}/0",
+        backup={"ext": "rdb.gz", "gzip": True, "dump": _redis_dump("redis-cli")},
     ),
     "valkey": Engine(
         key="valkey",
@@ -158,6 +206,7 @@ ENGINES: dict[str, Engine] = {
         healthcheck="valkey-cli ping | grep -q PONG",
         data_dir=lambda _v: "/data",
         url=lambda c, host, port: f"redis://default:{c['password']}@{host}:{port}/0",
+        backup={"ext": "rdb.gz", "gzip": True, "dump": _redis_dump("valkey-cli")},
     ),
     "mongodb": Engine(
         key="mongodb",
@@ -175,6 +224,9 @@ ENGINES: dict[str, Engine] = {
         healthcheck="mongosh --quiet --eval \"db.adminCommand('ping').ok\" | grep -q 1",
         data_dir=lambda _v: "/data/db",
         url=lambda c, host, port: f"mongodb://{c['user']}:{c['password']}@{host}:{port}/{c['db_name']}?authSource=admin",
+        backup={"ext": "archive.gz", "gzip": False,
+                "dump": f"mongodump --quiet --archive --gzip {_MONGO_AUTH} {_MONGO_SYSTEM}"},
+        restore=_mongo_restore,
     ),
 }
 
@@ -202,6 +254,7 @@ def catalog() -> list[dict]:
             "default_version": e.versions[0],
             "port": e.port,
             "env_var": e.env_var,
+            "can_restore": e.restore is not None,
         }
         for e in ENGINES.values()
     ]

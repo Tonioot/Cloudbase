@@ -876,6 +876,56 @@ async def cmd_db_stats(_client, _state, _main_id, payload, _headers):
     return await asyncio.to_thread(db_manager.stats, int(payload["database_id"]), payload.get("data_dir"))
 
 
+_BACKUP_TMP = os.path.expanduser("~/.cloudbase/backup-tmp")
+
+
+async def cmd_db_backup(client, state, _main_id, payload, _headers):
+    """Dump a database on this node and stream the file to the primary."""
+    import db_manager
+    spec, backup_id = payload["spec"], int(payload["backup_id"])
+    os.makedirs(_BACKUP_TMP, exist_ok=True)
+    path = os.path.join(_BACKUP_TMP, f"backup-{backup_id}")
+    try:
+        info = await asyncio.to_thread(db_manager.backup_to_file, spec, path)
+
+        async def body():
+            with open(path, "rb") as f:
+                while chunk := f.read(1024 * 1024):
+                    yield chunk
+
+        resp = await client.post(
+            f"{_normalize_url(state.main_url)}/api/nodes/agent/databases/{spec['database_id']}/backups/{backup_id}/upload",
+            content=body(), headers={"X-Node-Token": state.auth_token}, timeout=None,
+        )
+        resp.raise_for_status()
+        return info
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
+async def cmd_db_restore(client, state, _main_id, payload, _headers):
+    """Fetch a backup from the primary and load it into a database on this node."""
+    import db_manager
+    spec, backup_id = payload["spec"], int(payload["backup_id"])
+    os.makedirs(_BACKUP_TMP, exist_ok=True)
+    path = os.path.join(_BACKUP_TMP, f"restore-{backup_id}")
+    try:
+        async with client.stream(
+            "GET",
+            f"{_normalize_url(state.main_url)}/api/nodes/agent/databases/{spec['database_id']}/backups/{backup_id}/download",
+            headers={"X-Node-Token": state.auth_token}, timeout=None,
+        ) as resp:
+            resp.raise_for_status()
+            with open(path, "wb") as f:
+                async for chunk in resp.aiter_bytes(1024 * 1024):
+                    f.write(chunk)
+        return await asyncio.to_thread(db_manager.restore_from_file, spec, path, payload.get("source_db_name"))
+    finally:
+        if os.path.exists(path):
+            os.remove(path)
+
+
 async def cmd_db_logs(_client, _state, _main_id, payload, _headers):
     import db_manager
     lines = await asyncio.to_thread(db_manager.logs, int(payload["database_id"]), int(payload.get("lines", 300)))
@@ -956,6 +1006,8 @@ COMMAND_HANDLERS: Dict[str, Callable] = {
     "db_states": cmd_db_states,
     "db_stats": cmd_db_stats,
     "db_logs": cmd_db_logs,
+    "db_backup": cmd_db_backup,
+    "db_restore": cmd_db_restore,
     "get_logs_tail": cmd_get_logs_tail,
     "get_replica_logs": cmd_get_replica_logs,
     "get_stats": cmd_get_stats,

@@ -278,8 +278,33 @@ class Database(Base):
     # Public access through the primary (port = db_public_min + id).
     public_enabled   = Column(Boolean, default=False, nullable=False)
     public_allowlist = Column(Text, nullable=True)  # JSON list of IPs / CIDRs; empty = everyone
+    # Automatic backups: "off" | "hourly" | "daily" (at backup_hour, server time).
+    backup_schedule  = Column(String(10), default="daily", nullable=False)
+    backup_hour      = Column(Integer, default=3, nullable=False)
+    backup_retention = Column(Integer, default=7, nullable=False)  # scheduled backups to keep
     created_at      = Column(DateTime, default=datetime.utcnow)
     updated_at      = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DatabaseBackup(Base):
+    """A dump of a database, stored on the primary. Outlives its database."""
+    __tablename__ = "database_backups"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    database_id    = Column(Integer, ForeignKey("databases.id", ondelete="SET NULL"), nullable=True, index=True)
+    database_name  = Column(String(40), nullable=False)
+    engine         = Column(String(20), nullable=False)
+    version        = Column(String(20), nullable=True)
+    source_db_name = Column(String(100), nullable=True)  # logical database inside the dump
+    file_name      = Column(String(300), nullable=True)  # relative to the backups directory
+    size_bytes     = Column(Integer, nullable=True)
+    sha256         = Column(String(64), nullable=True)
+    status         = Column(String(10), default="running", nullable=False)  # running | success | failed
+    trigger        = Column(String(20), nullable=False)  # manual | scheduled | pre_delete | pre_restore | upload
+    error          = Column(Text, nullable=True)
+    actor          = Column(String(100), nullable=True)
+    created_at     = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    finished_at    = Column(DateTime, nullable=True)
 
 
 class DatabaseLink(Base):

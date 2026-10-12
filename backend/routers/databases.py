@@ -28,7 +28,7 @@ import db_proxy
 from audit import log_audit
 from database import get_db, AsyncSessionLocal
 from env_crypto import encrypt_text, decrypt_env
-from models import Application, ApplicationReplica, Database, DatabaseLink, Node
+from models import Application, ApplicationReplica, Database, DatabaseLink, Node, SystemConfig
 from routers.nodes import queue_node_command, wait_for_node_command, get_node_by_token_or_401
 
 router = APIRouter(prefix="/api/databases", tags=["databases"])
@@ -51,6 +51,7 @@ DIAL_TIMEOUT_SECONDS = 10
 
 # Databases with an operation in flight; the monitor leaves them alone.
 _busy: set[int] = set()
+_operation: dict[int, str] = {}  # what a busy database is doing, e.g. "Backing up…"
 _last_heal: dict[int, float] = {}
 
 # Cross-node connections: control channel per node, dials waiting for their node.
@@ -71,7 +72,28 @@ def _spec(database: Database) -> dict:
         "cpu_limit": database.cpu_limit,
         "memory_limit_mb": database.memory_limit_mb,
         "initialized": database.initialized_at is not None,
+        "volume_token": _volume_token(database),
     }
+
+
+def _volume_token(database: Database) -> str:
+    """Identifies the data volume of exactly this database (see db_manager.ensure_running)."""
+    created = database.created_at.isoformat() if database.created_at else ""
+    return f"{database.id}:{created}"
+
+
+async def _next_database_id(db: AsyncSession) -> int:
+    """Database ids are never reused: they name the data volume and the ports, and a
+    new database must not pick up the volume of a deleted one. SQLite reuses the
+    highest id after a delete, so keep our own high-water mark."""
+    row = (await db.execute(select(SystemConfig).where(SystemConfig.key == "databases.last_id"))).scalar_one_or_none()
+    highest = (await db.execute(select(func.max(Database.id)))).scalar() or 0
+    next_id = max(int(row.value or 0) if row else 0, highest) + 1
+    if row is None:
+        db.add(SystemConfig(key="databases.last_id", value=str(next_id)))
+    else:
+        row.value = str(next_id)
+    return next_id
 
 
 def _data_dir(database: Database) -> str:
@@ -269,6 +291,9 @@ def _as_dict(database: Database, node: Optional[Node], link_count: int = 0) -> d
         "default_env_var": engine.env_var if engine else "DATABASE_URL",
         "initialized": database.initialized_at is not None,
         "busy": database.id in _busy,
+        "operation": _operation.get(database.id),
+        "backup_schedule": database.backup_schedule,
+        "can_restore": bool(engine and engine.restore),
         "public_enabled": bool(database.public_enabled),
         "public_allowlist": _allowlist(database),
         "public_port": _safe_public_port(database.id),
@@ -378,6 +403,7 @@ async def create_database(
         raise HTTPException(409, f"Node '{node.name}' is offline or disabled")
 
     database = Database(
+        id=await _next_database_id(db),
         name=name,
         engine=engine.key,
         version=version,
@@ -525,6 +551,7 @@ async def delete_database(
     database_id: int,
     keep_data: bool = Query(default=False),
     force: bool = Query(default=False),
+    final_backup: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
     _user: dict = Depends(_auth.require_permission("databases.delete")),
     actor: str = Depends(_auth.get_current_actor),
@@ -532,6 +559,17 @@ async def delete_database(
     database = await _get_or_404(database_id, db)
     _require_idle(database)
     node = await db.get(Node, database.node_id)
+    if final_backup and node is not None and _node_reachable(node) and database.status in ("running", "unhealthy"):
+        from routers.database_backups import run_backup
+        _busy.add(database_id)
+        _operation[database_id] = "Making a final backup…"
+        try:
+            await run_backup(database_id, "pre_delete", actor)
+        except Exception as e:
+            raise HTTPException(502, f"The final backup failed, so the database was not deleted: {e}")
+        finally:
+            _busy.discard(database_id)
+            _operation.pop(database_id, None)
     removed_on_node = False
     if node is not None and _node_reachable(node):
         _busy.add(database_id)

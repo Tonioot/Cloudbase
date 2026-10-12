@@ -434,6 +434,16 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
   <tr><td>Redis, Valkey, MariaDB 10.11</td><td>Not encrypted, including the password. Use a tight allowlist or an SSH tunnel.</td></tr>
 </table>
 
+<h2>Backups</h2>
+<p>Every database is backed up every day at 03:00 (server time) by default, keeping the last 7. Change this on the <strong>Backups</strong> tab, or click <strong>Back up now</strong>. Backups are stored on the primary in <code>~/.cloudbase/backups</code>, also for databases on other nodes, and stay there when the database is deleted.</p>
+<ul>
+  <li><strong>Restore</strong> loads a backup into the database. A safety backup of the current data is made first, unless you turn that off.</li>
+  <li>Backups of other or deleted databases with the same engine can be restored too, which is also how you move a database to another node.</li>
+  <li><strong>Upload dump</strong> imports a dump made elsewhere: <code>pg_dump -Fc</code> or plain SQL for PostgreSQL, <code>mysqldump</code> SQL (optionally gzipped) for MySQL and MariaDB, and <code>mongodump --archive</code> (optionally <code>--gzip</code>) for MongoDB.</li>
+  <li>Redis and Valkey backups can be made and downloaded; restoring them from the panel comes later.</li>
+</ul>
+<div class="callout callout--warn"><p>Backups on the primary are lost with the primary's disk. Download important backups, or copy <code>~/.cloudbase/backups</code> elsewhere.</p></div>
+
 <h2>Credentials</h2>
 <p>Passwords are generated when the database is created and stored encrypted. Users with the <code>databases.credentials</code> permission can show them and copy the connection URL; every view is written to the audit log.</p>
 
