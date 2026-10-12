@@ -11,7 +11,9 @@ RESET='\033[0m'
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$INSTALL_DIR/backend"
 VENV_PATH="$BACKEND_DIR/venv"
-PORT=7823
+# server.port from the user config (falls back to the repo default)
+PORT="$(awk '/^server:/{s=1;next} /^[^[:space:]#]/{s=0} s && $1=="port:"{print $2; exit}' "$HOME/.cloudbase/config.yaml" 2>/dev/null || true)"
+[[ "$PORT" =~ ^[0-9]+$ ]] || PORT=7823
 CREDS="$HOME/.cloudbase/credentials"
 APP_NAME="Cloudbase"
 CLI_NAME="cloudbase"
@@ -90,7 +92,7 @@ Account:
 Node:
   connect            Connect as a node to a main Cloudbase instance
                        --main-url <url>  --invite-code <code>
-                       [--node-name <name>]  [--mode panel+node|node-only]
+                       [--node-name <name>]  [--mode node-only|panel+node]
   disconnect         Remove node connection state (return to local-only)
   node-status        Show current node agent connection state
 
@@ -957,7 +959,7 @@ case "$COMMAND" in
         _MAIN_URL=""
         _INVITE_CODE=""
         _NODE_NAME="$(hostname)"
-        _MODE="panel+node"
+        _MODE="node-only"
         while [[ $# -gt 0 ]]; do
             case "$1" in
                 --main-url)    _MAIN_URL="$2";    shift 2 ;;
@@ -967,10 +969,14 @@ case "$COMMAND" in
                 *) shift ;;
             esac
         done
+        if [[ "$_MODE" != "node-only" && "$_MODE" != "panel+node" ]]; then
+            err "Unknown mode '$_MODE' — use node-only or panel+node"
+            exit 1
+        fi
         if [[ -z "$_MAIN_URL" || -z "$_INVITE_CODE" ]]; then
             # Check if already registered (saved state exists)
-            if [[ ! -f "$HOME/.cloudbase-node/agent_state.json" ]]; then
-                err "Usage: cloudbase connect --main-url <url> --invite-code <code> [--node-name <name>] [--mode <panel+node|node-only>]"
+            if [[ ! -f "$BACKEND_DIR/agent_state.json" ]]; then
+                err "Usage: cloudbase connect --main-url <url> --invite-code <code> [--node-name <name>] [--mode <node-only|panel+node>]"
                 exit 1
             fi
             # Load previous mode if available
@@ -1043,13 +1049,19 @@ case "$COMMAND" in
             node_id=$(python3 -c "import json; d=json.load(open('$state_file')); print(d.get('node_id','?'))" 2>/dev/null)
             node_name=$(python3 -c "import json; d=json.load(open('$state_file')); print(d.get('node_name','?'))" 2>/dev/null)
             main_url=$(python3 -c "import json; d=json.load(open('$state_file')); print(d.get('main_url','?'))" 2>/dev/null)
+            node_mode=$(cat "$HOME/.cloudbase/mode" 2>/dev/null || echo "panel+node")
             info "Registered as: $node_name (id=$node_id)"
             info "Main node:     $main_url"
-            # Check if agent process is running
-            if pgrep -f "node_agent.py" >/dev/null 2>&1; then
-                success "Agent process: running"
+            info "Mode:          $node_mode"
+            # The agent runs inside the Cloudbase service, not as its own process
+            if [[ -n "$(port_owner_pid)" ]]; then
+                success "Cloudbase (with agent): running on port $PORT"
             else
-                warn "Agent process: not running"
+                warn "Cloudbase (with agent): not running — start it with 'cloudbase start'"
+            fi
+            if [[ -f "$AGENT_LOG_FILE" ]]; then
+                last_conn=$(grep -E "WebSocket connected|websocket loop error" "$AGENT_LOG_FILE" | tail -n 1 || true)
+                [[ -n "$last_conn" ]] && info "Last connection event: $last_conn"
             fi
         fi
         ;;

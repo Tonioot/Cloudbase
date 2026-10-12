@@ -622,7 +622,7 @@ async def _autoscaler():
                         # an orphaned container that keeps running forever.
                         victim = replicas[-1]
                         try:
-                            stopped = await asyncio.to_thread(process_manager.stop_docker_replica, app.id, victim.id)
+                            stopped = await asyncio.to_thread(pm.stop_docker_replica, app.id, victim.id)
                         except Exception as e:
                             stopped = False
                             log.warning("[autoscaler] app_id=%d scale down: stop replica %d raised: %s", app.id, victim.id, e)
@@ -682,7 +682,18 @@ async def _orphan_replica_cleanup():
     await asyncio.sleep(120)
     while True:
         try:
+            # In panel+node mode the primary also runs instances here through the
+            # agent. Those have no row in this DB; the agent cleans them up itself.
+            primary_ids: set[int] = set()
+            if node_agent._load_state() is not None:
+                managed = node_agent.managed_replica_ids()
+                if managed is None:
+                    log.info("[orphan-cleanup] skipped: agent hasn't heard from the primary yet")
+                    await asyncio.sleep(120)
+                    continue
+                primary_ids = managed
             containers = await asyncio.to_thread(_dm.list_replica_containers)
+            containers = [c for c in containers if c["replica_id"] not in primary_ids]
             if containers:
                 async with AsyncSessionLocal() as db:
                     # Local node id — we only manage local containers here.
@@ -861,34 +872,8 @@ def _refresh_panel_nginx() -> None:
     nm.write_default_catch_all(cert, key)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # First-run: generate a password if none exists. This must happen before
-    # init_db(), which seeds the admin user from the credentials file —
-    # otherwise the printed password only works after a second start.
-    if not auth.load_hashed_password():
-        import secrets
-        import string
-        alphabet = string.ascii_letters + string.digits
-        password = ''.join(secrets.choice(alphabet) for _ in range(16))
-        auth.save_hashed_password(auth.hash_password(password))
-        print("\n" + "=" * 60)
-        print("  Cloudbase — FIRST RUN")
-        print(f"  Admin password: {password}")
-        print("  Save this — it will not be shown again.")
-        print("=" * 60 + "\n")
-
-    await init_db()
-    pm.set_main_loop(asyncio.get_event_loop())
-
-    # Keep DB-backed global system settings in memory (with one-time config.yaml bootstrap).
-    async with AsyncSessionLocal() as _db:
-        await _syscfg.bootstrap_from_config_if_needed(_db)
-        await _syscfg.load_cache(_db)
-
-    # Ensure internal agent token exists (used by node_agent.py)
-    auth.get_or_create_agent_token()
-
+async def _startup_recovery() -> None:
+    """Bring local instances, nginx configs and the panel config in line with the DB."""
     # Recover running instances and auto-start
     async with AsyncSessionLocal() as db:
         from models import ApplicationReplica, Node as _Node
@@ -991,27 +976,65 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         log.warning("STARTUP panel nginx refresh failed: %s", exc)
 
-    monitor_task       = asyncio.create_task(_crash_monitor())
-    stats_task         = asyncio.create_task(_stats_collector())
-    node_task          = asyncio.create_task(_node_health_monitor())
-    history_task       = asyncio.create_task(_stats_history_writer())
-    remote_stats_task  = asyncio.create_task(_remote_replica_stats_poller())
-    cleanup_task       = asyncio.create_task(_node_command_cleanup())
-    autoscaler_task    = asyncio.create_task(_autoscaler())
-    orphan_task        = asyncio.create_task(_orphan_replica_cleanup())
-    overview_task      = asyncio.create_task(_overview_sampler())
-    import deploys as _deploys
-    auto_deploy_task   = asyncio.create_task(_deploys.auto_deploy_loop())
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # First-run: generate a password if none exists. This must happen before
+    # init_db(), which seeds the admin user from the credentials file —
+    # otherwise the printed password only works after a second start.
+    if not auth.load_hashed_password():
+        import secrets
+        import string
+        alphabet = string.ascii_letters + string.digits
+        password = ''.join(secrets.choice(alphabet) for _ in range(16))
+        auth.save_hashed_password(auth.hash_password(password))
+        print("\n" + "=" * 60)
+        print("  Cloudbase — FIRST RUN")
+        print(f"  Admin password: {password}")
+        print("  Save this — it will not be shown again.")
+        print("=" * 60 + "\n")
+
+    await init_db()
+    pm.set_main_loop(asyncio.get_event_loop())
+
+    # Keep DB-backed global system settings in memory (with one-time config.yaml bootstrap).
+    async with AsyncSessionLocal() as _db:
+        await _syscfg.bootstrap_from_config_if_needed(_db)
+        await _syscfg.load_cache(_db)
+
+    # Ensure internal agent token exists (used by node_agent.py)
+    auth.get_or_create_agent_token()
+
+    # A node-only server is driven by the primary through the agent; the panel
+    # loops would only work on its empty local DB, and the orphan cleanup would
+    # remove the instances the primary started here.
+    node_only = node_agent.is_node_only()
+    tasks: list[asyncio.Task] = []
+    if node_only:
+        log.info("INIT: node-only mode, starting the node agent only")
+    else:
+        await _startup_recovery()
+        import deploys as _deploys
+        tasks += [
+            asyncio.create_task(_crash_monitor()),
+            asyncio.create_task(_stats_collector()),
+            asyncio.create_task(_node_health_monitor()),
+            asyncio.create_task(_stats_history_writer()),
+            asyncio.create_task(_remote_replica_stats_poller()),
+            asyncio.create_task(_node_command_cleanup()),
+            asyncio.create_task(_autoscaler()),
+            asyncio.create_task(_orphan_replica_cleanup()),
+            asyncio.create_task(_overview_sampler()),
+            asyncio.create_task(_deploys.auto_deploy_loop()),
+        ]
 
     # Start node agent if configured (as an integrated background task)
-    agent_task = None
     if node_agent._load_state() is not None:
         log.debug("INIT: Node state detected, starting integrated agent task")
-        agent_task = asyncio.create_task(node_agent.start_agent())
+        tasks.append(asyncio.create_task(node_agent.start_agent()))
 
     yield
-    for task in (monitor_task, stats_task, node_task, history_task, remote_stats_task, cleanup_task, autoscaler_task, orphan_task, overview_task, auto_deploy_task, agent_task):
-        if not task: continue
+    for task in tasks:
         task.cancel()
         try:
             await asyncio.wait_for(asyncio.shield(task), timeout=4.0)

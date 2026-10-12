@@ -16,11 +16,15 @@ import httpx
 import websockets
 import psutil
 
+import config as _cfg
+
 # Configuration
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATE_PATH = os.path.join(_BASE_DIR, "agent_state.json")
+MODE_PATH = os.path.expanduser("~/.cloudbase/mode")
 AGENT_LOG_FILE = os.path.expanduser("~/.cloudbase/logs/node-agent.log")
-_LOCAL_API_BASE = "http://127.0.0.1:7823"
+_LOCAL_PORT = _cfg.get_server_port()
+_LOCAL_API_BASE = f"http://127.0.0.1:{_LOCAL_PORT}"
 
 os.makedirs(os.path.dirname(AGENT_LOG_FILE), exist_ok=True)
 logging.basicConfig(
@@ -53,8 +57,7 @@ def _ws_url(main_url: str) -> str:
     return url.replace("http://", "ws://") + "/api/nodes/ws/agent"
 
 def _local_ws_url(path: str) -> str:
-    # Assuming local Cloudbase runs on 7823
-    return f"ws://127.0.0.1:7823{path}"
+    return f"ws://127.0.0.1:{_LOCAL_PORT}{path}"
 
 def _load_agent_token() -> Optional[str]:
     token = os.environ.get("AGENT_TOKEN")
@@ -81,6 +84,16 @@ def _load_state() -> Optional[AgentState]:
     except Exception as e:
         _agent_log(f"[agent] Error loading state: {e}")
         return None
+
+def is_node_only() -> bool:
+    """True when this server is registered as a node and runs no panel of its own."""
+    if not os.path.exists(STATE_PATH):
+        return False
+    try:
+        with open(MODE_PATH) as f:
+            return f.read().strip() == "node-only"
+    except OSError:
+        return False
 
 def _save_state(state: AgentState) -> None:
     try:
@@ -401,6 +414,17 @@ async def _stop_tunnel_task(replica_id: int) -> None:
 _ORPHAN_MIN_AGE_SECONDS = 120
 # Replica IDs found orphaned on the previous check; removed only if still orphaned now.
 _orphan_suspects: set[int] = set()
+# Replica IDs the primary expects on this node, from the last successful check.
+# None until the primary has answered once.
+_primary_replica_ids: Optional[set[int]] = None
+
+
+def managed_replica_ids() -> Optional[set[int]]:
+    """Replica IDs whose containers belong to the primary, so a local panel
+    (panel+node mode) must leave them alone. None while still unknown."""
+    if _primary_replica_ids is None:
+        return None
+    return _primary_replica_ids | set(_active_tunnels)
 
 
 def _parse_docker_created(value: str) -> Optional[float]:
@@ -445,6 +469,8 @@ async def _cleanup_orphaned_replica_containers(client: httpx.AsyncClient, state:
             _agent_log(f"[cleanup] my-replicas returned HTTP {resp.status_code}, skipping orphan check")
             return
         live_ids: set[int] = {r["id"] for r in resp.json().get("replicas", [])}
+        global _primary_replica_ids
+        _primary_replica_ids = live_ids
 
         # Enumerate local replica containers through the Docker API (same access
         # the node uses to start them — the docker CLI may not be on the PATH
@@ -615,7 +641,7 @@ async def _download_and_extract_source(client: httpx.AsyncClient, state, main_id
     main_base = state.main_url.rstrip("/")
     url = f"{main_base}/api/apps/{main_id}/source-archive"
     # Use X-Node-Token for requests to the external primary — X-Agent-Token only
-    # works on the local loopback API (127.0.0.1:7823).
+    # works on the local loopback API (127.0.0.1).
     external_headers = {"X-Node-Token": state.auth_token}
     _agent_log(f"[source] Downloading source for '{app_name}' from primary")
     resp = await client.get(url, headers=external_headers, timeout=300)

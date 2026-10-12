@@ -68,7 +68,7 @@ export const GUIDES = [
   <li><strong>Make ports 80 and 443 reachable.</strong> All web traffic and HTTPS certificates go through them. Open them in the server’s firewall and your hosting provider’s firewall. Server at home? Forward both ports on your router to the server’s local IP address — the domain wizard shows which one.</li>
   <li><strong>Start on boot.</strong> Run <code>cloudbase enable</code> on the server once, so Cloudbase and its apps come back after a reboot. <code>cloudbase status</code> shows whether the service is installed and running.</li>
   <li><strong>Serve the panel over HTTPS.</strong> Point a domain at the server, enter it under <a href="/settings?s=domain">Domain &amp; SSL</a> and click <strong>Set up HTTPS</strong> — the certificate is free and renews itself. Until then the panel is plain HTTP on port 7823.</li>
-  <li><strong>Close port 7823.</strong> Once the panel has a domain, only ports 80, 443 and 22 need to be open — see <a href="/guides?g=system-settings">System settings</a>.</li>
+  <li><strong>Close port 7823.</strong> Once the panel has a domain, only ports 80 and 443 need to be open — see <a href="/guides?g=system-settings">System settings</a>.</li>
   <li><strong>Store the admin password</strong> in a password manager, and give teammates their own login instead of sharing it (<a href="/guides?g=users-roles">Users &amp; roles</a>).</li>
   <li><strong>Set a base domain</strong> if you want every app to get an address — with HTTPS — automatically.</li>
 </ol>
@@ -524,8 +524,8 @@ sudo bash install.sh</pre></li>
 
 <h2>Modes</h2>
 <ul>
-  <li><strong>node-only</strong> — just the agent and the local runtime. The usual choice for extra servers.</li>
-  <li><strong>panel+node</strong> — the node also runs its own panel. Only useful in special setups.</li>
+  <li><strong>node-only</strong> (default) — just the agent and the local runtime, listening on <code>127.0.0.1</code> only. None of the panel’s background work runs. The usual choice for extra servers.</li>
+  <li><strong>panel+node</strong> — the node also runs its own panel, reachable on port 7823. Only useful in special setups.</li>
 </ul>
 
 <h2>How the connection works</h2>
@@ -710,7 +710,7 @@ cloudbase import ~/cloudbase-backup.tar.gz</pre>
 </table>
 
 <h2>Firewall</h2>
-<p>Only these ports need to be open to the internet on the primary: <code>80</code> and <code>443</code> for nginx, and <code>22</code> for SSH. At home, forward <code>80</code> and <code>443</code> on your router to the primary. Port <code>7823</code> can be closed once the panel has a domain. Instance and tunnel ports don’t need to be public — nginx reaches them locally. Remote nodes need no inbound ports at all.</p>
+<p>Only these ports need to be open to the internet on the primary: <code>80</code> and <code>443</code> for nginx. At home, forward <code>80</code> and <code>443</code> on your router to the primary. Port <code>7823</code> can be closed once the panel has a domain. Instance and tunnel ports don’t need to be public — nginx reaches them locally. Remote nodes need no inbound ports at all.</p>
 
 <h2>The config file</h2>
 <pre>~/.cloudbase/config.yaml</pre>

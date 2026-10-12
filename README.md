@@ -4,7 +4,9 @@
 
 Cloudbase is a self-hosted deployment and operations platform for managing applications across multiple servers.
 
-It provides a central control plane for deploying applications from Git, distributing workloads across instances, and operating a multi-node infrastructure with integrated networking, load balancing, and observability.
+It turns a Git repository into running Docker containers on one or more of your own servers, puts NGINX in front of them, and gives you one panel to deploy, scale, route and observe everything.
+
+> Full documentation is built into the panel under **Guides** (`/guides`). This README is a summary.
 
 ---
 
@@ -23,259 +25,181 @@ The goal is to keep multi-server application management transparent and easy to 
 
 ---
 
-## Overview
+## Features
 
-Cloudbase runs on port 7823 by default and consists of a control plane and distributed execution nodes.
+**Apps & builds**
 
-Key capabilities include:
+* Web services, static sites and background workers
+* Uses your own `Dockerfile`, or generates one for Node.js, Python, Ruby, Go, PHP or a generic image
+* Separate build and start commands, Docker build caching
+* Encrypted environment variables, `.env` import, available during the build
+* Private repositories through saved GitHub tokens
 
-* Deployment of applications from Git repositories
-* Docker-based runtime for application execution
-* Instance-based scaling across multiple servers
-* Centralized orchestration of multi-node environments
-* Automated NGINX configuration per application
-* Domain management and SSL certificate handling
-* Load balancing across healthy instances
-* Live logging, metrics, and audit events
-* Role-based access control
+**Deploys**
 
----
+* Rolling and blue/green deploys with health checks and automatic rollback on failure
+* Auto-deploy on push: polls the branch every 1, 5 or 15 minutes — no webhook needed
+* Deploy history with full logs and one-click rollbacks to any earlier commit
 
-## System Architecture
+**Instances & scaling**
 
-Cloudbase is built around a primary node architecture with optional remote nodes.
+* Run any number of instances of an app, spread over any node
+* Restart policies, crash-loop protection and start on boot
+* CPU-based autoscaling with a minimum and maximum
+* Per-instance CPU and memory limits, read-only root filesystem
 
-### Primary Node (Control Plane)
+**Networking**
 
-The primary node is the central system component. It hosts the Cloudbase panel and is responsible for:
+* NGINX load balancing over every healthy instance
+* Domain wizard with live DNS check and free, self-renewing Let's Encrypt certificates
+* Automatic app subdomains (`<app>.apps.example.com`) with HTTPS per app
+* Panel domain with HTTPS, redirects, `www` aliases, Cloudflare support
+* Downtime, update, starting and restart pages — template or custom HTML
 
-* Storing all application configuration and metadata
-* Managing nodes and their state
-* Orchestrating deployments and updates
-* Handling routing decisions and load balancing configuration
-* Serving as the single entry point for user interaction
+**Operations**
 
-The primary node can also function as a regular node and host application instances like any other node.
-
-All control operations are managed through the primary node.
-
-### Nodes (Execution Layer)
-
-Nodes are servers that execute workloads. Each node must have Cloudbase installed.
-
-Nodes are responsible for:
-
-* Running application instances
-* Hosting Docker containers for workloads
-* Reporting status and health to the primary node
-* Receiving deployment and runtime instructions
+* Live logs per instance, build and deploy output
+* CPU, memory, network and disk metrics with seven days of history
+* Activity per app and a global audit log
+* Users and custom roles with fine-grained permissions
+* App export/import and full CLI backups
 
 ---
 
-## Core Model: App, Instance, Node
+## How it works
 
-Cloudbase uses three core abstractions.
+Cloudbase has four building blocks.
 
-### Application
+| Concept  | What it is |
+| -------- | ---------- |
+| Primary  | The server running the panel. Stores all configuration, runs NGINX and is the single entry point for traffic and for you. It is also a node itself. |
+| Node     | Any server that runs app containers. Extra servers join as remote nodes, controlled by a small agent. |
+| App      | A definition: repository, build and start command, port, environment variables, domains, resource limits. |
+| Instance | One running copy of an app — one Docker container on one node. |
 
-An application represents a logical service definition.
+### From repository to container
 
-It does not execute workloads itself. Instead, it defines configuration such as:
+The primary clones the repository to `~/.cloudbase/apps/<name>` and builds a Docker image. Remote nodes download the source from the primary and build the same image locally, so they don't need access to your Git host.
 
-* Git repository
-* Build and start commands
-* Internal service port
-* Environment variables
-* Domain and routing configuration
-* Resource limits
+### How a request reaches your app
 
-The primary node stores the application source code state. When a Pull and Rebuild operation is executed, the latest code is pulled and stored on the primary node.
+```
+Visitor ─► NGINX on the primary ─► instance on the primary (127.0.0.1:10000–19999)
+                               └─► tunnel port (127.0.0.1:20000–29999) ─► agent on a node ─► instance
+```
 
-### Instance
+All public traffic enters through NGINX on the primary, which spreads requests over every healthy instance. The agent on a remote node keeps an outbound WebSocket to the primary and opens a tunnel per instance, so remote nodes need no open inbound ports, public IP or VPN.
 
-An instance is a running execution of an application.
+### Node outages
 
-* Each instance runs as an isolated Docker container
-* Each instance has its own runtime environment
-* Instances can be distributed across multiple nodes
-* At least one instance is required for an application to be active
-
-### Node
-
-A node is a physical or virtual machine that runs instances.
+When a node goes offline, its instances are marked `node offline` and taken out of the load balancer; instances elsewhere keep serving. When it reconnects, surviving containers are reattached and missing ones are started again — without manual action.
 
 ---
-
-## Networking and Routing
-
-Cloudbase uses NGINX as the primary routing layer.
-
-* Each application can define one or more domains
-* SSL certificates can be configured per domain
-* Traffic is automatically distributed across healthy instances
-* Load balancing is handled by Cloudbase via NGINX configuration generation
-
-When instances run on remote nodes, Cloudbase establishes secure tunnels between the primary node and remote nodes. All external traffic is routed through the primary node and forwarded through these tunnels to the appropriate node and instance.
-
-If a node goes offline, all tunnels to that node are terminated and its instances are marked as disconnected. Remaining instances automatically handle traffic through load balancing.
-
-When the node comes back online, Cloudbase restores the tunnel connection. If the instance still exists, the container is restarted and reattached to the routing system, after which load balancing resumes automatically.
-
----
-
-## Application Lifecycle Pages
-
-Cloudbase provides system-managed NGINX-served pages for application states.
-
-### Downtime
-
-Displayed when an application is not reachable via NGINX or explicitly set to downtime mode from the panel.
-
-### Update
-
-Displayed when an application is in an update state triggered manually via the panel.
-
-### Restart
-
-Displayed automatically during application restarts and removed once the application becomes healthy again.
-
-### Start
-
-Displayed during initial application startup. Similar to restart but specifically for first boot or cold start.
-
-Each lifecycle page uses a standard template with configurable fields. Alternatively, full custom HTML can be used for complete control over rendering.
-
-All lifecycle pages are served via NGINX and managed internally by Cloudbase.
-
----
-
-## Technology Stack
-
-Cloudbase uses the following core technologies:
-
-* Docker for instance isolation and execution
-* NGINX for routing, SSL termination, and traffic management
-* Python-based control plane for orchestration and CLI
-* Git for source code retrieval and deployments
 
 ## Setup
 
 ### Requirements
 
-* Linux (Ubuntu, Debian, RHEL, Arch, openSUSE)
-* Python 3.10+
-* Git
-* Docker
-* NGINX
-* systemd (recommended)
+* Linux with systemd (Ubuntu, Debian, RHEL, Arch, openSUSE)
+* A user with `sudo`
+* Ports 80 and 443 reachable from the internet for domains and HTTPS
 
----
+The installer adds Python 3, Git, Docker, NGINX and certbot if they're missing.
 
 ### Installation
 
 ```bash
 git clone https://github.com/Tonioot/Cloudbase
-cd cloudbase
+cd Cloudbase
 sudo bash install.sh
 ```
 
-The installer configures:
-
-* System dependencies
-* Python environment
-* Docker
-* NGINX
-* systemd services
-* Cloudbase CLI 
-
----
-
 ### After installation
 
-* Store the generated admin password securely
-* Open the panel at: `http://<server-ip>:7823`
-* Log in to the control panel
+1. Store the generated admin password securely.
+2. Open the panel at `http://<server-ip>:7823` and log in.
+3. Run `cloudbase enable` so Cloudbase and its apps start on boot.
+4. Connect a domain to the panel under **Settings → Domain & SSL** for HTTPS, then close port 7823.
+5. Optionally set up app subdomains, so every app gets an address with HTTPS automatically.
 
----
+### Adding a node
 
-## Node Management
-
-### Primary node
-
-The primary node hosts the control panel and manages orchestration.
-
-### Remote nodes
-
-Remote nodes execute application instances.
-
-### Connect a node
+Install Cloudbase on the new server, click **Add node** in the panel and run the command it shows:
 
 ```bash
-cloudbase connect --main-url <url> --invite-code <code>
+cloudbase connect --main-url https://panel.example.com --invite-code <code> --mode node-only
 ```
 
-### Node modes
+Modes: `node-only` (the usual choice) or `panel+node`.
 
-* panel+node: combined control plane and execution node
-* node-only: execution-only worker node
+### Updating
+
+```bash
+cloudbase update
+```
+
+Run it on the primary and on every remote node. Running apps keep running.
 
 ---
 
-## CLI Operations
-
-### Core commands
+## CLI
 
 ```bash
-cloudbase start
-cloudbase stop
-cloudbase restart
-cloudbase status
-cloudbase logs
+# Service
+cloudbase start | stop | restart | status | logs
+cloudbase enable                 # systemd service + start on boot
+cloudbase disable
 cloudbase update
 cloudbase uninstall
-```
 
-### Node commands
+# Information
+cloudbase apps
+cloudbase nodes
+cloudbase password               # set a new admin password
 
-```bash
-cloudbase connect --main-url <url> --invite-code <code> --node-name <name> --mode <mode>
+# Nodes
+cloudbase connect --main-url <url> --invite-code <code> [--node-name <name>] [--mode node-only|panel+node]
 cloudbase disconnect
 cloudbase node-status
-```
 
-### NGINX management
-
-```bash
+# NGINX
 cloudbase nginx <domain>
 cloudbase nginx show
 cloudbase nginx disable
 cloudbase nginx permissions [user]
-```
 
-### Certificates
-
-```bash
+# Certificates
 cloudbase cert add <path> [name]
 cloudbase cert list
 cloudbase cert path
-```
 
-### Backup and restore
-
-```bash
+# Backup and restore (database + credentials)
 cloudbase export [file]
 cloudbase import <file>
 ```
 
 ---
 
-## Data Storage
+## Data storage
 
-Cloudbase stores all persistent data in:
+| Path                        | Contains |
+| --------------------------- | -------- |
+| `~/.cloudbase/config.yaml`  | Ports, limits, session length |
+| `~/.cloudbase/apps/`        | App sources, cloned from Git |
+| `~/.cloudbase/logs/`        | Log files, including the node agent's |
+| `~/.cloudbase/`             | Also the database and credentials — include it in server backups |
 
-```
-~/.cloudbase/
-```
+Cloudbase listens on port `7823`. Instances use host ports `10000–19999`, tunnels use `20000–29999` (local only). All are configurable under **Settings → System**.
+
+---
+
+## Technology stack
+
+* Python control plane, agent and CLI
+* Docker for building and isolating instances
+* NGINX for routing, TLS termination and load balancing
+* certbot / Let's Encrypt for certificates
+* Git for source retrieval and deployments
 
 ---
 
