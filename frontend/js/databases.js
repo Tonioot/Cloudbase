@@ -56,7 +56,7 @@ function rowHTML(d) {
           </span>
         </div>
       </td>
-      <td class="cell-muted"><span class="engine-cell">${engineIcon(d.engine, 22)}${esc(d.engine_label)} ${esc(d.version)}</span></td>
+      <td class="cell-muted"><span class="engine-cell">${engineIcon(d.engine, 22)}${esc(d.engine_label)} ${esc(d.running_version || d.version)}${d.update?.update_available ? ' <span class="db-tag db-tag--update" title="A newer release of this version is available">update</span>' : ''}</span></td>
       <td class="cell-mono">${esc(d.node_name || '—')}</td>
       <td class="cell-muted">${esc(limits || 'No limits')}</td>
       <td class="num">${d.link_count || '—'}</td>

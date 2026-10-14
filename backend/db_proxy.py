@@ -23,6 +23,9 @@ from typing import Awaitable, Callable, Optional
 import config as _cfg
 
 log = logging.getLogger("cloudbase.db-proxy")
+# Upgrading a PostgreSQL connection to TLS (start_tls) makes asyncio log a harmless
+# "returning true from eof_received() has no effect" for every such connection.
+logging.getLogger("asyncio").addFilter(lambda record: "eof_received" not in record.getMessage())
 
 CHUNK = 65536
 

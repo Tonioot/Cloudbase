@@ -1053,6 +1053,7 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(databases_router.database_monitor()),
             asyncio.create_task(database_backups_router.backup_scheduler()),
             asyncio.create_task(databases_router.database_stats_sampler()),
+            asyncio.create_task(databases_router.database_update_checker()),
         ]
         if os.environ.get("CLOUDBASE_DEV_DEMO_LOGS"):
             tasks.append(asyncio.create_task(_dev_demo_logs(os.environ["CLOUDBASE_DEV_DEMO_LOGS"])))

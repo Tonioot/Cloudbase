@@ -126,3 +126,6 @@
 .https-actions:empty { display: none; }
 .https-text code { font-size: 11.5px; color: var(--text-2); background: var(--hover); padding: 1px 5px; border-radius: 4px; }
 @media (max-width: 720px) { .https-card { flex-wrap: wrap; } .https-actions { width: 100%; padding-left: 20px; } }
+
+.key-box { display: block; padding: 12px 14px; border-radius: var(--radius-sm); background: var(--code); border: 1px solid var(--line);
+  font-family: var(--font-mono); font-size: 13px; color: var(--text); overflow-wrap: anywhere; user-select: all; }

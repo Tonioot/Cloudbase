@@ -28,6 +28,7 @@
     <section class="detail-head" aria-label="Database">
       <div class="detail-status-line">
         <span id="db-status-badge"></span>
+        <span class="db-tag db-tag--update" id="db-update-tag" style="display:none">update available</span>
         <span class="detail-status-meta" id="db-status-meta"></span>
       </div>
       <div class="detail-head-row">
@@ -154,6 +155,7 @@
           </div>
         </div>
         <p class="db-card-sub">Stored on the primary in <code>~/.cloudbase/backups</code>, also for databases on other nodes. Backups are kept when the database is deleted.</p>
+        <div class="db-offsite-hint" id="offsite-hint"></div>
         <div id="backup-list" class="db-list" style="margin-top:12px"></div>
         <p class="db-card-foot" id="backup-restore-note"></p>
 
@@ -223,6 +225,19 @@
           <button class="btn" type="submit" id="btn-save-limits">Save</button>
         </form>
         <div class="db-mem-warning" id="lim-mem-warning" style="display:none;margin-top:12px"></div>
+      </section>
+
+      <section class="db-card" aria-labelledby="ver-title">
+        <div class="danger-row">
+          <div class="danger-row-text">
+            <div class="title" id="ver-title">Version</div>
+            <div class="sub" id="ver-sub">Not checked yet</div>
+          </div>
+          <div class="db-card-actions">
+            <button class="btn btn-sm" id="btn-check-update">Check now</button>
+            <button class="btn btn-sm btn-primary" id="btn-update" data-perm="databases.manage" style="display:none">Update</button>
+          </div>
+        </div>
       </section>
 
       <section class="db-card" aria-labelledby="pw-title" data-perm="databases.credentials">

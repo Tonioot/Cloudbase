@@ -296,6 +296,23 @@ function renderBackupStorage(root) {
         <button class="btn btn-sm" id="storage-test">Test connection</button>
         <span class="field-hint" id="storage-test-result" style="margin:0"></span>
       </div>`)}
+    ${group('Encryption', 'Encrypt each backup on this server before it is uploaded (AES-256-GCM), so the bucket only ever holds unreadable files. Copies on this server stay as they are.',
+      `<label class="toggle-row form-toggle">
+        <span><span class="field-label">Encrypt backups before upload</span><span class="field-hint" id="st-key-state"></span></span>
+        <span class="toggle"><input type="checkbox" id="st-encrypt" /><span class="toggle-slider"></span></span>
+      </label>
+      <div class="field-hint" id="st-key-warning" style="color:var(--yellow)">Store the key somewhere outside this server (a password manager). Without it, encrypted backups in the bucket cannot be read, for example after this server's disk fails.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+        <button class="btn btn-sm" id="st-reveal">Show key</button>
+      </div>
+      <div class="field" style="margin:16px 0 0">
+        <label class="field-label" for="st-add-key">Add a key from another server</label>
+        <div style="display:flex;gap:8px">
+          <input class="input input-mono" id="st-add-key" placeholder="cbk1_…" spellcheck="false" autocomplete="off" />
+          <button class="btn" id="st-add-key-btn">Add</button>
+        </div>
+        <div class="field-hint">Needed to restore encrypted backups that another (or an earlier) Cloudbase server uploaded.</div>
+      </div>`)}
   `;
 
   const $ = id => document.getElementById(id);
@@ -307,6 +324,7 @@ function renderBackupStorage(root) {
     prefix: $('st-prefix').value.trim(),
     access_key: $('st-access').value.trim(),
     secret_key: $('st-secret').value,
+    encrypt: $('st-encrypt').checked,
   });
   const show = data => {
     $('st-enabled').checked = !!data.enabled;
@@ -317,6 +335,11 @@ function renderBackupStorage(root) {
     $('st-access').value = data.access_key || '';
     $('st-secret').value = '';
     $('st-secret').placeholder = data.secret_set ? 'Saved; leave empty to keep' : '';
+    $('st-encrypt').checked = !!data.encrypt;
+    $('st-reveal').disabled = !data.current_key_id;
+    $('st-key-state').textContent = data.current_key_id
+      ? `Current key ${data.current_key_id}` + (data.key_ids.length > 1 ? ` · ${data.key_ids.length} keys known` : '')
+      : 'A key is created when you turn this on and save';
     const c = data.counts;
     $('st-counts').textContent = c
       ? `${c.uploaded} backup${c.uploaded === 1 ? '' : 's'} copied` + (c.pending ? ` · ${c.pending} waiting` : '') + (c.failed ? ` · ${c.failed} failed` : '')
@@ -324,6 +347,42 @@ function renderBackupStorage(root) {
   };
 
   api.getBackupStorage().then(show).catch(e => setStatus(e.message, 'error'));
+
+  $('st-reveal').onclick = async () => {
+    let res;
+    try { res = await api.revealBackupKey(); } catch (e) { setStatus(e.message, 'error'); return; }
+    const backdrop = document.createElement('div');
+    backdrop.className = 'dialog-backdrop';
+    backdrop.innerHTML = `
+      <div class="dialog dialog-modern form-dialog" role="dialog" aria-modal="true" aria-labelledby="key-title">
+        <div class="dialog-title" id="key-title">Backup encryption key</div>
+        <div class="dialog-body">
+          <p class="form-dialog-intro">Save this key in a password manager or another safe place outside this server. Anyone with the key and your bucket can read your backups.</p>
+          <code class="key-box" id="key-value">${esc(res.key)}</code>
+        </div>
+        <div class="dialog-actions">
+          <button class="btn" id="key-copy">Copy</button>
+          <button class="btn btn-primary" id="key-close">I saved it</button>
+        </div>
+      </div>`;
+    document.body.appendChild(backdrop);
+    backdrop.querySelector('#key-copy').onclick = async () => {
+      await navigator.clipboard.writeText(res.key);
+      toast('Key copied');
+    };
+    backdrop.querySelector('#key-close').onclick = () => backdrop.remove();
+  };
+
+  $('st-add-key-btn').onclick = async () => {
+    const key = $('st-add-key').value.trim();
+    if (!key) return;
+    try {
+      show({ ...(await api.addBackupKey(key)), counts: null });
+      $('st-add-key').value = '';
+      toast('Key added');
+      api.getBackupStorage().then(show).catch(() => {});
+    } catch (e) { toast(e.message, 'error'); }
+  };
 
   $('storage-test').onclick = async () => {
     const btn = $('storage-test');

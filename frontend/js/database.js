@@ -7,7 +7,7 @@ import { memoryWarning } from './databases.js';
 const DB_ID = parseInt(new URLSearchParams(location.search).get('id'), 10);
 const TRANSITIONAL = ['creating', 'starting', 'stopping'];
 const TABS = ['overview', 'access', 'backups', 'logs', 'settings'];
-const TRIGGER_LABEL = { manual: 'manual', scheduled: 'scheduled', pre_delete: 'before delete', pre_restore: 'before restore', upload: 'uploaded' };
+const TRIGGER_LABEL = { manual: 'manual', scheduled: 'scheduled', pre_delete: 'before delete', pre_restore: 'before restore', pre_update: 'before update', upload: 'uploaded' };
 
 const ICON = {
   copy: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
@@ -27,6 +27,16 @@ let pollTimer = null;
 let logsTimer = null;
 let backups = null;       // last /backups response
 let backupsTimer = null;
+let verifyTls = (() => { try { return localStorage.getItem('cb-db-verify-tls') === '1'; } catch { return false; } })();
+
+// MySQL and MariaDB encrypt with their own certificate, which the Cloudbase CA does not sign.
+const canVerify = d => !['mysql', 'mariadb'].includes(d.engine);
+
+function verifyHint(d) {
+  const ca = '<a href="/api/databases/tls-ca.crt" download>cloudbase-database-ca.crt</a>';
+  if (d.engine === 'redis' || d.engine === 'valkey') return `Download ${ca} and give it to your client, e.g. <code>redis-cli --tls --cacert cloudbase-database-ca.crt</code>.`;
+  return `The copied URL checks the server with ${ca}. Save that file next to where you run your client.`;
+}
 
 // How well a public connection is protected, per engine.
 function encryptionNote(d) {
@@ -70,6 +80,8 @@ export async function initDatabasePage() {
   document.getElementById('btn-refresh-logs').onclick = loadLogs;
   document.getElementById('btn-delete').onclick = deleteDatabase;
   document.getElementById('btn-rotate').onclick = openRotateDialog;
+  document.getElementById('btn-check-update').onclick = checkUpdate;
+  document.getElementById('btn-update').onclick = updateEngine;
   document.getElementById('pub-enabled').addEventListener('change', togglePublic);
   document.getElementById('allow-form').addEventListener('submit', e => { e.preventDefault(); addAllowEntry(); });
   document.getElementById('allow-my-ip').onclick = () => addAllowEntry(myIp);
@@ -172,7 +184,9 @@ function render() {
   document.getElementById('db-name').textContent = d.name;
   document.getElementById('db-engine-icon').innerHTML = engineIcon(d.engine, 36);
   document.getElementById('db-meta').innerHTML =
-    `<span>${esc(d.engine_label)} ${esc(d.version)}</span><span>${esc(d.node_name || 'unknown node')}</span><code>${esc(d.host)}:${d.port}</code>`;
+    `<span>${esc(d.engine_label)} ${esc(d.running_version || d.version)}</span><span>${esc(d.node_name || 'unknown node')}</span><code>${esc(d.host)}:${d.port}</code>`;
+  document.getElementById('db-update-tag').style.display = d.update?.update_available ? '' : 'none';
+  renderVersion();
   document.getElementById('db-status-badge').innerHTML = badge(d.status);
   document.getElementById('db-status-meta').textContent = d.progress || d.operation || (d.busy && !TRANSITIONAL.includes(d.status) ? 'Working…' : '');
 
@@ -265,8 +279,18 @@ function renderAccess() {
     d.public_listening
       ? kvRow('Address', endpoint, { copy: 'public_endpoint' })
       : `<div class="db-kv-row"><span class="db-kv-label">Address</span><span class="db-kv-warn">Port ${d.public_port} could not be opened on the primary. Check the server log.</span></div>`,
-    kvRow('URL', credentials?.public_url, { copy: 'public_url', secret: true }),
-  ].join('');
+    kvRow('URL', verifyTls && credentials?.public_url_verified ? credentials.public_url_verified : credentials?.public_url,
+      { copy: verifyTls && canVerify(d) ? 'public_url_verified' : 'public_url', secret: true }),
+  ].join('') + (d.public_tls && canVerify(d) ? `
+    <label class="toggle-row form-toggle db-tls-row">
+      <span><span class="field-label">Verify the server certificate</span><span class="field-hint">${verifyTls ? verifyHint(d) : 'Off: the connection is encrypted, but your client does not check that it talks to this server.'}</span></span>
+      <span class="toggle"><input type="checkbox" id="pub-verify" ${verifyTls ? 'checked' : ''} /><span class="toggle-slider"></span></span>
+    </label>` : '');
+  document.getElementById('pub-verify')?.addEventListener('change', e => {
+    verifyTls = e.target.checked;
+    try { localStorage.setItem('cb-db-verify-tls', verifyTls ? '1' : '0'); } catch {}
+    renderAccess();
+  });
 
   const entries = d.public_allowlist || [];
   document.getElementById('allow-count').textContent = entries.length ? `${entries.length} allowed` : '';
@@ -622,6 +646,16 @@ function renderBackups() {
   others.style.display = b.can_restore && b.others.length ? '' : 'none';
   document.getElementById('other-backup-list').innerHTML = b.others.map(x => backupRow(x, { own: false })).join('');
 
+  const hint = document.getElementById('offsite-hint');
+  const settingsLink = '<a href="/settings?s=backups">Settings → Backup storage</a>';
+  if (b.offsite?.enabled) {
+    hint.className = 'db-offsite-hint db-offsite-hint--on';
+    hint.innerHTML = `Every backup is also copied to the bucket <code>${esc(b.offsite.bucket || '')}</code>. Change this in ${settingsLink}.`;
+  } else {
+    hint.className = 'db-offsite-hint';
+    hint.innerHTML = `Backups exist only on this server, so a broken disk loses them too. Add an S3, R2 or Backblaze bucket in ${settingsLink} to keep a copy elsewhere.`;
+  }
+
   document.getElementById('backup-restore-note').textContent = b.can_restore ? '' :
     `Restoring ${database.engine_label} backups from the panel comes later. You can download a backup and load it yourself.`;
 
@@ -755,6 +789,61 @@ function openRestoreDialog(b) {
       ok.disabled = false;
     }
   };
+}
+
+/* ─── Version / updates ─────────────────────────────────────────────────── */
+
+function renderVersion() {
+  const d = database;
+  const u = d.update;
+  const sub = document.getElementById('ver-sub');
+  const current = `${d.engine_label} ${u?.version || d.version}`;
+  const when = u?.checked_at ? timeAgoShort(u.checked_at) : null;
+  if (!u) sub.textContent = `${current}. Not checked for updates yet.`;
+  else if (u.error && !u.update_available) sub.textContent = `${current}. Last check failed: ${u.error}`;
+  else if (u.update_available) {
+    sub.textContent = `${current}: a newer ${d.version}.x release${u.latest_version ? ` (${u.latest_version})` : ''} is available. Updating makes a backup first, keeps your data and rolls back by itself if the new version doesn't start.`;
+  } else {
+    sub.textContent = `${current}, the newest ${d.version}.x release${when ? ` (checked ${when})` : ''}${u.updated_from ? `. Updated from ${u.updated_from}.` : '.'}`;
+  }
+  const btn = document.getElementById('btn-update');
+  btn.style.display = u?.update_available ? '' : 'none';
+  btn.disabled = d.busy || !d.node_online || !['running', 'unhealthy'].includes(d.status);
+}
+
+function timeAgoShort(iso) {
+  const s = (Date.now() - new Date(iso.endsWith('Z') ? iso : `${iso}Z`).getTime()) / 1000;
+  if (s < 90) return 'just now';
+  if (s < 5400) return `${Math.round(s / 60)} min ago`;
+  if (s < 129600) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} days ago`;
+}
+
+async function checkUpdate() {
+  const btn = document.getElementById('btn-check-update');
+  btn.disabled = true;
+  btn.textContent = 'Checking…';
+  try {
+    database.update = await api.checkDatabaseUpdate(DB_ID);
+    render();
+  } catch (e) {
+    toast(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Check now';
+  }
+}
+
+async function updateEngine() {
+  const d = database;
+  const ok = await confirm(`Update ${esc(d.name)}?`,
+    `Installs the newest ${esc(d.engine_label)} ${esc(d.version)}.x release. A backup is made first, the database restarts briefly with the same data, and Cloudbase rolls back by itself if the new version doesn't start.`);
+  if (!ok) return;
+  try {
+    await api.updateDatabaseEngine(DB_ID);
+    toast('Update started');
+    load();
+  } catch (e) { toast(e.message, 'error'); }
 }
 
 /* ─── Dialogs ───────────────────────────────────────────────────────────── */

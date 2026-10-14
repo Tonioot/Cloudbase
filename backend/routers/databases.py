@@ -52,6 +52,8 @@ DIAL_TIMEOUT_SECONDS = 10
 # Databases with an operation in flight; the monitor leaves them alone.
 _busy: set[int] = set()
 _operation: dict[int, str] = {}  # what a busy database is doing, e.g. "Backing up…"
+# Result of the last update check per database: {version, update_available, latest_version, error, checked_at}
+_update_info: dict[int, dict] = {}
 _last_heal: dict[int, float] = {}
 
 # Cross-node connections: control channel per node, dials waiting for their node.
@@ -300,6 +302,8 @@ def _as_dict(database: Database, node: Optional[Node], link_count: int = 0) -> d
         "initialized": database.initialized_at is not None,
         "busy": database.id in _busy,
         "operation": _operation.get(database.id),
+        "running_version": (_update_info.get(database.id) or {}).get("version"),
+        "update": _update_info.get(database.id),
         "progress": _progress(database, node),
         "backup_schedule": database.backup_schedule,
         "can_restore": bool(engine and engine.can_restore),
@@ -651,6 +655,8 @@ async def get_credentials(
         engine = db_engines.get_engine(database.engine)
         url = engine.url(creds, _public_host(), public_port)
         result["public_url"] = engine.tls_url(url) if database.public_tls and engine.tls_url else url
+        if database.public_tls and engine.tls_verify_url:
+            result["public_url_verified"] = engine.tls_verify_url(url)
     return result
 
 
@@ -758,6 +764,63 @@ async def stats_history(
             "cpu": avg("cpu_percent"), "mem": avg("memory_mb"), "disk": avg("disk_mb"),
         })
     return {"hours": hours, "samples": samples}
+
+
+@router.post("/{database_id}/check-update")
+async def check_update(
+    database_id: int,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("databases.view")),
+):
+    database = await _get_or_404(database_id, db)
+    node = await _node_for(database, db)
+    if not _node_reachable(node):
+        raise HTTPException(409, f"Node '{node.name}' is offline")
+    await _check_updates_on(node, [database])
+    return _update_info.get(database_id) or {}
+
+
+@router.post("/{database_id}/update")
+async def update_database_engine(
+    database_id: int,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("databases.manage")),
+    actor: str = Depends(_auth.get_current_actor),
+):
+    """Install the newest patch release of the database's version (e.g. 18.6 → 18.7).
+    A backup is made first; a failed start rolls back to the previous image."""
+    database = await _get_or_404(database_id, db)
+    _require_idle(database)
+    node = await _node_for(database, db)
+    if not _node_reachable(node):
+        raise HTTPException(409, f"Node '{node.name}' is offline")
+    if database.status not in ("running", "unhealthy"):
+        raise HTTPException(409, "The database must be running to update it")
+    await log_audit(db, "database.update_engine", actor=actor, detail={
+        "database_id": database.id, "name": database.name, "from": (_update_info.get(database_id) or {}).get("version"),
+    })
+    await db.commit()
+
+    async def op():
+        from routers.database_backups import run_backup
+        _operation[database_id] = "Backing up before the update…"
+        await run_backup(database_id, "pre_update", actor)
+        _operation[database_id] = "Updating…"
+        async with AsyncSessionLocal() as s:
+            spec = _spec(await s.get(Database, database_id))
+        try:
+            result = await _run_on_node(node, lambda: db_manager.update(spec), "db_update", {"spec": spec},
+                                        timeout=PROVISION_TIMEOUT_SECONDS + 900)
+        finally:
+            _operation.pop(database_id, None)
+        _update_info[database_id] = {
+            "version": result.get("version"), "update_available": False,
+            "checked_at": datetime.utcnow().isoformat(), "updated_from": result.get("from"),
+        }
+        await _set_status(database_id, "running")
+
+    _spawn(database.id, op)
+    return {"ok": True}
 
 
 @router.get("/{database_id}/logs")
@@ -1196,3 +1259,45 @@ async def database_stats_sampler() -> None:
             log.warning("[db-stats] error: %s", e)
         tick += 1
         await asyncio.sleep(STATS_INTERVAL_SECONDS)
+
+
+
+# ── Update checks ─────────────────────────────────────────────────────────────
+
+UPDATE_CHECK_INTERVAL_SECONDS = 12 * 3600
+
+
+async def _check_updates_on(node: Node, databases: list) -> None:
+    items = [{"database_id": d.id, "ref": db_engines.get_engine(d.engine).image_ref(d.version)} for d in databases]
+    result = await _run_on_node(node, lambda: {"updates": db_manager.check_updates(items)},
+                                "db_check_updates", {"items": items}, timeout=120)
+    now = datetime.utcnow().isoformat()
+    for db_id, info in (result.get("updates") or {}).items():
+        _update_info[int(db_id)] = {**info, "checked_at": now}
+
+
+async def database_update_checker() -> None:
+    """Look for newer patch releases twice a day (primary only)."""
+    await asyncio.sleep(300)
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                databases = (await db.execute(
+                    select(Database).where(Database.status.in_(["running", "unhealthy"]))
+                )).scalars().all()
+                nodes = {n.id: n for n in (await db.execute(select(Node))).scalars().all()}
+            by_node: dict[int, list] = {}
+            for d in databases:
+                by_node.setdefault(d.node_id, []).append(d)
+            for node_id, items in by_node.items():
+                node = nodes.get(node_id)
+                if node is not None and _node_reachable(node):
+                    try:
+                        await _check_updates_on(node, items)
+                    except Exception as e:
+                        log.debug("[db-updates] node %s: %s", node.name, e)
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            log.warning("[db-updates] error: %s", e)
+        await asyncio.sleep(UPDATE_CHECK_INTERVAL_SECONDS)

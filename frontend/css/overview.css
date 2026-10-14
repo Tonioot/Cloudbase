@@ -103,6 +103,7 @@
 .app-cell-name { font-weight: 500; color: var(--text); }
 .app-cell-sub { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 340px; }
 .app-cell-sub.error { color: var(--red); }
+.engine-cell .db-tag { font-size: 11px; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: var(--radius-xs); padding: 0 6px; line-height: 18px; }
 
 .row-actions { display: flex; justify-content: flex-end; gap: 2px; opacity: 0; transition: opacity var(--transition); }
 .apps-table tr:hover .row-actions, .row-actions:focus-within { opacity: 1; }

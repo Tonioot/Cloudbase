@@ -2,7 +2,7 @@
 // lead (intro paragraph, HTML) and body (HTML). h2 headings form the
 // "On this page" list automatically.
 
-export const GUIDE_GROUPS = ['Getting started', 'Apps', 'Networking', 'Nodes', 'Administration', 'Reference'];
+export const GUIDE_GROUPS = ['Getting started', 'Apps', 'Databases', 'Networking', 'Nodes', 'Administration', 'Reference'];
 
 export const GUIDES = [
 
@@ -393,76 +393,394 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
 `,
 },
 
+
+/* ─── Databases ────────────────────────────────────────────────────────── */
+
 {
   slug: 'databases',
-  group: 'Apps',
-  title: 'Databases',
-  summary: 'Run PostgreSQL, MySQL, MariaDB, Redis, Valkey or MongoDB next to your apps and link them.',
-  keywords: 'database postgres postgresql mysql mariadb redis valkey mongodb volume link DATABASE_URL',
-  lead: 'A managed database is one container with its own data volume on one node you choose. Cloudbase creates the credentials, keeps it running and hands the connection URL to the apps you link.',
+  group: 'Databases',
+  title: 'Databases: how it works',
+  summary: 'Managed PostgreSQL, MySQL, MariaDB, Redis, Valkey and MongoDB: what Cloudbase runs and where your data lives.',
+  keywords: 'database postgres postgresql mysql mariadb redis valkey mongodb create volume container architecture engine',
+  lead: 'A managed database is one container with its own data volume on a node you choose. Cloudbase creates it, keeps it running, backs it up and hands the connection details to the apps you link.',
   body: `
+<h2>Engines</h2>
+<table>
+  <tr><th>Engine</th><th>Versions</th><th>Port</th><th>Apps get</th><th>Good for</th></tr>
+  <tr><td>PostgreSQL</td><td>18, 17, 16, 15</td><td>5432</td><td><code>DATABASE_URL</code></td><td>The default choice for relational data</td></tr>
+  <tr><td>MySQL</td><td>8.4, 9</td><td>3306</td><td><code>DATABASE_URL</code></td><td>Apps that expect MySQL (WordPress, Laravel)</td></tr>
+  <tr><td>MariaDB</td><td>11.8, 11.4, 10.11</td><td>3306</td><td><code>DATABASE_URL</code></td><td>MySQL-compatible, fully open source</td></tr>
+  <tr><td>Redis</td><td>8, 7.4</td><td>6379</td><td><code>REDIS_URL</code></td><td>Caching, sessions, queues</td></tr>
+  <tr><td>Valkey</td><td>9, 8</td><td>6379</td><td><code>REDIS_URL</code></td><td>Open-source Redis fork; same clients</td></tr>
+  <tr><td>MongoDB</td><td>8.0, 7.0</td><td>27017</td><td><code>MONGODB_URL</code></td><td>Document data</td></tr>
+</table>
+<div class="callout"><p>On a Raspberry Pi: MongoDB 5 and newer need an ARMv8.2 CPU, which the Pi 5 has and the Pi 4 does not. On a Pi 4 MongoDB keeps restarting with "Illegal instruction".</p></div>
+
 <h2>Creating a database</h2>
-<p>Click <strong>New database</strong> on the Overview (or search for it with Ctrl K). Pick the engine, a version, the node and the resources. The official Docker image is pulled the first time, so the first start can take a minute.</p>
-<p>The memory limit does more than cap memory: Cloudbase also sizes the engine's caches from it (PostgreSQL <code>shared_buffers</code>, the InnoDB buffer pool, Redis <code>maxmemory</code>, the MongoDB WiredTiger cache). Without a limit the engine's own defaults apply.</p>
+<p>Click <strong>New database</strong> on the Overview (or search for it with Ctrl K). Pick the engine, a version, a name, the node and the resources. Cloudbase then:</p>
+<ol>
+  <li>generates a user and a random 32-character password and stores them encrypted;</li>
+  <li>downloads the official Docker image of the engine. A node downloads one image at a time, and the progress shows on the database page;</li>
+  <li>creates a data volume and starts the container with your limits, a health check and an automatic restart policy;</li>
+  <li>lets the engine set up its empty data directory (user and database) on the first start;</li>
+  <li>marks the database <strong>Running</strong> once the health check passes.</li>
+</ol>
+<p>The first start can take a few minutes on a small server: MySQL needs over 3 minutes on a Raspberry Pi to initialise. Until then the status is <em>Starting</em>.</p>
 
-<h2>Where the data lives</h2>
-<p>The data is stored in a Docker volume named <code>cloudbase-db-&lt;id&gt;-data</code> on the chosen node. The container itself is disposable: changing limits or restarting replaces it, and the volume stays.</p>
-<div class="callout callout--warn"><p>A database never moves to another node by itself. If its node goes offline, the database is shown as <em>node offline</em> until the node is back. Cloudbase also never creates an empty database over a missing volume: that shows an error instead.</p></div>
+<h2>How it fits together</h2>
+<div class="flow">
+  <span class="flow-box">Your app<small>DATABASE_URL</small></span><span class="flow-arrow">→</span>
+  <span class="flow-box">cloudbase-db-&lt;id&gt;:5432<small>internal Docker network</small></span><span class="flow-arrow">→</span>
+  <span class="flow-box">Database container<small>official image</small></span><span class="flow-arrow">→</span>
+  <span class="flow-box">Volume<small>cloudbase-db-&lt;id&gt;-data</small></span>
+</div>
+<ul>
+  <li><strong>Container</strong> <code>cloudbase-db-&lt;id&gt;</code>: disposable. Changing limits, updating or restarting replaces it.</li>
+  <li><strong>Volume</strong> <code>cloudbase-db-&lt;id&gt;-data</code>: holds the data and survives every container change.</li>
+  <li><strong>Network</strong> <code>cloudbase</code>: an internal Docker network. Every database listens on its engine's standard port on its own address there, so ten PostgreSQL databases on one server never clash. Nothing is published on the server itself unless you turn on <a href="/guides?g=database-public-access">public access</a>.</li>
+  <li><strong>Node</strong>: a database stays on the node it was created on. It never moves by itself.</li>
+</ul>
 
-<h2>Linking an app</h2>
-<p>On the database page, click <strong>Link app</strong>. The app gets the connection URL as an environment variable — <code>DATABASE_URL</code> for PostgreSQL, MySQL and MariaDB, <code>REDIS_URL</code> for Redis and Valkey, <code>MONGODB_URL</code> for MongoDB — after its next restart. You can pick another name. If the app already sets that variable itself, its own value wins.</p>
-<p>Apps reach the database with the host name <code>cloudbase-db-&lt;id&gt;</code>. No port is published on the server, so the database is not reachable from the internet.</p>
+<h2>Statuses</h2>
 <table>
-  <tr><th>Where the instance runs</th><th>How it connects</th></tr>
-  <tr><td>Same node as the database</td><td>Directly over the internal Docker network <code>cloudbase</code>. Fastest.</td></tr>
-  <tr><td>Another node</td><td>Through a small proxy on its own node and a WebSocket to the primary, which forwards to the database. Adds roughly one to two round trips between the servers per query.</td></tr>
+  <tr><th>Status</th><th>Meaning</th></tr>
+  <tr><td>Creating</td><td>Downloading the image and creating the container. The progress shows next to the status.</td></tr>
+  <tr><td>Starting</td><td>The container runs, the health check has not passed yet (first start, restart, update).</td></tr>
+  <tr><td>Running</td><td>Healthy and accepting connections.</td></tr>
+  <tr><td>Unhealthy</td><td>The container runs but the health check fails. See the Logs tab.</td></tr>
+  <tr><td>Stopped</td><td>You stopped it. It stays stopped, also after a reboot.</td></tr>
+  <tr><td>Error</td><td>Something failed; the message says what. A database that should run is started again every two minutes.</td></tr>
+  <tr><td>Node offline</td><td>Its node is unreachable. The database comes back with the node.</td></tr>
 </table>
-<p>For chatty workloads, run the app's instances on the database's node.</p>
-<div class="callout callout--warn"><p>With a host firewall such as ufw enabled on a node, allow containers to reach the database proxies: <code>sudo ufw allow in on cloudbase0 proto tcp to any port 30000:30999</code>.</p></div>
+<p>Every 30 seconds Cloudbase compares this with Docker. A database that should run but is stopped or missing is started again, on its existing volume. If the volume of a database that ran before is missing, Cloudbase stops with an error instead of creating an empty database in its place.</p>
 
-<h2>Public access</h2>
-<p>To reach a database from your own computer, for example with pgAdmin, TablePlus or DBeaver, turn on <strong>Public access</strong> on its page. The primary then listens on port <code>31000 + &lt;id&gt;</code> and forwards connections to the database, on whichever node it runs. <strong>Copy public URL</strong> gives the full connection string.</p>
-<ul>
-  <li>The database password is always required.</li>
-  <li>Add your own IP to the allowlist (<strong>Add my IP</strong>). Connections from other addresses are refused before they reach the database. An empty list lets anyone try to log in.</li>
-  <li>Open the port in the firewall of the primary, or in the security group of your cloud provider.</li>
-</ul>
-<p>The public port requires TLS by default; connections without encryption are refused. <strong>Copy public URL</strong> already contains what clients need:</p>
-<table>
-  <tr><th>Engine</th><th>In the URL</th><th>How</th></tr>
-  <tr><td>PostgreSQL</td><td><code>sslmode=require</code></td><td>Cloudbase answers the TLS request and encrypts up to the primary.</td></tr>
-  <tr><td>MongoDB</td><td><code>tls=true</code></td><td>TLS from the first byte, handled by Cloudbase.</td></tr>
-  <tr><td>Redis, Valkey</td><td><code>rediss://</code></td><td>TLS from the first byte, handled by Cloudbase.</td></tr>
-  <tr><td>MySQL, MariaDB 11.4+</td><td><code>ssl-mode=REQUIRED</code></td><td>Encrypted end to end by the database itself.</td></tr>
-  <tr><td>MariaDB 10.11</td><td>none</td><td>No TLS support: stays unencrypted. Use 11.4 or newer.</td></tr>
-</table>
-<p>The certificates come from Cloudbase's own CA. Clients encrypt without further setup; to also verify the server, download the CA on the <strong>Access</strong> tab and use it as the client's CA file (for example <code>sslmode=verify-ca</code>). Turn <strong>Require TLS</strong> off only for a client that cannot do TLS.</p>
-
-<h2>Backups</h2>
-<p>Every database is backed up every day at 03:00 (server time) by default, keeping the last 7. Change this on the <strong>Backups</strong> tab, or click <strong>Back up now</strong>. Backups are stored on the primary in <code>~/.cloudbase/backups</code>, also for databases on other nodes, and stay there when the database is deleted.</p>
-<ul>
-  <li><strong>Restore</strong> loads a backup into the database. A safety backup of the current data is made first, unless you turn that off.</li>
-  <li>Backups of other or deleted databases with the same engine can be restored too, which is also how you move a database to another node.</li>
-  <li><strong>Upload dump</strong> imports a dump made elsewhere: <code>pg_dump -Fc</code> or plain SQL for PostgreSQL, <code>mysqldump</code> SQL (optionally gzipped) for MySQL and MariaDB, and <code>mongodump --archive</code> (optionally <code>--gzip</code>) for MongoDB.</li>
-  <li>Redis and Valkey are restored by briefly stopping the database and loading the backup into its data directory; the previous data is put back if anything fails.</li>
-</ul>
-<h3>Off-site copies</h3>
-<p>Backups on the primary are lost with the primary's disk. Under <strong>Settings → Backup storage</strong>, add an S3-compatible bucket (AWS S3, Cloudflare R2, Backblaze B2, MinIO) and every backup is copied there right after it is made. Existing backups are uploaded too, failed uploads are retried every hour, and deleting a backup removes both copies. When the local file is gone, restoring or downloading fetches it from the bucket.</p>
-
-<h2>Password and usage</h2>
-<ul>
-  <li><strong>Settings → Change password</strong> gives the app user a new password. The old one stops working at once; linked apps can be restarted from the same dialog to pick up the new URL.</li>
-  <li>The <strong>Overview</strong> tab charts CPU, memory and data size for the last hour, day or week. Cloudbase samples every minute and keeps 7 days.</li>
-  <li>When the databases on a node would together be allowed more than 60% of its memory, the create dialog and the Settings tab warn about it.</li>
-</ul>
-
-<h2>Credentials</h2>
-<p>Passwords are generated when the database is created and stored encrypted. Users with the <code>databases.credentials</code> permission can show them and copy the connection URL; every view is written to the audit log.</p>
+<h2>Resources</h2>
+<p>The memory limit also sets the engine's caches: PostgreSQL <code>shared_buffers</code> (25%), the InnoDB buffer pool (50%), Redis <code>maxmemory</code> (80%) and the MongoDB WiredTiger cache. Without a limit the engine uses its own defaults and may use all memory of the node. The dialog and the Settings tab warn when the databases on a node would together be allowed more than 60% of its memory.</p>
 
 <h2>Deleting</h2>
-<p>Deleting removes the container and, unless you choose <strong>Keep the data volume</strong>, all data. A node that has databases on it cannot be removed until those databases are deleted.</p>
+<p><strong>Settings → Delete database</strong> removes the container and, unless you keep it, the volume. <strong>Make a final backup first</strong> is on by default; that backup stays on the primary and can be restored into another database later. Database ids are never reused, so a new database never picks up the data of a deleted one.</p>
+
+<h2>Permissions</h2>
+<table>
+  <tr><th>Permission</th><th>Allows</th></tr>
+  <tr><td><code>databases.view</code></td><td>See databases, their status, logs and charts</td></tr>
+  <tr><td><code>databases.create</code></td><td>Create databases</td></tr>
+  <tr><td><code>databases.manage</code></td><td>Start, stop, restart, change limits, link apps, public access, updates</td></tr>
+  <tr><td><code>databases.credentials</code></td><td>See passwords and connection URLs, change the password</td></tr>
+  <tr><td><code>databases.backup</code></td><td>Make, download, upload and restore backups</td></tr>
+  <tr><td><code>databases.delete</code></td><td>Delete databases</td></tr>
+</table>
 `,
 },
+
+{
+  slug: 'database-connecting',
+  group: 'Databases',
+  title: 'Connecting apps to a database',
+  summary: 'Link an app, read DATABASE_URL in your code, and how connections work across nodes.',
+  keywords: 'database link connect DATABASE_URL REDIS_URL MONGODB_URL env environment variable prisma django node python',
+  lead: 'Link an app to a database and Cloudbase gives every instance of that app the connection URL as an environment variable. Your code reads that variable; you never copy passwords around.',
+  body: `
+<h2>Linking an app</h2>
+<ol>
+  <li>Open the database, tab <strong>Overview</strong>, and click <strong>Link app</strong>.</li>
+  <li>Pick the app. Keep the suggested variable name or choose your own, for example <code>ANALYTICS_DB_URL</code> for a second database.</li>
+  <li><strong>Restart the app.</strong> The variable is added when its containers start.</li>
+</ol>
+<p>If the app already defines the same variable itself, linking is refused, so you never get two values. Unlinking removes the variable at the next restart.</p>
+
+<h2>What the app receives</h2>
+<pre>DATABASE_URL=postgresql://shop_db:&lt;password&gt;@cloudbase-db-5:5432/shop_db
+DATABASE_URL=mysql://shop_db:&lt;password&gt;@cloudbase-db-6:3306/shop_db
+REDIS_URL=redis://default:&lt;password&gt;@cloudbase-db-7:6379/0
+MONGODB_URL=mongodb://shop_db:&lt;password&gt;@cloudbase-db-8:27017/shop_db?authSource=admin</pre>
+<p>The host <code>cloudbase-db-&lt;id&gt;</code> only resolves inside Cloudbase's Docker network, so these URLs work from your apps but not from your own computer. For that, see <a href="/guides?g=database-public-access">Public access</a>.</p>
+
+<h2>Using it in your code</h2>
+<pre>// Node.js: PostgreSQL (pg)
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// Node.js: MySQL (mysql2)
+const pool = mysql.createPool(process.env.DATABASE_URL);
+
+// Node.js: Redis (redis / ioredis)
+const client = createClient({ url: process.env.REDIS_URL });
+
+// Node.js: MongoDB
+const client = new MongoClient(process.env.MONGODB_URL);</pre>
+<pre># Python: SQLAlchemy (PostgreSQL / MySQL)
+engine = create_engine(os.environ["DATABASE_URL"])
+
+# Python: psycopg
+conn = psycopg.connect(os.environ["DATABASE_URL"])
+
+# Python: redis-py / PyMongo
+r = redis.from_url(os.environ["REDIS_URL"])
+client = pymongo.MongoClient(os.environ["MONGODB_URL"])</pre>
+<p>Frameworks that read <code>DATABASE_URL</code> on their own: Prisma (<code>url = env("DATABASE_URL")</code>), Rails, Django with <code>dj-database-url</code>, Laravel (<code>DB_URL</code>; link with that name), Drizzle and most ORMs.</p>
+<div class="callout callout--tip"><p>Use a connection pool and let it retry: when a database restarts (an update, new limits) it is unreachable for a few seconds. Most drivers reconnect by themselves.</p></div>
+
+<h2>Instances on other nodes</h2>
+<p>Instances on the database's own node connect directly. Instances on another node connect through a small proxy on their node, which forwards each connection over a WebSocket to the primary, which forwards it to the database. The URL looks the same; only the port differs, and Cloudbase fills it in per instance.</p>
+<table>
+  <tr><th>Where the instance runs</th><th>Path</th><th>Extra delay per query</th></tr>
+  <tr><td>Same node</td><td>Directly over the Docker network</td><td>about 0.1 ms</td></tr>
+  <tr><td>Another node</td><td>Proxy → primary → database</td><td>one to two round trips between the servers</td></tr>
+</table>
+<p>For apps that run many small queries, keep their instances on the database's node. The database page marks linked apps with instances elsewhere as <em>via primary</em>.</p>
+<div class="callout callout--warn"><p>With a host firewall such as ufw on a node, containers must be allowed to reach the proxies: <code>sudo ufw allow in on cloudbase0 proto tcp to any port 30000:30999</code>.</p></div>
+
+<h2>Credentials</h2>
+<p>The <strong>Overview</strong> tab shows host, port, database and user, with a copy button per line. The password and full URL appear after clicking the eye icon (needs <code>databases.credentials</code>; every view is written to the audit log). To change the password, see <a href="/guides?g=database-maintenance">Updates &amp; maintenance</a>.</p>
+
+<h2>Quick access from the server</h2>
+<p>To run a query without public access, open a shell on the server and use the client inside the container:</p>
+<pre>docker exec -it cloudbase-db-5 psql -U shop_db shop_db
+docker exec -it cloudbase-db-6 sh -c 'mysql -u shop_db -p shop_db'
+docker exec -it cloudbase-db-7 redis-cli
+docker exec -it cloudbase-db-8 sh -c 'mongosh -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin'</pre>
+`,
+},
+
+{
+  slug: 'database-public-access',
+  group: 'Databases',
+  title: 'Public access & TLS',
+  summary: 'Reach a database from your own computer with pgAdmin, TablePlus or a script, encrypted and limited to your IP.',
+  keywords: 'database public access port 31000 allowlist ip tls ssl certificate verify pgadmin tableplus dbeaver firewall cloudflare',
+  lead: 'Public access opens one port on the primary that forwards to the database, wherever it runs. It is off by default, encrypted with TLS, limited to the IP addresses you allow, and the password is always required.',
+  body: `
+<h2>Turning it on</h2>
+<ol>
+  <li>Open the database, tab <strong>Access</strong>, and switch <strong>Public access</strong> on. With an empty list, only your current IP is allowed.</li>
+  <li>Make the port reachable: it is <code>31000 + &lt;database id&gt;</code> (shown on the tab). Open it in the firewall of the primary, in your cloud provider's security group, and forward it on your router if the server is at home.</li>
+  <li>Click <strong>Copy</strong> next to <strong>URL</strong> and paste it into your client.</li>
+</ol>
+<p>The address is always the server's IP, not your panel domain: a domain behind the Cloudflare proxy only carries web traffic, so database connections to it time out.</p>
+<pre># Open one database port to your own IP only (ufw)
+sudo ufw allow from 203.0.113.7 to any port 31005 proto tcp
+
+# Or the whole range at once
+sudo ufw allow from 203.0.113.7 to any port 31000:31999 proto tcp</pre>
+
+<h2>Allowed IP addresses</h2>
+<p>Connections from other addresses are closed before they reach the database. Add single addresses (<code>203.0.113.7</code>) or ranges (<code>198.51.100.0/24</code>). <strong>Add my IP</strong> uses the address your browser reaches the panel from. If your database client goes through a VPN or uses IPv4 where your browser uses IPv6, add that address as well. With an empty list anyone can try to log in; the page asks before you allow that.</p>
+
+<h2>TLS</h2>
+<p>TLS is required by default; plaintext connections are refused with a clear error. The copied URL contains what the client needs:</p>
+<table>
+  <tr><th>Engine</th><th>In the URL</th><th>How it works</th></tr>
+  <tr><td>PostgreSQL</td><td><code>sslmode=require</code></td><td>Cloudbase answers the client's TLS request and encrypts up to the primary</td></tr>
+  <tr><td>MongoDB</td><td><code>tls=true</code></td><td>TLS from the first byte, handled by Cloudbase</td></tr>
+  <tr><td>Redis, Valkey</td><td><code>rediss://</code></td><td>TLS from the first byte, handled by Cloudbase</td></tr>
+  <tr><td>MySQL, MariaDB 11.4+</td><td><code>ssl-mode=REQUIRED</code></td><td>Encrypted end to end by the database itself</td></tr>
+  <tr><td>MariaDB 10.11</td><td>none</td><td>Has no TLS: stays unencrypted. Use 11.4 or newer.</td></tr>
+</table>
+<p>Behind the primary, traffic to a database on the same server stays inside it; traffic to a database on another node goes over the node's connection to the primary, which is encrypted when the panel runs on https.</p>
+
+<h3>Verifying the server</h3>
+<p>By default clients encrypt without checking the certificate, so a machine between you and the server could pose as it. Switch on <strong>Verify the server certificate</strong> on the Access tab: the copied URL then checks the server against Cloudbase's own CA. Download <code>cloudbase-database-ca.crt</code> from the same tab and keep it next to your client.</p>
+<pre>psql "postgresql://…:31005/shop_db?sslmode=verify-full&amp;sslrootcert=cloudbase-database-ca.crt"
+mongosh "mongodb://…:31008/shop_db?authSource=admin&amp;tls=true&amp;tlsCAFile=cloudbase-database-ca.crt"
+redis-cli -h 203.0.113.10 -p 31007 --tls --cacert cloudbase-database-ca.crt</pre>
+<p>MySQL and MariaDB use their own certificate, so this option is not offered for them.</p>
+
+<h3>Turning TLS off</h3>
+<p>Only for a client that cannot do TLS. Data then travels readable over the internet, for Redis and Valkey including the password. Keep the allowlist tight.</p>
+
+<h2>GUI clients</h2>
+<table>
+  <tr><th>Client</th><th>Settings</th></tr>
+  <tr><td>pgAdmin, DBeaver, TablePlus (PostgreSQL)</td><td>Host = server IP, port = 31000+id, SSL mode <em>require</em> (or <em>verify-full</em> with the CA file)</td></tr>
+  <tr><td>MySQL Workbench, TablePlus (MySQL)</td><td>Use SSL: <em>Require</em></td></tr>
+  <tr><td>MongoDB Compass</td><td>Paste the copied URL</td></tr>
+  <tr><td>RedisInsight</td><td>Use TLS on; for verification add the CA as the CA certificate</td></tr>
+</table>
+
+<h2>Without public access</h2>
+<p>An SSH tunnel needs no open port at all: <code>ssh -L 5432:&lt;container-ip&gt;:5432 you@server</code>, then connect to <code>localhost:5432</code>. Find the container IP with <code>docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' cloudbase-db-5</code>.</p>
+`,
+},
+
+{
+  slug: 'database-backups',
+  group: 'Databases',
+  title: 'Backups, restore & migration',
+  summary: 'Automatic backups, restoring, moving data in from another host, and encrypted off-site copies.',
+  keywords: 'database backup restore dump import migrate atlas mongodump pg_dump mysqldump s3 r2 backblaze offsite encryption key',
+  lead: 'Every database is backed up daily by default and can be restored with a few clicks. Backups live on the primary and, if you add a bucket, also in S3-compatible storage, optionally encrypted.',
+  body: `
+<h2>Automatic and manual backups</h2>
+<p>New databases are backed up every day at 03:00 (server time), keeping the last 7 automatic backups. Change this on the <strong>Backups</strong> tab: every hour, every day at a chosen hour, or off. <strong>Back up now</strong> makes one immediately. Manual backups and uploads are kept until you delete them.</p>
+<table>
+  <tr><th>Engine</th><th>Backup format</th></tr>
+  <tr><td>PostgreSQL</td><td><code>pg_dump -Fc</code> (custom format, compressed)</td></tr>
+  <tr><td>MySQL / MariaDB</td><td>SQL dump of the database, gzipped</td></tr>
+  <tr><td>MongoDB</td><td><code>mongodump --archive --gzip</code></td></tr>
+  <tr><td>Redis / Valkey</td><td>RDB snapshot, gzipped</td></tr>
+</table>
+<p>Backups are stored on the primary in <code>~/.cloudbase/backups/&lt;id&gt;/</code> (readable only by Cloudbase), also for databases on other nodes, and are kept after the database is deleted. Cloudbase also makes one automatically before a restore, before an update and, unless you turn it off, before deleting.</p>
+
+<h2>Restoring</h2>
+<ol>
+  <li>On the <strong>Backups</strong> tab, click the restore icon next to a backup.</li>
+  <li>Keep <strong>Make a safety backup first</strong> on, type the database name and confirm.</li>
+</ol>
+<p>The data in the backup replaces the current data. Linked apps keep running and see the restored data. For Redis and Valkey the database stops for a moment: the backup is loaded in a temporary helper container, and the previous data is put back if anything fails.</p>
+<p><strong>Backups of other or deleted databases</strong> with the same engine can be restored too. That is also how you move a database to another node: back up, create a database on the new node, restore, relink the apps.</p>
+
+<h2>Migrating from another host</h2>
+<p>Make a dump on the old host, then use <strong>Upload dump</strong> on the Backups tab and restore it.</p>
+<pre># MongoDB Atlas / any MongoDB
+mongodump --uri "mongodb+srv://user:pass@cluster.example.mongodb.net" --archive=dump.archive.gz --gzip
+
+# PostgreSQL (Supabase, Neon, RDS, …)
+pg_dump -Fc "postgresql://user:pass@host:5432/dbname" -f dump.dump
+
+# MySQL / MariaDB
+mysqldump --single-transaction --routines --triggers -h host -u user -p dbname | gzip &gt; dump.sql.gz</pre>
+<p>MongoDB users and system data (<code>admin.*</code>) are never restored, so the database keeps its own login. A dump of one MongoDB database is renamed into this database's name automatically. Redis dumps from elsewhere (an <code>.rdb</code> file) can be uploaded too.</p>
+
+<h2>Off-site copies</h2>
+<p>A broken disk on the primary takes its backups with it. Under <strong>Settings → Backup storage</strong>, add an S3-compatible bucket and every backup is copied there right after it is made. Earlier backups are uploaded too, failed uploads are retried every hour, and deleting a backup removes both copies. If the local file is gone, restoring and downloading fetch it from the bucket.</p>
+<table>
+  <tr><th>Provider</th><th>Endpoint</th><th>Region</th></tr>
+  <tr><td>AWS S3</td><td>empty</td><td>e.g. <code>eu-central-1</code></td></tr>
+  <tr><td>Cloudflare R2</td><td><code>https://&lt;account-id&gt;.r2.cloudflarestorage.com</code></td><td><code>auto</code></td></tr>
+  <tr><td>Backblaze B2</td><td><code>https://s3.&lt;region&gt;.backblazeb2.com</code></td><td>e.g. <code>eu-central-003</code></td></tr>
+  <tr><td>MinIO</td><td>your MinIO URL</td><td>empty</td></tr>
+</table>
+<p>Create an access key that can only reach this bucket, fill in the form, click <strong>Test connection</strong> (it writes, reads and removes a small file) and save. Use a separate folder per Cloudbase server.</p>
+
+<h3>Encryption</h3>
+<p>Turn on <strong>Encrypt backups before upload</strong>: each backup is encrypted on the server (AES-256-GCM) and the bucket only holds unreadable files. Copies on the server stay as they are.</p>
+<div class="callout callout--warn"><p>Save the key (<strong>Show key</strong>) in a password manager, outside this server. If the server's disk fails, the key is needed to read the backups in the bucket. On a new server, paste it under <strong>Add a key from another server</strong>.</p></div>
+`,
+},
+
+{
+  slug: 'database-maintenance',
+  group: 'Databases',
+  title: 'Updates & maintenance',
+  summary: 'Install new patch releases, change limits and passwords, read logs and usage charts.',
+  keywords: 'database update upgrade version patch major collation reindex password rotate limits memory logs charts restart',
+  lead: 'Most maintenance is a button on the database page. Anything that replaces the container keeps the data and restarts the database for a few seconds.',
+  body: `
+<h2>Updates</h2>
+<p>A database runs a major version (PostgreSQL 18, MySQL 8.4, MongoDB 8.0, …). Twice a day Cloudbase checks Docker Hub for a newer patch release of that version and shows <strong>update available</strong> on the database and in the overview. <strong>Settings → Version</strong> shows the exact running version; <strong>Check now</strong> checks right away.</p>
+<p><strong>Update</strong> then:</p>
+<ol>
+  <li>makes a backup;</li>
+  <li>downloads the new image;</li>
+  <li>replaces the container, on the same volume;</li>
+  <li>for PostgreSQL, rebuilds indexes when the new image sorts text differently (a "collation version mismatch" after a newer operating system in the image);</li>
+  <li>if the new version is not healthy within 10 minutes, puts the previous image back by itself.</li>
+</ol>
+<p>Expect a short interruption while the container is replaced: seconds for Redis and PostgreSQL, longer for MySQL. Run updates when traffic is low.</p>
+
+<h3>New major versions</h3>
+<p>A new major version (PostgreSQL 17 → 18) cannot run on the old data files. Move with a dump: <strong>Back up now</strong>, create a database with the new version, restore the backup into it, relink your apps, then delete the old database.</p>
+
+<h2>Limits</h2>
+<p><strong>Settings → Resources</strong> changes the CPU and memory limits. Saving replaces the container (the data stays), because the memory limit also sizes the engine's caches.</p>
+
+<h2>Changing the password</h2>
+<p><strong>Settings → Password → Change password</strong> gives the app user a new random password. The old one stops working at once. Tick <strong>Restart linked apps now</strong> so they pick up the new URL; update external clients (pgAdmin, scripts) yourself. MongoDB, Redis and Valkey restart briefly to apply it.</p>
+
+<h2>Start, stop, restart</h2>
+<p>A stopped database stays stopped, also after a reboot, until you start it. Linked apps lose their connection meanwhile.</p>
+
+<h2>Logs and usage</h2>
+<ul>
+  <li><strong>Logs</strong> shows the last 300 lines of the database's own log and refreshes every 5 seconds while open.</li>
+  <li><strong>Overview → Usage</strong> charts CPU, memory and data size for the last hour, day or week. Cloudbase samples every minute and keeps 7 days.</li>
+</ul>
+`,
+},
+
+{
+  slug: 'database-security',
+  group: 'Databases',
+  title: 'Database security',
+  summary: 'What protects your data by default, what is encrypted where, and a checklist for production.',
+  keywords: 'database security safe encryption tls password allowlist firewall checklist risks',
+  lead: 'Databases are closed by default and every way in needs a password. This page lists what Cloudbase does for you and what you should do yourself before storing important data.',
+  body: `
+<h2>What Cloudbase does</h2>
+<ul>
+  <li>No database port is published on the server. Only linked apps on the internal network, and public access if you turn it on, can connect.</li>
+  <li>Every database gets a random 32-character password. Passwords are stored encrypted; viewing one needs <code>databases.credentials</code> and is logged.</li>
+  <li>Public access is off by default and, when on, requires TLS and is limited to the IP addresses you allow.</li>
+  <li>Backups are readable only by Cloudbase on the server, can be copied off-site, and can be encrypted before upload.</li>
+  <li>A missing data volume is never silently replaced by an empty database, and ids are never reused.</li>
+</ul>
+
+<h2>What is encrypted where</h2>
+<table>
+  <tr><th>Path</th><th>Encrypted</th></tr>
+  <tr><td>Your computer → public port</td><td>Yes, with TLS (except MariaDB 10.11, or when you turn TLS off)</td></tr>
+  <tr><td>App → database on the same node</td><td>No, but it never leaves the server</td></tr>
+  <tr><td>Node ↔ primary (other-node apps, public access to a remote database)</td><td>Yes, when the panel and nodes use https</td></tr>
+  <tr><td>Backups on the primary</td><td>No (file permissions only)</td></tr>
+  <tr><td>Backups in the bucket</td><td>Yes, with <em>Encrypt backups before upload</em></td></tr>
+</table>
+
+<h2>Checklist</h2>
+<ul>
+  <li>Use the panel only over https and close port 7823.</li>
+  <li>Let nodes connect to the primary over https.</li>
+  <li>Keep the allowlist to your own addresses; turn public access off when you don't need it.</li>
+  <li>Turn on <em>Verify the server certificate</em> when connecting from untrusted networks.</li>
+  <li>Set up off-site backups with encryption, and store the key outside the server.</li>
+  <li>Install database updates when Cloudbase shows them.</li>
+  <li>Secure the server itself: SSH with keys only, system updates, a firewall. Anyone with root on the primary can read everything, including backups and the key that protects stored passwords.</li>
+  <li>Give teammates their own login with only the database permissions they need.</li>
+</ul>
+`,
+},
+
+{
+  slug: 'database-troubleshooting',
+  group: 'Databases',
+  title: 'Database troubleshooting',
+  summary: 'Fixes for slow starts, connection timeouts, authentication errors, TLS errors and failed backups.',
+  keywords: 'database troubleshooting error timeout authentication failed unhealthy creating stuck rate limit tls restore failed',
+  lead: 'Most problems show a message on the database page. The Logs tab has the database’s own output; the server log is in ~/.cloudbase/logs/server.log.',
+  body: `
+<h2>Starting</h2>
+<table>
+  <tr><th>Symptom</th><th>Cause and fix</th></tr>
+  <tr><td>Stays on <em>Creating</em> for minutes</td><td>The image is downloading; the progress shows next to the status. On a Raspberry Pi with several new databases this can take 10+ minutes, as images are fetched one at a time.</td></tr>
+  <tr><td>Error <code>toomanyrequests</code></td><td>Docker Hub's download limit for anonymous users. Run <code>docker login</code> on that node with a free Docker account.</td></tr>
+  <tr><td><em>Starting</em> or <em>Unhealthy</em> right after creating</td><td>The first start sets up the data directory, which takes minutes on small servers (MySQL on a Pi: 3+ minutes). Failed health checks only count after 10 minutes.</td></tr>
+  <tr><td>MongoDB keeps restarting on a Raspberry Pi 4</td><td>MongoDB 5+ needs an ARMv8.2 CPU (Pi 5). Use another engine on a Pi 4.</td></tr>
+  <tr><td>"Data volume … is missing"</td><td>The volume was removed outside Cloudbase. Restore a backup into a new database.</td></tr>
+  <tr><td>"Data volume … belongs to an earlier database"</td><td>A volume with this name is left from a deleted database. Remove it (<code>docker volume rm …</code>) if you don't need its data.</td></tr>
+</table>
+
+<h2>Connecting</h2>
+<table>
+  <tr><th>Symptom</th><th>Cause and fix</th></tr>
+  <tr><td>App can't resolve <code>cloudbase-db-…</code></td><td>The app was not restarted after linking, or runs outside Cloudbase.</td></tr>
+  <tr><td>App on another node times out</td><td>A firewall on that node blocks the proxy ports: <code>sudo ufw allow in on cloudbase0 proto tcp to any port 30000:30999</code>.</td></tr>
+  <tr><td>Public access times out</td><td>The port is closed in the firewall, security group or router, or you used a domain behind the Cloudflare proxy instead of the server IP.</td></tr>
+  <tr><td>Public access: connection closed immediately</td><td>Your IP is not in the allowlist. Check the address your client really uses (VPN, IPv6).</td></tr>
+  <tr><td>"Authentication failed"</td><td>An old URL or password (copy it again), or for MongoDB a URL without <code>authSource=admin</code>.</td></tr>
+  <tr><td>"This database requires TLS" / error 3159</td><td>The client connects without TLS. Use the copied URL or enable SSL/TLS in the client.</td></tr>
+  <tr><td>Certificate errors with verification on</td><td>Download <code>cloudbase-database-ca.crt</code> again and point the client to it; use the server IP as host.</td></tr>
+</table>
+
+<h2>Backups</h2>
+<table>
+  <tr><th>Symptom</th><th>Cause and fix</th></tr>
+  <tr><td>"The database must be running"</td><td>Backups and restores run inside the database container. Start it first.</td></tr>
+  <tr><td>Restore of an uploaded dump fails</td><td>Check the format: PostgreSQL custom or plain SQL, MySQL SQL, MongoDB <code>--archive</code>, Redis RDB. The error shows the tool's message.</td></tr>
+  <tr><td>"off-site upload failed"</td><td>Hover the label for the reason (bucket name, key permissions, endpoint, region). Use <strong>Test connection</strong>; failed uploads are retried every hour.</td></tr>
+  <tr><td>"encrypted with key …, which this server does not have"</td><td>Add the key from the server that made the backup under <strong>Settings → Backup storage</strong>.</td></tr>
+</table>
+`,
+},
+
 
 /* ─── Networking ───────────────────────────────────────────────────────── */
 

@@ -112,7 +112,16 @@ async def _ensure_local(backup: DatabaseBackup) -> bool:
     if not db_offsite.is_active(settings):
         return False
     try:
-        await asyncio.to_thread(db_offsite.download, settings, backup.offsite_key, _path(backup))
+        if backup.offsite_key.endswith(db_offsite.ENCRYPTED_SUFFIX):
+            encrypted = _path(backup) + db_offsite.ENCRYPTED_SUFFIX
+            await asyncio.to_thread(db_offsite.download, settings, backup.offsite_key, encrypted)
+            try:
+                await asyncio.to_thread(db_offsite.decrypt_file, encrypted, _path(backup), db_offsite.keyring(settings))
+                os.chmod(_path(backup), 0o600)
+            finally:
+                os.remove(encrypted)
+        else:
+            await asyncio.to_thread(db_offsite.download, settings, backup.offsite_key, _path(backup))
         log.info("[offsite] restored local copy of backup %s from storage", backup.id)
         return True
     except Exception as e:
@@ -131,13 +140,24 @@ async def _offsite_upload(backup_id: int) -> None:
             return
         key = db_offsite.object_key(settings, backup.file_name)
         path = _path(backup)
+    encrypted_path = None
     try:
-        await asyncio.to_thread(db_offsite.upload, settings, path, key)
+        if settings.get("encrypt"):
+            secret = db_offsite.current_key(settings)
+            if not secret:
+                raise RuntimeError("Encryption is on but no key is set")
+            encrypted_path = path + db_offsite.ENCRYPTED_SUFFIX
+            await asyncio.to_thread(db_offsite.encrypt_file, path, encrypted_path, secret)
+            key += db_offsite.ENCRYPTED_SUFFIX
+        await asyncio.to_thread(db_offsite.upload, settings, encrypted_path or path, key)
         status, error = "uploaded", None
         log.info("[offsite] backup %s uploaded to %s", backup_id, key)
     except Exception as e:
         status, error = "failed", str(e)[:1000]
         log.warning("[offsite] backup %s upload failed: %s", backup_id, e)
+    finally:
+        if encrypted_path and os.path.exists(encrypted_path):
+            os.remove(encrypted_path)
     async with AsyncSessionLocal() as db:
         backup = await db.get(DatabaseBackup, backup_id)
         if backup:
@@ -338,7 +358,9 @@ async def list_backups(
         ).order_by(DatabaseBackup.created_at.desc()).limit(50)
     )).scalars().all()
     engine = db_engines.get_engine(database.engine)
+    storage = await db_offsite.load(db)
     return {
+        "offsite": {"enabled": db_offsite.is_active(storage), "bucket": storage.get("bucket") or None},
         "backups": [_as_dict(b) for b in own],
         "others": [_as_dict(b) for b in others],
         "schedule": database.backup_schedule,
@@ -538,6 +560,7 @@ async def agent_download_backup(
 
 class StorageSettingsRequest(BaseModel):
     enabled: bool = False
+    encrypt: bool = False
     endpoint: str = ""
     region: str = ""
     bucket: str = ""
@@ -575,6 +598,8 @@ async def put_storage(
     settings = db_offsite.merge_update(await db_offsite.load(db), req.model_dump())
     if settings.get("enabled") and not db_offsite.is_active(settings):
         raise HTTPException(400, "Fill in the bucket, access key and secret key to turn off-site backups on")
+    if settings.get("encrypt") and not settings.get("current_key_id"):
+        settings = db_offsite.add_key(settings, db_offsite.new_key(), make_current=True)
     await db_offsite.save(db, settings)
     await log_audit(db, "system.backup_storage", actor=actor, detail={
         "enabled": bool(settings.get("enabled")), "endpoint": settings.get("endpoint"), "bucket": settings.get("bucket"),
@@ -582,6 +607,46 @@ async def put_storage(
     await db.commit()
     if db_offsite.is_active(settings):
         asyncio.create_task(_offsite_catch_up(limit=20))
+    return db_offsite.public_view(settings)
+
+
+class KeyRequest(BaseModel):
+    key: str
+    make_current: bool = False
+
+
+@storage_router.post("/key/reveal")
+async def reveal_key(
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("system.manage")),
+    actor: str = Depends(_auth.get_current_actor),
+):
+    """The current encryption key, to store somewhere safe off this server."""
+    settings = await db_offsite.load(db)
+    key = db_offsite.current_key(settings)
+    if not key:
+        raise HTTPException(404, "No encryption key yet; turn encryption on first")
+    await log_audit(db, "system.backup_key_reveal", actor=actor, detail={"key_id": settings.get("current_key_id")})
+    await db.commit()
+    return {"key": key, "key_id": settings.get("current_key_id")}
+
+
+@storage_router.post("/key")
+async def add_key(
+    req: KeyRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("system.manage")),
+    actor: str = Depends(_auth.get_current_actor),
+):
+    """Add a key, e.g. from an old server, so its encrypted backups can be read."""
+    try:
+        kid = db_offsite.key_id(req.key.strip())
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    settings = db_offsite.add_key(await db_offsite.load(db), req.key.strip(), req.make_current)
+    await db_offsite.save(db, settings)
+    await log_audit(db, "system.backup_key_add", actor=actor, detail={"key_id": kid, "current": req.make_current})
+    await db.commit()
     return db_offsite.public_view(settings)
 
 

@@ -33,6 +33,9 @@ class Engine:
     restore: Optional[Callable[[dict], str]] = None
     # Turn a public URL into one that uses TLS (the public port requires it by default).
     tls_url: Optional[Callable[[str], str]] = None
+    # Same, but also verifying the server against the Cloudbase CA file (None when the
+    # engine encrypts with its own certificate, as MySQL/MariaDB do).
+    tls_verify_url: Optional[Callable[[str], str]] = None
     # Restore with a helper container instead of a command in the running one
     # (Redis / Valkey load their data only at startup).
     restore_via_helper: Optional[dict] = None  # {"server": ..., "cli": ...}
@@ -149,6 +152,7 @@ ENGINES: dict[str, Engine] = {
                 "dump": 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc --no-owner'},
         restore=_pg_restore,
         tls_url=lambda u: _with_param(u, "sslmode=require"),
+        tls_verify_url=lambda u: _with_param(u, "sslmode=verify-full&sslrootcert=cloudbase-database-ca.crt"),
     ),
     "mysql": Engine(
         key="mysql",
@@ -212,6 +216,7 @@ ENGINES: dict[str, Engine] = {
         backup={"ext": "rdb.gz", "gzip": True, "dump": _redis_dump("redis-cli")},
         restore_via_helper={"server": "redis-server", "cli": "redis-cli"},
         tls_url=lambda u: "rediss://" + u.split("://", 1)[1],
+        tls_verify_url=lambda u: "rediss://" + u.split("://", 1)[1],  # pass the CA to the client (--cacert)
     ),
     "valkey": Engine(
         key="valkey",
@@ -228,6 +233,7 @@ ENGINES: dict[str, Engine] = {
         backup={"ext": "rdb.gz", "gzip": True, "dump": _redis_dump("valkey-cli")},
         restore_via_helper={"server": "valkey-server", "cli": "valkey-cli"},
         tls_url=lambda u: "rediss://" + u.split("://", 1)[1],
+        tls_verify_url=lambda u: "rediss://" + u.split("://", 1)[1],  # pass the CA to the client (--cacert)
     ),
     "mongodb": Engine(
         key="mongodb",
@@ -250,6 +256,7 @@ ENGINES: dict[str, Engine] = {
         restore=_mongo_restore,
         # Self-signed by the Cloudbase CA: encrypt without verifying, or use tlsCAFile.
         tls_url=lambda u: _with_param(u, "tls=true&tlsAllowInvalidCertificates=true"),
+        tls_verify_url=lambda u: _with_param(u, "tls=true&tlsCAFile=cloudbase-database-ca.crt"),
     ),
 }
 
