@@ -15,4 +15,5 @@ python-jose[cryptography]>=3.3.0
 cryptography>=41.0.0
 bcrypt>=4.0.0
 docker>=7.0.0
+boto3>=1.34  # off-site database backups in S3-compatible storage
 dnspython>=2.4  # authoritative DNS lookups for the domain wizard (no stale resolver caches)

@@ -130,6 +130,7 @@ async def init_db():
         for col, definition in [
             ("public_enabled",   "BOOLEAN NOT NULL DEFAULT 0"),
             ("public_allowlist", "TEXT"),
+            ("public_tls",       "BOOLEAN NOT NULL DEFAULT 1"),
             ("backup_schedule",  "VARCHAR(10) NOT NULL DEFAULT 'daily'"),
             ("backup_hour",      "INTEGER NOT NULL DEFAULT 3"),
             ("backup_retention", "INTEGER NOT NULL DEFAULT 7"),
@@ -138,6 +139,20 @@ async def init_db():
                 continue
             await conn.exec_driver_sql(
                 f"ALTER TABLE databases ADD COLUMN {col} {definition}"
+            )
+
+        result = await conn.exec_driver_sql("PRAGMA table_info(database_backups)")
+        existing_backup_cols = {row[1] for row in result.fetchall()}
+        for col, definition in [
+            ("offsite_status", "VARCHAR(10)"),
+            ("offsite_key",    "VARCHAR(500)"),
+            ("offsite_error",  "TEXT"),
+            ("offsite_at",     "DATETIME"),
+        ]:
+            if col in existing_backup_cols:
+                continue
+            await conn.exec_driver_sql(
+                f"ALTER TABLE database_backups ADD COLUMN {col} {definition}"
             )
 
         # nodes — index auth_token for fast per-request token lookups

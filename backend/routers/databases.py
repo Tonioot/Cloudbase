@@ -11,10 +11,10 @@ import logging
 import re
 import secrets
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.exc import IntegrityError
@@ -28,7 +28,7 @@ import db_proxy
 from audit import log_audit
 from database import get_db, AsyncSessionLocal
 from env_crypto import encrypt_text, decrypt_env
-from models import Application, ApplicationReplica, Database, DatabaseLink, Node, SystemConfig
+from models import Application, ApplicationReplica, Database, DatabaseLink, DatabaseStatsHistory, Node, SystemConfig
 from routers.nodes import queue_node_command, wait_for_node_command, get_node_by_token_or_401
 
 router = APIRouter(prefix="/api/databases", tags=["databases"])
@@ -302,12 +302,13 @@ def _as_dict(database: Database, node: Optional[Node], link_count: int = 0) -> d
         "operation": _operation.get(database.id),
         "progress": _progress(database, node),
         "backup_schedule": database.backup_schedule,
-        "can_restore": bool(engine and engine.restore),
+        "can_restore": bool(engine and engine.can_restore),
         "public_enabled": bool(database.public_enabled),
         "public_allowlist": _allowlist(database),
         "public_port": _safe_public_port(database.id),
         "public_host": _public_host(),
         "public_listening": db_proxy.public_listening(database.id),
+        "public_tls": bool(database.public_tls),
         "link_count": link_count,
         "created_at": database.created_at.isoformat() if database.created_at else None,
     }
@@ -343,6 +344,7 @@ class UpdateDatabaseRequest(BaseModel):
 class PublicAccessRequest(BaseModel):
     enabled: bool
     allowlist: list[str] = Field(default_factory=list, max_length=100)
+    tls: Optional[bool] = None  # None = keep the current setting
 
 
 class LinkRequest(BaseModel):
@@ -355,6 +357,15 @@ class LinkRequest(BaseModel):
 @router.get("/engines")
 async def list_engines(_user: dict = Depends(_auth.require_permission("databases.view"))):
     return db_engines.catalog()
+
+
+@router.get("/tls-ca.crt")
+async def tls_ca(_user: dict = Depends(_auth.require_permission("databases.view"))):
+    """The CA that signs the public database ports, to verify the server."""
+    import db_tls
+    pem = await asyncio.to_thread(db_tls.ca_pem)
+    return Response(pem, media_type="application/x-pem-file",
+                    headers={"Content-Disposition": 'attachment; filename="cloudbase-database-ca.crt"'})
 
 
 @router.get("/my-ip")
@@ -637,7 +648,9 @@ async def get_credentials(
         result["root_password"] = creds["root_password"]
     public_port = _safe_public_port(database.id)
     if database.public_enabled and public_port and _public_host():
-        result["public_url"] = db_engines.get_engine(database.engine).url(creds, _public_host(), public_port)
+        engine = db_engines.get_engine(database.engine)
+        url = engine.url(creds, _public_host(), public_port)
+        result["public_url"] = engine.tls_url(url) if database.public_tls and engine.tls_url else url
     return result
 
 
@@ -659,14 +672,92 @@ async def set_public_access(
         raise HTTPException(409, "This database id is outside the db_public port range in config.yaml")
     database.public_enabled = req.enabled
     database.public_allowlist = json.dumps(entries)
+    if req.tls is not None:
+        database.public_tls = req.tls
     await log_audit(db, "database.public_access", actor=actor, detail={
         "database_id": database.id, "name": database.name, "enabled": req.enabled, "allowlist": entries,
+        "tls": bool(database.public_tls),
     })
     await db.commit()
     await push_proxies()
     node = await db.get(Node, database.node_id)
     links = await _links_for(database.id, db)
     return {**_as_dict(database, node, len(links)), "links": links}
+
+
+@router.post("/{database_id}/rotate-password")
+async def rotate_password(
+    database_id: int,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("databases.credentials")),
+    actor: str = Depends(_auth.get_current_actor),
+):
+    """Give the app user a new password. The old one stops working at once; linked
+    apps pick up the new URL when they restart."""
+    database = await _get_or_404(database_id, db)
+    _require_idle(database)
+    node = await _node_for(database, db)
+    if not _node_reachable(node):
+        raise HTTPException(409, f"Node '{node.name}' is offline")
+    if database.status not in ("running", "unhealthy"):
+        raise HTTPException(409, "The database must be running to change its password")
+
+    spec = _spec(database)
+    new_password = secrets.token_urlsafe(24)
+    _busy.add(database_id)
+    _operation[database_id] = "Changing the password…"
+    try:
+        await _run_on_node(
+            node,
+            lambda: db_manager.rotate_password(spec, new_password),
+            "db_rotate_password",
+            {"spec": spec, "new_password": new_password},
+        )
+        creds = {**spec["credentials"], "password": new_password}
+        database.credentials = encrypt_text(json.dumps(creds))
+        await log_audit(db, "database.rotate_password", actor=actor, detail={"database_id": database.id, "name": database.name})
+        await db.commit()
+    except Exception as e:
+        raise HTTPException(502, f"The password was not changed: {e}")
+    finally:
+        _busy.discard(database_id)
+        _operation.pop(database_id, None)
+
+    await db_links.refresh(db)
+    if database.engine in db_manager.ROTATE_RECREATES:
+        # The server command / environment carries the password: new container, same data.
+        database.status = "starting"
+        await db.commit()
+        _spawn(database.id, lambda: _start_operation(database.id, "recreate"))
+    links = await _links_for(database_id, db)
+    return {"ok": True, "apps": [{"id": l["app_id"], "name": l["app_name"]} for l in links]}
+
+
+@router.get("/{database_id}/stats/history")
+async def stats_history(
+    database_id: int,
+    hours: float = Query(default=24, ge=0.25, le=24 * 7),
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("databases.view")),
+):
+    """CPU, memory and data-size samples, oldest first, at most ~300 points."""
+    since = datetime.utcnow() - timedelta(hours=hours)
+    rows = (await db.execute(
+        select(DatabaseStatsHistory)
+        .where(DatabaseStatsHistory.database_id == database_id, DatabaseStatsHistory.timestamp >= since)
+        .order_by(DatabaseStatsHistory.timestamp.asc())
+    )).scalars().all()
+    step = max(1, len(rows) // 300)
+    samples = []
+    for i in range(0, len(rows), step):
+        chunk = rows[i:i + step]
+        avg = lambda key: (lambda vals: round(sum(vals) / len(vals), 2) if vals else None)(
+            [getattr(r, key) for r in chunk if getattr(r, key) is not None])
+        samples.append({
+            "ts": int(chunk[-1].timestamp.replace(tzinfo=timezone.utc).timestamp() * 1000),
+            "cpu": avg("cpu_percent"), "mem": avg("memory_mb"), "disk": avg("disk_mb"),
+        })
+    return {"hours": hours, "samples": samples}
 
 
 @router.get("/{database_id}/logs")
@@ -924,7 +1015,12 @@ async def push_proxies() -> None:
         local = (await db.execute(select(Node).where(Node.is_local == True))).scalar_one_or_none()
     global _public_ip
     _public_ip = local.public_host if local else None
-    await db_proxy.reconcile_public([{"database_id": d.id, "allowlist": _allowlist(d)} for d in public])
+    hosts = [h for h in (_public_ip, "localhost") if h]
+    await db_proxy.reconcile_public([
+        {"database_id": d.id, "allowlist": _allowlist(d), "engine": d.engine,
+         "tls": bool(d.public_tls), "hosts": hosts}
+        for d in public
+    ])
     for node_id in list(_control):
         await _send_control(node_id, {"type": "proxies", "database_ids": sorted(_desired_proxies.get(node_id, set()))})
 
@@ -1039,3 +1135,64 @@ async def db_proxy_ws(database_id: int, websocket: WebSocket):
         await client.close()
         return
     await db_proxy.pipe(client, upstream)
+
+
+# ── Usage history ─────────────────────────────────────────────────────────────
+
+STATS_INTERVAL_SECONDS = 60
+STATS_DISK_EVERY = 10          # measure the data size every 10th sample (du is slow)
+STATS_RETENTION_DAYS = 7
+
+
+async def _stats_tick(with_disk: bool) -> None:
+    async with AsyncSessionLocal() as db:
+        databases = (await db.execute(
+            select(Database).where(Database.status.in_(["running", "unhealthy", "starting"]))
+        )).scalars().all()
+        nodes = {n.id: n for n in (await db.execute(select(Node))).scalars().all()}
+    by_node: dict[int, list[dict]] = {}
+    for d in databases:
+        by_node.setdefault(d.node_id, []).append(
+            {"database_id": d.id, "data_dir": _data_dir(d) if with_disk else None})
+    now = datetime.utcnow()
+    rows = []
+    for node_id, items in by_node.items():
+        node = nodes.get(node_id)
+        if node is None or not _node_reachable(node):
+            continue
+        try:
+            result = await _run_on_node(node, lambda items=items: {"stats": db_manager.stats_many(items)},
+                                        "db_stats_many", {"items": items}, timeout=60)
+        except Exception as e:
+            log.debug("[db-stats] node %s: %s", node.name, e)
+            continue
+        for db_id, s in (result.get("stats") or {}).items():
+            rows.append(DatabaseStatsHistory(
+                database_id=int(db_id), timestamp=now,
+                cpu_percent=s.get("cpu_percent"), memory_mb=s.get("memory_mb"), disk_mb=s.get("disk_mb"),
+            ))
+    if rows:
+        async with AsyncSessionLocal() as db:
+            db.add_all(rows)
+            await db.commit()
+
+
+async def database_stats_sampler() -> None:
+    """Sample database usage every minute for the history charts (primary only)."""
+    from sqlalchemy import delete as _delete
+    await asyncio.sleep(45)
+    tick = 0
+    while True:
+        try:
+            await _stats_tick(with_disk=tick % STATS_DISK_EVERY == 0)
+            if tick % 60 == 0:
+                async with AsyncSessionLocal() as db:
+                    await db.execute(_delete(DatabaseStatsHistory).where(
+                        DatabaseStatsHistory.timestamp < datetime.utcnow() - timedelta(days=STATS_RETENTION_DAYS)))
+                    await db.commit()
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            log.warning("[db-stats] error: %s", e)
+        tick += 1
+        await asyncio.sleep(STATS_INTERVAL_SECONDS)

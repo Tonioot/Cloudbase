@@ -99,6 +99,7 @@ function railHTML(active) {
       ${setting('btn-pdm-nginx', 'domain', 'globe', 'Domain &amp; SSL', 'data-perm="system.manage"')}
       ${setting('btn-system-settings', 'system', 'sliders', 'System settings', 'data-perm="system.manage"')}
       ${setting('btn-manage-users', 'users', 'users', 'Users &amp; roles', 'style="display:none"')}
+      ${setting('btn-backup-storage', 'backups', 'database', 'Backup storage', 'data-perm="system.manage"')}
       ${setting('btn-github-tokens', 'tokens', 'key', 'GitHub tokens', 'data-perm="tokens.manage"')}
       ${setting('btn-export-import', 'transfer', 'transfer', 'Export / import', 'data-perm="apps.configure"')}
     </nav>
@@ -279,6 +280,7 @@ function paletteCommands() {
     ['btn-pdm-nginx', 'Domain & SSL', ICONS.globe, 'nginx ssl certificate subdomain'],
     ['btn-system-settings', 'System settings', ICONS.sliders, 'ports limits session'],
     ['btn-manage-users', 'Users & roles', ICONS.users, 'permissions accounts'],
+    ['btn-backup-storage', 'Backup storage', ICONS.database, 's3 r2 backblaze offsite off-site bucket'],
     ['btn-github-tokens', 'GitHub tokens', ICONS.key, 'private repository'],
     ['btn-export-import', 'Export / import apps', ICONS.transfer, 'backup json'],
     ['btn-change-password', 'Account & password', ICONS.lock, 'change password'],

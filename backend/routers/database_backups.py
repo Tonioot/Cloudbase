@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import auth as _auth
 import db_engines
 import db_manager
+import db_offsite
 from audit import log_audit
 from database import AsyncSessionLocal, DATA_DIR, get_db
 from models import Database, DatabaseBackup, Node
@@ -28,6 +29,7 @@ from routers.nodes import get_node_by_token_or_401
 
 router = APIRouter(prefix="/api/databases", tags=["database-backups"])
 agent_router = APIRouter(prefix="/api/nodes/agent/databases", tags=["database-backups"])
+storage_router = APIRouter(prefix="/api/system/backup-storage", tags=["database-backups"])
 log = logging.getLogger("cloudbase.backups")
 
 BACKUP_DIR = os.path.join(DATA_DIR, "backups")
@@ -60,6 +62,8 @@ def _as_dict(b: DatabaseBackup) -> dict:
         "actor": b.actor,
         "created_at": b.created_at.isoformat() if b.created_at else None,
         "finished_at": b.finished_at.isoformat() if b.finished_at else None,
+        "offsite_status": b.offsite_status,
+        "offsite_error": b.offsite_error,
     }
 
 
@@ -81,6 +85,83 @@ def _remove_file(backup: DatabaseBackup) -> None:
             os.remove(_path(backup))
         except FileNotFoundError:
             pass
+
+
+async def _remove_everywhere(backup: DatabaseBackup) -> None:
+    """Delete the local file and the off-site copy."""
+    _remove_file(backup)
+    if backup.offsite_key:
+        async with AsyncSessionLocal() as db:
+            settings = await db_offsite.load(db)
+        if db_offsite.is_active(settings):
+            try:
+                await asyncio.to_thread(db_offsite.delete, settings, backup.offsite_key)
+            except Exception as e:
+                log.warning("[offsite] could not delete %s: %s", backup.offsite_key, e)
+
+
+async def _ensure_local(backup: DatabaseBackup) -> bool:
+    """Make sure the backup file is on this disk, fetching it from off-site storage
+    when the local copy is gone (e.g. after a disk replacement)."""
+    if os.path.exists(_path(backup)):
+        return True
+    if not backup.offsite_key:
+        return False
+    async with AsyncSessionLocal() as db:
+        settings = await db_offsite.load(db)
+    if not db_offsite.is_active(settings):
+        return False
+    try:
+        await asyncio.to_thread(db_offsite.download, settings, backup.offsite_key, _path(backup))
+        log.info("[offsite] restored local copy of backup %s from storage", backup.id)
+        return True
+    except Exception as e:
+        log.warning("[offsite] could not fetch backup %s: %s", backup.id, e)
+        return False
+
+
+async def _offsite_upload(backup_id: int) -> None:
+    """Copy one backup to S3-compatible storage, if configured."""
+    async with AsyncSessionLocal() as db:
+        settings = await db_offsite.load(db)
+        backup = await db.get(DatabaseBackup, backup_id)
+        if backup is None or backup.status != "success" or not db_offsite.is_active(settings):
+            return
+        if not os.path.exists(_path(backup)):
+            return
+        key = db_offsite.object_key(settings, backup.file_name)
+        path = _path(backup)
+    try:
+        await asyncio.to_thread(db_offsite.upload, settings, path, key)
+        status, error = "uploaded", None
+        log.info("[offsite] backup %s uploaded to %s", backup_id, key)
+    except Exception as e:
+        status, error = "failed", str(e)[:1000]
+        log.warning("[offsite] backup %s upload failed: %s", backup_id, e)
+    async with AsyncSessionLocal() as db:
+        backup = await db.get(DatabaseBackup, backup_id)
+        if backup:
+            backup.offsite_status, backup.offsite_error, backup.offsite_at = status, error, datetime.utcnow()
+            backup.offsite_key = key if status == "uploaded" else backup.offsite_key
+            await db.commit()
+
+
+async def _offsite_catch_up(limit: int = 3) -> None:
+    """Upload backups that have no off-site copy yet; retry failures hourly."""
+    async with AsyncSessionLocal() as db:
+        settings = await db_offsite.load(db)
+        if not db_offsite.is_active(settings):
+            return
+        retry_before = datetime.utcnow() - timedelta(hours=1)
+        pending = (await db.execute(
+            select(DatabaseBackup.id).where(
+                DatabaseBackup.status == "success",
+                (DatabaseBackup.offsite_status.is_(None))
+                | ((DatabaseBackup.offsite_status == "failed") & (DatabaseBackup.offsite_at < retry_before)),
+            ).order_by(DatabaseBackup.created_at.desc()).limit(limit)
+        )).scalars().all()
+    for backup_id in pending:
+        await _offsite_upload(backup_id)
 
 
 # ── Making a backup ───────────────────────────────────────────────────────────
@@ -135,6 +216,7 @@ async def run_backup(database_id: int, trigger: str, actor: Optional[str] = None
         backup.size_bytes, backup.sha256 = info["size_bytes"], info["sha256"]
         await db.commit()
     log.info("[backup] database %s: %s backup %s done (%s bytes)", database_id, trigger, backup_id, info["size_bytes"])
+    asyncio.create_task(_offsite_upload(backup_id))
     return backup_id
 
 
@@ -157,7 +239,7 @@ async def _apply_retention(database_id: int) -> None:
             )
         )).scalars().all()
         for backup in list(scheduled[max(database.backup_retention, 1):]) + list(old_failed):
-            _remove_file(backup)
+            await _remove_everywhere(backup)
             await db.delete(backup)
         await db.commit()
 
@@ -204,6 +286,8 @@ async def _restore(database_id: int, backup_id: int, safety_backup: bool, actor:
             node = await db.get(Node, database.node_id)
             spec = dbs._spec(database)
             path, source = _path(backup), backup.source_db_name
+        if not await _ensure_local(backup):
+            raise RuntimeError("The backup file is gone and no off-site copy could be fetched")
         if node.is_local:
             await asyncio.to_thread(db_manager.restore_from_file, spec, path, source)
         else:
@@ -260,7 +344,7 @@ async def list_backups(
         "schedule": database.backup_schedule,
         "hour": database.backup_hour,
         "retention": database.backup_retention,
-        "can_restore": engine.restore is not None,
+        "can_restore": engine.can_restore,
         "restore": _restores.get(database_id),
         "operation": dbs._operation.get(database_id),
     }
@@ -337,6 +421,8 @@ async def upload_backup(
         "database_id": database_id, "backup_id": backup.id, "file": original, "size": backup.size_bytes,
     })
     await db.commit()
+    if backup.status == "success":
+        asyncio.create_task(_offsite_upload(backup.id))
     return _as_dict(backup)
 
 
@@ -349,7 +435,7 @@ async def download_backup(
     actor: str = Depends(_auth.get_current_actor),
 ):
     backup = await _backup_or_404(database_id, backup_id, db)
-    if backup.status != "success" or not os.path.exists(_path(backup)):
+    if backup.status != "success" or not await _ensure_local(backup):
         raise HTTPException(404, "Backup file not available")
     await log_audit(db, "database.backup_download", actor=actor, detail={"database_id": database_id, "backup_id": backup_id})
     await db.commit()
@@ -367,7 +453,7 @@ async def delete_backup(
     backup = await _backup_or_404(database_id, backup_id, db)
     if backup.status == "running":
         raise HTTPException(409, "This backup is still running")
-    _remove_file(backup)
+    await _remove_everywhere(backup)
     await db.delete(backup)
     await log_audit(db, "database.backup_delete", actor=actor, detail={"database_id": database_id, "backup_id": backup_id})
     await db.commit()
@@ -384,10 +470,10 @@ async def restore_backup(
 ):
     database = await dbs._get_or_404(database_id, db)
     _require_backup_ready(database, await db.get(Node, database.node_id))
-    if db_engines.get_engine(database.engine).restore is None:
+    if not db_engines.get_engine(database.engine).can_restore:
         raise HTTPException(409, f"Restoring {database.engine} backups is not supported yet")
     backup = await db.get(DatabaseBackup, req.backup_id)
-    if backup is None or backup.status != "success" or not os.path.exists(_path(backup)):
+    if backup is None or backup.status != "success" or not (os.path.exists(_path(backup)) or backup.offsite_key):
         raise HTTPException(404, "Backup not found")
     if backup.engine != database.engine:
         raise HTTPException(400, f"This is a {backup.engine} backup; {database.name} runs {database.engine}")
@@ -443,9 +529,74 @@ async def agent_download_backup(
     if restore.get("state") != "running" or restore.get("backup_id") != backup_id:
         raise HTTPException(403, "No restore of this backup is in progress for this database")
     backup = await db.get(DatabaseBackup, backup_id)
-    if backup is None or not os.path.exists(_path(backup)):
+    if backup is None or not await _ensure_local(backup):
         raise HTTPException(404, "Backup file not available")
     return FileResponse(_path(backup), media_type="application/octet-stream")
+
+
+# ── Off-site storage settings ─────────────────────────────────────────────────
+
+class StorageSettingsRequest(BaseModel):
+    enabled: bool = False
+    endpoint: str = ""
+    region: str = ""
+    bucket: str = ""
+    prefix: str = "cloudbase/"
+    access_key: str = ""
+    secret_key: str = ""  # empty = keep the stored secret
+
+
+@storage_router.get("")
+async def get_storage(
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("system.manage")),
+):
+    settings = await db_offsite.load(db)
+    totals = (await db.execute(
+        select(DatabaseBackup.offsite_status).where(DatabaseBackup.status == "success")
+    )).scalars().all()
+    return {
+        **db_offsite.public_view(settings),
+        "counts": {
+            "uploaded": sum(1 for s in totals if s == "uploaded"),
+            "failed": sum(1 for s in totals if s == "failed"),
+            "pending": sum(1 for s in totals if s is None),
+        },
+    }
+
+
+@storage_router.put("")
+async def put_storage(
+    req: StorageSettingsRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("system.manage")),
+    actor: str = Depends(_auth.get_current_actor),
+):
+    settings = db_offsite.merge_update(await db_offsite.load(db), req.model_dump())
+    if settings.get("enabled") and not db_offsite.is_active(settings):
+        raise HTTPException(400, "Fill in the bucket, access key and secret key to turn off-site backups on")
+    await db_offsite.save(db, settings)
+    await log_audit(db, "system.backup_storage", actor=actor, detail={
+        "enabled": bool(settings.get("enabled")), "endpoint": settings.get("endpoint"), "bucket": settings.get("bucket"),
+    })
+    await db.commit()
+    if db_offsite.is_active(settings):
+        asyncio.create_task(_offsite_catch_up(limit=20))
+    return db_offsite.public_view(settings)
+
+
+@storage_router.post("/test")
+async def test_storage(
+    req: StorageSettingsRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("system.manage")),
+):
+    """Try the settings in the form (not yet saved) with a small test object."""
+    settings = db_offsite.merge_update(await db_offsite.load(db), req.model_dump())
+    if not (settings.get("bucket") and settings.get("access_key") and settings.get("secret_key")):
+        raise HTTPException(400, "Fill in the bucket, access key and secret key first")
+    error = await asyncio.to_thread(db_offsite.test, settings)
+    return {"ok": error is None, "error": error}
 
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
@@ -510,6 +661,7 @@ async def backup_scheduler() -> None:
     while True:
         try:
             await _scheduler_tick()
+            await _offsite_catch_up()
         except asyncio.CancelledError:
             return
         except Exception as e:

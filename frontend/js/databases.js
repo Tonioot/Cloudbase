@@ -21,6 +21,28 @@ const URL_PREVIEW = {
 
 let engines = [];
 
+const fmtGb = mb => mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
+
+/**
+ * Advice when the databases on a node would together be allowed too much of its
+ * memory. `excludeId` leaves out the database being edited. Returns '' when fine.
+ */
+export function memoryWarning(node, databases, newMb, excludeId = null) {
+  const total = node?.metadata?.ram_total_mb;
+  if (!total) return '';
+  const others = databases.filter(d => d.node_id === node.id && d.id !== excludeId && d.desired_state !== 'stopped');
+  const unlimited = others.filter(d => !d.memory_limit_mb).length + (newMb ? 0 : 1);
+  const sum = others.reduce((n, d) => n + (d.memory_limit_mb || 0), 0) + (newMb || 0);
+  const name = node.is_local ? 'the primary' : node.name;
+  if (sum > total * 0.6) {
+    return `Databases on ${name} would together be allowed ${fmtGb(sum)} of its ${fmtGb(total)} memory. Apps need memory too: lower the limits or stop databases you don't use.`;
+  }
+  if (unlimited && others.length) {
+    return `${unlimited} database${unlimited === 1 ? '' : 's'} on ${name} ${unlimited === 1 ? 'has' : 'have'} no memory limit and can use all of its ${fmtGb(total)}.`;
+  }
+  return '';
+}
+
 function statusLine(d) {
   if (d.status === 'error' || d.status === 'unhealthy') return { text: d.last_error || 'Needs attention', cls: 'error' };
   if (d.status === 'node_offline') return { text: `Node ${d.node_name || ''} is offline`, cls: 'error' };
@@ -77,11 +99,12 @@ export function renderDatabasesTable(wrap, databases) {
 }
 
 export async function openCreateDatabaseDialog() {
-  let nodes;
+  let nodes, existing;
   try {
-    [engines, nodes] = await Promise.all([
+    [engines, nodes, existing] = await Promise.all([
       engines.length ? engines : api.listDatabaseEngines(),
       api.listNodes(),
+      api.listDatabases().catch(() => []),
     ]);
   } catch (e) {
     toast(e.message, 'error');
@@ -151,6 +174,7 @@ export async function openCreateDatabaseDialog() {
           </div>
         </fieldset>
 
+        <div class="db-mem-warning" id="db-mem-warning" style="display:none"></div>
         <div class="field-hint" id="db-dlg-error" style="color:var(--red);display:none;margin:0"></div>
       </div>
       <div class="dialog-actions">
@@ -176,9 +200,19 @@ export async function openCreateDatabaseDialog() {
     const url = (URL_PREVIEW[e.key] || (() => ''))(ident, ident).replace('HOST', 'cloudbase-db-<id>');
     $('#db-url-preview').textContent = `${e.env_var}=${url}`;
   };
-  backdrop.querySelectorAll('input[name="db-engine"]').forEach(r => r.addEventListener('change', syncEngine));
+  const syncMemory = () => {
+    const nodeId = parseInt(backdrop.querySelector('input[name="db-node"]:checked')?.value, 10);
+    const text = memoryWarning(usableNodes.find(n => n.id === nodeId), existing, parseInt($('#db-mem').value, 10) || 0);
+    const el = $('#db-mem-warning');
+    el.textContent = text;
+    el.style.display = text ? '' : 'none';
+  };
+  backdrop.querySelectorAll('input[name="db-node"]').forEach(r => r.addEventListener('change', syncMemory));
+  $('#db-mem').addEventListener('input', syncMemory);
+  backdrop.querySelectorAll('input[name="db-engine"]').forEach(r => r.addEventListener('change', () => { syncEngine(); syncMemory(); }));
   $('#db-name').addEventListener('input', syncPreview);
   syncEngine();
+  syncMemory();
   $('#db-name').focus();
 
   const close = () => backdrop.remove();

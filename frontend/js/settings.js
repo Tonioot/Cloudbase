@@ -14,6 +14,7 @@ export const SETTINGS_SECTIONS = {
   domain:   { title: 'Domain & SSL',     sub: 'Where the panel and your apps are reachable. HTTPS certificates are requested and renewed automatically.' },
   system:   { title: 'System settings',  sub: 'Session length, port ranges and resource limits for this Cloudbase installation.' },
   users:    { title: 'Users & roles',    sub: 'Who can sign in to this panel, and what each role is allowed to do.' },
+  backups:  { title: 'Backup storage',   sub: 'Keep a copy of every database backup outside this server, in S3-compatible storage.' },
   tokens:   { title: 'GitHub tokens',    sub: 'Saved access tokens for private repositories. Pick one when you create or edit an app.' },
   transfer: { title: 'Export / import',  sub: 'Move app configurations between Cloudbase installations, or keep a backup.' },
   account:  { title: 'Account',          sub: 'Your own sign-in details.' },
@@ -23,6 +24,7 @@ const RENDER = {
   domain: renderDomain,
   system: renderSystem,
   users: renderUsers,
+  backups: renderBackupStorage,
   tokens: renderTokens,
   transfer: renderTransfer,
   account: renderAccount,
@@ -251,6 +253,104 @@ function renderSystem(root) {
     try {
       await api.saveSystemSettings(body);
       setStatus('Saved. Port changes apply after a restart.', 'ok');
+    } catch (e) {
+      setStatus(e.message || 'Failed to save', 'error');
+    } finally {
+      save.disabled = false;
+    }
+  };
+}
+
+/* ─── Backup storage ────────────────────────────────────────────────────── */
+
+function textField(id, label, hint, attrs = '') {
+  return `
+    <div class="field">
+      <label class="field-label" for="${id}">${label}</label>
+      <input class="input" id="${id}" ${attrs} />
+      ${hint ? `<div class="field-hint">${hint}</div>` : ''}
+    </div>`;
+}
+
+function renderBackupStorage(root) {
+  root.innerHTML = `
+    ${actionBar('Database backups are always kept on the primary; this adds a copy elsewhere.', 'storage-save', 'Save')}
+    ${group('Off-site copies', 'When on, every new backup is uploaded right after it is made. Existing backups are uploaded too, and failed uploads are retried every hour.',
+      `<label class="toggle-row form-toggle">
+        <span><span class="field-label">Copy backups to S3-compatible storage</span><span class="field-hint" id="st-counts"></span></span>
+        <span class="toggle"><input type="checkbox" id="st-enabled" /><span class="toggle-slider"></span></span>
+      </label>`)}
+    ${group('Bucket', 'AWS S3, Cloudflare R2, Backblaze B2, MinIO or any other S3-compatible service.',
+      `${textField('st-endpoint', 'Endpoint', 'Empty for AWS S3. R2: <code>https://&lt;account-id&gt;.r2.cloudflarestorage.com</code> · Backblaze: <code>https://s3.&lt;region&gt;.backblazeb2.com</code>', 'placeholder="https://…" spellcheck="false"')}
+      <div class="form-pair">
+        ${textField('st-bucket', 'Bucket', '', 'spellcheck="false"')}
+        ${textField('st-region', 'Region', 'e.g. <code>eu-central-1</code>; <code>auto</code> for R2', 'spellcheck="false"')}
+      </div>
+      ${textField('st-prefix', 'Folder in the bucket', 'Backups go to <code>&lt;folder&gt;database-backups/</code>. Use one folder per Cloudbase server.', 'spellcheck="false"')}`)}
+    ${group('Access key', 'Give this key access to the bucket only. The secret is stored encrypted and never shown again.',
+      `<div class="form-pair">
+        ${textField('st-access', 'Access key ID', '', 'spellcheck="false" autocomplete="off"')}
+        ${textField('st-secret', 'Secret access key', '', 'type="password" autocomplete="new-password"')}
+      </div>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-sm" id="storage-test">Test connection</button>
+        <span class="field-hint" id="storage-test-result" style="margin:0"></span>
+      </div>`)}
+  `;
+
+  const $ = id => document.getElementById(id);
+  const form = () => ({
+    enabled: $('st-enabled').checked,
+    endpoint: $('st-endpoint').value.trim(),
+    region: $('st-region').value.trim(),
+    bucket: $('st-bucket').value.trim(),
+    prefix: $('st-prefix').value.trim(),
+    access_key: $('st-access').value.trim(),
+    secret_key: $('st-secret').value,
+  });
+  const show = data => {
+    $('st-enabled').checked = !!data.enabled;
+    $('st-endpoint').value = data.endpoint || '';
+    $('st-region').value = data.region || '';
+    $('st-bucket').value = data.bucket || '';
+    $('st-prefix').value = data.prefix || 'cloudbase/';
+    $('st-access').value = data.access_key || '';
+    $('st-secret').value = '';
+    $('st-secret').placeholder = data.secret_set ? 'Saved; leave empty to keep' : '';
+    const c = data.counts;
+    $('st-counts').textContent = c
+      ? `${c.uploaded} backup${c.uploaded === 1 ? '' : 's'} copied` + (c.pending ? ` · ${c.pending} waiting` : '') + (c.failed ? ` · ${c.failed} failed` : '')
+      : '';
+  };
+
+  api.getBackupStorage().then(show).catch(e => setStatus(e.message, 'error'));
+
+  $('storage-test').onclick = async () => {
+    const btn = $('storage-test');
+    const out = $('storage-test-result');
+    btn.disabled = true;
+    out.style.color = '';
+    out.textContent = 'Testing…';
+    try {
+      const res = await api.testBackupStorage(form());
+      out.style.color = res.ok ? 'var(--green)' : 'var(--red)';
+      out.textContent = res.ok ? 'Connected: wrote, read and removed a test file.' : res.error;
+    } catch (e) {
+      out.style.color = 'var(--red)';
+      out.textContent = e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  $('storage-save').onclick = async () => {
+    const save = $('storage-save');
+    save.disabled = true;
+    setStatus('Saving…');
+    try {
+      show(await api.saveBackupStorage(form()));
+      setStatus('Saved', 'ok');
+      setTimeout(() => api.getBackupStorage().then(show).catch(() => {}), 3000);
     } catch (e) {
       setStatus(e.message || 'Failed to save', 'error');
     } finally {

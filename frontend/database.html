@@ -83,6 +83,23 @@
           <p class="db-card-foot">A linked app gets the connection URL as an environment variable after its next restart. Instances on other nodes connect through the primary.</p>
         </section>
       </div>
+
+      <section class="db-card db-usage" aria-labelledby="usage-title">
+        <div class="db-card-head">
+          <h2 id="usage-title">Usage</h2>
+          <div class="segmented" role="group" aria-label="Chart range" id="usage-range">
+            <button type="button" data-hours="1" aria-pressed="false">1h</button>
+            <button type="button" data-hours="24" aria-pressed="true">24h</button>
+            <button type="button" data-hours="168" aria-pressed="false">7d</button>
+          </div>
+        </div>
+        <div class="db-charts">
+          <figure class="db-chart"><figcaption>CPU <span id="u-cpu"></span></figcaption><canvas id="chart-cpu"></canvas></figure>
+          <figure class="db-chart"><figcaption>Memory <span id="u-mem"></span></figcaption><canvas id="chart-mem"></canvas></figure>
+          <figure class="db-chart"><figcaption>Data <span id="u-disk"></span></figcaption><canvas id="chart-disk"></canvas></figure>
+        </div>
+        <p class="db-card-foot" id="usage-empty" style="display:none">No history yet. Cloudbase samples running databases every minute.</p>
+      </section>
     </div>
 
     <!-- Access: public access -->
@@ -99,6 +116,10 @@
 
         <div id="pub-on">
           <div class="db-kv" id="pub-rows"></div>
+          <label class="toggle-row form-toggle db-tls-row">
+            <span><span class="field-label">Require TLS</span><span class="field-hint" id="pub-tls-hint"></span></span>
+            <span class="toggle"><input type="checkbox" id="pub-tls" data-perm="databases.manage" aria-label="Require TLS" /><span class="toggle-slider"></span></span>
+          </label>
 
           <div class="db-subhead">
             <h3>Allowed IP addresses</h3>
@@ -201,6 +222,17 @@
           </label>
           <button class="btn" type="submit" id="btn-save-limits">Save</button>
         </form>
+        <div class="db-mem-warning" id="lim-mem-warning" style="display:none;margin-top:12px"></div>
+      </section>
+
+      <section class="db-card" aria-labelledby="pw-title" data-perm="databases.credentials">
+        <div class="danger-row">
+          <div class="danger-row-text">
+            <div class="title" id="pw-title">Password</div>
+            <div class="sub">Give the app user a new password, for example after it leaked. The old one stops working right away.</div>
+          </div>
+          <button class="btn" id="btn-rotate">Change password</button>
+        </div>
       </section>
 
       <section class="db-card db-card--danger" aria-labelledby="danger-title" data-perm="databases.delete">

@@ -16,6 +16,7 @@ import logging
 import os
 import shutil
 import tarfile
+import threading
 import time
 from typing import Optional
 
@@ -26,6 +27,26 @@ log = logging.getLogger("cloudbase.databases")
 
 NETWORK = "cloudbase"
 STOP_TIMEOUT_SECONDS = 60  # databases need time for a clean shutdown
+# Creating or starting a container can take minutes on a busy small host (a
+# Raspberry Pi extracting images); the default 60 s made Docker calls fail while
+# Docker carried on, which led to duplicate attempts.
+DOCKER_TIMEOUT_SECONDS = 300
+
+_client_instance = None
+_client_lock = threading.Lock()
+# One image pull at a time per host: parallel pulls of several large images
+# saturate disk and CPU on small hosts.
+_pull_lock = threading.Lock()
+
+
+def _client():
+    global _client_instance
+    if _client_instance is None:
+        with _client_lock:
+            if _client_instance is None:
+                import docker  # type: ignore
+                _client_instance = docker.from_env(timeout=DOCKER_TIMEOUT_SECONDS)
+    return _client_instance
 
 
 class VolumeMissingError(RuntimeError):
@@ -94,6 +115,17 @@ def _ensure_image(client, ref: str, database_id: int) -> None:
         return
     except docker.errors.ImageNotFound:
         pass
+    _progress[database_id] = "Waiting for another image download"
+    with _pull_lock:
+        try:
+            client.images.get(ref)  # pulled meanwhile for another database
+            return
+        except docker.errors.ImageNotFound:
+            pass
+        _pull(client, ref, database_id)
+
+
+def _pull(client, ref: str, database_id: int) -> None:
     log.info("[db] Pulling %s", ref)
     repo, _, tag = ref.rpartition(":")
     _progress[database_id] = f"Pulling {ref}"
@@ -143,7 +175,10 @@ def _run_container(client, spec: dict):
             "interval": 10_000_000_000,
             "timeout": 5_000_000_000,
             "retries": 6,
-            "start_period": 60_000_000_000,
+            # The first start initialises the data directory, which takes minutes on a
+            # busy or small host (MySQL on a Raspberry Pi: 3+ minutes). Failed checks in
+            # this window don't count; a passing check still marks it healthy at once.
+            "start_period": 600_000_000_000,
         },
         "security_opt": ["no-new-privileges:true"],
         "log_config": {"type": "json-file", "config": {"max-size": "10m", "max-file": "3"}},
@@ -185,7 +220,7 @@ def ensure_running(spec: dict) -> dict:
     Never initialises an empty database over a missing volume of a database that
     has been running before: that raises VolumeMissingError instead.
     """
-    client = dm._get_client()
+    client = _client()
     db_id = int(spec["database_id"])
 
     container = _get_container(client, db_id)
@@ -227,19 +262,21 @@ def ensure_running(spec: dict) -> dict:
 
 def recreate(spec: dict) -> dict:
     """Replace the container (e.g. after changing limits). The volume is kept."""
-    client = dm._get_client()
+    client = _client()
     container = _get_container(client, int(spec["database_id"]))
     if container is not None:
         try:
             container.stop(timeout=STOP_TIMEOUT_SECONDS)
         except Exception:
             pass
-        container.remove(force=True)
+        # v=True also drops anonymous volumes the image declares (e.g. MongoDB's
+        # /data/configdb); the named data volume is never touched by it.
+        container.remove(force=True, v=True)
     return ensure_running(spec)
 
 
 def stop(database_id: int) -> dict:
-    client = dm._get_client()
+    client = _client()
     container = _get_container(client, database_id)
     if container is not None and _container_state(container) != "stopped":
         container.stop(timeout=STOP_TIMEOUT_SECONDS)
@@ -247,7 +284,7 @@ def stop(database_id: int) -> dict:
 
 
 def restart(spec: dict) -> dict:
-    client = dm._get_client()
+    client = _client()
     container = _get_container(client, int(spec["database_id"]))
     if container is None:
         return ensure_running(spec)
@@ -257,14 +294,16 @@ def restart(spec: dict) -> dict:
 
 def remove(database_id: int, keep_volume: bool = True) -> dict:
     import docker  # type: ignore
-    client = dm._get_client()
+    client = _client()
     container = _get_container(client, database_id)
     if container is not None:
         try:
             container.stop(timeout=STOP_TIMEOUT_SECONDS)
         except Exception:
             pass
-        container.remove(force=True)
+        # v=True also drops anonymous volumes the image declares (e.g. MongoDB's
+        # /data/configdb); the named data volume is never touched by it.
+        container.remove(force=True, v=True)
     volume_removed = False
     if not keep_volume:
         try:
@@ -278,7 +317,7 @@ def remove(database_id: int, keep_volume: bool = True) -> dict:
 
 def states(database_ids: list[int]) -> dict[str, dict]:
     """{id: {state, volume}} where state is running|starting|unhealthy|restarting|stopped|missing."""
-    client = dm._get_client()
+    client = _client()
     out: dict[str, dict] = {}
     for db_id in database_ids:
         container = _get_container(client, int(db_id))
@@ -289,7 +328,7 @@ def states(database_ids: list[int]) -> dict[str, dict]:
 
 def container_address(database_id: int) -> tuple[str, int]:
     """IP on the cloudbase network and port of a running database container."""
-    client = dm._get_client()
+    client = _client()
     container = _get_container(client, database_id)
     if container is None:
         raise RuntimeError(f"Database container {container_name(database_id)} does not exist on this node")
@@ -305,7 +344,7 @@ def stats(database_id: int, data_dir: Optional[str] = None) -> dict:
     data = dm.get_container_stats_by_name(container_name(database_id))
     if data and data_dir:
         try:
-            client = dm._get_client()
+            client = _client()
             container = _get_container(client, database_id)
             result = container.exec_run(["du", "-sk", data_dir]) if container is not None else None
             if result is not None and result.exit_code == 0:
@@ -313,6 +352,20 @@ def stats(database_id: int, data_dir: Optional[str] = None) -> dict:
         except Exception:
             log.debug("[db] du failed for %s", container_name(database_id), exc_info=True)
     return data
+
+
+def stats_many(items: list[dict]) -> dict[str, dict]:
+    """Stats for several databases: items are {database_id, data_dir or None}.
+    Measuring the data size (du) is slower, so callers ask for it only now and then."""
+    out: dict[str, dict] = {}
+    for item in items:
+        try:
+            data = stats(int(item["database_id"]), item.get("data_dir"))
+        except Exception:
+            data = {}
+        if data:
+            out[str(item["database_id"])] = data
+    return out
 
 
 def logs(database_id: int, lines: int = 300) -> list[str]:
@@ -328,7 +381,7 @@ RESTORE_PATH = "/tmp/cb-restore"
 
 
 def _running_container(database_id: int):
-    container = _get_container(dm._get_client(), database_id)
+    container = _get_container(_client(), database_id)
     if container is None or _container_state(container) == "stopped":
         raise RuntimeError("The database must be running to back it up or restore it")
     return container
@@ -398,6 +451,8 @@ def _tar_stream(path: str, name: str):
 def restore_from_file(spec: dict, in_path: str, source_db_name: Optional[str] = None) -> dict:
     """Load a dump into the database, replacing what the dump contains."""
     engine = db_engines.get_engine(spec["engine"])
+    if engine.restore_via_helper:
+        return _restore_with_helper(spec, engine, in_path)
     if engine.restore is None:
         raise RuntimeError(f"Restoring {engine.label} backups is not supported yet; download the backup instead")
     container = _running_container(int(spec["database_id"]))
@@ -434,4 +489,140 @@ def restore_from_file(spec: dict, in_path: str, source_db_name: Optional[str] = 
             os.remove(unpacked)
     if code != 0:
         raise RuntimeError(f"Restore failed (exit {code}): {_tail((err or b'') + (out or b'')) or 'no output'}")
+    return {"ok": True}
+
+
+# ── Password rotation ─────────────────────────────────────────────────────────
+
+# Engines whose password also lives in the container's command or environment in
+# a way that matters (startup, backups); their container is recreated afterwards.
+ROTATE_RECREATES = {"mongodb", "redis", "valkey"}
+
+
+def _rotate_command(engine: str, user: str, new_password: str) -> Optional[str]:
+    # token_urlsafe passwords contain only [A-Za-z0-9_-]; names only [a-z0-9_].
+    if engine == "postgres":
+        return f'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "ALTER USER \\"{user}\\" WITH PASSWORD \'{new_password}\'"'
+    if engine == "mysql":
+        return f'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -e "ALTER USER \'{user}\'@\'%\' IDENTIFIED BY \'{new_password}\'"'
+    if engine == "mariadb":
+        return f'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb -uroot -e "ALTER USER \'{user}\'@\'%\' IDENTIFIED BY \'{new_password}\'"'
+    if engine == "mongodb":
+        return ('mongosh --quiet -u "$MONGO_INITDB_ROOT_USERNAME" -p "$MONGO_INITDB_ROOT_PASSWORD" '
+                f'--authenticationDatabase admin admin --eval "db.changeUserPassword(\'{user}\', \'{new_password}\')"')
+    return None  # Redis / Valkey: the password is part of the server command
+
+
+def rotate_password(spec: dict, new_password: str) -> dict:
+    """Change the app user's password inside the running database (old credentials
+    in `spec`). The caller stores the new password and, for ROTATE_RECREATES
+    engines, recreates the container with it."""
+    cmd = _rotate_command(spec["engine"], spec["credentials"]["user"], new_password)
+    if cmd is None:
+        return {"ok": True, "applied": "on recreate"}
+    container = _running_container(int(spec["database_id"]))
+    api = container.client.api
+    exec_id = api.exec_create(container.id, ["sh", "-c", cmd], stdout=True, stderr=True)["Id"]
+    out, err = api.exec_start(exec_id, demux=True)
+    code = api.exec_inspect(exec_id).get("ExitCode")
+    if code != 0:
+        raise RuntimeError(f"Changing the password failed (exit {code}): {_tail((err or b'') + (out or b''))}")
+    return {"ok": True, "applied": "in place"}
+
+
+# ── Redis / Valkey restore ────────────────────────────────────────────────────
+# These load their data only at startup, and with append-only persistence they
+# ignore an RDB file that sits next to an existing AOF. So: stop the database, and
+# in a helper container (same image, same volume, no network) load the RDB into a
+# temporary server, let it write a fresh AOF, shut it down cleanly, start again.
+
+_HELPER_SCRIPT = r"""
+set -u
+cd /data
+rollback() {
+  echo "restore failed, putting the previous data back" >&2
+  rm -rf appendonlydir dump.rdb
+  [ -d appendonlydir.before-restore ] && mv appendonlydir.before-restore appendonlydir
+  [ -f dump.rdb.before-restore ] && mv dump.rdb.before-restore dump.rdb
+  exit 1
+}
+rm -rf appendonlydir.before-restore dump.rdb.before-restore
+[ -d appendonlydir ] && mv appendonlydir appendonlydir.before-restore
+[ -f dump.rdb ] && mv dump.rdb dump.rdb.before-restore
+mv restore.rdb dump.rdb || rollback
+SERVER --dir /data --dbfilename dump.rdb --appendonly no --save '' --port 6399 --bind 127.0.0.1 --daemonize yes || rollback
+i=0
+until CLI -p 6399 ping 2>/dev/null | grep -q PONG; do i=$((i+1)); [ $i -gt 1200 ] && rollback; sleep 0.5; done
+echo "loaded $(CLI -p 6399 dbsize) keys"
+CLI -p 6399 config set appendonly yes >/dev/null || rollback
+sleep 1
+i=0
+until CLI -p 6399 info persistence | grep -q 'aof_rewrite_in_progress:0' \
+   && CLI -p 6399 info persistence | grep -q 'aof_rewrite_scheduled:0' \
+   && ls appendonlydir/*.manifest >/dev/null 2>&1; do
+  i=$((i+1)); [ $i -gt 2400 ] && rollback; sleep 0.5
+done
+CLI -p 6399 shutdown >/dev/null 2>&1
+i=0
+while CLI -p 6399 ping >/dev/null 2>&1; do i=$((i+1)); [ $i -gt 120 ] && rollback; sleep 0.5; done
+rm -rf appendonlydir.before-restore dump.rdb.before-restore
+echo "restore complete"
+"""
+
+
+def _restore_with_helper(spec: dict, engine, in_path: str) -> dict:
+    import docker  # type: ignore
+    db_id = int(spec["database_id"])
+    client = _client()
+    main = _get_container(client, db_id)
+    if main is None:
+        raise RuntimeError("The database container does not exist; start the database first")
+
+    with open(in_path, "rb") as f:
+        is_gzip = f.read(2) == b"\x1f\x8b"
+    rdb = in_path
+    if is_gzip:
+        rdb = in_path + ".rdb"
+        with gzip.open(in_path, "rb") as src, open(rdb, "wb") as dst:
+            shutil.copyfileobj(src, dst, 1024 * 1024)
+    with open(rdb, "rb") as f:
+        if f.read(5) != b"REDIS":
+            raise RuntimeError("This is not a Redis/Valkey RDB file")
+
+    script = _HELPER_SCRIPT.replace("SERVER", engine.restore_via_helper["server"]).replace("CLI", engine.restore_via_helper["cli"])
+    helper_name = f"{container_name(db_id)}-restore"
+    try:
+        old = client.containers.get(helper_name)
+        old.remove(force=True, v=True)
+    except docker.errors.NotFound:
+        pass
+
+    main.stop(timeout=STOP_TIMEOUT_SECONDS)
+    helper = None
+    try:
+        helper = client.containers.create(
+            main.image.id,
+            name=helper_name,
+            entrypoint=["sh", "-c", script],
+            command=[],
+            volumes={volume_name(db_id): {"bind": "/data", "mode": "rw"}},
+            network_mode="none",
+            labels={"cloudbase.database_id": str(db_id), "cloudbase.role": "restore-helper"},
+        )
+        helper.put_archive("/data", _tar_stream(rdb, "restore.rdb"))
+        helper.start()
+        result = helper.wait(timeout=3600)
+        output = helper.logs(stdout=True, stderr=True)
+        if result.get("StatusCode") != 0:
+            raise RuntimeError(f"Restore failed: {_tail(output)}")
+        log.info("[db] %s restored: %s", container_name(db_id), _tail(output, 200))
+    finally:
+        if helper is not None:
+            try:
+                helper.remove(force=True, v=True)
+            except Exception:
+                pass
+        if rdb != in_path and os.path.exists(rdb):
+            os.remove(rdb)
+        main.start()  # with the restored data, or the previous data after a rollback
     return {"ok": True}

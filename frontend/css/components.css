@@ -792,6 +792,14 @@ select.input { padding-right: 28px; }
 .engine-cell { display: inline-flex; align-items: center; gap: 10px; }
 
 /* ─── New database dialog ───────────────────────────────────────────────── */
+.db-mem-warning {
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--yellow) 10%, transparent);
+  color: var(--yellow);
+  font-size: 12px;
+  line-height: 1.5;
+}
 .db-dialog { width: 560px; max-width: calc(100vw - 32px); }
 .engine-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .engine-card {

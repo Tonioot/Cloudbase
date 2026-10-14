@@ -427,12 +427,16 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
   <li>Add your own IP to the allowlist (<strong>Add my IP</strong>). Connections from other addresses are refused before they reach the database. An empty list lets anyone try to log in.</li>
   <li>Open the port in the firewall of the primary, or in the security group of your cloud provider.</li>
 </ul>
+<p>The public port requires TLS by default; connections without encryption are refused. <strong>Copy public URL</strong> already contains what clients need:</p>
 <table>
-  <tr><th>Engine</th><th>Encryption over the internet</th></tr>
-  <tr><td>MySQL, MariaDB 11.4+</td><td>Encrypted with the server's self-signed certificate. Use <code>ssl-mode=REQUIRED</code> in your client.</td></tr>
-  <tr><td>PostgreSQL, MongoDB</td><td>Login is protected (SCRAM), but queries and data are not encrypted.</td></tr>
-  <tr><td>Redis, Valkey, MariaDB 10.11</td><td>Not encrypted, including the password. Use a tight allowlist or an SSH tunnel.</td></tr>
+  <tr><th>Engine</th><th>In the URL</th><th>How</th></tr>
+  <tr><td>PostgreSQL</td><td><code>sslmode=require</code></td><td>Cloudbase answers the TLS request and encrypts up to the primary.</td></tr>
+  <tr><td>MongoDB</td><td><code>tls=true</code></td><td>TLS from the first byte, handled by Cloudbase.</td></tr>
+  <tr><td>Redis, Valkey</td><td><code>rediss://</code></td><td>TLS from the first byte, handled by Cloudbase.</td></tr>
+  <tr><td>MySQL, MariaDB 11.4+</td><td><code>ssl-mode=REQUIRED</code></td><td>Encrypted end to end by the database itself.</td></tr>
+  <tr><td>MariaDB 10.11</td><td>none</td><td>No TLS support: stays unencrypted. Use 11.4 or newer.</td></tr>
 </table>
+<p>The certificates come from Cloudbase's own CA. Clients encrypt without further setup; to also verify the server, download the CA on the <strong>Access</strong> tab and use it as the client's CA file (for example <code>sslmode=verify-ca</code>). Turn <strong>Require TLS</strong> off only for a client that cannot do TLS.</p>
 
 <h2>Backups</h2>
 <p>Every database is backed up every day at 03:00 (server time) by default, keeping the last 7. Change this on the <strong>Backups</strong> tab, or click <strong>Back up now</strong>. Backups are stored on the primary in <code>~/.cloudbase/backups</code>, also for databases on other nodes, and stay there when the database is deleted.</p>
@@ -440,9 +444,17 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
   <li><strong>Restore</strong> loads a backup into the database. A safety backup of the current data is made first, unless you turn that off.</li>
   <li>Backups of other or deleted databases with the same engine can be restored too, which is also how you move a database to another node.</li>
   <li><strong>Upload dump</strong> imports a dump made elsewhere: <code>pg_dump -Fc</code> or plain SQL for PostgreSQL, <code>mysqldump</code> SQL (optionally gzipped) for MySQL and MariaDB, and <code>mongodump --archive</code> (optionally <code>--gzip</code>) for MongoDB.</li>
-  <li>Redis and Valkey backups can be made and downloaded; restoring them from the panel comes later.</li>
+  <li>Redis and Valkey are restored by briefly stopping the database and loading the backup into its data directory; the previous data is put back if anything fails.</li>
 </ul>
-<div class="callout callout--warn"><p>Backups on the primary are lost with the primary's disk. Download important backups, or copy <code>~/.cloudbase/backups</code> elsewhere.</p></div>
+<h3>Off-site copies</h3>
+<p>Backups on the primary are lost with the primary's disk. Under <strong>Settings → Backup storage</strong>, add an S3-compatible bucket (AWS S3, Cloudflare R2, Backblaze B2, MinIO) and every backup is copied there right after it is made. Existing backups are uploaded too, failed uploads are retried every hour, and deleting a backup removes both copies. When the local file is gone, restoring or downloading fetches it from the bucket.</p>
+
+<h2>Password and usage</h2>
+<ul>
+  <li><strong>Settings → Change password</strong> gives the app user a new password. The old one stops working at once; linked apps can be restarted from the same dialog to pick up the new URL.</li>
+  <li>The <strong>Overview</strong> tab charts CPU, memory and data size for the last hour, day or week. Cloudbase samples every minute and keeps 7 days.</li>
+  <li>When the databases on a node would together be allowed more than 60% of its memory, the create dialog and the Settings tab warn about it.</li>
+</ul>
 
 <h2>Credentials</h2>
 <p>Passwords are generated when the database is created and stored encrypted. Users with the <code>databases.credentials</code> permission can show them and copy the connection URL; every view is written to the audit log.</p>

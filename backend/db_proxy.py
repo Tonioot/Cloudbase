@@ -274,39 +274,175 @@ def _allowed(database_id: int, peer_ip: str) -> bool:
     return any(ip in net for net in networks)
 
 
+# Public listeners: database id → (server, mode). The mode decides how TLS works:
+#   "raw"      no TLS handling, bytes pass through
+#   "tls"      TLS from the first byte, terminated here (MongoDB, Redis, Valkey)
+#   "postgres" answer the client's SSLRequest, then terminate TLS here
+#   "mysql"    MySQL/MariaDB do TLS themselves; refuse clients that don't ask for it
+_public_mode: dict[int, tuple] = {}
+
+PG_SSL_REQUEST = 80877103
+PG_GSSENC_REQUEST = 80877104
+MYSQL_CLIENT_SSL = 0x00000800
+
+
+def public_mode(engine: str, tls: bool) -> str:
+    if not tls:
+        return "raw"
+    if engine == "postgres":
+        return "postgres"
+    if engine in ("mysql", "mariadb"):
+        return "mysql"
+    return "tls"
+
+
 async def _serve_public(database_id: int, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     peer = (writer.get_extra_info("peername") or ("?",))[0]
     if not _allowed(database_id, peer):
         log.info("[db-public] database %s: refused %s (not in allowlist)", database_id, peer)
         writer.close()
         return
+    mode, ctx = _public_mode.get(database_id, ("raw", None))
+    try:
+        if mode == "postgres":
+            if not await _postgres_tls(reader, writer, ctx):
+                return
+        elif mode == "mysql":
+            await _serve_mysql_tls(database_id, peer, reader, writer)
+            return
+    except (asyncio.IncompleteReadError, ConnectionError, OSError):
+        writer.close()
+        return
     await _serve(database_id, reader, writer)
 
 
+def _pg_error(message: str) -> bytes:
+    """A PostgreSQL ErrorResponse, so clients show a readable reason."""
+    fields = b"SFATAL\0VFATAL\0C28000\0M" + message.encode() + b"\0\0"
+    return b"E" + (len(fields) + 4).to_bytes(4, "big") + fields
+
+
+async def _postgres_tls(reader, writer, ctx) -> bool:
+    """Handle the SSLRequest of a PostgreSQL client and switch to TLS. Returns False
+    (connection closed) when the client does not want TLS."""
+    while True:
+        head = await asyncio.wait_for(reader.readexactly(8), timeout=15)
+        length, code = int.from_bytes(head[:4], "big"), int.from_bytes(head[4:], "big")
+        if length == 8 and code == PG_GSSENC_REQUEST:
+            writer.write(b"N")  # no GSSAPI encryption; the client then asks for TLS
+            await writer.drain()
+            continue
+        if length == 8 and code == PG_SSL_REQUEST:
+            writer.write(b"S")
+            await writer.drain()
+            await writer.start_tls(ctx)
+            return True
+        writer.write(_pg_error("This database requires TLS. Connect with sslmode=require."))
+        await writer.drain()
+        writer.close()
+        return False
+
+
+async def _read_packet(read) -> tuple[bytes, bytes]:
+    """One MySQL packet: (4-byte header, payload)."""
+    header = await read(4)
+    return header, await read(int.from_bytes(header[:3], "little"))
+
+
+async def _serve_mysql_tls(database_id: int, peer: str, reader, writer) -> None:
+    """MySQL/MariaDB negotiate TLS inside their own protocol, end to end with the
+    server. Forward the server greeting, then require the client's first packet
+    to ask for TLS before passing everything through."""
+    client = TcpStream(reader, writer)
+    if _connector is None:
+        await client.close()
+        return
+    upstream = await _connector(database_id)
+    buffer = bytearray()
+
+    async def read_upstream(n: int) -> bytes:
+        while len(buffer) < n:
+            chunk = await upstream.recv()
+            if chunk is None:
+                raise ConnectionError("database closed the connection")
+            buffer.extend(chunk)
+        data = bytes(buffer[:n])
+        del buffer[:n]
+        return data
+
+    try:
+        header, greeting = await asyncio.wait_for(_read_packet(read_upstream), timeout=15)
+        server_tls = _mysql_greeting_has_ssl(greeting)
+        writer.write(header + greeting + bytes(buffer))
+        buffer.clear()
+        await writer.drain()
+
+        c_header, c_payload = await asyncio.wait_for(_read_packet(reader.readexactly), timeout=30)
+        client_tls = len(c_payload) >= 4 and int.from_bytes(c_payload[:4], "little") & MYSQL_CLIENT_SSL
+        if server_tls and not client_tls:
+            seq = (c_header[3] + 1) % 256
+            body = b"\xff" + (3159).to_bytes(2, "little") + b"#HY000" + \
+                b"Connections using insecure transport are prohibited: enable TLS (ssl-mode=REQUIRED)"
+            writer.write(len(body).to_bytes(3, "little") + bytes([seq]) + body)
+            await writer.drain()
+            log.info("[db-public] database %s: refused %s (no TLS)", database_id, peer)
+            await client.close()
+            await upstream.close()
+            return
+        await upstream.send(c_header + c_payload)
+    except Exception:
+        await client.close()
+        await upstream.close()
+        return
+    await pipe(client, upstream)
+
+
+def _mysql_greeting_has_ssl(greeting: bytes) -> bool:
+    """Does the server's handshake (protocol 10) offer CLIENT_SSL?"""
+    try:
+        end = greeting.index(b"\0", 1)  # server version string
+        pos = end + 1 + 4 + 8 + 1          # connection id, auth data part 1, filler
+        caps = int.from_bytes(greeting[pos:pos + 2], "little")
+        return bool(caps & MYSQL_CLIENT_SSL)
+    except (ValueError, IndexError):
+        return False
+
+
 async def reconcile_public(specs: list[dict]) -> None:
-    """Run exactly the public listeners in `specs` ({database_id, allowlist})."""
-    wanted = {int(s["database_id"]): s.get("allowlist") or [] for s in specs}
+    """Run exactly the public listeners in `specs`
+    ({database_id, allowlist, engine, tls, hosts})."""
+    wanted = {int(s["database_id"]): s for s in specs}
     async with _listener_lock:
         for db_id in list(_public):
-            if db_id not in wanted:
+            spec = wanted.get(db_id)
+            if spec is None or _public_mode.get(db_id, (None,))[0] != public_mode(spec.get("engine", ""), spec.get("tls", False)):
                 _public.pop(db_id).close()
                 _public_allow.pop(db_id, None)
-                log.info("[db-public] database %s: public access closed", db_id)
-        for db_id, allowlist in wanted.items():
+                _public_mode.pop(db_id, None)
+                log.info("[db-public] database %s: public listener closed", db_id)
+        for db_id, spec in wanted.items():
             try:
-                _public_allow[db_id] = parse_allowlist(allowlist)
+                _public_allow[db_id] = parse_allowlist(spec.get("allowlist") or [])
             except ValueError as e:
                 log.warning("[db-public] database %s: invalid allowlist, refusing everyone: %s", db_id, e)
                 _public_allow[db_id] = [ipaddress.ip_network("0.0.0.0/32")]
             if db_id in _public:
                 continue
+            mode = public_mode(spec.get("engine", ""), spec.get("tls", False))
             try:
+                ctx = None
+                if mode in ("tls", "postgres"):
+                    import db_tls
+                    ctx = await asyncio.to_thread(db_tls.server_context, tuple(spec.get("hosts") or ()))
                 port = public_port(db_id)
                 server = await asyncio.start_server(
                     lambda r, w, i=db_id: _serve_public(i, r, w), host=None, port=port,
+                    ssl=ctx if mode == "tls" else None,
+                    ssl_handshake_timeout=15 if mode == "tls" else None,
                 )
                 _public[db_id] = server
-                log.info("[db-public] database %s: public on port %s", db_id, port)
+                _public_mode[db_id] = (mode, ctx)
+                log.info("[db-public] database %s: public on port %s (%s)", db_id, port, mode)
             except Exception as e:
                 log.warning("[db-public] database %s: cannot open public port: %s", db_id, e)
 

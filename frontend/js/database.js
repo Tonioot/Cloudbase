@@ -1,7 +1,8 @@
 import { api } from './api.js';
-import { badge, toast, confirm, fmtUptime, stripAnsi } from './utils.js';
+import { badge, toast, confirm, fmtUptime, stripAnsi, cssVar } from './utils.js';
 import { esc, setCrumbs } from './shell.js';
 import { engineIcon } from './engine-icons.js';
+import { memoryWarning } from './databases.js';
 
 const DB_ID = parseInt(new URLSearchParams(location.search).get('id'), 10);
 const TRANSITIONAL = ['creating', 'starting', 'stopping'];
@@ -29,10 +30,20 @@ let backupsTimer = null;
 
 // How well a public connection is protected, per engine.
 function encryptionNote(d) {
-  const tlsDefault = d.engine === 'mysql' || (d.engine === 'mariadb' && parseFloat(d.version) >= 11.4);
-  if (tlsDefault) return { warn: false, text: `${esc(d.engine_label)} encrypts connections with its own self-signed certificate. Use <code>ssl-mode=REQUIRED</code> (or "require SSL") in your client.` };
-  if (d.engine === 'postgres' || d.engine === 'mongodb') return { warn: false, text: 'The login is protected (SCRAM), so the password is never sent readable, but queries and data are not encrypted. Keep the allowlist tight.' };
-  return { warn: true, text: `${esc(d.engine_label)} sends the password and all data unencrypted. Only use this with a tight allowlist, or connect over an SSH tunnel instead.` };
+  const ca = '<a href="/api/databases/tls-ca.crt" download>Download the Cloudbase CA</a> to also verify the server certificate.';
+  if (d.engine === 'mariadb' && parseFloat(d.version) < 11.4) {
+    return { warn: true, text: `MariaDB ${esc(d.version)} has no TLS out of the box, so connections stay unencrypted. Use MariaDB 11.4 or newer for encryption, or connect over an SSH tunnel.` };
+  }
+  if (!d.public_tls) {
+    return { warn: true, text: d.engine === 'redis' || d.engine === 'valkey'
+      ? `TLS is off: ${esc(d.engine_label)} sends the password and all data unencrypted. Only for clients that cannot do TLS, with a tight allowlist.`
+      : 'TLS is off: queries and data travel unencrypted. Only for clients that cannot do TLS, with a tight allowlist.' };
+  }
+  if (d.engine === 'mysql' || d.engine === 'mariadb') {
+    return { warn: false, text: `Encrypted end to end by ${esc(d.engine_label)} itself; clients that don't ask for TLS are refused. The URL contains <code>ssl-mode=REQUIRED</code>; some clients call it "require SSL".` };
+  }
+  const param = { postgres: '<code>sslmode=require</code>', mongodb: '<code>tls=true</code>', redis: '<code>rediss://</code>', valkey: '<code>rediss://</code>' }[d.engine];
+  return { warn: false, text: `Encrypted with TLS; connections without it are refused. The URL already contains ${param}. ${ca}` };
 }
 
 export async function initDatabasePage() {
@@ -46,11 +57,23 @@ export async function initDatabasePage() {
   document.getElementById('btn-restart').onclick = () => lifecycle('restart');
   document.getElementById('btn-link').onclick = openLinkDialog;
   document.getElementById('limits-form').addEventListener('submit', e => { e.preventDefault(); saveLimits(); });
+  document.getElementById('lim-mem').addEventListener('input', () => syncMemoryWarning());
+  document.getElementById('usage-range').addEventListener('click', e => {
+    const btn = e.target.closest('[data-hours]');
+    if (!btn) return;
+    historyHours = Number(btn.dataset.hours);
+    document.querySelectorAll('#usage-range [data-hours]').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+    loadHistory();
+  });
+  window.addEventListener('resize', () => { if (usageHistory) drawHistory(); });
+  setInterval(() => { if (document.getElementById('panel-overview').classList.contains('active')) loadHistory(); }, 60000);
   document.getElementById('btn-refresh-logs').onclick = loadLogs;
   document.getElementById('btn-delete').onclick = deleteDatabase;
+  document.getElementById('btn-rotate').onclick = openRotateDialog;
   document.getElementById('pub-enabled').addEventListener('change', togglePublic);
   document.getElementById('allow-form').addEventListener('submit', e => { e.preventDefault(); addAllowEntry(); });
   document.getElementById('allow-my-ip').onclick = () => addAllowEntry(myIp);
+  document.getElementById('pub-tls').addEventListener('change', toggleTls);
   document.getElementById('btn-backup-now').onclick = backupNow;
   document.getElementById('backup-upload').addEventListener('change', uploadDump);
   document.getElementById('sch-hour').innerHTML = Array.from({ length: 24 }, (_, h) => `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`).join('');
@@ -83,6 +106,26 @@ function showTab(name, updateHash = true) {
     logsTimer = setInterval(loadLogs, 5000);
   }
   if (name === 'backups') loadBackups();
+  if (name === 'overview') loadHistory();
+  if (name === 'settings') syncMemoryWarning(true);
+}
+
+let memoryContext = null;  // { node, databases } for the memory advice
+
+async function syncMemoryWarning(refresh = false) {
+  if (refresh || !memoryContext) {
+    try {
+      const [nodes, databases] = await Promise.all([api.listNodes(), api.listDatabases()]);
+      memoryContext = { node: nodes.find(n => n.id === database.node_id), databases };
+    } catch {
+      return;
+    }
+  }
+  const mb = parseInt(document.getElementById('lim-mem').value, 10) || 0;
+  const text = memoryWarning(memoryContext.node, memoryContext.databases, mb, DB_ID);
+  const el = document.getElementById('lim-mem-warning');
+  el.textContent = text;
+  el.style.display = text ? '' : 'none';
 }
 
 /* ─── Data ──────────────────────────────────────────────────────────────── */
@@ -142,6 +185,7 @@ function render() {
   const blocked = d.busy || TRANSITIONAL.includes(d.status) || !d.node_online;
   document.getElementById('btn-start').style.display = stopped ? '' : 'none';
   document.getElementById('btn-stop').style.display = stopped ? 'none' : '';
+  document.getElementById('btn-rotate').disabled = blocked || !['running', 'unhealthy'].includes(d.status);
   ['btn-start', 'btn-stop', 'btn-restart', 'btn-save-limits'].forEach(id => {
     document.getElementById(id).disabled = blocked;
   });
@@ -248,15 +292,23 @@ function renderAccess() {
     ? `Your IP as seen by this panel is ${myIp}. If your database client connects through a VPN or another network (IPv4 or IPv6), add that address too.`
     : '';
 
+  const tlsIn = document.getElementById('pub-tls');
+  const noTls = d.engine === 'mariadb' && parseFloat(d.version) < 11.4;
+  tlsIn.checked = !!d.public_tls && !noTls;
+  tlsIn.disabled = noTls;
+  document.getElementById('pub-tls-hint').textContent = noTls
+    ? `Not available for MariaDB ${d.version}`
+    : d.public_tls ? 'Connections without encryption are refused' : 'Off: unencrypted connections are allowed';
+
   const note = encryptionNote(d);
   const noteEl = document.getElementById('pub-note');
   noteEl.className = `db-note${note.warn ? ' db-note--warn' : ''}`;
   noteEl.innerHTML = `<p>${note.text}</p><p>Make TCP port <code>${d.public_port}</code> reachable on the primary: open it in its firewall or your cloud provider's security group, and forward it on your router if the server is behind one.</p>`;
 }
 
-async function savePublic(enabled, allowlist, message) {
+async function savePublic(enabled, allowlist, message, tls = database.public_tls) {
   try {
-    database = { ...database, ...(await api.setDatabasePublic(DB_ID, { enabled, allowlist })) };
+    database = { ...database, ...(await api.setDatabasePublic(DB_ID, { enabled, allowlist, tls })) };
     credentials = null;
     revealed = false;
     render();
@@ -283,6 +335,15 @@ async function togglePublic(e) {
     if (!ok) { e.target.checked = false; return; }
   }
   await savePublic(enable, list, enable ? 'Public access on' : 'Public access off');
+}
+
+async function toggleTls(e) {
+  const on = e.target.checked;
+  if (!on) {
+    const ok = await confirm('Turn TLS off?', 'Clients can then connect without encryption, so data travels readable over the internet. Only do this for a client that cannot use TLS.');
+    if (!ok) { e.target.checked = true; return; }
+  }
+  await savePublic(database.public_enabled, database.public_allowlist || [], on ? 'TLS required' : 'TLS no longer required', on);
 }
 
 function looksLikeIp(value) {
@@ -400,6 +461,98 @@ async function saveLimits() {
   } catch (e) { toast(e.message, 'error'); }
 }
 
+/* ─── Usage history ─────────────────────────────────────────────────────── */
+
+let historyHours = 24;
+let usageHistory = null;
+
+async function loadHistory() {
+  try {
+    usageHistory = (await api.getDatabaseStatsHistory(DB_ID, historyHours)).samples;
+  } catch {
+    return;
+  }
+  drawHistory();
+}
+
+function fmtMb(mb) {
+  if (mb == null) return '—';
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
+}
+
+function drawHistory() {
+  const has = usageHistory.length > 1;
+  document.getElementById('usage-empty').style.display = has ? 'none' : '';
+  const last = key => [...usageHistory].reverse().find(s => s[key] != null)?.[key];
+  document.getElementById('u-cpu').textContent = has && last('cpu') != null ? `${last('cpu').toFixed(1)}%` : '';
+  document.getElementById('u-mem').textContent = has ? fmtMb(last('mem')) : '';
+  document.getElementById('u-disk').textContent = has ? fmtMb(last('disk')) : '';
+  const memMax = database?.memory_limit_mb || null;
+  drawChart('chart-cpu', usageHistory, 'cpu', '--accent', v => `${v.toFixed(0)}%`);
+  drawChart('chart-mem', usageHistory, 'mem', '--purple', fmtMb, memMax);
+  drawChart('chart-disk', usageHistory, 'disk', '--yellow', fmtMb);
+}
+
+/** A small area chart in the panel's chart style. */
+function drawChart(id, samples, key, colorVar, fmt, fixedMax = null) {
+  const canvas = document.getElementById(id);
+  const dpr = devicePixelRatio || 1;
+  canvas.width = canvas.offsetWidth * dpr;
+  canvas.height = canvas.offsetHeight * dpr;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  const pts = samples.filter(s => s[key] != null);
+  if (pts.length < 2) return;
+
+  const color = cssVar(colorVar);
+  const raw = Math.max(...pts.map(p => p[key]));
+  const max = fixedMax && fixedMax >= raw ? fixedMax : (raw <= 0 ? 1 : raw * 1.15);
+  const pL = 4 * dpr, pR = 4 * dpr, pT = 6 * dpr, pB = 16 * dpr;
+  const t0 = pts[0].ts, t1 = pts[pts.length - 1].ts || t0 + 1;
+  const x = t => pL + ((t - t0) / Math.max(t1 - t0, 1)) * (W - pL - pR);
+  const y = v => pT + (1 - Math.min(v / max, 1)) * (H - pT - pB);
+
+  ctx.strokeStyle = cssVar('--line');
+  ctx.lineWidth = dpr;
+  [0, 0.5, 1].forEach(f => {
+    const gy = pT + f * (H - pT - pB);
+    ctx.beginPath(); ctx.moveTo(pL, gy); ctx.lineTo(W - pR, gy); ctx.stroke();
+  });
+
+  ctx.beginPath();
+  pts.forEach((p, i) => (i ? ctx.lineTo(x(p.ts), y(p[key])) : ctx.moveTo(x(p.ts), y(p[key]))));
+  const line = new Path2D();
+  pts.forEach((p, i) => (i ? line.lineTo(x(p.ts), y(p[key])) : line.moveTo(x(p.ts), y(p[key]))));
+  ctx.lineTo(x(t1), H - pB);
+  ctx.lineTo(x(t0), H - pB);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, pT, 0, H - pB);
+  grad.addColorStop(0, color + '30');
+  grad.addColorStop(1, color + '00');
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.5 * dpr;
+  ctx.lineJoin = 'round';
+  ctx.stroke(line);
+
+  ctx.fillStyle = cssVar('--faint');
+  ctx.font = `${10 * dpr}px Geist, sans-serif`;
+  ctx.textBaseline = 'bottom';
+  const label = ts => {
+    const d = new Date(ts);
+    return historyHours > 24 ? d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+      : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  };
+  ctx.textAlign = 'left';
+  ctx.fillText(label(t0), pL, H);
+  ctx.textAlign = 'right';
+  ctx.fillText(label(t1), W - pR, H);
+  ctx.textBaseline = 'top';
+  ctx.fillText(fmt(max), W - pR, 0);
+}
+
 /* ─── Backups ───────────────────────────────────────────────────────────── */
 
 function fmtBytes(n) {
@@ -430,6 +583,8 @@ function backupRow(b, { own }) {
         <span class="db-tag">${esc(TRIGGER_LABEL[b.trigger] || b.trigger)}</span>
         ${status}
         <span class="db-list-meta">${b.status === 'success' ? esc(fmtBytes(b.size_bytes)) : ''}</span>
+        ${b.offsite_status === 'uploaded' ? '<span class="db-tag db-tag--offsite" title="A copy is in off-site storage">off-site</span>' : ''}
+        ${b.offsite_status === 'failed' ? `<span class="db-tag db-tag--failed" title="${esc(b.offsite_error || '')}">off-site upload failed</span>` : ''}
         ${b.status === 'failed' && b.error ? `<span class="db-list-error">${esc(b.error.split('\n')[0].slice(0, 160))}</span>` : ''}
       </div>
       <span class="db-kv-actions">
@@ -603,6 +758,60 @@ function openRestoreDialog(b) {
 }
 
 /* ─── Dialogs ───────────────────────────────────────────────────────────── */
+
+function openRotateDialog() {
+  const d = database;
+  const apps = (d.links || []).map(l => l.app_name);
+  const recreates = ['mongodb', 'redis', 'valkey'].includes(d.engine);
+  const backdrop = document.createElement('div');
+  backdrop.className = 'dialog-backdrop';
+  backdrop.innerHTML = `
+    <div class="dialog dialog-modern form-dialog" role="dialog" aria-modal="true" aria-labelledby="rot-title">
+      <div class="dialog-title" id="rot-title">Change the password of ${esc(d.name)}</div>
+      <div class="dialog-body">
+        <p class="form-dialog-intro">A new random password replaces the current one. Anything still using the old password loses access${recreates ? `, and ${esc(d.engine_label)} restarts briefly to pick it up` : ''}.</p>
+        ${apps.length ? `
+        <label class="toggle-row form-toggle">
+          <span><span class="field-label">Restart linked apps now</span><span class="field-hint">${esc(apps.join(', '))} get the new URL when they restart</span></span>
+          <span class="toggle"><input type="checkbox" id="rot-restart" checked /><span class="toggle-slider"></span></span>
+        </label>` : '<p class="form-dialog-intro">No apps are linked. Update any external clients (pgAdmin, scripts) yourself.</p>'}
+      </div>
+      <div class="dialog-actions">
+        <button class="btn" id="rot-cancel">Cancel</button>
+        <button class="btn btn-danger" id="rot-ok">Change password</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  const close = () => backdrop.remove();
+  backdrop.querySelector('#rot-cancel').onclick = close;
+  backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
+  const ok = backdrop.querySelector('#rot-ok');
+  ok.onclick = async () => {
+    ok.disabled = true;
+    ok.textContent = 'Changing…';
+    const restart = !!backdrop.querySelector('#rot-restart')?.checked;
+    try {
+      const res = await api.rotateDatabasePassword(DB_ID);
+      credentials = null;
+      revealed = false;
+      close();
+      if (restart && res.apps.length) {
+        const failed = [];
+        for (const app of res.apps) {
+          try { await api.restart(app.id); } catch { failed.push(app.name); }
+        }
+        toast(failed.length ? `Password changed. Restart ${failed.join(', ')} yourself.` : `Password changed; restarting ${res.apps.map(a => a.name).join(', ')}.`, failed.length ? 'error' : 'success');
+      } else {
+        toast(res.apps.length ? `Password changed. Restart ${res.apps.map(a => a.name).join(', ')} to use it.` : 'Password changed');
+      }
+      load();
+    } catch (e) {
+      toast(e.message, 'error');
+      ok.disabled = false;
+      ok.textContent = 'Change password';
+    }
+  };
+}
 
 async function openLinkDialog() {
   let apps;

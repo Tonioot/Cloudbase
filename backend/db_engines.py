@@ -31,6 +31,15 @@ class Engine:
     # restore(ctx) -> shell command restoring ctx["path"]; None = not supported yet.
     # ctx: path, gzip (file is gzipped), pg_custom (pg_dump -Fc), ns_from / ns_to (database names)
     restore: Optional[Callable[[dict], str]] = None
+    # Turn a public URL into one that uses TLS (the public port requires it by default).
+    tls_url: Optional[Callable[[str], str]] = None
+    # Restore with a helper container instead of a command in the running one
+    # (Redis / Valkey load their data only at startup).
+    restore_via_helper: Optional[dict] = None  # {"server": ..., "cli": ...}
+
+    @property
+    def can_restore(self) -> bool:
+        return self.restore is not None or self.restore_via_helper is not None
 
     def image_ref(self, version: str) -> str:
         return f"{self.image}:{version}"
@@ -112,6 +121,10 @@ def _redis_dump(cli: str) -> str:
             "rc=$?; rm -f /tmp/cb-backup.rdb; exit $rc")
 
 
+def _with_param(url: str, param: str) -> str:
+    return url + ("&" if "?" in url else "?") + param
+
+
 # ── Registry ──────────────────────────────────────────────────────────────────
 
 ENGINES: dict[str, Engine] = {
@@ -134,6 +147,7 @@ ENGINES: dict[str, Engine] = {
         backup={"ext": "dump", "gzip": False,
                 "dump": 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc --no-owner'},
         restore=_pg_restore,
+        tls_url=lambda u: _with_param(u, "sslmode=require"),
     ),
     "mysql": Engine(
         key="mysql",
@@ -150,13 +164,14 @@ ENGINES: dict[str, Engine] = {
         },
         command=_innodb_command,
         # 127.0.0.1 only answers once the real server runs (init uses --skip-networking).
-        healthcheck='mysqladmin ping -h 127.0.0.1 -uroot -p"$MYSQL_ROOT_PASSWORD" --silent',
+        healthcheck='MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin ping -h 127.0.0.1 -uroot --silent',
         data_dir=lambda _v: "/var/lib/mysql",
         url=lambda c, host, port: f"mysql://{c['user']}:{c['password']}@{host}:{port}/{c['db_name']}",
         backup={"ext": "sql.gz", "gzip": True,
                 "dump": 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -uroot --single-transaction --routines '
                         '--triggers --events --set-gtid-purged=OFF "$MYSQL_DATABASE"'},
         restore=lambda ctx: f'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot "$MYSQL_DATABASE" < {ctx["path"]}',
+        tls_url=lambda u: _with_param(u, "ssl-mode=REQUIRED"),
     ),
     "mariadb": Engine(
         key="mariadb",
@@ -179,6 +194,7 @@ ENGINES: dict[str, Engine] = {
                 "dump": 'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb-dump -uroot --single-transaction --routines '
                         '--triggers --events "$MARIADB_DATABASE"'},
         restore=lambda ctx: f'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb -uroot "$MARIADB_DATABASE" < {ctx["path"]}',
+        tls_url=lambda u: _with_param(u, "ssl-mode=REQUIRED"),
     ),
     "redis": Engine(
         key="redis",
@@ -193,6 +209,8 @@ ENGINES: dict[str, Engine] = {
         data_dir=lambda _v: "/data",
         url=lambda c, host, port: f"redis://default:{c['password']}@{host}:{port}/0",
         backup={"ext": "rdb.gz", "gzip": True, "dump": _redis_dump("redis-cli")},
+        restore_via_helper={"server": "redis-server", "cli": "redis-cli"},
+        tls_url=lambda u: "rediss://" + u.split("://", 1)[1],
     ),
     "valkey": Engine(
         key="valkey",
@@ -207,6 +225,8 @@ ENGINES: dict[str, Engine] = {
         data_dir=lambda _v: "/data",
         url=lambda c, host, port: f"redis://default:{c['password']}@{host}:{port}/0",
         backup={"ext": "rdb.gz", "gzip": True, "dump": _redis_dump("valkey-cli")},
+        restore_via_helper={"server": "valkey-server", "cli": "valkey-cli"},
+        tls_url=lambda u: "rediss://" + u.split("://", 1)[1],
     ),
     "mongodb": Engine(
         key="mongodb",
@@ -227,6 +247,8 @@ ENGINES: dict[str, Engine] = {
         backup={"ext": "archive.gz", "gzip": False,
                 "dump": f"mongodump --quiet --archive --gzip {_MONGO_AUTH} {_MONGO_SYSTEM}"},
         restore=_mongo_restore,
+        # Self-signed by the Cloudbase CA: encrypt without verifying, or use tlsCAFile.
+        tls_url=lambda u: _with_param(u, "tls=true&tlsAllowInvalidCertificates=true"),
     ),
 }
 
@@ -254,7 +276,7 @@ def catalog() -> list[dict]:
             "default_version": e.versions[0],
             "port": e.port,
             "env_var": e.env_var,
-            "can_restore": e.restore is not None,
+            "can_restore": e.can_restore,
         }
         for e in ENGINES.values()
     ]

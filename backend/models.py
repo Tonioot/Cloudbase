@@ -278,6 +278,7 @@ class Database(Base):
     # Public access through the primary (port = db_public_min + id).
     public_enabled   = Column(Boolean, default=False, nullable=False)
     public_allowlist = Column(Text, nullable=True)  # JSON list of IPs / CIDRs; empty = everyone
+    public_tls       = Column(Boolean, default=True, nullable=False)  # require TLS on the public port
     # Automatic backups: "off" | "hourly" | "daily" (at backup_hour, server time).
     backup_schedule  = Column(String(10), default="daily", nullable=False)
     backup_hour      = Column(Integer, default=3, nullable=False)
@@ -305,6 +306,23 @@ class DatabaseBackup(Base):
     actor          = Column(String(100), nullable=True)
     created_at     = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     finished_at    = Column(DateTime, nullable=True)
+    # Off-site copy in S3-compatible storage: None | uploaded | failed
+    offsite_status = Column(String(10), nullable=True)
+    offsite_key    = Column(String(500), nullable=True)
+    offsite_error  = Column(Text, nullable=True)
+    offsite_at     = Column(DateTime, nullable=True)
+
+
+class DatabaseStatsHistory(Base):
+    """Per-database usage samples (every minute, kept 7 days)."""
+    __tablename__ = "database_stats_history"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    database_id = Column(Integer, ForeignKey("databases.id", ondelete="CASCADE"), nullable=False, index=True)
+    timestamp   = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    cpu_percent = Column(Float, nullable=True)
+    memory_mb   = Column(Float, nullable=True)
+    disk_mb     = Column(Float, nullable=True)
 
 
 class DatabaseLink(Base):
