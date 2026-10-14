@@ -9,15 +9,6 @@ const ENGINE_KIND = {
   postgres: 'Relational', mysql: 'Relational', mariadb: 'Relational',
   mongodb: 'Document', redis: 'Key-value', valkey: 'Key-value',
 };
-// What a linked app receives, shown live in the dialog (password masked).
-const URL_PREVIEW = {
-  postgres: (u, db) => `postgresql://${u}:•••@HOST:5432/${db}`,
-  mysql:    (u, db) => `mysql://${u}:•••@HOST:3306/${db}`,
-  mariadb:  (u, db) => `mysql://${u}:•••@HOST:3306/${db}`,
-  redis:    ()      => `redis://default:•••@HOST:6379/0`,
-  valkey:   ()      => `redis://default:•••@HOST:6379/0`,
-  mongodb:  (u, db) => `mongodb://${u}:•••@HOST:27017/${db}?authSource=admin`,
-};
 
 let engines = [];
 
@@ -143,10 +134,6 @@ export async function openCreateDatabaseDialog() {
             <select id="db-version" class="input"></select>
           </div>
         </div>
-        <div class="engine-preview">
-          <span class="engine-preview-label">Linked apps get</span>
-          <code id="db-url-preview"></code>
-        </div>
 
         <fieldset class="form-block">
           <legend>Node <small>the database stays on this node</small></legend>
@@ -191,14 +178,6 @@ export async function openCreateDatabaseDialog() {
     if (!e) return;
     $('#db-version').innerHTML = e.versions.map(v => `<option value="${esc(v)}">${esc(e.label)} ${esc(v)}</option>`).join('');
     $('#db-mem').value = DEFAULT_MEMORY_MB[e.key] || 512;
-    syncPreview();
-  };
-  const syncPreview = () => {
-    const e = selectedEngine();
-    if (!e) return;
-    const ident = ($('#db-name').value.trim().toLowerCase() || 'shop-db').replace(/-/g, '_');
-    const url = (URL_PREVIEW[e.key] || (() => ''))(ident, ident).replace('HOST', 'cloudbase-db-<id>');
-    $('#db-url-preview').textContent = `${e.env_var}=${url}`;
   };
   const syncMemory = () => {
     const nodeId = parseInt(backdrop.querySelector('input[name="db-node"]:checked')?.value, 10);
@@ -210,7 +189,6 @@ export async function openCreateDatabaseDialog() {
   backdrop.querySelectorAll('input[name="db-node"]').forEach(r => r.addEventListener('change', syncMemory));
   $('#db-mem').addEventListener('input', syncMemory);
   backdrop.querySelectorAll('input[name="db-engine"]').forEach(r => r.addEventListener('change', () => { syncEngine(); syncMemory(); }));
-  $('#db-name').addEventListener('input', syncPreview);
   syncEngine();
   syncMemory();
   $('#db-name').focus();

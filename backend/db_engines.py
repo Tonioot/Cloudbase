@@ -101,8 +101,9 @@ def _pg_restore(ctx: dict) -> str:
 
 
 _MONGO_AUTH = '--username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin'
-# Never dump or restore users and internals: restoring admin.* with --drop would
-# replace this database's own login.
+# Never restore users and internals: restoring admin.* with --drop would replace
+# this database's own login. (mongodump has no --nsExclude, so dumps include them
+# and only the restore leaves them out.)
 _MONGO_SYSTEM = '--nsExclude "admin.*" --nsExclude "config.*" --nsExclude "local.*"'
 
 
@@ -245,7 +246,7 @@ ENGINES: dict[str, Engine] = {
         data_dir=lambda _v: "/data/db",
         url=lambda c, host, port: f"mongodb://{c['user']}:{c['password']}@{host}:{port}/{c['db_name']}?authSource=admin",
         backup={"ext": "archive.gz", "gzip": False,
-                "dump": f"mongodump --quiet --archive --gzip {_MONGO_AUTH} {_MONGO_SYSTEM}"},
+                "dump": f"mongodump --quiet --archive --gzip {_MONGO_AUTH}"},
         restore=_mongo_restore,
         # Self-signed by the Cloudbase CA: encrypt without verifying, or use tlsCAFile.
         tls_url=lambda u: _with_param(u, "tls=true&tlsAllowInvalidCertificates=true"),
