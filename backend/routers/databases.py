@@ -58,6 +58,7 @@ _last_heal: dict[int, float] = {}
 _control: dict[int, tuple[WebSocket, asyncio.Lock]] = {}
 _pending_dials: dict[str, tuple[asyncio.Future, int]] = {}
 _desired_proxies: dict[int, set[int]] = {}  # node id -> database ids it proxies
+_remote_progress: dict[int, dict[str, str]] = {}  # node id -> {database id: progress}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -270,6 +271,13 @@ def _client_ip(request: Request) -> str:
     return host
 
 
+def _progress(database: Database, node: Optional[Node]) -> Optional[str]:
+    """What the database is doing before its container exists (e.g. pulling the image)."""
+    if node is not None and node.is_local:
+        return db_manager.progress(database.id)
+    return _remote_progress.get(database.node_id, {}).get(str(database.id))
+
+
 def _as_dict(database: Database, node: Optional[Node], link_count: int = 0) -> dict:
     engine = db_engines.ENGINES.get(database.engine)
     return {
@@ -292,6 +300,7 @@ def _as_dict(database: Database, node: Optional[Node], link_count: int = 0) -> d
         "initialized": database.initialized_at is not None,
         "busy": database.id in _busy,
         "operation": _operation.get(database.id),
+        "progress": _progress(database, node),
         "backup_schedule": database.backup_schedule,
         "can_restore": bool(engine and engine.restore),
         "public_enabled": bool(database.public_enabled),
@@ -978,12 +987,19 @@ async def db_control_ws(websocket: WebSocket):
             msg = await websocket.receive()
             if msg.get("type") == "websocket.disconnect":
                 break
+            try:
+                data = json.loads(msg.get("text") or "{}")
+            except ValueError:
+                continue
+            if data.get("type") == "progress":
+                _remote_progress[node.id] = {str(k): str(v) for k, v in (data.get("progress") or {}).items()}
     except Exception:
         pass
     finally:
         current = _control.get(node.id)
         if current is not None and current[0] is websocket:
             _control.pop(node.id, None)
+            _remote_progress.pop(node.id, None)
         log.info("[db-relay] control channel of node %s disconnected", node.name)
 
 

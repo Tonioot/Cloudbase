@@ -56,6 +56,10 @@ $seedScript = Join-Path $PSScriptRoot 'dev_seed.py'
 & $Py $seedScript credentials $Password
 if ($Seed) { & $Py $seedScript demo }
 
+# Demo apps have no containers in dev; stream their seeded demo logs instead
+$demoLogs = Join-Path $DevHome '.cloudbase\dev-demo-logs.json'
+if (Test-Path $demoLogs) { $env:CLOUDBASE_DEV_DEMO_LOGS = $demoLogs }
+
 # A crashed --reload run can leave a worker process holding the port, which
 # keeps serving old code. Stop whatever still listens on it.
 Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue | ForEach-Object {

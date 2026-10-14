@@ -74,14 +74,47 @@ def _container_state(container) -> str:
     return "stopped"
 
 
-def _ensure_image(client, ref: str) -> None:
+# What a database is doing before its container exists, e.g. "Pulling postgres:18 · 45%".
+# Read by the primary (local databases) or pushed by the agent (remote ones).
+_progress: dict[int, str] = {}
+
+
+def progress(database_id: int) -> Optional[str]:
+    return _progress.get(int(database_id))
+
+
+def all_progress() -> dict[int, str]:
+    return dict(_progress)
+
+
+def _ensure_image(client, ref: str, database_id: int) -> None:
     import docker  # type: ignore
     try:
         client.images.get(ref)
+        return
     except docker.errors.ImageNotFound:
-        log.info("[db] Pulling %s", ref)
-        repo, _, tag = ref.rpartition(":")
-        client.images.pull(repo, tag=tag)
+        pass
+    log.info("[db] Pulling %s", ref)
+    repo, _, tag = ref.rpartition(":")
+    _progress[database_id] = f"Pulling {ref}"
+    layers: dict[str, tuple[int, int]] = {}  # layer id → (downloaded, total)
+    for event in client.api.pull(repo, tag=tag, stream=True, decode=True):
+        if event.get("error"):
+            raise RuntimeError(f"Pulling {ref} failed: {event['error']}")
+        detail = event.get("progressDetail") or {}
+        layer, status = event.get("id"), event.get("status", "")
+        if layer and detail.get("total"):
+            if status == "Downloading":
+                layers[layer] = (detail.get("current", 0), detail["total"])
+            elif status == "Extracting":
+                _progress[database_id] = f"Extracting {ref}"
+        elif layer and status in ("Download complete", "Pull complete") and layer in layers:
+            layers[layer] = (layers[layer][1], layers[layer][1])
+        if layers and not _progress[database_id].startswith("Extracting"):
+            done = sum(c for c, _ in layers.values())
+            total = sum(t for _, t in layers.values())
+            _progress[database_id] = f"Pulling {ref} · {done * 100 // max(total, 1)}% of {total / 1e6:.0f} MB"
+    log.info("[db] Pulled %s", ref)
 
 
 def _run_container(client, spec: dict):
@@ -92,7 +125,8 @@ def _run_container(client, spec: dict):
     mem_mb = spec.get("memory_limit_mb")
 
     image = engine.image_ref(version)
-    _ensure_image(client, image)
+    _ensure_image(client, image, db_id)
+    _progress[db_id] = "Starting the container"
     dm.ensure_network(NETWORK)
 
     run_kwargs = {
@@ -128,7 +162,21 @@ def _run_container(client, spec: dict):
     if mem_mb:
         run_kwargs["mem_limit"] = int(mem_mb) * 1024 * 1024
 
-    return client.containers.run(image, **run_kwargs)
+    import docker  # type: ignore
+    try:
+        return client.containers.run(image, **run_kwargs)
+    except docker.errors.APIError as e:
+        # On a slow host an earlier attempt can time out on our side while Docker still
+        # creates the container. Take that container over instead of failing on the name.
+        if e.status_code != 409:
+            raise
+        existing = _get_container(client, db_id)
+        if existing is None:
+            raise
+        log.info("[db] %s already exists, taking it over", container_name(db_id))
+        if _container_state(existing) == "stopped":
+            existing.start()
+        return existing
 
 
 def ensure_running(spec: dict) -> dict:
@@ -169,7 +217,10 @@ def ensure_running(spec: dict) -> dict:
                 f"database. Remove it (docker volume rm {volume_name(db_id)}) or keep it and delete this database."
             )
 
-    container = _run_container(client, spec)
+    try:
+        container = _run_container(client, spec)
+    finally:
+        _progress.pop(db_id, None)
     log.info("[db] Started %s (%s %s)", container_name(db_id), spec["engine"], spec["version"])
     return {"container_id": container.id, "state": _container_state(container)}
 

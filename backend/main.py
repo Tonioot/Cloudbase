@@ -973,6 +973,33 @@ async def _startup_recovery() -> None:
         log.warning("STARTUP panel nginx refresh failed: %s", exc)
 
 
+async def _dev_demo_logs(path: str) -> None:
+    """Dev only: feed the demo apps' log views from dev-demo-logs.json (no Docker needed)."""
+    import random
+    from datetime import datetime
+    try:
+        with open(path, encoding="utf-8") as f:
+            demo = {int(k): v for k, v in json.load(f).items()}
+    except (OSError, ValueError) as e:
+        log.warning("dev demo logs not loaded from %s: %s", path, e)
+        return
+
+    def emit(app_id: int, template: str) -> None:
+        line = template.replace("{ts}", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        pm.log_buffers.setdefault(app_id, deque(maxlen=5000)).append(line)
+        pm._push_line(app_id, line)
+
+    for app_id, d in demo.items():
+        for t in d["start"]:
+            emit(app_id, t)
+        for t in d["loop"] * 3:
+            emit(app_id, t)
+    while True:
+        await asyncio.sleep(1.5)
+        app_id, d = random.choice(list(demo.items()))
+        emit(app_id, random.choice(d["loop"]))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # First-run: generate a password if none exists. This must happen before
@@ -1026,6 +1053,8 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(databases_router.database_monitor()),
             asyncio.create_task(database_backups_router.backup_scheduler()),
         ]
+        if os.environ.get("CLOUDBASE_DEV_DEMO_LOGS"):
+            tasks.append(asyncio.create_task(_dev_demo_logs(os.environ["CLOUDBASE_DEV_DEMO_LOGS"])))
 
     yield
     for task in tasks:

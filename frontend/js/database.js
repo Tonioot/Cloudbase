@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { badge, toast, confirm, fmtUptime } from './utils.js';
+import { badge, toast, confirm, fmtUptime, stripAnsi } from './utils.js';
 import { esc, setCrumbs } from './shell.js';
 import { engineIcon } from './engine-icons.js';
 
@@ -131,7 +131,7 @@ function render() {
   document.getElementById('db-meta').innerHTML =
     `<span>${esc(d.engine_label)} ${esc(d.version)}</span><span>${esc(d.node_name || 'unknown node')}</span><code>${esc(d.host)}:${d.port}</code>`;
   document.getElementById('db-status-badge').innerHTML = badge(d.status);
-  document.getElementById('db-status-meta').textContent = d.operation || (d.busy && !TRANSITIONAL.includes(d.status) ? 'Working…' : '');
+  document.getElementById('db-status-meta').textContent = d.progress || d.operation || (d.busy && !TRANSITIONAL.includes(d.status) ? 'Working…' : '');
 
   const err = document.getElementById('db-error');
   const showErr = d.last_error && ['error', 'unhealthy'].includes(d.status);
@@ -371,7 +371,9 @@ async function loadLogs() {
   try {
     const { lines } = await api.getDatabaseLogs(DB_ID, 300);
     const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
-    pre.textContent = lines.length ? lines.join('\n') : 'No log output yet.';
+    pre.textContent = lines.length ? stripAnsi(lines.join('\n'))
+      : database?.progress ? `The container has not started yet.\n${database.progress}…`
+      : 'No log output yet.';
     if (atBottom) pre.scrollTop = pre.scrollHeight;
   } catch (e) {
     pre.textContent = `Could not load logs: ${e.message}`;

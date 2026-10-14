@@ -973,6 +973,19 @@ async def _db_dial(state: AgentState, msg: dict) -> None:
     await db_proxy.pipe(db_proxy.TcpStream(reader, writer), upstream)
 
 
+async def _report_db_progress(ws) -> None:
+    """Tell the primary what a database is doing before its container exists (an
+    image pull can take minutes and blocks the command loop meanwhile)."""
+    import db_manager
+    last = None
+    while True:
+        await asyncio.sleep(2)
+        current = {str(k): v for k, v in db_manager.all_progress().items()}
+        if current != last:
+            await ws.send(json.dumps({"type": "progress", "progress": current}))
+            last = current
+
+
 async def _db_control_loop(state: AgentState) -> None:
     import db_proxy
     db_proxy.configure(asyncio.get_running_loop(), lambda db_id: _open_db_proxy_ws(state, db_id), state.node_id)
@@ -982,12 +995,16 @@ async def _db_control_loop(state: AgentState) -> None:
             async with websockets.connect(
                 url, additional_headers={"x-node-token": state.auth_token}, ping_interval=20, ping_timeout=30,
             ) as ws:
-                async for raw in ws:
-                    msg = json.loads(raw)
-                    if msg.get("type") == "proxies":
-                        asyncio.create_task(db_proxy.reconcile(msg.get("database_ids") or []))
-                    elif msg.get("type") == "dial":
-                        asyncio.create_task(_db_dial(state, msg))
+                reporter = asyncio.create_task(_report_db_progress(ws))
+                try:
+                    async for raw in ws:
+                        msg = json.loads(raw)
+                        if msg.get("type") == "proxies":
+                            asyncio.create_task(db_proxy.reconcile(msg.get("database_ids") or []))
+                        elif msg.get("type") == "dial":
+                            asyncio.create_task(_db_dial(state, msg))
+                finally:
+                    reporter.cancel()
         except asyncio.CancelledError:
             raise
         except Exception as e:

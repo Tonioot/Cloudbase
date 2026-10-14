@@ -24,7 +24,8 @@ let engines = [];
 function statusLine(d) {
   if (d.status === 'error' || d.status === 'unhealthy') return { text: d.last_error || 'Needs attention', cls: 'error' };
   if (d.status === 'node_offline') return { text: `Node ${d.node_name || ''} is offline`, cls: 'error' };
-  if (d.status === 'creating') return { text: 'Pulling image and initialising…', cls: '' };
+  if (d.progress) return { text: d.progress, cls: '' };
+  if (d.status === 'creating') return { text: 'Preparing…', cls: '' };
   return { text: d.status.replace('_', ' '), cls: '' };
 }
 

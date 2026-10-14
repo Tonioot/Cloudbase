@@ -269,6 +269,62 @@ export function timeAgo(iso) {
   return `${days}d ago`;
 }
 
+/* ─── ANSI escape codes (colored app output) ────────────────────────────── */
+// CSI sequences (colors, cursor moves), OSC sequences (titles, links) and lone escapes
+const ANSI_RE = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g;
+// Standard 8 colors mapped onto theme colors so they stay readable in light and dark
+const ANSI_FG = ['var(--faint)', 'var(--red)', 'var(--green)', 'var(--yellow)', 'var(--accent)', 'var(--purple)', 'var(--accent)', 'var(--text)'];
+
+export function stripAnsi(s) {
+  return String(s).replace(ANSI_RE, '');
+}
+
+// Escaped HTML with SGR colors/styles as spans; every other escape is dropped
+export function ansiToHtml(s) {
+  const esc = t => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  s = String(s);
+  let out = '', last = 0, st = {};
+  const emit = text => {
+    if (!text) return;
+    const css = [];
+    if (st.fg)        css.push(`color:${st.fg}`);
+    if (st.bold)      css.push('font-weight:600');
+    if (st.dim)       css.push('opacity:.65');
+    if (st.italic)    css.push('font-style:italic');
+    if (st.underline) css.push('text-decoration:underline');
+    out += css.length ? `<span style="${css.join(';')}">${esc(text)}</span>` : esc(text);
+  };
+  for (const m of s.matchAll(ANSI_RE)) {
+    emit(s.slice(last, m.index));
+    last = m.index + m[0].length;
+    const sgr = /^\x1b\[([\d;]*)m$/.exec(m[0]);
+    if (!sgr) continue;
+    const codes = sgr[1] === '' ? [0] : sgr[1].split(';').map(Number);
+    for (let i = 0; i < codes.length; i++) {
+      const c = codes[i];
+      if (c === 0) st = {};
+      else if (c === 1) st.bold = true;
+      else if (c === 2) st.dim = true;
+      else if (c === 3) st.italic = true;
+      else if (c === 4) st.underline = true;
+      else if (c === 22) st.bold = st.dim = false;
+      else if (c === 23) st.italic = false;
+      else if (c === 24) st.underline = false;
+      else if (c >= 30 && c <= 37) st.fg = ANSI_FG[c - 30];
+      else if (c >= 90 && c <= 97) st.fg = c === 90 ? 'var(--muted)' : ANSI_FG[c - 90];
+      else if (c === 39) st.fg = null;
+      else if (c === 38 || c === 48) {
+        // Extended color: 5;n (256-color) or 2;r;g;b — only the basic 16 map to the theme
+        const n = codes[i + 1] === 5 ? 2 : codes[i + 1] === 2 ? 4 : 0;
+        if (c === 38 && n === 2 && codes[i + 2] < 16) st.fg = ANSI_FG[codes[i + 2] % 8];
+        i += n;
+      }
+    }
+  }
+  emit(s.slice(last));
+  return out;
+}
+
 /* ─── Log line colorizer ─────────────────────────────────────────────────── */
 export function logClass(line) {
   if (/error|fail|fatal|exception/i.test(line)) return 'log-error';

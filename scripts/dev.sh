@@ -47,6 +47,10 @@ export HOME="$DEV_HOME"
 "$PY" "$ROOT/scripts/dev_seed.py" credentials "$PASSWORD"
 [ "$SEED" = 1 ] && "$PY" "$ROOT/scripts/dev_seed.py" demo
 
+# Demo apps have no containers in dev; stream their seeded demo logs instead
+DEMO_LOGS="$DEV_HOME/.cloudbase/dev-demo-logs.json"
+[ -f "$DEMO_LOGS" ] && export CLOUDBASE_DEV_DEMO_LOGS="$DEMO_LOGS"
+
 echo
 echo "  Cloudbase dev server:  http://127.0.0.1:$PORT"
 echo "  Login:                 admin / $PASSWORD"

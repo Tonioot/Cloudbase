@@ -1,5 +1,5 @@
 import { api, wsLogs, wsReplicaLogs, wsStats, wsNodeEvents, PermissionError } from './api.js';
-import { auditTableHTML, cssVar, icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, setBtn, parseDotEnv, pickTextFile, mergeEnvIntoRows, timeAgo } from './utils.js';
+import { auditTableHTML, cssVar, icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, stripAnsi, ansiToHtml, setBtn, parseDotEnv, pickTextFile, mergeEnvIntoRows, timeAgo } from './utils.js';
 import { pickGitHubToken } from './sidebar.js';
 import { openDomainWizard, leCertName } from './domain-wizard.js';
 import { setCrumbs } from './shell.js';
@@ -633,8 +633,8 @@ function _appendLogLine(line) {
   logLines.push(line);
 
   const div = document.createElement('div');
-  div.className = `log-line ${logClass(line)}`;
-  div.innerHTML = `<span class="log-num">${String(logLines.length).padStart(4)}</span><span class="log-text">${escHtml(line)}</span>`;
+  div.className = `log-line ${logClass(stripAnsi(line))}`;
+  div.innerHTML = `<span class="log-num">${String(logLines.length).padStart(4)}</span><span class="log-text">${ansiToHtml(line)}</span>`;
   const atBottom = terminal.scrollHeight - terminal.clientHeight - terminal.scrollTop < 60;
   terminal.appendChild(div);
   if (atBottom) terminal.scrollTop = terminal.scrollHeight;
@@ -2798,7 +2798,7 @@ function openActionLogsDialog(title) {
 
   return {
     append(line) {
-      pre.textContent += `${line}\n`;
+      pre.textContent += `${stripAnsi(line)}\n`;
       pre.scrollTop = pre.scrollHeight;
     },
     setStatus(text) {
