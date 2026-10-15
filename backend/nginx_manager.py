@@ -883,10 +883,10 @@ def config_uses_restart_page(content: str) -> bool:
 def write_maintenance_files(app_id: int, downtime_html: str, update_html: str, restart_html: str = None, starting_html: str = None) -> tuple[bool, str]:
     """Write downtime.html, update.html (and optionally restart.html, starting.html) to /var/www/cloudbase/maintenance/{app_id}/."""
     app_dir = os.path.join(MAINTENANCE_DIR, str(app_id))
-    log.info("[maint-files] writing to %s", app_dir)
+    log.debug("[maint-files] writing to %s", app_dir)
     try:
         r = subprocess.run(["sudo", "mkdir", "-p", app_dir], capture_output=True, text=True)
-        log.info("[maint-files] mkdir rc=%d stderr=%r", r.returncode, r.stderr)
+        log.log(logging.WARNING if r.returncode else logging.DEBUG, "[maint-files] mkdir rc=%d stderr=%r", r.returncode, r.stderr)
         if r.returncode != 0:
             return False, r.stderr or "Failed to create maintenance directory"
 
@@ -899,14 +899,14 @@ def write_maintenance_files(app_id: int, downtime_html: str, update_html: str, r
         for filename, content in files:
             path = os.path.join(app_dir, filename)
             r = subprocess.run(["sudo", "tee", path], input=content, text=True, capture_output=True)
-            log.info("[maint-files] tee %s rc=%d stderr=%r", path, r.returncode, r.stderr)
+            log.log(logging.WARNING if r.returncode else logging.DEBUG, "[maint-files] tee %s rc=%d stderr=%r", path, r.returncode, r.stderr)
             if r.returncode != 0:
                 return False, r.stderr or f"Failed to write {filename}"
 
         for filename, _ in files:
             path = os.path.join(app_dir, filename)
             r = subprocess.run(["sudo", "chmod", "644", path], capture_output=True, text=True)
-            log.info("[maint-files] chmod %s rc=%d stderr=%r", path, r.returncode, r.stderr)
+            log.log(logging.WARNING if r.returncode else logging.DEBUG, "[maint-files] chmod %s rc=%d stderr=%r", path, r.returncode, r.stderr)
             if r.returncode != 0:
                 return False, r.stderr or f"Failed to chmod {filename}"
         return True, "OK"
@@ -957,8 +957,8 @@ def write_nginx_config(app_name: str, config: str) -> tuple[bool, str]:
     server_block_count = cfg.count("\nserver {")
     line_count = cfg.count("\n") + (1 if cfg else 0)
     cfg_bytes = len(cfg.encode("utf-8", errors="ignore"))
-    log.info("[nginx-cfg] writing config for app=%r safe=%r path=%s", app_name, safe, config_path)
-    log.info(
+    log.debug("[nginx-cfg] writing config for app=%r safe=%r path=%s", app_name, safe, config_path)
+    log.debug(
         "[nginx-cfg] app=%r sha=%s lines=%d upstreams=%d server_blocks=%d bytes=%d",
         app_name,
         cfg_sha,
@@ -974,7 +974,7 @@ def write_nginx_config(app_name: str, config: str) -> tuple[bool, str]:
             ["sudo", "tee", config_path],
             input=config, text=True, capture_output=True,
         )
-        log.info("[nginx-cfg] tee config rc=%d stderr=%r", result.returncode, result.stderr)
+        log.log(logging.WARNING if result.returncode else logging.DEBUG, "[nginx-cfg] tee config rc=%d stderr=%r", result.returncode, result.stderr)
         if result.returncode != 0:
             return False, result.stderr or "Failed to write nginx config"
 
@@ -984,28 +984,28 @@ def write_nginx_config(app_name: str, config: str) -> tuple[bool, str]:
                 ["sudo", "ln", "-sf", config_path, enabled_path],
                 capture_output=True, text=True,
             )
-            log.info("[nginx-cfg] symlink rc=%d stderr=%r", r.returncode, r.stderr)
+            log.log(logging.WARNING if r.returncode else logging.DEBUG, "[nginx-cfg] symlink rc=%d stderr=%r", r.returncode, r.stderr)
             if r.returncode != 0:
                 return False, r.stderr or "Failed to enable nginx site"
         else:
-            log.info("[nginx-cfg] symlink already exists at %s", enabled_path)
+            log.debug("[nginx-cfg] symlink already exists at %s", enabled_path)
             # Always re-create symlink to ensure it points to current config
             subprocess.run(["sudo", "ln", "-sf", config_path, enabled_path], capture_output=True)
 
         # Validate config — if a *different* app's broken config causes the failure,
         # disable it automatically and retry once.
         result = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True)
-        log.info("[nginx-cfg] nginx -t rc=%d stdout=%r stderr=%r", result.returncode, result.stdout, result.stderr)
+        log.log(logging.WARNING if result.returncode else logging.DEBUG, "[nginx-cfg] nginx -t rc=%d stdout=%r stderr=%r", result.returncode, result.stdout, result.stderr)
         if result.returncode != 0:
             disabled = _disable_broken_configs(safe, result.stderr)
             if disabled:
                 result = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True)
-                log.info("[nginx-cfg] nginx -t retry rc=%d stderr=%r", result.returncode, result.stderr)
+                log.log(logging.WARNING if result.returncode else logging.DEBUG, "[nginx-cfg] nginx -t retry rc=%d stderr=%r", result.returncode, result.stderr)
             if result.returncode != 0:
                 return False, result.stderr
 
         r = subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True, text=True)
-        log.info("[nginx-cfg] reload rc=%d stderr=%r", r.returncode, r.stderr)
+        log.log(logging.WARNING if r.returncode else logging.DEBUG, "[nginx-cfg] reload rc=%d stderr=%r", r.returncode, r.stderr)
         return True, "OK"
     except FileNotFoundError:
         log.error("[nginx-cfg] nginx not found")

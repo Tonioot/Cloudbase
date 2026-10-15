@@ -541,7 +541,7 @@ async def _stats_history_writer():
 
 # ── Autoscaler ───────────────────────────────────────────────────────────────
 async def _autoscaler():
-    """Every 60s check CPU for autoscale-enabled apps and add/remove replicas.
+    """Every 15s check CPU for autoscale-enabled apps and add/remove replicas.
 
     Scale up goes to the least-loaded online node (local or remote); scale down
     removes remote replicas first, then the newest local one. Scale actions run
@@ -561,10 +561,29 @@ async def _autoscaler():
     from routers.nodes import queue_node_command, wait_for_node_command
 
     alog = logging.getLogger("cloudbase.autoscaler")
-    # cooldown: app_id → last scale action timestamp
+    # Fast up, slow down (no flapping):
+    CHECK_INTERVAL = 15  # seconds between checks
+    UP_WINDOW = 60       # scale up when the average CPU over this many seconds is above target
+    UP_COOLDOWN = 60     # min seconds after any scale action / deploy before scaling up again
+    DOWN_WINDOW = 300    # scale down only when CPU stayed below half the target this long;
+                         # also the min seconds after any scale action / deploy
+    # app_id → time of the last scale action (or of a deploy we waited for)
     _last_scaled: dict[int, float] = {}
-    COOLDOWN = 120  # seconds between scale actions per app
     ACTOR = "autoscaler"
+
+    def _recent_cpu_avg(app_id: int, seconds: int) -> Optional[float]:
+        """Average of the live CPU samples (in memory; ~2s apart locally, ~15s for
+        remote nodes) over the last `seconds`, or None when they don't cover
+        most of that window yet (e.g. just after a restart)."""
+        now_ms = _time.time() * 1000
+        cutoff_ms = now_ms - seconds * 1000
+        frames = [
+            f for f in pm.get_recent_stats(app_id)
+            if f.get("cpu_percent") is not None and (f.get("timestamp") or 0) >= cutoff_ms
+        ]
+        if len(frames) < 3 or now_ms - min(f["timestamp"] for f in frames) < seconds * 750:
+            return None
+        return sum(f["cpu_percent"] for f in frames) / len(frames)
 
     def _say(app_id: int, msg: str, level: int = logging.INFO) -> None:
         # Server log, the app's Cloudbase log (once, with the right level) and its live log.
@@ -647,7 +666,7 @@ async def _autoscaler():
                     payload={**_remote_replica_command_payload(app, env_vars, new_port), "replica_id": replica.id},
                 )
 
-        _say(app_id, f"CPU {avg_cpu:.1f}% > {target:.0f}% — adding instance {replica.id} on '{node.name}' ({count} → {count + 1})…")
+        _say(app_id, f"CPU {avg_cpu:.1f}% > {target:.0f}% over the last {UP_WINDOW}s — adding instance {replica.id} on '{node.name}' ({count} → {count + 1})…")
 
         # Docker work and the health check run with no DB session open. A local
         # replica stays "starting" (so not in nginx) until it serves traffic.
@@ -713,7 +732,7 @@ async def _autoscaler():
             victim.status = "stopping"
             await s.commit()
             app_name = (await s.get(Application, app_id)).name
-        _say(app_id, f"CPU {avg_cpu:.1f}% < {target * 0.5:.0f}% — removing instance {victim_id} on '{node.name}' ({count} → {count - 1})…")
+        _say(app_id, f"CPU stayed below {target * 0.5:.0f}% for {DOWN_WINDOW // 60} min (peak {avg_cpu:.1f}%) — removing instance {victim_id} on '{node.name}' ({count} → {count - 1})…")
         await _rewrite_nginx(app_id)
 
         try:
@@ -780,7 +799,8 @@ async def _autoscaler():
 
                 for app in apps:
                     now = asyncio.get_running_loop().time()
-                    if now - _last_scaled.get(app.id, 0) < COOLDOWN:
+                    since_action = now - _last_scaled.get(app.id, 0)
+                    if since_action < UP_COOLDOWN:
                         continue
                     # A deploy (or our own previous scale action) is still running.
                     # Blue-green/rolling deploys briefly run old + new replicas side by
@@ -790,17 +810,24 @@ async def _autoscaler():
                         _last_scaled[app.id] = now
                         continue
 
-                    # Average CPU over last 2 minutes from StatsHistory
-                    since = _dt.datetime.utcnow() - _dt.timedelta(minutes=2)
-                    hist = await db.execute(
-                        select(StatsHistory)
-                        .where(StatsHistory.app_id == app.id, StatsHistory.timestamp >= since)
-                        .order_by(StatsHistory.timestamp.desc())
-                    )
-                    rows = hist.scalars().all()
-                    if not rows:
+                    # Up: average of the live samples over the last minute — reacts fast.
+                    up_avg = _recent_cpu_avg(app.id, UP_WINDOW)
+
+                    # Down: every 30s average of the last 5 minutes must be low, and the
+                    # history must actually cover those 5 minutes.
+                    down_peak = None
+                    if since_action >= DOWN_WINDOW:
+                        since = _dt.datetime.utcnow() - _dt.timedelta(seconds=DOWN_WINDOW)
+                        hist = await db.execute(
+                            select(StatsHistory.cpu_percent, StatsHistory.timestamp)
+                            .where(StatsHistory.app_id == app.id, StatsHistory.timestamp >= since)
+                        )
+                        rows = hist.all()
+                        if rows and min(r.timestamp for r in rows) <= since + _dt.timedelta(seconds=60):
+                            down_peak = max(r.cpu_percent for r in rows)
+
+                    if up_avg is None and down_peak is None:
                         continue
-                    avg_cpu = sum(r.cpu_percent for r in rows) / len(rows)
 
                     rep_result = await db.execute(
                         select(ApplicationReplica)
@@ -821,14 +848,14 @@ async def _autoscaler():
                     target = app.autoscale_cpu_target or 70.0
 
                     action = None
-                    if avg_cpu > target and count < max_r:
-                        action = _scale_up(app.id, count, avg_cpu, target)
-                    elif avg_cpu < target * 0.5 and count > min_r:
+                    if up_avg is not None and up_avg > target and count < max_r:
+                        action = _scale_up(app.id, count, up_avg, target)
+                    elif down_peak is not None and down_peak < target * 0.5 and count > min_r:
                         # Remove remote replicas first (the primary keeps the base load),
                         # newest first within each group (replicas is ordered by id desc).
                         is_local = lambda r: r.node_id is None or r.node_id == local_node.id
                         victim = next((r for r in replicas if not is_local(r)), None) or replicas[0]
-                        action = _scale_down(app.id, victim.id, count, avg_cpu, target)
+                        action = _scale_down(app.id, victim.id, count, down_peak, target)
 
                     if action is not None:
                         # A deploy may have started during the queries above.
@@ -844,7 +871,7 @@ async def _autoscaler():
             return
         except Exception as e:
             alog.warning("[autoscaler] error: %s", e)
-        await asyncio.sleep(60)
+        await asyncio.sleep(CHECK_INTERVAL)
 
 
 # ── NodeCommand cleanup ───────────────────────────────────────────────────────
@@ -1493,9 +1520,20 @@ async def overview_history(hours: float = 1,
     return {"interval_seconds": _OVERVIEW_SAMPLE_SECONDS, "hours": hours, "samples": _downsample(rows, keys)}
 
 
+def _read_version() -> str:
+    try:
+        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "VERSION")) as f:
+            return f.read().strip() or "dev"
+    except OSError:
+        return "dev"
+
+
+VERSION = _read_version()
+
+
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "1.0.0", "port": PORT}
+    return {"status": "ok", "version": VERSION, "port": PORT}
 
 
 @app.get("/api/auth/check")

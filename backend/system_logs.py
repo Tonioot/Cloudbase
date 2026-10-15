@@ -82,12 +82,14 @@ def _parse_entries(lines: list[str]) -> list[dict]:
                 "ts": m.group("ts"),
                 "level": m.group("level"),
                 "component": component_of(m.group("name")),
-                "text": line,
+                "text": line,             # raw line(s), for search
+                "msg": m.group("msg"),    # message without timestamp/level/logger
             })
         elif entries:
             entries[-1]["text"] += "\n" + line
+            entries[-1]["msg"] += "\n" + line
         elif line:
-            entries.append({"ts": None, "level": None, "component": "other", "text": line})
+            entries.append({"ts": None, "level": None, "component": "other", "text": line, "msg": line})
     return entries
 
 

@@ -18,9 +18,6 @@ CREDS="$HOME/.cloudbase/credentials"
 APP_NAME="Cloudbase"
 SERVICE_NAME="cloudbase"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-NGINX_SITE_NAME="cloudbase"
-NGINX_CONFIG_PATH="/etc/nginx/sites-available/${NGINX_SITE_NAME}"
-NGINX_ENABLED_PATH="/etc/nginx/sites-enabled/${NGINX_SITE_NAME}"
 CERTS_DIR="$HOME/.cloudbase/certs"
 LOG_DIR="$HOME/.cloudbase/logs"
 CLI_LOG_FILE="$LOG_DIR/cloudbase-cli.log"
@@ -65,49 +62,38 @@ usage() {
     cat <<EOF
 Usage: cloudbase <command> [options]
 
-The CLI is for server setup and service management.
-Web UI available at:
+Cloudbase is managed from the web UI — apps, databases, domains, HTTPS, users:
   http://localhost:${PORT}${_ip:+
   http://${_ip}:${PORT}}
+The CLI runs the server and handles updates, backups and recovery.
 
-Core:
-  start              Start Cloudbase
-  stop               Stop Cloudbase
-  restart            Restart Cloudbase
-  status             Show service status
-  logs               Show service logs
-  enable             Install systemd autostart and start now
-  disable            Disable systemd autostart and stop service
-  update             Update to the latest version
-  uninstall          Remove Cloudbase from this server [--keep-data]
+Service:
+  start | stop | restart       Start, stop or restart Cloudbase
+  status                       Service, version, apps and nodes at a glance
+  logs [options]               Cloudbase's own log
+                                 -f              keep following
+                                 -n <lines>      lines to show (default 100)
+                                 --app <name>    everything Cloudbase did for one app
+                                 --errors        only warnings and errors
+  enable | disable             Start Cloudbase on boot (systemd)
+  doctor                       Check the installation and explain what's wrong
 
-Info:
-  apps               List all deployed applications
-  nodes              List all connected nodes
+Install:
+  update [--branch <name>]     Update to the latest version
+  version                      Show the installed version
+  uninstall [--keep-data]      Remove Cloudbase from this server
 
-Account:
-  password           Change the administrator password
+Recovery:
+  password [user]              Set a new password (default user: admin)
+  backup [file]                Back up Cloudbase's database, keys and settings
+  restore <file> [--yes]       Restore a backup made with 'cloudbase backup'
+  nginx permissions [user]     Let Cloudbase manage nginx and HTTPS certificates
 
-Node:
-  connect            Make this server a node of a primary
-                       --main-url <url>  --invite-code <code>  [--node-name <name>]
-  disconnect         Leave the primary and make this server a primary itself
-  node-status        Show which primary this node is connected to
-
-Data:
-  export [file]      Export database + credentials to .tar.gz
-  import <file>      Restore database + credentials from .tar.gz
-
-Nginx:
-  nginx <domain>     Set up nginx reverse proxy for a domain
-  nginx show         Show current nginx config
-  nginx disable      Remove nginx config
-  nginx permissions  Allow Cloudbase to manage nginx without sudo prompts
-
-Certificates:
-  cert add <path> [name]   Add certificate to local store
-  cert list                List stored certificates
-  cert path                Show certificate store directory
+Nodes:
+  connect                      Make this server a node of a primary
+                                 --main-url <url>  --invite-code <code>  [--node-name <name>]
+  disconnect                   Leave the primary and make this server a primary itself
+  node-status                  Show which primary this node is connected to
 EOF
 }
 
@@ -207,23 +193,6 @@ port_owner_pid() {
     echo "$pid"
 }
 
-resolve_cert_path() {
-    local input="${1:-}"
-    if [[ -z "$input" ]]; then
-        echo ""
-        return 0
-    fi
-    if [[ -f "$input" ]]; then
-        echo "$input"
-        return 0
-    fi
-    if [[ -f "$CERTS_DIR/$input" ]]; then
-        echo "$CERTS_DIR/$input"
-        return 0
-    fi
-    return 1
-}
-
 write_service_file() {
     require_systemctl
     local run_user="${SUDO_USER:-$(id -un)}"
@@ -246,21 +215,6 @@ Delegate=yes
 [Install]
 WantedBy=multi-user.target
 EOF
-}
-
-show_status() {
-    if service_installed && command -v systemctl >/dev/null 2>&1; then
-        systemctl status "$SERVICE_NAME" --no-pager
-        return
-    fi
-
-    local pid
-    pid="$(port_owner_pid)"
-    if [[ -n "$pid" ]]; then
-        success "Cloudbase is running on port $PORT (pid $pid)"
-    else
-        warn "Cloudbase is not running"
-    fi
 }
 
 stop_foreground_instance() {
@@ -301,146 +255,83 @@ show_first_run_password() {
     printf '\n'
 }
 
-show_logs() {
-    if service_installed && command -v systemctl >/dev/null 2>&1; then
-        sudo journalctl -u "$SERVICE_NAME" -n 100 --no-pager
-        if [[ -f "$AGENT_LOG_FILE" ]]; then
-            printf '\n'
-            info "Recent node agent log lines"
-            tail -n 60 "$AGENT_LOG_FILE"
+SERVER_LOG_FILE="$LOG_DIR/server.log"
+DB_FILE="$HOME/.cloudbase/cloudbase.db"
+
+# Colour log levels when writing to a terminal.
+colorize_log() {
+    if [[ -t 1 ]]; then
+        awk -v r="$RED" -v y="$YELLOW" -v d='\033[2m' -v z="$RESET" '
+            /\[(ERROR|CRITICAL)\]/ { print r $0 z; fflush(); next }
+            /\[WARNING\]/          { print y $0 z; fflush(); next }
+            /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] / { print d substr($0, 1, 23) z substr($0, 24); fflush(); next }
+            { print; fflush() }'
+    else
+        cat
+    fi
+}
+
+# App id for an app name (case-insensitive; a unique partial match also works).
+app_id_by_name() {
+    python3 - "$DB_FILE" "$1" <<'PYEOF'
+import sqlite3, sys
+db, name = sys.argv[1], sys.argv[2]
+con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+rows = con.execute("SELECT id, name FROM applications ORDER BY name").fetchall()
+hit = [r for r in rows if r[1].lower() == name.lower()] or [r for r in rows if name.lower() in r[1].lower()]
+if len(hit) != 1:
+    names = ", ".join(r[1] for r in (hit or rows)) or "(no apps)"
+    print(("Several apps match: " if hit else "No app called that. Apps: ") + names, file=sys.stderr)
+    sys.exit(1)
+print(hit[0][0])
+PYEOF
+}
+
+cmd_logs() {
+    local follow=0 lines=100 app="" errors=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -f|--follow) follow=1 ;;
+            -n|--lines)  lines="${2:-100}"; shift ;;
+            --app)       app="${2:-}"; shift ;;
+            --errors)    errors=1 ;;
+            *) err "Unknown option for logs: $1"; exit 1 ;;
+        esac
+        shift
+    done
+
+    local file="$SERVER_LOG_FILE"
+    if [[ -n "$app" ]]; then
+        [[ -f "$DB_FILE" ]] || { err "No Cloudbase database found."; exit 1; }
+        local app_id
+        app_id="$(app_id_by_name "$app")" || exit 1
+        file="$LOG_DIR/apps/$app_id.log"
+        if [[ ! -f "$file" ]]; then
+            warn "Nothing logged for this app yet."
+            [[ $follow -eq 1 ]] || return 0
         fi
-        return
-    fi
-    if [[ -f "$CLI_LOG_FILE" ]]; then
-        tail -n 100 "$CLI_LOG_FILE"
-        if [[ -f "$AGENT_LOG_FILE" ]]; then
-            printf '\n'
-            info "Recent node agent log lines"
-            tail -n 60 "$AGENT_LOG_FILE"
+    elif [[ ! -s "$file" ]]; then
+        # Installs before v2 logged everything to the node agent log.
+        if [[ -s "$AGENT_LOG_FILE" ]]; then
+            file="$AGENT_LOG_FILE"
+        elif service_installed && command -v systemctl >/dev/null 2>&1; then
+            local jflags=(-u "$SERVICE_NAME" -n "$lines" --no-pager)
+            [[ $follow -eq 1 ]] && jflags+=(-f)
+            sudo journalctl "${jflags[@]}"
+            return
+        else
+            warn "No Cloudbase logs found yet"
+            return
         fi
-        return
-    fi
-    warn "No Cloudbase logs found yet"
-}
-
-generate_cloudbase_nginx_config() {
-    local domain="$1"
-    local ssl_cert="${2:-}"
-    local ssl_key="${3:-}"
-
-    if [[ -n "$ssl_cert" || -n "$ssl_key" ]]; then
-        cat <<EOF
-server {
-    listen 80;
-    server_name ${domain};
-    return 301 https://\$host\$request_uri;
-}
-
-server {
-    listen 443 ssl;
-    server_name ${domain};
-
-    ssl_certificate "${ssl_cert}";
-    ssl_certificate_key "${ssl_key}";
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-
-    location / {
-        proxy_pass http://127.0.0.1:${PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_cache_bypass \$http_upgrade;
-        # Long-running build/log streams (SSE, websockets)
-        proxy_buffering off;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-    }
-}
-EOF
-        return
     fi
 
-    cat <<EOF
-server {
-    listen 80;
-    server_name ${domain};
-
-    location / {
-        proxy_pass http://127.0.0.1:${PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_cache_bypass \$http_upgrade;
-        # Long-running build/log streams (SSE, websockets)
-        proxy_buffering off;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-    }
-}
-EOF
-}
-
-nginx_setup() {
-    require_nginx
-    local domain="${1:-}"
-    local cert_path=""
-    local key_path=""
-
-    if [[ -z "$domain" ]]; then
-        err "Usage: cloudbase nginx <domain>"
-        exit 1
-    fi
-
-    # Auto-detect certificates from the certs directory
-    local auto_cert="$CERTS_DIR/fullchain.pem"
-    local auto_key="$CERTS_DIR/privkey.pem"
-    if [[ -f "$auto_cert" && -f "$auto_key" ]]; then
-        cert_path="$auto_cert"
-        key_path="$auto_key"
-        info "Found SSL certificates in $CERTS_DIR — enabling HTTPS"
+    local filter=(cat)
+    [[ $errors -eq 1 ]] && filter=(grep --line-buffered -E '\[(WARNING|ERROR|CRITICAL)\]')
+    if [[ $follow -eq 1 ]]; then
+        tail -n "$lines" -F "$file" 2>/dev/null | "${filter[@]}" | colorize_log
     else
-        info "No SSL certificates found in $CERTS_DIR — setting up HTTP proxy"
-        info "  To enable HTTPS: cloudbase cert add <fullchain.pem> then cloudbase cert add <privkey.pem>"
+        tail -n "$lines" "$file" | "${filter[@]}" | colorize_log || true
     fi
-
-    info "Writing nginx config for Cloudbase domain '$domain'"
-    generate_cloudbase_nginx_config "$domain" "$cert_path" "$key_path" | sudo tee "$NGINX_CONFIG_PATH" > /dev/null
-    sudo ln -sf "$NGINX_CONFIG_PATH" "$NGINX_ENABLED_PATH"
-    sudo nginx -t
-    sudo systemctl reload nginx
-
-    if [[ -n "$cert_path" ]]; then
-        success "Cloudbase is now available at https://$domain"
-    else
-        success "Cloudbase is now available at http://$domain"
-    fi
-}
-
-nginx_show() {
-    require_nginx
-    if sudo test -f "$NGINX_CONFIG_PATH"; then
-        sudo cat "$NGINX_CONFIG_PATH"
-    else
-        warn "No local Cloudbase nginx config exists yet"
-    fi
-}
-
-nginx_disable() {
-    require_nginx
-    info "Removing local Cloudbase nginx config"
-    sudo rm -f "$NGINX_ENABLED_PATH" "$NGINX_CONFIG_PATH"
-    sudo nginx -t
-    sudo systemctl reload nginx
-    success "Cloudbase nginx config removed"
 }
 
 nginx_permissions() {
@@ -459,207 +350,135 @@ handle_nginx_command() {
         permissions|perms|fix-perms)
             nginx_permissions "$@"
             ;;
-        show)
-            nginx_show
-            ;;
-        disable|remove)
-            nginx_disable
-            ;;
-        "")
-            err "Usage: cloudbase nginx <domain>"
+        *)
+            # The panel domain, app domains and HTTPS are managed by Cloudbase itself now.
+            warn "Domains and HTTPS are set up in the web UI: Settings → Domain & SSL."
+            info "The only nginx command left is: cloudbase nginx permissions"
             exit 1
             ;;
-        *)
-            # Treat anything else as a domain name
-            nginx_setup "$subcommand" "$@"
-            ;;
     esac
-}
-
-cert_add() {
-    local source_path="${1:-}"
-    local target_name="${2:-}"
-    if [[ -z "$source_path" ]]; then
-        err "Usage: cloudbase cert add <source_path> [target_name]"
-        exit 1
-    fi
-    if [[ ! -f "$source_path" ]]; then
-        err "Certificate file not found: $source_path"
-        exit 1
-    fi
-    if [[ -z "$target_name" ]]; then
-        target_name="$(basename "$source_path")"
-    fi
-    cp "$source_path" "$CERTS_DIR/$target_name"
-    success "Copied certificate to $CERTS_DIR/$target_name"
-}
-
-cert_list() {
-    if compgen -G "$CERTS_DIR/*" > /dev/null; then
-        ls -1 "$CERTS_DIR"
-    else
-        warn "No local certificates found in $CERTS_DIR"
-    fi
 }
 
 handle_cert_command() {
-    local subcommand="${1:-}"
-    shift || true
-    case "$subcommand" in
-        add)
-            cert_add "$@"
-            ;;
-        list)
-            cert_list
-            ;;
-        path)
-            printf '%s\n' "$CERTS_DIR"
-            ;;
-        *)
-            err "Usage: cloudbase cert <add|list|path>"
-            exit 1
-            ;;
-    esac
+    warn "Certificates are handled in the web UI (Settings → Domain & SSL): Let's Encrypt is requested and renewed automatically, and you can upload your own there."
+    exit 1
 }
 
-cmd_apps() {
-    if [[ ! -f "$HOME/.cloudbase/cloudbase.db" ]]; then
-        err "No Cloudbase database found."
-        exit 1
-    fi
-    python3 - <<PYEOF
-import sqlite3, os, sys
-
-db_path = os.path.expanduser("~/.cloudbase/cloudbase.db")
-con = sqlite3.connect(db_path)
-con.row_factory = sqlite3.Row
-
-rows_raw = con.execute("""
-    SELECT a.name, a.status, a.app_type, a.port, a.external_port, n.name AS node_name
-    FROM applications a
-    LEFT JOIN nodes n ON a.node_id = n.id
-    ORDER BY a.name
-""").fetchall()
-con.close()
-
-if not rows_raw:
-    print("No applications deployed.")
-    sys.exit(0)
-
-rows = []
-for r in rows_raw:
-    name   = r["name"] or "—"
-    status = r["status"] or "unknown"
-    node   = r["node_name"] or "primary"
-    port   = str(r["external_port"] or r["port"] or "—")
-    atype  = r["app_type"] or "—"
-    rows.append((name, status, node, port, atype))
-
-cols   = ["NAME", "STATUS", "NODE", "PORT", "TYPE"]
-widths = [max(len(cols[i]), max(len(r[i]) for r in rows)) for i in range(5)]
-
-GREEN = "\033[32m"; RED = "\033[31m"; YELLOW = "\033[33m"; RESET = "\033[0m"
-def color(s):
-    if s == "running":  return GREEN + s + RESET
-    if s == "error":    return RED + s + RESET
-    if s in ("stopped", "deploying", "starting", "stopping"): return YELLOW + s + RESET
-    return s
-
-header = "  ".join(f"{cols[i]:<{widths[i]}}" for i in range(5))
-sep    = "  ".join("─" * w for w in widths)
-print(header)
-print(sep)
-for r in rows:
-    pad  = widths[1] - len(r[1])
-    line = "  ".join([
-        f"{r[0]:<{widths[0]}}",
-        color(r[1]) + " " * pad,
-        f"{r[2]:<{widths[2]}}",
-        f"{r[3]:<{widths[3]}}",
-        f"{r[4]:<{widths[4]}}",
-    ])
-    print(line)
-PYEOF
+# ── Status ──────────────────────────────────────────────────────────────────
+cmd_version() {
+    local version sha branch
+    version="$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo dev)"
+    sha="$(git -C "$INSTALL_DIR" rev-parse --short HEAD 2>/dev/null || true)"
+    branch="$(git -C "$INSTALL_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+    printf 'Cloudbase v%s%s\n' "$version" "${sha:+ ($branch · $sha)}"
 }
 
-cmd_nodes() {
-    if [[ ! -f "$HOME/.cloudbase/cloudbase.db" ]]; then
-        err "No Cloudbase database found."
-        exit 1
+service_state() {
+    if service_installed && command -v systemctl >/dev/null 2>&1; then
+        systemctl is-active "$SERVICE_NAME" 2>/dev/null || true
+    elif [[ -n "$(port_owner_pid)" ]]; then
+        echo "active"
+    else
+        echo "inactive"
     fi
-    python3 - <<PYEOF
-import sqlite3, os, sys, datetime
+}
 
-db_path = os.path.expanduser("~/.cloudbase/cloudbase.db")
-con = sqlite3.connect(db_path)
+cmd_status() {
+    local state
+    state="$(service_state)"
+    printf '%b%s%b\n' "$BOLD" "$(cmd_version)" "$RESET"
+    if [[ "$state" == "active" ]]; then
+        printf '  Service   %brunning%b on port %s\n' "$GREEN" "$RESET" "$PORT"
+    else
+        printf '  Service   %b%s%b — start it with: cloudbase start\n' "$RED" "$state" "$RESET"
+    fi
+    if is_node; then
+        printf '  Role      node (see: cloudbase node-status)\n'
+        return
+    fi
+    printf '  Role      primary\n\n'
+    if [[ ! -f "$DB_FILE" ]]; then
+        warn "No Cloudbase database found yet."
+        return
+    fi
+    python3 - "$DB_FILE" <<'PYEOF'
+import sqlite3, sys, datetime
+
+con = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
 con.row_factory = sqlite3.Row
+tty = sys.stdout.isatty()
+C = {"g": "\033[32m", "r": "\033[31m", "y": "\033[33m", "d": "\033[2m", "x": "\033[0m"} if tty else {k: "" for k in "gryxd"}
 
-nodes_raw = con.execute("SELECT * FROM nodes ORDER BY is_local DESC, name ASC").fetchall()
-app_counts = {r[0]: r[1] for r in con.execute("SELECT node_id, COUNT(*) FROM applications GROUP BY node_id").fetchall()}
-con.close()
+def table(title, cols, rows, status_col):
+    print(f"{C['d']}{title}{C['x']}")
+    if not rows:
+        print("  (none)\n")
+        return
+    widths = [max(len(c), *(len(r[i]) for r in rows)) for i, c in enumerate(cols)]
+    print("  " + "  ".join(c.ljust(w) for c, w in zip(cols, widths)))
+    for r in rows:
+        cells = []
+        for i, (v, w) in enumerate(zip(r, widths)):
+            pad = v.ljust(w)
+            if i == status_col:
+                col = C["g"] if v in ("running", "online") else C["r"] if v in ("error", "offline", "stopped") else C["y"]
+                pad = col + pad + C["x"]
+            cells.append(pad)
+        print("  " + "  ".join(cells))
+    print()
 
-if not nodes_raw:
-    print("No nodes registered.")
-    sys.exit(0)
-
-def time_ago(ts):
-    if not ts: return "—"
-    try:
-        dt = datetime.datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
-        secs = int((datetime.datetime.utcnow() - dt).total_seconds())
-    except Exception:
+def ago(ts):
+    if not ts:
         return "—"
-    if secs < 10:    return "just now"
-    if secs < 60:    return f"{secs}s ago"
-    if secs < 3600:  return f"{secs//60}m ago"
-    if secs < 86400: return f"{secs//3600}h ago"
-    return f"{secs//86400}d ago"
+    try:
+        now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+        secs = int((now - datetime.datetime.fromisoformat(str(ts))).total_seconds())
+    except ValueError:
+        return "—"
+    for unit, n in (("d", 86400), ("h", 3600), ("m", 60)):
+        if secs >= n:
+            return f"{secs // n}{unit} ago"
+    return "just now"
 
-rows = []
-for n in nodes_raw:
-    name   = n["name"] or "—"
-    status = n["status"] or "unknown"
-    ntype  = "local" if n["is_local"] else "remote"
-    apps   = str(app_counts.get(n["id"], 0))
-    seen   = "—" if n["is_local"] else time_ago(n["last_seen"])
-    rows.append((name, status, ntype, apps, seen))
+apps = con.execute("""
+    SELECT a.name, a.status, a.domain, a.nginx_enabled, a.autoscale_enabled,
+           a.autoscale_min_replicas AS amin, a.autoscale_max_replicas AS amax,
+           (SELECT COUNT(*) FROM application_replicas r WHERE r.app_id = a.id AND r.status = 'running') AS up,
+           (SELECT COUNT(*) FROM application_replicas r WHERE r.app_id = a.id) AS total
+    FROM applications a ORDER BY a.name
+""").fetchall()
+table("APPS", ["NAME", "STATUS", "INSTANCES", "AUTOSCALE", "DOMAIN"], [
+    (a["name"], a["status"] or "unknown", f"{a['up']}/{a['total']}",
+     f"{a['amin'] or 1}–{a['amax'] or 4}" if a["autoscale_enabled"] else "off",
+     a["domain"] if a["nginx_enabled"] and a["domain"] else "—")
+    for a in apps
+], 1)
 
-cols   = ["NAME", "STATUS", "TYPE", "APPS", "LAST SEEN"]
-widths = [max(len(cols[i]), max(len(r[i]) for r in rows)) for i in range(5)]
-
-GREEN = "\033[32m"; RED = "\033[31m"; YELLOW = "\033[33m"; RESET = "\033[0m"
-def color(s):
-    if s == "online":  return GREEN + s + RESET
-    if s == "offline": return RED + s + RESET
-    return YELLOW + s + RESET
-
-header = "  ".join(f"{cols[i]:<{widths[i]}}" for i in range(5))
-sep    = "  ".join("─" * w for w in widths)
-print(header)
-print(sep)
-for r in rows:
-    pad  = widths[1] - len(r[1])
-    line = "  ".join([
-        f"{r[0]:<{widths[0]}}",
-        color(r[1]) + " " * pad,
-        f"{r[2]:<{widths[2]}}",
-        f"{r[3]:<{widths[3]}}",
-        f"{r[4]:<{widths[4]}}",
-    ])
-    print(line)
+nodes = con.execute("""
+    SELECT n.name, n.status, n.is_local, n.last_seen, n.node_cpu_percent AS cpu,
+           (SELECT COUNT(*) FROM application_replicas r WHERE r.node_id = n.id AND r.status = 'running') AS up
+    FROM nodes n ORDER BY n.is_local DESC, n.name
+""").fetchall()
+table("NODES", ["NAME", "STATUS", "INSTANCES", "CPU", "LAST SEEN"], [
+    (n["name"], n["status"] or "unknown", str(n["up"]),
+     f"{n['cpu']:.0f}%" if n["cpu"] is not None else "—",
+     "this server" if n["is_local"] else ago(n["last_seen"]))
+    for n in nodes
+], 1)
 PYEOF
 }
 
+# ── Password ────────────────────────────────────────────────────────────────
 cmd_password() {
-    info "Changing password for the admin account"
-    local new_pass
+    local username="${1:-admin}"
+    info "Setting a new password for '$username'"
+    local new_pass confirm
     read -r -s -p "New password: " new_pass
     printf '\n'
     if [[ ${#new_pass} -lt 8 ]]; then
         err "Password must be at least 8 characters"
         exit 1
     fi
-    local confirm
     read -r -s -p "Confirm password: " confirm
     printf '\n'
     if [[ "$new_pass" != "$confirm" ]]; then
@@ -667,9 +486,9 @@ cmd_password() {
         exit 1
     fi
     cd "$BACKEND_DIR"
-    "$VENV_PATH/bin/python3" - <<PYEOF
-import asyncio
-import sys
+    # Password and user name go in through the environment, never into the code.
+    CB_NEW_PASS="$new_pass" CB_USER="$username" "$VENV_PATH/bin/python3" - <<'PYEOF'
+import asyncio, os, sys
 sys.path.insert(0, '.')
 import auth
 from database import AsyncSessionLocal
@@ -677,67 +496,260 @@ from models import User
 from sqlalchemy import select
 
 async def main():
-    hashed = auth.hash_password('$new_pass')
+    username = os.environ["CB_USER"]
+    hashed = auth.hash_password(os.environ["CB_NEW_PASS"])
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(User).where(User.username == 'admin'))
-        user = result.scalar_one_or_none()
+        user = (await session.execute(select(User).where(User.username == username))).scalar_one_or_none()
         if user is None:
-            print('No admin user found in the database', file=sys.stderr)
+            names = (await session.execute(select(User.username))).scalars().all()
+            print(f"No user '{username}'. Users: {', '.join(names) or '(none)'}", file=sys.stderr)
             sys.exit(1)
         user.password_hash = hashed
         await session.commit()
-    # Keep legacy credentials file in sync (used only for first-run DB seeding)
-    auth.save_hashed_password(hashed)
-    print('Password updated')
+    if username == "admin":
+        # Keep the first-run credentials file in sync (only used to seed a fresh DB)
+        auth.save_hashed_password(hashed)
 
 asyncio.run(main())
 PYEOF
-    success "Admin password updated"
+    success "Password updated for '$username'"
 }
 
-cmd_export() {
+# ── Backup / restore ────────────────────────────────────────────────────────
+# Everything needed to bring this server back, including the keys that decrypt
+# app env vars and saved tokens. App sources are re-cloned and images rebuilt,
+# so they're not included; managed databases have their own backups.
+BACKUP_FILES=(credentials secret_key env_key agent_token github_tokens.json config.yaml)
+BACKUP_DIRS=(certs db-tls)
+
+cmd_backup() {
     local out="${1:-cloudbase-backup-$(date +%Y%m%d-%H%M%S).tar.gz}"
     local data_dir="$HOME/.cloudbase"
-    local tmp_dir
-    tmp_dir=$(mktemp -d)
+    [[ -f "$data_dir/cloudbase.db" ]] || { err "No Cloudbase database found in $data_dir"; exit 1; }
+
+    CB_TMP_DIR="$(mktemp -d)"
+    trap 'rm -rf "${CB_TMP_DIR:-}"' EXIT
+    local tmp_dir="$CB_TMP_DIR"
     mkdir -p "$tmp_dir/cloudbase"
-    [[ -f "$data_dir/cloudbase.db" ]]  && cp "$data_dir/cloudbase.db"  "$tmp_dir/cloudbase/"
-    [[ -f "$data_dir/credentials" ]]   && cp "$data_dir/credentials"   "$tmp_dir/cloudbase/"
-    [[ -f "$data_dir/secret_key" ]]    && cp "$data_dir/secret_key"    "$tmp_dir/cloudbase/"
-    if [[ -d "$data_dir/certs" ]]; then
-        cp -r "$data_dir/certs" "$tmp_dir/cloudbase/"
-    fi
-    tar -czf "$out" -C "$tmp_dir" cloudbase
-    rm -rf "$tmp_dir"
-    success "Export saved to $out"
+
+    # Consistent copy even while Cloudbase is writing to it
+    python3 - "$data_dir/cloudbase.db" "$tmp_dir/cloudbase/cloudbase.db" <<'PYEOF'
+import sqlite3, sys
+src = sqlite3.connect(sys.argv[1])
+dst = sqlite3.connect(sys.argv[2])
+src.backup(dst)
+dst.close(); src.close()
+PYEOF
+
+    local f d
+    for f in "${BACKUP_FILES[@]}"; do
+        [[ -f "$data_dir/$f" ]] && cp -p "$data_dir/$f" "$tmp_dir/cloudbase/"
+    done
+    for d in "${BACKUP_DIRS[@]}"; do
+        [[ -d "$data_dir/$d" ]] && cp -rp "$data_dir/$d" "$tmp_dir/cloudbase/"
+    done
+    # A node's identity towards its primary
+    [[ -f "$BACKEND_DIR/agent_state.json" ]] && cp -p "$BACKEND_DIR/agent_state.json" "$tmp_dir/cloudbase/"
+
+    printf 'version=%s\ncreated=%s\nhost=%s\n' \
+        "$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo dev)" "$(date -Iseconds)" "$(hostname)" \
+        > "$tmp_dir/cloudbase/MANIFEST"
+
+    (umask 077 && tar -czf "$out" -C "$tmp_dir" cloudbase)
+    success "Backup saved to $out"
+    warn "It contains the keys to all app secrets — keep it somewhere safe."
+    info "Managed databases aren't in here; they have their own backups (Databases page)."
 }
 
-cmd_import() {
-    local src="${1:-}"
+cmd_restore() {
+    local src="" yes=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -y|--yes) yes=1 ;;
+            *) src="$1" ;;
+        esac
+        shift
+    done
     if [[ -z "$src" || ! -f "$src" ]]; then
-        err "Usage: cloudbase import <backup.tar.gz>"
+        err "Usage: cloudbase restore <backup.tar.gz> [--yes]"
         exit 1
     fi
+
     local data_dir="$HOME/.cloudbase"
-    local tmp_dir
-    tmp_dir=$(mktemp -d)
+    CB_TMP_DIR="$(mktemp -d)"
+    trap 'rm -rf "${CB_TMP_DIR:-}"' EXIT
+    local tmp_dir="$CB_TMP_DIR"
     tar -xzf "$src" -C "$tmp_dir"
     local src_dir="$tmp_dir/cloudbase"
-    if [[ ! -d "$src_dir" ]]; then
-        err "Invalid backup archive: missing cloudbase/ directory"
-        rm -rf "$tmp_dir"
+    if [[ ! -f "$src_dir/cloudbase.db" ]]; then
+        err "Not a Cloudbase backup: cloudbase/cloudbase.db is missing"
         exit 1
     fi
-    mkdir -p "$data_dir"
-    [[ -f "$src_dir/cloudbase.db" ]] && cp "$src_dir/cloudbase.db" "$data_dir/" && success "Database restored"
-    [[ -f "$src_dir/credentials" ]]  && cp "$src_dir/credentials"  "$data_dir/" && chmod 600 "$data_dir/credentials"
-    [[ -f "$src_dir/secret_key" ]]   && cp "$src_dir/secret_key"   "$data_dir/" && chmod 600 "$data_dir/secret_key"
-    if [[ -d "$src_dir/certs" ]]; then
-        cp -r "$src_dir/certs" "$data_dir/"
-        success "Certificates restored"
+
+    if [[ -f "$src_dir/MANIFEST" ]]; then
+        info "Backup: $(tr '\n' ' ' < "$src_dir/MANIFEST")"
+    else
+        warn "Backup from before v2 (no MANIFEST)."
     fi
-    rm -rf "$tmp_dir"
-    success "Import complete — restart Cloudbase to apply: cloudbase restart"
+    [[ -f "$src_dir/env_key" ]] || warn "This backup has no env_key: app environment variables will not decrypt."
+
+    if [[ $yes -ne 1 ]]; then
+        if [[ ! -t 0 ]]; then
+            err "This replaces Cloudbase's current data. Re-run with --yes to confirm."
+            exit 1
+        fi
+        local answer
+        read -r -p "This replaces Cloudbase's current data on this server. Continue? [y/N] " answer
+        [[ "$answer" =~ ^[Yy]$ ]] || { info "Restore cancelled"; exit 0; }
+    fi
+
+    local was_running=0
+    if [[ "$(service_state)" == "active" ]]; then
+        was_running=1
+        info "Stopping Cloudbase"
+        if service_installed && command -v systemctl >/dev/null 2>&1; then
+            sudo systemctl stop "$SERVICE_NAME"
+        else
+            stop_foreground_instance
+        fi
+    fi
+
+    # Keep what we replace, so a wrong restore can be undone by hand.
+    local keep="$data_dir/pre-restore-$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$keep"
+    local f d
+    for f in cloudbase.db "${BACKUP_FILES[@]}"; do
+        [[ -f "$data_dir/$f" ]] && mv "$data_dir/$f" "$keep/"
+    done
+    for d in "${BACKUP_DIRS[@]}"; do
+        [[ -d "$data_dir/$d" ]] && mv "$data_dir/$d" "$keep/"
+    done
+    [[ -f "$BACKEND_DIR/agent_state.json" ]] && mv "$BACKEND_DIR/agent_state.json" "$keep/"
+
+    mkdir -p "$data_dir"
+    cp -p "$src_dir/cloudbase.db" "$data_dir/"
+    for f in "${BACKUP_FILES[@]}"; do
+        [[ -f "$src_dir/$f" ]] && cp -p "$src_dir/$f" "$data_dir/" && chmod 600 "$data_dir/$f"
+    done
+    for d in "${BACKUP_DIRS[@]}"; do
+        [[ -d "$src_dir/$d" ]] && cp -rp "$src_dir/$d" "$data_dir/"
+    done
+    [[ -f "$src_dir/agent_state.json" ]] && cp -p "$src_dir/agent_state.json" "$BACKEND_DIR/"
+    chmod 600 "$data_dir/cloudbase.db"
+
+    success "Restored. The previous data is kept in $keep"
+    if [[ $was_running -eq 1 ]]; then
+        info "Starting Cloudbase"
+        if service_installed && command -v systemctl >/dev/null 2>&1; then
+            sudo systemctl start "$SERVICE_NAME"
+        else
+            info "Start it again with: cloudbase start"
+        fi
+    fi
+    info "Apps are rebuilt from their repositories when they next start or deploy."
+}
+
+# ── Doctor ──────────────────────────────────────────────────────────────────
+cmd_doctor() {
+    local problems=0
+    ok()   { printf '  %b✓%b %s\n' "$GREEN" "$RESET" "$1"; }
+    hint() { if [[ -n "${1:-}" ]]; then printf '      → %s\n' "$1"; fi; }
+    bad()  { printf '  %b✗%b %s\n' "$RED" "$RESET" "$1"; hint "${2:-}"; problems=$((problems + 1)); }
+    note() { printf '  %b!%b %s\n' "$YELLOW" "$RESET" "$1"; hint "${2:-}"; }
+
+    printf '%b%s%b\n\n' "$BOLD" "$(cmd_version)" "$RESET"
+
+    # Install
+    if [[ -n "$(git -C "$INSTALL_DIR" status --porcelain --untracked-files=no 2>/dev/null)" ]]; then
+        note "Files in $INSTALL_DIR were changed by hand" "'cloudbase update' will overwrite them"
+    fi
+
+    # Service
+    if service_installed; then
+        systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null && ok "Starts on boot" \
+            || note "Doesn't start on boot" "cloudbase enable"
+    else
+        note "No systemd service installed" "cloudbase enable"
+    fi
+    if [[ "$(service_state)" == "active" ]]; then
+        ok "Service is running"
+    else
+        bad "Service is not running" "cloudbase start, then cloudbase logs --errors"
+    fi
+    if python3 -c "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:$PORT/api/health', timeout=5)" 2>/dev/null; then
+        ok "API answers on port $PORT"
+    else
+        bad "API doesn't answer on port $PORT" "cloudbase logs --errors"
+    fi
+
+    # Docker
+    if ! command -v docker >/dev/null 2>&1; then
+        bad "Docker is not installed" "cloudbase update installs it"
+    elif docker info >/dev/null 2>&1; then
+        ok "Docker is reachable"
+    else
+        bad "Docker isn't reachable for user $(id -un)" "sudo usermod -aG docker $(id -un), then log in again"
+    fi
+
+    if ! is_node; then
+        # nginx + HTTPS
+        # nginx lives in /usr/sbin, which isn't on a normal user's PATH
+        local nginx_bin
+        nginx_bin="$(PATH="$PATH:/usr/sbin:/sbin" command -v nginx || true)"
+        if [[ -z "$nginx_bin" ]]; then
+            bad "nginx is not installed" "cloudbase update installs it"
+        elif sudo -n "$nginx_bin" -t >/dev/null 2>&1; then
+            ok "nginx config is valid and Cloudbase may manage it"
+        elif sudo -n true 2>/dev/null; then
+            bad "nginx config has errors" "sudo nginx -t"
+        else
+            bad "Cloudbase may not manage nginx" "cloudbase nginx permissions"
+        fi
+        command -v certbot >/dev/null 2>&1 && ok "certbot is installed (automatic HTTPS)" \
+            || bad "certbot is missing — no automatic HTTPS" "cloudbase update, then cloudbase nginx permissions"
+        [[ -x /usr/local/lib/cloudbase/issue-cert ]] || bad "Certificate helper is missing" "cloudbase nginx permissions"
+    else
+        local main_url
+        main_url="$(python3 -c "import json; print(json.load(open('$BACKEND_DIR/agent_state.json')).get('main_url',''))" 2>/dev/null || true)"
+        if [[ -n "$main_url" ]] && python3 -c "import urllib.request; urllib.request.urlopen('${main_url%/}/api/health', timeout=8)" 2>/dev/null; then
+            ok "Primary $main_url is reachable"
+        else
+            bad "Primary ${main_url:-?} is not reachable" "check the network / firewall, then cloudbase node-status"
+        fi
+    fi
+
+    # Disk
+    local use
+    use="$(df -P "$HOME" 2>/dev/null | awk 'NR==2 {gsub("%","",$5); print $5}')"
+    if [[ -n "$use" ]]; then
+        if (( use >= 90 )); then
+            bad "Disk is ${use}% full" "docker system prune removes unused images"
+        elif (( use >= 80 )); then
+            note "Disk is ${use}% full"
+        else
+            ok "Disk ${use}% used"
+        fi
+    fi
+
+    # Recent errors
+    if [[ -s "$SERVER_LOG_FILE" ]]; then
+        local today yesterday n
+        today="$(date +%Y-%m-%d)"; yesterday="$(date -d yesterday +%Y-%m-%d 2>/dev/null || echo "$today")"
+        n="$(grep -cE "^($today|$yesterday) .*\[(ERROR|CRITICAL)\]" "$SERVER_LOG_FILE" 2>/dev/null || true)"
+        if [[ "${n:-0}" -gt 0 ]]; then
+            note "$n error(s) logged since yesterday" "cloudbase logs --errors"
+        else
+            ok "No errors logged since yesterday"
+        fi
+    fi
+
+    printf '\n'
+    if [[ $problems -eq 0 ]]; then
+        success "No problems found"
+    else
+        warn "$problems problem(s) found"
+        exit 1
+    fi
 }
 
 # update, connect, disconnect and uninstall are done by the installer, so they
@@ -862,7 +874,13 @@ case "$COMMAND" in
         fi
         ;;
     status)
-        show_status
+        cmd_status
+        ;;
+    version|--version|-v)
+        cmd_version
+        ;;
+    doctor)
+        cmd_doctor
         ;;
     stop)
         if service_installed && command -v systemctl >/dev/null 2>&1; then
@@ -881,16 +899,16 @@ case "$COMMAND" in
         fi
         ;;
     logs)
-        show_logs
+        cmd_logs "$@"
         ;;
     password)
-        cmd_password
+        cmd_password "$@"
         ;;
-    export)
-        cmd_export "$@"
+    backup|export)
+        cmd_backup "$@"
         ;;
-    import)
-        cmd_import "$@"
+    restore|import)
+        cmd_restore "$@"
         ;;
     update)
         run_installer --update "$@"
@@ -949,11 +967,9 @@ case "$COMMAND" in
     uninstall)
         run_installer --uninstall "$@"
         ;;
-    apps)
-        cmd_apps
-        ;;
-    nodes)
-        cmd_nodes
+    apps|nodes)
+        # Folded into status
+        cmd_status
         ;;
     *)
         err "Unknown command: $COMMAND"

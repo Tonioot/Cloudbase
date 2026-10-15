@@ -132,6 +132,7 @@ function railHTML(active) {
       </div>
       <a class="menu-item" id="btn-change-password" href="/settings?s=account">${ICONS.lock}<span>Account &amp; password</span></a>
       <button type="button" class="menu-item menu-item--danger" id="btn-logout">${ICONS.logout}<span>Sign out</span></button>
+      <div class="flyout-version" id="rail-version"></div>
     </div>`;
 }
 
@@ -378,6 +379,10 @@ function mount() {
   if (!rail) return;
   const section = currentSection();
   rail.innerHTML = railHTML(section);
+  api.health().then(h => {
+    const el = document.getElementById('rail-version');
+    if (el && h?.version) el.textContent = `Cloudbase v${h.version}`;
+  }).catch(() => {});
 
   const main = document.querySelector('.main-content');
   if (main && !document.getElementById('topbar')) {

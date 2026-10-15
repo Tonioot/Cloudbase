@@ -1059,9 +1059,9 @@ tail -n 100 ~/.cloudbase/logs/node-agent.log # what the agent did</pre>
 <p>Choose the file on the same page. Cloudbase creates each app with one instance and deploys it from its repository. Apps whose name already exists are skipped. Use <strong>Target node</strong> to put everything on one node; otherwise the primary is used. Afterwards, add environment variables and tokens, and scale up where needed.</p>
 
 <h2>Full backup (CLI)</h2>
-<pre>cloudbase export ~/cloudbase-backup.tar.gz
-cloudbase import ~/cloudbase-backup.tar.gz</pre>
-<p>This includes the database (apps, nodes, users, roles, history) and the credentials Cloudbase needs to decrypt secrets. Use it for disaster recovery of the same installation.</p>
+<pre>cloudbase backup ~/cloudbase-backup.tar.gz
+cloudbase restore ~/cloudbase-backup.tar.gz</pre>
+<p>This includes the database (apps, nodes, users, roles, history), the keys that decrypt environment variables and saved tokens, settings and certificates. Treat the file like a password. Restoring stops Cloudbase, keeps the replaced data in <code>~/.cloudbase/pre-restore-…</code> and starts it again. Managed databases have their own backups on the Databases page.</p>
 
 <h2>Moving to a new server</h2>
 <ol class="guide-steps">
@@ -1122,20 +1122,23 @@ cloudbase import ~/cloudbase-backup.tar.gz</pre>
   <tr><td><code>cloudbase start</code></td><td>Start Cloudbase</td></tr>
   <tr><td><code>cloudbase stop</code></td><td>Stop Cloudbase (app containers keep running)</td></tr>
   <tr><td><code>cloudbase restart</code></td><td>Restart Cloudbase</td></tr>
-  <tr><td><code>cloudbase status</code></td><td>Show the service status</td></tr>
-  <tr><td><code>cloudbase logs</code></td><td>Follow the service log</td></tr>
+  <tr><td><code>cloudbase status</code></td><td>Service, version, apps and nodes at a glance</td></tr>
+  <tr><td><code>cloudbase logs</code></td><td>Cloudbase’s log. Options: <code>-f</code> follow, <code>-n</code> lines, <code>--app &lt;name&gt;</code> one app, <code>--errors</code></td></tr>
+  <tr><td><code>cloudbase doctor</code></td><td>Check the installation and show how to fix each problem</td></tr>
+  <tr><td><code>cloudbase version</code></td><td>Show the installed version</td></tr>
   <tr><td><code>cloudbase enable</code></td><td>Install the systemd service and start on boot</td></tr>
   <tr><td><code>cloudbase disable</code></td><td>Remove autostart and stop the service</td></tr>
   <tr><td><code>cloudbase update</code></td><td>Update to the latest version and restart</td></tr>
   <tr><td><code>cloudbase uninstall</code></td><td>Remove Cloudbase from the server. Option: <code>--keep-data</code></td></tr>
 </table>
 
-<h2>Information</h2>
+<h2>Recovery</h2>
 <table>
   <tr><th>Command</th><th>Does</th></tr>
-  <tr><td><code>cloudbase apps</code></td><td>List all apps</td></tr>
-  <tr><td><code>cloudbase nodes</code></td><td>List all nodes</td></tr>
-  <tr><td><code>cloudbase password</code></td><td>Set a new admin password</td></tr>
+  <tr><td><code>cloudbase password [user]</code></td><td>Set a new password, e.g. when you’re locked out (default user: admin)</td></tr>
+  <tr><td><code>cloudbase backup [file]</code></td><td>Write the database, keys and settings to a <code>.tar.gz</code></td></tr>
+  <tr><td><code>cloudbase restore &lt;file&gt;</code></td><td>Restore from such a file. Option: <code>--yes</code> to skip the question</td></tr>
+  <tr><td><code>cloudbase nginx permissions</code></td><td>Let Cloudbase manage nginx and request HTTPS certificates</td></tr>
 </table>
 
 <h2>Nodes</h2>
@@ -1146,29 +1149,7 @@ cloudbase import ~/cloudbase-backup.tar.gz</pre>
   <tr><td><code>cloudbase node-status</code></td><td>Show the node’s registration and whether the agent runs</td></tr>
 </table>
 
-<h2>nginx</h2>
-<table>
-  <tr><th>Command</th><th>Does</th></tr>
-  <tr><td><code>cloudbase nginx &lt;domain&gt;</code></td><td>Serve the panel on a domain</td></tr>
-  <tr><td><code>cloudbase nginx show</code></td><td>Print the panel’s nginx config</td></tr>
-  <tr><td><code>cloudbase nginx disable</code></td><td>Remove the panel’s nginx config</td></tr>
-  <tr><td><code>cloudbase nginx permissions</code></td><td>Let Cloudbase manage nginx without sudo prompts</td></tr>
-</table>
-
-<h2>Certificates</h2>
-<table>
-  <tr><th>Command</th><th>Does</th></tr>
-  <tr><td><code>cloudbase cert add &lt;path&gt; [name]</code></td><td>Copy a certificate or key into the store</td></tr>
-  <tr><td><code>cloudbase cert list</code></td><td>List stored certificates</td></tr>
-  <tr><td><code>cloudbase cert path</code></td><td>Print the store directory</td></tr>
-</table>
-
-<h2>Backups</h2>
-<table>
-  <tr><th>Command</th><th>Does</th></tr>
-  <tr><td><code>cloudbase export [file]</code></td><td>Write database and credentials to a <code>.tar.gz</code></td></tr>
-  <tr><td><code>cloudbase import &lt;file&gt;</code></td><td>Restore from such a file</td></tr>
-</table>
+<p>Domains, HTTPS certificates, apps and databases are managed in the panel, not from the CLI.</p>
 `,
 },
 

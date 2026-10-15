@@ -147,39 +147,35 @@ Run it on the primary and on every remote node. Running apps keep running.
 
 ## CLI
 
+Everything day-to-day — apps, databases, domains, HTTPS, users — happens in the web UI.
+The CLI runs the server and covers updates, backups and recovery.
+
 ```bash
 # Service
-cloudbase start | stop | restart | status | logs
-cloudbase enable                 # systemd service + start on boot
-cloudbase disable
-cloudbase update
+cloudbase start | stop | restart
+cloudbase status                 # service, version, apps and nodes at a glance
+cloudbase logs [-f] [-n 200] [--app <name>] [--errors]
+cloudbase enable | disable       # start on boot (systemd)
+cloudbase doctor                 # check the installation, with a fix for each problem
+
+# Install
+cloudbase update [--branch <name>]
+cloudbase version
 cloudbase uninstall [--keep-data]
 
-# Information
-cloudbase apps
-cloudbase nodes
-cloudbase password               # set a new admin password
+# Recovery
+cloudbase password [user]        # new password (default user: admin)
+cloudbase backup [file]          # database, keys and settings → .tar.gz
+cloudbase restore <file> [--yes]
+cloudbase nginx permissions [user]
 
 # Nodes
 cloudbase connect --main-url <url> --invite-code <code> [--node-name <name>]
 cloudbase disconnect             # leave the primary and become a primary
 cloudbase node-status
-
-# NGINX
-cloudbase nginx <domain>
-cloudbase nginx show
-cloudbase nginx disable
-cloudbase nginx permissions [user]
-
-# Certificates
-cloudbase cert add <path> [name]
-cloudbase cert list
-cloudbase cert path
-
-# Backup and restore (database + credentials)
-cloudbase export [file]
-cloudbase import <file>
 ```
+
+`cloudbase backup` includes the key that decrypts app environment variables, so treat the file like a password. Managed databases are backed up separately from the Databases page.
 
 ---
 
@@ -189,7 +185,7 @@ cloudbase import <file>
 | --------------------------- | -------- |
 | `~/.cloudbase/config.yaml`  | Ports, limits, session length |
 | `~/.cloudbase/apps/`        | App sources, cloned from Git |
-| `~/.cloudbase/logs/`        | Log files, including the node agent's |
+| `~/.cloudbase/logs/`        | `server.log` (Cloudbase), `apps/<id>.log` (per app), the node agent's log |
 | `~/.cloudbase/`             | Also the database and credentials — include it in server backups |
 
 Cloudbase listens on port `7823`. Instances use host ports `10000–19999`, tunnels use `20000–29999` (local only). All are configurable under **Settings → System**.

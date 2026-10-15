@@ -684,7 +684,7 @@ def _ensure_maintenance_files(app: Application, app_id: int) -> tuple[bool, str]
             "has_status_url": bool(cfg.get("status_url")),
         }
 
-    log.info(
+    log.debug(
         "[ensure-files] app_id=%d page_meta downtime=%s update=%s restart=%s starting=%s",
         app_id,
         _page_meta(downtime_cfg),
@@ -698,7 +698,7 @@ def _ensure_maintenance_files(app: Application, app_id: int) -> tuple[bool, str]
     restart_html = nm.render_app_page("restart", restart_cfg)
     starting_html = nm.render_app_page("starting", starting_cfg)
     ok, msg = nm.write_maintenance_files(app_id, downtime_html, update_html, restart_html, starting_html)
-    log.info("[ensure-files] write result ok=%s msg=%r", ok, msg)
+    log.log(logging.DEBUG if ok else logging.WARNING, "[ensure-files] write result ok=%s msg=%r", ok, msg)
     return ok, msg
 
 
