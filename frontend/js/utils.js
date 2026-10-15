@@ -356,6 +356,7 @@ const AUDIT_TONE = {
   'app.start': 'var(--green)', 'app.stop': 'var(--red)', 'app.restart': 'var(--yellow)',
   'app.deploy': 'var(--accent)', 'app.pull': 'var(--accent)', 'app.rebuild': 'var(--accent)',
   'app.zero_downtime_deploy': 'var(--green)', 'app.rolling_deploy': 'var(--green)',
+  'app.autoscale_up': 'var(--accent)', 'app.autoscale_down': 'var(--accent)', 'app.autoscale_failed': 'var(--red)',
   'app.delete': 'var(--red)', 'auth.change_password': 'var(--yellow)',
   'user.create': 'var(--green)', 'user.delete': 'var(--red)',
   'node.connect': 'var(--green)', 'node.enable': 'var(--green)', 'node.disable': 'var(--yellow)', 'node.delete': 'var(--red)',

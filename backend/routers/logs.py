@@ -17,8 +17,55 @@ from routers.nodes import (
     _node_ws_connections,
 )
 
+import system_logs
+
 log = logging.getLogger("cloudbase.logs")
 router = APIRouter(tags=["logs"])
+
+
+# ── Cloudbase log per app (deploys, builds, scaling, nginx, …) ────────────────
+@router.get("/api/apps/{app_id}/cloudbase-logs")
+async def app_cloudbase_logs(
+    app_id: int,
+    limit: int = Query(1000, ge=1, le=5000),
+    component: str | None = None,
+    level: str | None = None,
+    q: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(auth.require_permission("apps.view")),
+):
+    await _get_or_404(app_id, db)
+    return await asyncio.to_thread(system_logs.read_entries, f"app:{app_id}", limit, component, level, q)
+
+
+@router.websocket("/ws/apps/{app_id}/cloudbase-logs")
+async def stream_app_cloudbase_logs(app_id: int, websocket: WebSocket):
+    """Live tail of an app's Cloudbase log; sends JSON batches ({entries: [...]})."""
+    if not await auth.authorize_websocket(websocket, "apps.view"):
+        return
+    await websocket.accept()
+
+    async def _pump():
+        try:
+            async for batch in system_logs.tail(f"app:{app_id}"):
+                if batch:
+                    await websocket.send_text(json.dumps({"entries": batch}))
+        except (WebSocketDisconnect, asyncio.CancelledError):
+            pass
+        except Exception as e:
+            log.warning("app %d cloudbase log stream ended: %s", app_id, e, extra={"no_applog": True})
+
+    # A quiet log never sends, so watch for the disconnect separately.
+    pump = asyncio.create_task(_pump())
+    try:
+        while not pump.done():
+            msg = await websocket.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+    except Exception:
+        pass
+    finally:
+        pump.cancel()
 
 
 @router.get("/api/apps/{app_id}/logs/tail")

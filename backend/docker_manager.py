@@ -11,7 +11,7 @@ from typing import Optional
 
 import config as _cfg
 
-log = logging.getLogger("pdm.docker")
+log = logging.getLogger("cloudbase.docker")
 
 # ── Lazy Docker client ────────────────────────────────────────────────────────
 

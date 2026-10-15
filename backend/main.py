@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import logging.handlers
 import os
 import time as _time
 from collections import deque
@@ -39,20 +38,13 @@ import node_agent
 import config as _cfg
 import system_config as _syscfg
 
-_LOG_DIR  = os.path.expanduser("~/.cloudbase/logs")
-_LOG_FILE = os.path.join(_LOG_DIR, "server.log")
-os.makedirs(_LOG_DIR, exist_ok=True)
+import system_logs
 
-_log_file_handler = logging.handlers.RotatingFileHandler(
-    _LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
-)
-_log_file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[logging.StreamHandler(), _log_file_handler],
-)
+# Must run after the imports above: it replaces any root handlers an imported
+# module installed (node_agent used to, which sent everything to node-agent.log).
+system_logs.setup_logging()
+import applog
+applog.install()
 
 log = logging.getLogger("cloudbase.main")
 
@@ -549,23 +541,44 @@ async def _stats_history_writer():
 
 # ── Autoscaler ───────────────────────────────────────────────────────────────
 async def _autoscaler():
-    """Every 60s check CPU for autoscale-enabled apps and add/remove local replicas.
+    """Every 60s check CPU for autoscale-enabled apps and add/remove replicas.
 
-    Scale actions run as background tasks and mark the app in
-    _scaling_in_progress, so a deploy and a scale action never overlap.
-    Nginx is rewritten after every change so traffic follows the replica set.
+    Scale up goes to the least-loaded online node (local or remote); scale down
+    removes remote replicas first, then the newest local one. Scale actions run
+    as background tasks and mark the app in _scaling_in_progress, so a deploy
+    and a scale action never overlap. Nginx is rewritten after every change so
+    traffic follows the replica set. Every action is written to the server log,
+    the app's live log and the audit log (actor "autoscaler").
     """
     import datetime as _dt
-    from models import StatsHistory, ApplicationReplica
+    from models import StatsHistory, ApplicationReplica, Node
     from routers.applications import (
         _assign_external_port, _start_instance_local, _wait_new_instance_healthy,
         _write_app_nginx_config, _has_public_nginx_domain, ensure_local_node,
-        _deploys_in_progress, _scaling_in_progress,
+        _remote_replica_command_payload, _deploys_in_progress, _scaling_in_progress,
+        DEPLOY_HEALTH_TIMEOUT_SECONDS,
     )
+    from routers.nodes import queue_node_command, wait_for_node_command
 
+    alog = logging.getLogger("cloudbase.autoscaler")
     # cooldown: app_id → last scale action timestamp
     _last_scaled: dict[int, float] = {}
     COOLDOWN = 120  # seconds between scale actions per app
+    ACTOR = "autoscaler"
+
+    def _say(app_id: int, msg: str, level: int = logging.INFO) -> None:
+        # Server log, the app's Cloudbase log (once, with the right level) and its live log.
+        alog.log(level, "[autoscaler] app_id=%d %s", app_id, msg, extra={"no_applog": True})
+        applog.write(app_id, msg, level, "autoscaler")
+        pm._push_container_line(app_id, f"[Autoscaler] {msg}")
+
+    async def _audit(app_id: int, action: str, detail: dict) -> None:
+        try:
+            async with AsyncSessionLocal() as s:
+                await log_audit(s, action, actor=ACTOR, app_id=app_id, detail=detail)
+                await s.commit()
+        except Exception as e:
+            alog.warning("[autoscaler] app_id=%d audit log failed: %s", app_id, e)
 
     async def _rewrite_nginx(app_id: int) -> None:
         async with AsyncSessionLocal() as s:
@@ -576,93 +589,178 @@ async def _autoscaler():
             await _write_app_nginx_config(a, s, local_node)
             await s.commit()
 
-    async def _scale_up(app_id: int, count: int, avg_cpu: float) -> None:
+    def _node_load(n: Node) -> float:
+        if n.node_cpu_percent is not None:
+            return n.node_cpu_percent
+        return psutil.cpu_percent(interval=None) if n.is_local else 100.0
+
+    async def _pick_scale_up_node(s, local_node: Node) -> Node:
+        res = await s.execute(select(Node).where(Node.enabled == True, Node.status == "online"))
+        nodes = list(res.scalars().all())
+        if not any(n.id == local_node.id for n in nodes):
+            nodes.append(local_node)
+        # Least-loaded node wins; on a tie prefer the local node (no tunnel hop).
+        return min(nodes, key=lambda n: (_node_load(n), not n.is_local))
+
+    async def _remove_failed_replica(app_id: int, replica_id: int, node: Node) -> None:
+        try:
+            if node.is_local:
+                await asyncio.to_thread(pm.stop_docker_replica, app_id, replica_id)
+            else:
+                async with AsyncSessionLocal() as s:
+                    r = await s.get(ApplicationReplica, replica_id)
+                    if r:
+                        r.status = "stopping"
+                        await s.commit()
+                    a = await s.get(Application, app_id)
+                    await queue_node_command(
+                        s, node_id=node.id, app_id=app_id, command_type="stop_replica",
+                        payload={"app_id": app_id, "replica_id": replica_id, "app_name": a.name if a else ""},
+                    )
+        except Exception as e:
+            alog.warning("[autoscaler] app_id=%d cleanup of replica %d failed: %s", app_id, replica_id, e)
+        async with AsyncSessionLocal() as s:
+            r = await s.get(ApplicationReplica, replica_id)
+            if r:
+                await s.delete(r)
+                await s.commit()
+        await _rewrite_nginx(app_id)
+
+    async def _scale_up(app_id: int, count: int, avg_cpu: float, target: float) -> None:
         async with AsyncSessionLocal() as s:
             app = await s.get(Application, app_id)
             local_node = await ensure_local_node(s)
+            node = await _pick_scale_up_node(s, local_node)
             env_vars = decrypt_env(app.env_vars or "")
-            new_port = await _assign_external_port(None, local_node.id, None, s)
+            new_port = await _assign_external_port(None, node.id, None, s)
             replica = ApplicationReplica(
                 app_id=app_id,
-                node_id=local_node.id,
+                node_id=node.id,
                 external_port=new_port,
                 status="starting",
             )
             s.add(replica)
             await s.commit()
+            if not node.is_local:
+                await queue_node_command(
+                    s, node_id=node.id, app_id=app_id, command_type="start_replica",
+                    payload={**_remote_replica_command_payload(app, env_vars, new_port), "replica_id": replica.id},
+                )
 
-        # Docker work and the health check run with no DB session open. The replica
-        # stays "starting" (so not in nginx) until it actually serves traffic.
+        _say(app_id, f"CPU {avg_cpu:.1f}% > {target:.0f}% — adding instance {replica.id} on '{node.name}' ({count} → {count + 1})…")
+
+        # Docker work and the health check run with no DB session open. A local
+        # replica stays "starting" (so not in nginx) until it serves traffic.
         try:
-            cid = await _start_instance_local(app, replica, env_vars, app_id)
+            if node.is_local:
+                cid = await _start_instance_local(app, replica, env_vars, app_id)
+                check_port = replica.external_port
+            else:
+                # The agent may need to clone + build first; the tunnel comes up
+                # once the container runs (and puts the replica in nginx).
+                deadline = asyncio.get_running_loop().time() + DEPLOY_HEALTH_TIMEOUT_SECONDS
+                check_port = None
+                while asyncio.get_running_loop().time() < deadline:
+                    await asyncio.sleep(3)
+                    async with AsyncSessionLocal() as s:
+                        fresh = await s.get(ApplicationReplica, replica.id)
+                    if fresh is None:
+                        raise RuntimeError("instance was removed")
+                    if fresh.status == "error":
+                        raise RuntimeError(f"node reported an error: {fresh.last_error or 'unknown'}")
+                    if fresh.tunnel_port:
+                        check_port = fresh.tunnel_port
+                        break
+                if not check_port:
+                    raise RuntimeError(f"tunnel from '{node.name}' did not connect within {DEPLOY_HEALTH_TIMEOUT_SECONDS}s")
             if not app.no_web:
-                healthy, reason = await _wait_new_instance_healthy(app_id, replica.id, replica.external_port, is_local=True)
+                healthy, reason = await _wait_new_instance_healthy(app_id, replica.id, check_port, is_local=node.is_local)
                 if not healthy:
                     raise RuntimeError(f"health check failed: {reason}")
         except Exception as e:
-            log.warning("[autoscaler] app_id=%d scale up failed: %s", app_id, e)
-            try:
-                await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
-            except Exception:
-                pass
-            async with AsyncSessionLocal() as s:
-                r = await s.get(ApplicationReplica, replica.id)
-                if r:
-                    await s.delete(r)
-                    await s.commit()
+            _say(app_id, f"Scale up failed on '{node.name}': {e} — instance {replica.id} removed.", logging.WARNING)
+            await _remove_failed_replica(app_id, replica.id, node)
+            await _audit(app_id, "app.autoscale_failed", {"direction": "up", "node": node.name, "error": str(e)})
             return
 
-        async with AsyncSessionLocal() as s:
-            r = await s.get(ApplicationReplica, replica.id)
-            if r is None:
-                return
-            r.status = "running"
-            r.substatus = None
-            r.container_id = cid
-            r.last_error = None
-            # _start_instance_local may have reassigned the port on conflict
-            r.external_port = replica.external_port
-            await s.commit()
+        if node.is_local:
+            async with AsyncSessionLocal() as s:
+                r = await s.get(ApplicationReplica, replica.id)
+                if r is None:
+                    return
+                r.status = "running"
+                r.substatus = None
+                r.container_id = cid
+                r.last_error = None
+                # _start_instance_local may have reassigned the port on conflict
+                r.external_port = replica.external_port
+                await s.commit()
         await _rewrite_nginx(app_id)
-        log.info("[autoscaler] app_id=%d scaled UP to %d replicas (cpu=%.1f%%)", app_id, count + 1, avg_cpu)
+        _say(app_id, f"Scaled UP to {count + 1} instances (new instance {replica.id} on '{node.name}').")
+        await _audit(app_id, "app.autoscale_up", {
+            "replica_id": replica.id, "node": node.name, "replicas": count + 1, "cpu": round(avg_cpu, 1),
+        })
 
-    async def _scale_down(app_id: int, victim_id: int, count: int, avg_cpu: float) -> None:
+    async def _scale_down(app_id: int, victim_id: int, count: int, avg_cpu: float, target: float) -> None:
         # Take the victim out of nginx first so no requests hit a dying container.
         async with AsyncSessionLocal() as s:
             victim = await s.get(ApplicationReplica, victim_id)
             if victim is None or victim.status != "running":
                 return
+            node = await s.get(Node, victim.node_id) if victim.node_id else None
+            if node is None:
+                node = await ensure_local_node(s)
             victim.status = "stopping"
             await s.commit()
+            app_name = (await s.get(Application, app_id)).name
+        _say(app_id, f"CPU {avg_cpu:.1f}% < {target * 0.5:.0f}% — removing instance {victim_id} on '{node.name}' ({count} → {count - 1})…")
         await _rewrite_nginx(app_id)
 
         try:
-            stopped = await asyncio.to_thread(pm.stop_docker_replica, app_id, victim_id)
+            if node.is_local:
+                stopped = await asyncio.to_thread(pm.stop_docker_replica, app_id, victim_id)
+            else:
+                async with AsyncSessionLocal() as s:
+                    cmd = await queue_node_command(
+                        s, node_id=node.id, app_id=app_id, command_type="stop_replica",
+                        payload={"app_id": app_id, "replica_id": victim_id, "app_name": app_name},
+                    )
+                    done = await wait_for_node_command(s, cmd.id, timeout_seconds=120)
+                stopped = done.status == "done"
+                if not stopped:
+                    alog.warning("[autoscaler] app_id=%d stop_replica on '%s' ended %s: %s",
+                                app_id, node.name, done.status, done.error_message)
         except Exception as e:
             stopped = False
-            log.warning("[autoscaler] app_id=%d scale down: stop replica %d raised: %s", app_id, victim_id, e)
+            alog.warning("[autoscaler] app_id=%d scale down: stop replica %d raised: %s", app_id, victim_id, e)
 
         async with AsyncSessionLocal() as s:
             victim = await s.get(ApplicationReplica, victim_id)
-            if victim is None:
-                return
+            # A remote tunnel closing after an intentional stop marks it "stopped".
+            if victim and victim.status == "stopped":
+                stopped = True
             if stopped:
-                await s.delete(victim)
-            else:
-                # Container still there — keep the row (no orphan) and put it back in rotation.
-                log.warning("[autoscaler] app_id=%d scale down aborted: replica %d container not stopped, keeping it", app_id, victim_id)
+                if victim:
+                    await s.delete(victim)
+            elif victim and victim.status == "stopping":
+                # Container may still be there — keep the row (no orphan) and put it back in rotation.
                 victim.status = "running"
             await s.commit()
+        await _rewrite_nginx(app_id)
         if not stopped:
-            await _rewrite_nginx(app_id)
+            _say(app_id, f"Scale down aborted: instance {victim_id} on '{node.name}' did not stop, keeping it.", logging.WARNING)
+            await _audit(app_id, "app.autoscale_failed", {"direction": "down", "replica_id": victim_id, "node": node.name})
             return
-        log.info("[autoscaler] app_id=%d scaled DOWN to %d replicas (cpu=%.1f%%)", app_id, count - 1, avg_cpu)
+        _say(app_id, f"Scaled DOWN to {count - 1} instances (removed instance {victim_id} on '{node.name}').")
+        await _audit(app_id, "app.autoscale_down", {
+            "replica_id": victim_id, "node": node.name, "replicas": count - 1, "cpu": round(avg_cpu, 1),
+        })
 
     async def _run_action(app_id: int, coro) -> None:
         try:
             await coro
         except Exception as e:
-            log.warning("[autoscaler] app_id=%d scale action error: %s", app_id, e)
+            alog.warning("[autoscaler] app_id=%d scale action error: %s", app_id, e)
         finally:
             _scaling_in_progress.discard(app_id)
             _last_scaled[app_id] = asyncio.get_running_loop().time()
@@ -724,15 +822,19 @@ async def _autoscaler():
 
                     action = None
                     if avg_cpu > target and count < max_r:
-                        action = _scale_up(app.id, count, avg_cpu)
+                        action = _scale_up(app.id, count, avg_cpu, target)
                     elif avg_cpu < target * 0.5 and count > min_r:
-                        # Only remove local replicas the autoscaler can stop itself;
-                        # newest first so long-running ones are kept.
-                        local = [r for r in replicas if r.node_id is None or r.node_id == local_node.id]
-                        if local:
-                            action = _scale_down(app.id, local[0].id, count, avg_cpu)
+                        # Remove remote replicas first (the primary keeps the base load),
+                        # newest first within each group (replicas is ordered by id desc).
+                        is_local = lambda r: r.node_id is None or r.node_id == local_node.id
+                        victim = next((r for r in replicas if not is_local(r)), None) or replicas[0]
+                        action = _scale_down(app.id, victim.id, count, avg_cpu, target)
 
                     if action is not None:
+                        # A deploy may have started during the queries above.
+                        if app.id in _deploys_in_progress:
+                            action.close()
+                            continue
                         # Blocks deploys (see _single_deploy) until the action is done.
                         _scaling_in_progress.add(app.id)
                         _last_scaled[app.id] = now
@@ -741,7 +843,7 @@ async def _autoscaler():
         except asyncio.CancelledError:
             return
         except Exception as e:
-            log.warning("[autoscaler] error: %s", e)
+            alog.warning("[autoscaler] error: %s", e)
         await asyncio.sleep(60)
 
 
@@ -994,7 +1096,7 @@ async def _startup_recovery() -> None:
                 # Re-attach to the replica's own container (not the legacy cloudbase-app-{id}
                 # name), otherwise live logs stay silent after a Cloudbase restart.
                 dm.attach_container_log_tailer(
-                    replica.app_id, pm.log_buffers, pm._push_line, asyncio.get_event_loop(),
+                    replica.app_id, pm.log_buffers, pm._push_container_line, asyncio.get_event_loop(),
                     cname=dm.replica_container_name(replica.app_id, replica.id),
                 )
 
@@ -1083,7 +1185,7 @@ async def _dev_demo_logs(path: str) -> None:
     def emit(app_id: int, template: str) -> None:
         line = template.replace("{ts}", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         pm.log_buffers.setdefault(app_id, deque(maxlen=5000)).append(line)
-        pm._push_line(app_id, line)
+        pm._push_container_line(app_id, line)
 
     for app_id, d in demo.items():
         for t in d["start"]:
@@ -1932,54 +2034,63 @@ async def delete_github_token(token_id: str, _: dict = Depends(auth.require_perm
 # /value endpoint intentionally omitted — raw tokens are resolved server-side only.
 
 
-@app.get("/api/system/debug-log")
-async def get_debug_log(lines: int = 200, _: dict = Depends(auth.require_permission("system.manage"))):
-    try:
-        with open(pm.DEBUG_LOG_PATH) as f:
-            all_lines = f.readlines()
-        return {"lines": [l.rstrip() for l in all_lines[-lines:]]}
-    except FileNotFoundError:
-        return {"lines": ["(debug log is empty — no events recorded yet)"]}
+# ── System logs ──────────────────────────────────────────────────────────────
+@app.get("/api/system/log-sources")
+async def get_log_sources(_: dict = Depends(auth.require_permission("system.manage"))):
+    return {"sources": system_logs.source_info()}
 
 
 @app.get("/api/system/logs")
-async def get_server_logs(lines: int = 500, _: dict = Depends(auth.require_permission("system.manage"))):
+async def get_system_logs(
+    source: str = "server",
+    limit: int = 500,
+    component: Optional[str] = None,
+    level: Optional[str] = None,
+    q: Optional[str] = None,
+    _: dict = Depends(auth.require_permission("system.manage")),
+):
+    if source not in system_logs.SOURCES:
+        raise HTTPException(404, f"Unknown log source '{source}'")
     try:
-        with open(_LOG_FILE, encoding="utf-8") as f:
-            all_lines = f.readlines()
-        return {"lines": [l.rstrip() for l in all_lines[-lines:]]}
-    except FileNotFoundError:
-        return {"lines": []}
+        return await asyncio.to_thread(system_logs.read_entries, source, limit, component, level, q)
+    except PermissionError:
+        raise HTTPException(403, f"Cloudbase can't read {system_logs.SOURCES[source][1]} (file permissions)")
 
 
 from fastapi import WebSocket as _WS, WebSocketDisconnect as _WSD
 
-@app.websocket("/ws/system/server-logs")
-async def stream_server_logs(websocket: _WS):
+@app.websocket("/ws/system/logs")
+async def stream_system_logs(websocket: _WS, source: str = "server"):
+    """Live tail of a log source; sends JSON batches of entries ({entries: [...]})."""
     if not await auth.authorize_websocket(websocket, "system.manage"):
         return
+    if source not in system_logs.SOURCES:
+        await websocket.close(code=4404)
+        return
     await websocket.accept()
-    try:
-        # Send existing lines first
-        try:
-            with open(_LOG_FILE, encoding="utf-8") as f:
-                existing = f.readlines()[-300:]
-            for line in existing:
-                await websocket.send_text(line.rstrip())
-        except FileNotFoundError:
-            pass
 
-        # Then tail the file for new lines
-        with open(_LOG_FILE, encoding="utf-8") as f:
-            f.seek(0, 2)  # seek to end
-            while True:
-                line = f.readline()
-                if line:
-                    await websocket.send_text(line.rstrip())
-                else:
-                    await asyncio.sleep(0.5)
-    except (_WSD, Exception):
+    async def _pump():
+        try:
+            async for batch in system_logs.tail(source):
+                if batch:
+                    await websocket.send_text(json.dumps({"entries": batch}))
+        except (_WSD, asyncio.CancelledError):
+            pass
+        except Exception as e:
+            log.warning("system log stream (%s) ended: %s", source, e)
+
+    # A quiet log never sends, so watch for the disconnect separately —
+    # otherwise the tail would keep polling after the tab is closed.
+    pump = asyncio.create_task(_pump())
+    try:
+        while not pump.done():
+            msg = await websocket.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+    except Exception:
         pass
+    finally:
+        pump.cancel()
 
 
 

@@ -1,4 +1,5 @@
-import { api, wsLogs, wsReplicaLogs, wsStats, wsNodeEvents, PermissionError } from './api.js';
+import { api, wsLogs, wsReplicaLogs, wsStats, wsNodeEvents, wsAppCloudbaseLogs, PermissionError } from './api.js';
+import { createLogViewer, fillComponentSelect } from './logviewer.js';
 import { auditTableHTML, cssVar, icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, stripAnsi, ansiToHtml, setBtn, parseDotEnv, pickTextFile, mergeEnvIntoRows, timeAgo } from './utils.js';
 import { pickGitHubToken } from './sidebar.js';
 import { openDomainWizard, leCertName } from './domain-wizard.js';
@@ -506,6 +507,7 @@ function switchTab(t) {
 function teardownTab(t) {
   if (t === 'logs')  {
     if (logWs) { logWs.close(); logWs = null; }
+    _cbLogViewer?.stop();
     clearInterval(_logInstancesTimer); _logInstancesTimer = null;
   }
   if (t === 'stats') { statsTabActive = false; } // Keep statWs alive — data keeps accumulating
@@ -529,6 +531,7 @@ let _logInstances = new Map();      // id → instance, refreshed while the tab 
 let _logInstancesTimer = null;
 let _logSourceKey = null;           // what the terminal currently shows (stream or empty state)
 
+const LOG_CLOUDBASE = 'cloudbase';
 const LOG_LIVE_STATUSES = new Set(['running', 'starting', 'restarting', 'stopping', 'pending', 'deploying']);
 
 function _logOptionLabel(r) {
@@ -552,13 +555,15 @@ async function _refreshLogInstances() {
     opt.textContent = _logOptionLabel(r);
     select.appendChild(opt);
   });
-  select.value = _logInstances.has(current) ? current : 'all';
+  select.insertAdjacentHTML('beforeend', `<option value="${LOG_CLOUDBASE}">Cloudbase · deploys, scaling, nginx…</option>`);
+  select.value = _logInstances.has(current) || current === LOG_CLOUDBASE ? current : 'all';
 
   // Re-render when the selected instance went up or down (e.g. node came back)
   if (_logSourceKey !== _logSourceKeyFor(select.value)) _switchLogInstance();
 }
 
 function _logSourceKeyFor(val) {
+  if (val === LOG_CLOUDBASE) return LOG_CLOUDBASE;
   if (val === 'all' || val === 'primary') return 'all';
   const r = _logInstances.get(val);
   return r && !LOG_LIVE_STATUSES.has(r.status) ? `empty:${val}:${r.status}` : `live:${val}`;
@@ -570,6 +575,7 @@ function initLogs() {
   if (!_logsInitDone) {
     _logsInitDone = true;
     select?.addEventListener('change', () => _switchLogInstance());
+    _wireCloudbaseLogFilters();
   }
 
   _logSourceKey = null;
@@ -600,8 +606,18 @@ function _switchLogInstance() {
   const terminal = document.getElementById('log-terminal');
 
   if (logWs) { logWs.close(); logWs = null; }
+  _cbLogViewer?.stop();
   _logSourceKey = _logSourceKeyFor(val);
   logLines = [];
+
+  const cbFilters = document.getElementById('logs-cb-filters');
+  if (cbFilters) cbFilters.hidden = val !== LOG_CLOUDBASE;
+  if (val === LOG_CLOUDBASE) {
+    terminal.closest('.logs-panel')?.classList.remove('logs-idle');
+    if (hint) hint.textContent = 'Live · everything Cloudbase did for this app';
+    _cloudbaseLogViewer(terminal).start();
+    return;
+  }
 
   const inst = isAll ? null : _logInstances.get(val);
   if (inst && !LOG_LIVE_STATUSES.has(inst.status)) {
@@ -624,6 +640,35 @@ function _switchLogInstance() {
   logWs = isAll
     ? wsLogs(APP_ID, _appendLogLine, reset)
     : wsReplicaLogs(APP_ID, parseInt(val, 10), _appendLogLine, reset);
+}
+
+// "Cloudbase" source: the app's own Cloudbase log (deploys, builds, scaling,
+// autoscaler, nginx, crash recovery), kept on disk with level/component filters.
+let _cbLogViewer = null;
+
+function _cloudbaseLogViewer(terminal) {
+  if (!_cbLogViewer) {
+    const compSel = document.getElementById('log-cb-component');
+    _cbLogViewer = createLogViewer(terminal, {
+      load: f => api.getAppCloudbaseLogs(APP_ID, f),
+      stream: onEntries => wsAppCloudbaseLogs(APP_ID, onEntries),
+      onComponents: names => compSel && fillComponentSelect(compSel, names, _cbLogViewer.filters.component),
+    });
+  }
+  return _cbLogViewer;
+}
+
+function _wireCloudbaseLogFilters() {
+  const compSel = document.getElementById('log-cb-component');
+  const levelSel = document.getElementById('log-cb-level');
+  const qInput = document.getElementById('log-cb-q');
+  if (compSel) compSel.onchange = () => _cbLogViewer?.setFilter('component', compSel.value);
+  if (levelSel) levelSel.onchange = () => _cbLogViewer?.setFilter('level', levelSel.value);
+  let qTimer;
+  if (qInput) qInput.oninput = () => {
+    clearTimeout(qTimer);
+    qTimer = setTimeout(() => _cbLogViewer?.setFilter('q', qInput.value.trim()), 300);
+  };
 }
 
 function _appendLogLine(line) {

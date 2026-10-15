@@ -33,5 +33,11 @@ async def log_audit(
         )
         db.add(entry)
         await db.flush()
+        # Also in the server log, and (via app_id) in the app's Cloudbase log.
+        # Details stay in the audit table only — they can hold IPs and names.
+        if app_id is not None:
+            log.info("%s by %s", action, actor, extra={"app_id": app_id})
+        else:
+            log.info("%s by %s", action, actor)
     except Exception:
         log.debug("audit log write failed", exc_info=True)

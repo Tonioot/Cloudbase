@@ -21,6 +21,7 @@ from database import get_db, AsyncSessionLocal
 import datetime as _dt
 from models import Application, ApplicationReplica, Node, StatsHistory, NodeCommand, AuditLog, Deployment
 import process_manager as pm
+import applog
 import nginx_manager as nm
 import certificates as certs
 import token_vault
@@ -34,7 +35,7 @@ import config as _cfg
 import system_config as _syscfg
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
-log = logging.getLogger("pdm.apps")
+log = logging.getLogger("cloudbase.apps")
 
 RESTART_READY_TIMEOUT_SECONDS = 180
 RESTART_READY_POLL_SECONDS = 1
@@ -199,6 +200,8 @@ async def _assign_external_port(requested: Optional[int], node_id: int, exclude_
 
 async def _cleanup_app_dependencies(db: AsyncSession, app_id: int) -> None:
     """Remove or detach rows that can still reference an app in older DB schemas."""
+    # App ids can be reused; a new app must not inherit this one's Cloudbase log.
+    applog.forget(app_id)
     await db.execute(
         update(NodeCommand)
         .where(NodeCommand.app_id == app_id)

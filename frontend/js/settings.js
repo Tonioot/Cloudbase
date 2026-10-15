@@ -1,9 +1,10 @@
-// Settings pages: /settings?s=domain|system|users|tokens|transfer|account
+// Settings pages: /settings?s=domain|system|users|backups|tokens|transfer|logs|account
 //
 // Each section is a full page (title, description, grouped forms) instead of
 // the modals these used to be. The sidebar links here and marks the active one.
 
-import { api } from './api.js';
+import { api, wsSystemLogs } from './api.js';
+import { createLogViewer, fillComponentSelect } from './logviewer.js';
 import { setCrumbs } from './shell.js';
 import { toast, confirm } from './utils.js';
 import { openPanelDomainWizard, openBaseDomainWizard } from './domain-wizard.js';
@@ -17,12 +18,14 @@ export const SETTINGS_SECTIONS = {
   backups:  { title: 'Backup storage',   sub: 'Keep a copy of every database backup outside this server, in S3-compatible storage.' },
   tokens:   { title: 'GitHub tokens',    sub: 'Saved access tokens for private repositories. Pick one when you create or edit an app.' },
   transfer: { title: 'Export / import',  sub: 'Move app configurations between Cloudbase installations, or keep a backup.' },
+  logs:     { title: 'System logs',      sub: 'Everything Cloudbase itself logs — deploys, autoscaler, nginx, nodes, databases — in one place, live.' },
   account:  { title: 'Account',          sub: 'Your own sign-in details.' },
 };
 
 const RENDER = {
   domain: renderDomain,
   system: renderSystem,
+  logs: renderLogs,
   users: renderUsers,
   backups: renderBackupStorage,
   tokens: renderTokens,
@@ -259,6 +262,100 @@ function renderSystem(root) {
       save.disabled = false;
     }
   };
+}
+
+/* ─── System logs ───────────────────────────────────────────────────────── */
+
+function fmtBytes(n) {
+  if (!n) return 'empty';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function renderLogs(root) {
+  const params = new URLSearchParams(location.search);
+  let source = params.get('source') || 'server';
+
+  root.innerHTML = `
+    <div class="syslog-sources" id="syslog-sources" role="tablist" aria-label="Log source"></div>
+    <p class="syslog-source-desc" id="syslog-source-desc"></p>
+    <div class="logs-panel syslog-panel">
+      <div class="logs-toolbar">
+        <select class="input" id="syslog-component" aria-label="Component"><option value="">All components</option></select>
+        <select class="input" id="syslog-level" aria-label="Level">
+          <option value="">All levels</option>
+          <option value="WARNING">Warnings &amp; errors</option>
+          <option value="ERROR">Errors only</option>
+        </select>
+        <input class="input syslog-search" id="syslog-q" type="search" placeholder="Search…" spellcheck="false" />
+        <span class="logs-live"><span class="dot"></span><span>Live</span></span>
+      </div>
+      <div class="log-terminal" id="syslog-out"><div class="log-empty">Loading…</div></div>
+    </div>`;
+
+  const compSel = document.getElementById('syslog-component');
+  const levelSel = document.getElementById('syslog-level');
+  const qInput = document.getElementById('syslog-q');
+
+  const viewer = createLogViewer(document.getElementById('syslog-out'), {
+    load: f => api.getSystemLogs({ source, limit: 1000, ...f }),
+    stream: onEntries => wsSystemLogs(source, onEntries),
+    onComponents: names => fillComponentSelect(compSel, names, viewer.filters.component),
+  });
+  viewer.filters.component = params.get('component') || '';
+
+  function syncUrl() {
+    const p = new URLSearchParams(location.search);
+    p.set('source', source);
+    if (viewer.filters.component) p.set('component', viewer.filters.component); else p.delete('component');
+    history.replaceState(null, '', `${location.pathname}?${p}`);
+  }
+
+  async function loadSources() {
+    const box = document.getElementById('syslog-sources');
+    const desc = document.getElementById('syslog-source-desc');
+    let sources = [];
+    try {
+      sources = (await api.getLogSources()).sources;
+    } catch (e) {
+      box.innerHTML = `<div class="settings-notice" data-tone="error">${esc(e.message)}</div>`;
+      return;
+    }
+    if (!sources.some(s => s.key === source)) source = 'server';
+    const draw = () => {
+      box.innerHTML = sources.map(s => `
+        <button type="button" role="tab" class="syslog-source${s.key === source ? ' active' : ''}"
+          data-key="${s.key}" aria-selected="${s.key === source}" ${s.readable ? '' : 'disabled'}
+          title="${esc(s.path)}">
+          <span>${esc(s.label)}</span>
+          <span class="syslog-source-size">${s.exists ? (s.readable ? fmtBytes(s.size) : 'no access') : 'missing'}</span>
+        </button>`).join('');
+      const cur = sources.find(s => s.key === source);
+      desc.innerHTML = cur ? `${esc(cur.description)} <code>${esc(cur.path)}</code>` : '';
+    };
+    draw();
+    box.onclick = ev => {
+      const btn = ev.target.closest('.syslog-source');
+      if (!btn || btn.disabled || btn.dataset.key === source) return;
+      source = btn.dataset.key;
+      viewer.filters.component = '';
+      draw();
+      syncUrl();
+      viewer.start();
+    };
+  }
+
+  compSel.onchange = () => { viewer.setFilter('component', compSel.value); syncUrl(); };
+  levelSel.onchange = () => viewer.setFilter('level', levelSel.value);
+  let qTimer;
+  qInput.oninput = () => {
+    clearTimeout(qTimer);
+    qTimer = setTimeout(() => viewer.setFilter('q', qInput.value.trim()), 300);
+  };
+  window.addEventListener('pagehide', () => viewer.stop(), { once: true });
+
+  loadSources().then(() => { syncUrl(); viewer.start(); });
 }
 
 /* ─── Backup storage ────────────────────────────────────────────────────── */

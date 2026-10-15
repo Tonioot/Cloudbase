@@ -220,7 +220,21 @@ export const api = {
   restartInstance:(id, instanceId) => request('POST',   `/apps/${id}/instances/${instanceId}/restart`),
   getInstanceLogs:(id, repId, lines) => request('GET',  `/apps/${id}/replicas/${repId}/logs?lines=${lines || 200}`),
   getAppLogsTail: (id, lines)      => request('GET',    `/apps/${id}/logs/tail?limit=${lines || 200}`),
-  getServerLogs: (lines) => request('GET', `/system/logs?lines=${lines || 500}`),
+  getAppCloudbaseLogs: (id, { limit = 1000, component = '', level = '', q = '' } = {}) => {
+    const p = new URLSearchParams({ limit });
+    if (component) p.set('component', component);
+    if (level) p.set('level', level);
+    if (q) p.set('q', q);
+    return request('GET', `/apps/${id}/cloudbase-logs?${p}`);
+  },
+  getLogSources: () => request('GET', '/system/log-sources'),
+  getSystemLogs: ({ source = 'server', limit = 500, component = '', level = '', q = '' } = {}) => {
+    const p = new URLSearchParams({ source, limit });
+    if (component) p.set('component', component);
+    if (level) p.set('level', level);
+    if (q) p.set('q', q);
+    return request('GET', `/system/logs?${p}`);
+  },
   getPDManagerNginx: () => request('GET',  '/system/nginx-config'),
   setPanelDomain:    (data) => request('POST', '/system/panel-domain', data),
   setBaseDomain:     (baseDomain) => request('POST', '/system/base-domain', { base_domain: baseDomain }),
@@ -320,12 +334,20 @@ export function wsLocalNodeStats(onData) {
   return { close() { closed = true; if (ws) ws.close(); } };
 }
 
-export function wsServerLogs(onLine) {
+export function wsSystemLogs(source, onEntries) {
+  return _wsEntries(`/ws/system/logs?source=${encodeURIComponent(source)}`, onEntries);
+}
+
+export function wsAppCloudbaseLogs(appId, onEntries) {
+  return _wsEntries(`/ws/apps/${appId}/cloudbase-logs`, onEntries);
+}
+
+function _wsEntries(path, onEntries) {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   let ws, closed = false;
   function connect() {
-    ws = new WebSocket(`${proto}//${location.host}/ws/system/server-logs`);
-    ws.onmessage = e => onLine(e.data);
+    ws = new WebSocket(`${proto}//${location.host}${path}`);
+    ws.onmessage = e => { try { onEntries(JSON.parse(e.data).entries || []); } catch (_) {} };
     ws.onclose = () => { if (!closed) setTimeout(connect, 3000); };
   }
   connect();

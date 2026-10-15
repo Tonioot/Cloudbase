@@ -3,7 +3,7 @@ import os
 import subprocess
 import hashlib
 
-log = logging.getLogger("pdm.nginx")
+log = logging.getLogger("cloudbase.nginx")
 
 NGINX_SITES_DIR = "/etc/nginx/sites-available"
 NGINX_ENABLED_DIR = "/etc/nginx/sites-enabled"

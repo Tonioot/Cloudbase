@@ -9,6 +9,7 @@ import argparse
 import platform
 import subprocess
 import logging
+import logging.handlers
 from typing import Optional, Any, Tuple, Dict, Callable
 from dataclasses import dataclass
 
@@ -26,14 +27,20 @@ _LOCAL_PORT = _cfg.get_server_port()
 _LOCAL_API_BASE = f"http://127.0.0.1:{_LOCAL_PORT}"
 
 os.makedirs(os.path.dirname(AGENT_LOG_FILE), exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.FileHandler(AGENT_LOG_FILE), logging.StreamHandler()],
-)
+# Own logger with its own file, so the panel can show agent activity on its own.
+# It also propagates to the root logger (server.log / stdout) set up by main.py;
+# configuring the root logger here would hijack the whole server's logging.
+_log = logging.getLogger("cloudbase.agent")
+_log.setLevel(logging.INFO)
+if not _log.handlers:
+    _agent_file_handler = logging.handlers.RotatingFileHandler(
+        AGENT_LOG_FILE, maxBytes=10 * 1024 * 1024, backupCount=3, encoding="utf-8"
+    )
+    _agent_file_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    _log.addHandler(_agent_file_handler)
 
 def _agent_log(message: str) -> None:
-    logging.info(message)
+    _log.info(message)
 
 @dataclass
 class AgentState:
@@ -554,11 +561,14 @@ async def cmd_get_replica_stats(client, state, main_id, payload, headers):
     return resp.json()
 
 async def cmd_get_agent_logs(client, state, main_id, payload, headers):
-    log_file = os.path.expanduser("~/.cloudbase/logs/node-agent.log")
+    # server.log has everything on this node (agent + docker + …); older
+    # installs only wrote node-agent.log, so fall back to that.
+    server_log = os.path.expanduser("~/.cloudbase/logs/server.log")
+    log_file = server_log if os.path.exists(server_log) and os.path.getsize(server_log) > 0 else AGENT_LOG_FILE
     lines = payload.get("lines") or 100
     if not os.path.exists(log_file):
         return {"lines": []}
-    with open(log_file) as f:
+    with open(log_file, encoding="utf-8", errors="replace") as f:
         all_lines = f.readlines()
     return {"lines": [l.rstrip() for l in all_lines[-lines:]]}
 
@@ -1293,4 +1303,6 @@ async def main():
         raise SystemExit(1)
 
 if __name__ == "__main__":
+    # Standalone (e.g. registration from the installer): also print to the console.
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     asyncio.run(main())

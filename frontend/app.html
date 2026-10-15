@@ -128,6 +128,15 @@
             <select id="log-instance-select" class="input">
               <option value="all">All instances</option>
             </select>
+            <span class="logs-cb-filters" id="logs-cb-filters" hidden>
+              <select id="log-cb-component" class="input" aria-label="Component"><option value="">All components</option></select>
+              <select id="log-cb-level" class="input" aria-label="Level">
+                <option value="">All levels</option>
+                <option value="WARNING">Warnings &amp; errors</option>
+                <option value="ERROR">Errors only</option>
+              </select>
+              <input id="log-cb-q" class="input" type="search" placeholder="Search…" spellcheck="false" />
+            </span>
             <span class="logs-live"><span class="dot"></span><span id="log-instance-hint">Live</span></span>
           </div>
           <div class="log-terminal" id="log-terminal">

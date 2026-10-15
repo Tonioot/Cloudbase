@@ -1666,12 +1666,11 @@ async def replica_tunnel_ws(replica_id: int, websocket: WebSocket):
 async def get_node_agent_logs(node_id: int, limit: int = 200, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("nodes.view"))):
     node = await get_node_or_404(node_id, db)
     if node.is_local:
-        import os
-        log_path = os.path.expanduser("~/.cloudbase/logs/node-agent.log")
+        # The primary runs no agent loop; its activity is in the server log.
+        import system_logs
         try:
-            with open(log_path, encoding="utf-8") as f:
-                lines = f.readlines()[-limit:]
-            return {"lines": [l.rstrip() for l in lines], "source": "local"}
+            lines = await asyncio.to_thread(system_logs._read_backwards, system_logs.SERVER_LOG, 2 * 1024 * 1024)
+            return {"lines": lines[-limit:], "source": "local"}
         except FileNotFoundError:
             return {"lines": [], "source": "local", "error": "Log file not found"}
         except Exception as exc:

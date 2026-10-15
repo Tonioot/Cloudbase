@@ -821,3 +821,12 @@ a.icon-btn { text-decoration: none; }
   .db-card-head { flex-wrap: wrap; }
   .db-limits .btn { grid-column: 1 / -1; }
 }
+
+/* Logs tab: filters for the "Cloudbase" source */
+.logs-cb-filters { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.logs-cb-filters[hidden] { display: none; }
+#log-cb-q { min-width: 160px; }
+@media (max-width: 640px) {
+  #logs-toolbar { flex-wrap: wrap; }
+  .logs-cb-filters, .logs-cb-filters .input { flex: 1 1 100%; max-width: none; }
+}

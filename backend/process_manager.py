@@ -4,6 +4,7 @@ import threading
 from collections import deque
 from typing import Optional
 
+import applog
 import docker_manager as dm
 
 APPS_BASE_DIR = os.path.expanduser("~/.cloudbase/apps")
@@ -90,6 +91,13 @@ def unsubscribe_logs(app_id: int, q: asyncio.Queue) -> None:
 
 
 def _push_line(app_id: int, line: str) -> None:
+    """Push a Cloudbase message to the app's live log and keep it in the app's Cloudbase log."""
+    applog.record_push(app_id, line)
+    _push_container_line(app_id, line)
+
+
+def _push_container_line(app_id: int, line: str) -> None:
+    """Push a line to the app's live log only (the app's own container output)."""
     if _main_loop is None or _main_loop.is_closed():
         return
     with _queues_lock:
@@ -164,7 +172,7 @@ def start_docker_app(
         raise RuntimeError(message) from e
 
     if _main_loop is not None and not _main_loop.is_closed():
-        dm.attach_container_log_tailer(app_id, log_buffers, _push_line, _main_loop)
+        dm.attach_container_log_tailer(app_id, log_buffers, _push_container_line, _main_loop)
 
     return container_id
 
@@ -206,7 +214,7 @@ def start_docker_replica(
 
     if _main_loop is not None and not _main_loop.is_closed():
         dm.attach_container_log_tailer(
-            app_id, log_buffers, _push_line, _main_loop,
+            app_id, log_buffers, _push_container_line, _main_loop,
             cname=dm.replica_container_name(app_id, replica_id),
         )
 
