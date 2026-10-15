@@ -73,6 +73,11 @@ async def run_deploy(
     collector = asyncio.create_task(_collect())
     dep_id: Optional[int] = None
     try:
+        # A webhook deploy shouldn't fail just because the autoscaler is busy
+        # adding/removing an instance — wait for that to finish first.
+        deadline = asyncio.get_running_loop().time() + 900
+        while app_id in apps._scaling_in_progress and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(2)
         with apps._single_deploy(app_id):
             async with AsyncSessionLocal() as db:
                 app = await db.get(Application, app_id)

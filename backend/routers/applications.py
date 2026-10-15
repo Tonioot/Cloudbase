@@ -48,6 +48,8 @@ DEPLOY_HEALTH_PROGRESS_SECONDS = 30
 _active_transition_modes: dict[int, tuple[str, float]] = {}
 # App ids with a rolling / blue-green deploy in progress (one at a time per app).
 _deploys_in_progress: set[int] = set()
+# App ids the autoscaler is currently adding/removing a replica for.
+_scaling_in_progress: set[int] = set()
 
 
 def _set_active_transition_mode(app_id: int, mode: str, started_at: Optional[float] = None) -> float:
@@ -3072,6 +3074,8 @@ def _single_deploy(app_id: int):
     """
     if app_id in _deploys_in_progress:
         raise HTTPException(409, "A deploy is already in progress for this app — wait for it to finish.")
+    if app_id in _scaling_in_progress:
+        raise HTTPException(409, "The autoscaler is adding or removing an instance for this app — try again in a moment.")
     _deploys_in_progress.add(app_id)
     try:
         yield

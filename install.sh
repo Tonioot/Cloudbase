@@ -587,7 +587,12 @@ step_code() {
 step_python() {
   # Earlier installers ran parts of this as root; give everything back to the service user.
   chown -R "$RUN_USER": "$INSTALL_DIR"
-  [[ -d "$DATA_DIR" ]] && chown -R "$RUN_USER": "$DATA_DIR"
+  # The data dir is in use while updating: SQLite creates and removes its -shm/-wal
+  # files at any moment, so a plain `chown -R` can fail on a file that just vanished.
+  # Only touch files that need it, and don't stop on ones that disappear meanwhile.
+  if [[ -d "$DATA_DIR" ]]; then
+    find "$DATA_DIR" ! -user "$RUN_USER" -exec chown "$RUN_USER": {} + 2>/dev/null || true
+  fi
   as_user mkdir -p "$DATA_DIR/apps" "$DATA_DIR/logs" "$DATA_DIR/certs"
 
   # Data from the old name of the project

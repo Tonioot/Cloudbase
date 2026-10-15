@@ -549,15 +549,123 @@ async def _stats_history_writer():
 
 # ── Autoscaler ───────────────────────────────────────────────────────────────
 async def _autoscaler():
-    """Every 60s check CPU for autoscale-enabled apps and add/remove replicas."""
+    """Every 60s check CPU for autoscale-enabled apps and add/remove local replicas.
+
+    Scale actions run as background tasks and mark the app in
+    _scaling_in_progress, so a deploy and a scale action never overlap.
+    Nginx is rewritten after every change so traffic follows the replica set.
+    """
     import datetime as _dt
     from models import StatsHistory, ApplicationReplica
-    from routers.applications import _assign_external_port, _start_replica_runtime, ensure_local_node
-    from env_crypto import decrypt_env
+    from routers.applications import (
+        _assign_external_port, _start_instance_local, _wait_new_instance_healthy,
+        _write_app_nginx_config, _has_public_nginx_domain, ensure_local_node,
+        _deploys_in_progress, _scaling_in_progress,
+    )
 
     # cooldown: app_id → last scale action timestamp
     _last_scaled: dict[int, float] = {}
     COOLDOWN = 120  # seconds between scale actions per app
+
+    async def _rewrite_nginx(app_id: int) -> None:
+        async with AsyncSessionLocal() as s:
+            a = await s.get(Application, app_id)
+            if a is None or not _has_public_nginx_domain(a):
+                return
+            local_node = await ensure_local_node(s)
+            await _write_app_nginx_config(a, s, local_node)
+            await s.commit()
+
+    async def _scale_up(app_id: int, count: int, avg_cpu: float) -> None:
+        async with AsyncSessionLocal() as s:
+            app = await s.get(Application, app_id)
+            local_node = await ensure_local_node(s)
+            env_vars = decrypt_env(app.env_vars or "")
+            new_port = await _assign_external_port(None, local_node.id, None, s)
+            replica = ApplicationReplica(
+                app_id=app_id,
+                node_id=local_node.id,
+                external_port=new_port,
+                status="starting",
+            )
+            s.add(replica)
+            await s.commit()
+
+        # Docker work and the health check run with no DB session open. The replica
+        # stays "starting" (so not in nginx) until it actually serves traffic.
+        try:
+            cid = await _start_instance_local(app, replica, env_vars, app_id)
+            if not app.no_web:
+                healthy, reason = await _wait_new_instance_healthy(app_id, replica.id, replica.external_port, is_local=True)
+                if not healthy:
+                    raise RuntimeError(f"health check failed: {reason}")
+        except Exception as e:
+            log.warning("[autoscaler] app_id=%d scale up failed: %s", app_id, e)
+            try:
+                await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
+            except Exception:
+                pass
+            async with AsyncSessionLocal() as s:
+                r = await s.get(ApplicationReplica, replica.id)
+                if r:
+                    await s.delete(r)
+                    await s.commit()
+            return
+
+        async with AsyncSessionLocal() as s:
+            r = await s.get(ApplicationReplica, replica.id)
+            if r is None:
+                return
+            r.status = "running"
+            r.substatus = None
+            r.container_id = cid
+            r.last_error = None
+            # _start_instance_local may have reassigned the port on conflict
+            r.external_port = replica.external_port
+            await s.commit()
+        await _rewrite_nginx(app_id)
+        log.info("[autoscaler] app_id=%d scaled UP to %d replicas (cpu=%.1f%%)", app_id, count + 1, avg_cpu)
+
+    async def _scale_down(app_id: int, victim_id: int, count: int, avg_cpu: float) -> None:
+        # Take the victim out of nginx first so no requests hit a dying container.
+        async with AsyncSessionLocal() as s:
+            victim = await s.get(ApplicationReplica, victim_id)
+            if victim is None or victim.status != "running":
+                return
+            victim.status = "stopping"
+            await s.commit()
+        await _rewrite_nginx(app_id)
+
+        try:
+            stopped = await asyncio.to_thread(pm.stop_docker_replica, app_id, victim_id)
+        except Exception as e:
+            stopped = False
+            log.warning("[autoscaler] app_id=%d scale down: stop replica %d raised: %s", app_id, victim_id, e)
+
+        async with AsyncSessionLocal() as s:
+            victim = await s.get(ApplicationReplica, victim_id)
+            if victim is None:
+                return
+            if stopped:
+                await s.delete(victim)
+            else:
+                # Container still there — keep the row (no orphan) and put it back in rotation.
+                log.warning("[autoscaler] app_id=%d scale down aborted: replica %d container not stopped, keeping it", app_id, victim_id)
+                victim.status = "running"
+            await s.commit()
+        if not stopped:
+            await _rewrite_nginx(app_id)
+            return
+        log.info("[autoscaler] app_id=%d scaled DOWN to %d replicas (cpu=%.1f%%)", app_id, count - 1, avg_cpu)
+
+    async def _run_action(app_id: int, coro) -> None:
+        try:
+            await coro
+        except Exception as e:
+            log.warning("[autoscaler] app_id=%d scale action error: %s", app_id, e)
+        finally:
+            _scaling_in_progress.discard(app_id)
+            _last_scaled[app_id] = asyncio.get_running_loop().time()
 
     await asyncio.sleep(60)
     while True:
@@ -570,10 +678,18 @@ async def _autoscaler():
                     )
                 )
                 apps = result.scalars().all()
+                local_node = await ensure_local_node(db)
 
                 for app in apps:
                     now = asyncio.get_running_loop().time()
                     if now - _last_scaled.get(app.id, 0) < COOLDOWN:
+                        continue
+                    # A deploy (or our own previous scale action) is still running.
+                    # Blue-green/rolling deploys briefly run old + new replicas side by
+                    # side; scaling down then would kill the new one while the deploy
+                    # stops the old one, leaving the app with zero instances.
+                    if app.id in _deploys_in_progress or app.id in _scaling_in_progress:
+                        _last_scaled[app.id] = now
                         continue
 
                     # Average CPU over last 2 minutes from StatsHistory
@@ -589,58 +705,38 @@ async def _autoscaler():
                     avg_cpu = sum(r.cpu_percent for r in rows) / len(rows)
 
                     rep_result = await db.execute(
-                        select(ApplicationReplica).where(
+                        select(ApplicationReplica)
+                        .where(
                             ApplicationReplica.app_id == app.id,
                             ApplicationReplica.status.in_(["running", "starting"]),
                         )
+                        .order_by(ApplicationReplica.id.desc())
                     )
                     replicas = rep_result.scalars().all()
                     count = len(replicas)
+                    # Don't act on a replica set that is still settling.
+                    if any(r.status == "starting" for r in replicas):
+                        continue
 
                     min_r = app.autoscale_min_replicas or 1
                     max_r = app.autoscale_max_replicas or 4
                     target = app.autoscale_cpu_target or 70.0
 
+                    action = None
                     if avg_cpu > target and count < max_r:
-                        # Scale up: add one replica on local node
-                        local_node = await ensure_local_node(db)
-                        env_vars = decrypt_env(app.env_vars or "")
-                        new_port = await _assign_external_port(None, local_node.id, None, db)
-                        new_replica = ApplicationReplica(
-                            app_id=app.id,
-                            node_id=local_node.id,
-                            external_port=new_port,
-                            status="starting",
-                        )
-                        db.add(new_replica)
-                        await db.flush()
-                        try:
-                            await _start_replica_runtime(app, new_replica, local_node, env_vars, db)
-                            log.info("[autoscaler] app_id=%d scaled UP to %d replicas (cpu=%.1f%%)", app.id, count + 1, avg_cpu)
-                            _last_scaled[app.id] = now
-                        except Exception as e:
-                            log.warning("[autoscaler] app_id=%d scale up failed: %s", app.id, e)
-                            await db.rollback()
-                            continue
-
+                        action = _scale_up(app.id, count, avg_cpu)
                     elif avg_cpu < target * 0.5 and count > min_r:
-                        # Scale down: remove the last replica. Only drop the DB row
-                        # once the container is actually gone — otherwise we'd leak
-                        # an orphaned container that keeps running forever.
-                        victim = replicas[-1]
-                        try:
-                            stopped = await asyncio.to_thread(pm.stop_docker_replica, app.id, victim.id)
-                        except Exception as e:
-                            stopped = False
-                            log.warning("[autoscaler] app_id=%d scale down: stop replica %d raised: %s", app.id, victim.id, e)
-                        if not stopped:
-                            log.warning("[autoscaler] app_id=%d scale down aborted: replica %d container not stopped, keeping DB row", app.id, victim.id)
-                            continue
-                        await db.delete(victim)
-                        log.info("[autoscaler] app_id=%d scaled DOWN to %d replicas (cpu=%.1f%%)", app.id, count - 1, avg_cpu)
-                        _last_scaled[app.id] = now
+                        # Only remove local replicas the autoscaler can stop itself;
+                        # newest first so long-running ones are kept.
+                        local = [r for r in replicas if r.node_id is None or r.node_id == local_node.id]
+                        if local:
+                            action = _scale_down(app.id, local[0].id, count, avg_cpu)
 
-                    await db.commit()
+                    if action is not None:
+                        # Blocks deploys (see _single_deploy) until the action is done.
+                        _scaling_in_progress.add(app.id)
+                        _last_scaled[app.id] = now
+                        asyncio.create_task(_run_action(app.id, action))
 
         except asyncio.CancelledError:
             return
