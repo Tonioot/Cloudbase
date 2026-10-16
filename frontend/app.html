@@ -487,17 +487,6 @@
               </div>
             </section>
 
-            <!-- Advanced -->
-            <section class="settings-group sv2-sec" id="set-advanced" data-nav="Advanced" data-icon="code" data-nosave data-perm="apps.configure">
-              <header class="sv2-head"><h3>Advanced</h3><p>For when you need to look under the hood.</p></header>
-              <div class="s3-card">
-                <button type="button" class="s3-row s3-link" id="tile-nginx">
-                  <span class="s3-label"><span class="s3-title">nginx configuration</span><span class="s3-desc">View or edit the reverse proxy config Cloudbase generated for this app</span></span>
-                  <span class="s3-chev" aria-hidden="true"></span>
-                </button>
-              </div>
-            </section>
-
             <!-- Danger zone -->
             <section class="settings-group sv2-sec settings-group--danger" id="set-danger" data-nav="Danger zone" data-icon="alert" data-nosave data-perm="apps.delete">
               <header class="sv2-head"><h3>Danger zone</h3><p>Can’t be undone.</p></header>
@@ -566,27 +555,6 @@
       </div><!-- /panel-activity -->
 
       <!-- DNS Setup modal -->
-      <!-- Nginx config modal -->
-      <div id="nginx-modal" style="display:none" class="dialog-backdrop">
-        <div class="dialog nginx-dialog">
-          <div class="dialog-title">
-            Nginx Config
-            <span id="nginx-status-badge" style="margin-left:8px;font-size:11px;font-weight:400"></span>
-          </div>
-          <div class="dialog-body" style="padding:0;display:flex;flex-direction:column;gap:0">
-            <div style="padding:12px 16px 8px;font-size:12px;color:var(--text-muted)" id="nginx-config-path"></div>
-            <textarea id="nginx-config-textarea" class="input input-mono nginx-textarea" spellcheck="false"></textarea>
-            <div id="nginx-save-msg" style="padding:6px 16px;font-size:12px;display:none"></div>
-          </div>
-          <div class="dialog-actions">
-            <button class="btn btn-secondary" id="nginx-close">Close</button>
-            <button class="btn btn-primary" id="nginx-save">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17,21 17,13 7,13 7,21"/><polyline points="7,3 7,8 15,8"/></svg>
-              Save &amp; Reload Nginx
-            </button>
-          </div>
-        </div>
-      </div>
 
     </div>
     </div>

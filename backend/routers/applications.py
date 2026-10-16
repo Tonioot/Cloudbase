@@ -125,7 +125,6 @@ class UpdateRequest(BaseModel):
     github_token_id: Optional[str] = None   # ID of a saved vault token
     auto_start:     Optional[bool] = None
     restart_policy: Optional[str] = None   # no | always | on-failure
-    working_dir:    Optional[str] = None   # set by node agents after source extraction
     source_revision: Optional[str] = None
     image_revision: Optional[str] = None
     autoscale_enabled:      Optional[bool]  = None
@@ -300,6 +299,10 @@ def _docker_runtime_options(app: Application) -> dict:
         "tmpfs_enabled": bool(app.docker_tmpfs_enabled),
         "tmpfs_size_mb": app.docker_tmpfs_size_mb,
         "restart_policy": app.restart_policy or "no",
+        # Reached through nginx (or the node tunnel), both on localhost: then the
+        # host port must not be open to the internet as well. Without a domain
+        # the host port is the only way in, so it stays public.
+        "bind_host": "127.0.0.1" if _has_public_nginx_domain(app) else None,
         **db_links.runtime_options(app.id),
     }
 
@@ -767,13 +770,48 @@ def _decrypt_github_token(stored: Optional[str]) -> Optional[str]:
 async def _request_can_manage_apps(request: Request) -> bool:
     """Return True if the requester has apps.configure (or is superadmin)."""
     token = request.cookies.get("pdm_token")
-    user = _auth.decode_token(token) if token else None
+    user = await _auth.session_user(token)
     if not user:
         return False
     if user.get("username") == "admin":
         return True
     perms = await _auth.get_user_permissions(user["username"])
     return "apps.configure" in perms
+
+
+# nginx site files the panel itself uses; an app whose name maps onto one would overwrite it
+_RESERVED_APP_NAMES = {"cloudbase", "cloudbase-default", "zz-cloudbase-acme", "default"}
+_REPO_URL_RE = re.compile(r"^(https?://|ssh://|git@)[^\s]+$")
+# Commits, branches and other refs passed to git: never an option ("-..."), no whitespace
+_GIT_REF_RE = re.compile(r"^[A-Za-z0-9._/~^@{}-]{1,200}$")
+
+
+async def _check_new_app_name(name: Optional[str], db: AsyncSession) -> str:
+    name = (name or "").strip()
+    if not name or len(name) > 100:
+        raise HTTPException(400, "App name must be 1–100 characters")
+    safe = nm._safe_name(name)
+    if safe in _RESERVED_APP_NAMES:
+        raise HTTPException(400, f"The name '{name}' is reserved by Cloudbase")
+    # Two apps whose names map to the same file would overwrite each other's nginx config and folder
+    for (other,) in (await db.execute(select(Application.name))).all():
+        if nm._safe_name(other) == safe:
+            raise HTTPException(400, f"App '{other}' already uses this name")
+    return name
+
+
+def _check_repo_url(url: Optional[str]) -> str:
+    url = (url or "").strip()
+    if url != "local://primary" and not _REPO_URL_RE.match(url):
+        raise HTTPException(400, "Repository URL must start with https://, http://, ssh:// or git@")
+    return url
+
+
+def _check_git_ref(ref: Optional[str]) -> Optional[str]:
+    ref = (ref or "").strip() or None
+    if ref is not None and (ref.startswith("-") or ".." in ref or not _GIT_REF_RE.match(ref)):
+        raise HTTPException(400, "Invalid commit or branch")
+    return ref
 
 
 def _build_clone_url(repo_url: str, token: Optional[str]) -> str:
@@ -976,12 +1014,18 @@ def _recent_git_commits(app_dir: str, limit: int = 20, ref: Optional[str] = None
     return commits
 
 
+async def _source_archive_auth(request: Request, app_id: int, db: AsyncSession = Depends(get_db)):
+    # Only the agent of a node that runs this app may fetch its source.
+    await _require_node_agent_for_app()(request, app_id, db)
+
+
 @router.get("/{app_id}/source-archive")
-async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db)):
+async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db), _node: None = Depends(_source_archive_auth)):
     """Return a .tar.gz of the app's working directory for remote nodes to build from.
     Only the local primary serves this — remote nodes call this endpoint directly."""
     app = await _get_or_404(app_id, db)
-    if not app.working_dir or not os.path.exists(app.working_dir):
+    source_dir = pm.app_source_dir(app)
+    if not source_dir or not os.path.exists(source_dir):
         raise HTTPException(404, "App source directory not found — deploy the app first")
 
     import tarfile
@@ -993,7 +1037,7 @@ async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db)):
     try:
         await asyncio.to_thread(
             dm.ensure_dockerfile,
-            app.working_dir,
+            source_dir,
             app.app_type or "unknown",
             app.start_command or "",
             app.port or 8000,
@@ -1005,7 +1049,7 @@ async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db)):
     def _make_archive() -> bytes:
         buf = io.BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            tar.add(app.working_dir, arcname=".", recursive=True,
+            tar.add(source_dir, arcname=".", recursive=True,
                     filter=lambda m: None if os.path.basename(m.name) in {".git", "__pycache__", "node_modules", ".venv", "venv"} else m)
         return buf.getvalue()
 
@@ -1071,7 +1115,7 @@ async def _deploy_app(app: Application):
         log.info("[deploy] Cloning from %s", app.repo_url.replace(github_token or "SECRET", "***") if github_token else app.repo_url)
 
         result = await asyncio.to_thread(subprocess.run,
-            ["git", "clone", clone_url, "."],
+            ["git", "clone", "--", clone_url, "."],
             cwd=app_dir,
             capture_output=True,
             text=True,
@@ -1146,7 +1190,7 @@ async def discover_app_certs(app_id: int, db: AsyncSession = Depends(get_db), _u
     """Scan for cert/key files inside the app's working directory only."""
     app = await _get_or_404(app_id, db)
 
-    base = app.working_dir
+    base = pm.app_source_dir(app)
     if not base or not os.path.isdir(base):
         return {"certs": [], "keys": []}
 
@@ -1191,13 +1235,18 @@ async def upload_app_cert(app_id: int, file: UploadFile = File(...), _user: dict
     if ext not in allowed_exts:
         raise HTTPException(400, "Only .pem, .crt, .cer, .key files are allowed")
     safe_name = os.path.basename(file.filename).replace("..", "").lstrip("/")
-    base = app.working_dir or os.path.expanduser(f"~/.cloudbase/certs/{app.name}")
+    if not safe_name or safe_name.startswith("."):
+        raise HTTPException(400, "Invalid file name")
+    base = pm.app_source_dir(app) if app.working_dir else os.path.expanduser(f"~/.cloudbase/certs/{pm._safe_dir_name(app.name)}")
+    if not base:
+        raise HTTPException(400, "App source directory is outside the Cloudbase apps folder")
     dest_dir = os.path.join(base, "certs")
     os.makedirs(dest_dir, exist_ok=True)
     dest_path = os.path.join(dest_dir, safe_name)
     contents = await file.read()
     with open(dest_path, "wb") as f:
         f.write(contents)
+    os.chmod(dest_path, 0o600)
     return {"path": dest_path}
 
 
@@ -1324,6 +1373,8 @@ async def deploy_app(
     existing = await db.execute(select(Application).where(Application.name == req.name))
     if existing.scalar_one_or_none():
         raise HTTPException(400, f"App '{req.name}' already exists")
+    req.name = await _check_new_app_name(req.name, db)
+    req.repo_url = _check_repo_url(_normalize_repo_url(req.repo_url))
 
     all_domains = [req.domain] + (req.extra_domains or []) + (req.redirect_domains or [])
     await _check_domain_conflicts([d for d in all_domains if d], db)
@@ -1536,8 +1587,6 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.auto_start = req.auto_start
     if req.restart_policy is not None and req.restart_policy in ("no", "always", "on-failure"):
         app.restart_policy = req.restart_policy
-    if req.working_dir is not None:
-        app.working_dir = req.working_dir
     if req.source_revision is not None:
         app.source_revision = req.source_revision
     if req.image_revision is not None:
@@ -1546,7 +1595,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.auto_deploy = req.auto_deploy
     if req.deploy_branch is not None:
         branch = req.deploy_branch.strip()
-        if branch and not re.match(r"^[A-Za-z0-9._/-]{1,200}$", branch):
+        if branch and (branch.startswith("-") or ".." in branch or not re.match(r"^[A-Za-z0-9._/-]{1,200}$", branch)):
             raise HTTPException(400, "Invalid branch name")
         app.deploy_branch = branch or None
     if req.deploy_strategy is not None:
@@ -1748,6 +1797,12 @@ async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, _us
         existing = await db.execute(select(Application).where(Application.name == app_data.get("name")))
         if existing.scalar_one_or_none():
             continue  # Skip existing apps by name
+        try:
+            app_data["name"] = await _check_new_app_name(app_data.get("name"), db)
+            app_data["repo_url"] = _check_repo_url(app_data.get("repo_url"))
+        except HTTPException as e:
+            log.warning("[import] skipped app %r: %s", app_data.get("name"), e.detail)
+            continue
 
         target_node_id = req.target_node_id or app_data.get("node_id") or local_node.id
         node_result = await db.execute(select(Node).where(Node.id == target_node_id, Node.enabled == True))
@@ -1877,7 +1932,7 @@ async def _start_instance_local(app: "Application", replica: "ApplicationReplica
     except Exception as first_exc:
         msg = str(first_exc)
         bind_conflict = (
-            "bind for 0.0.0.0" in msg.lower()
+            "bind for " in msg.lower()
             or "port is already allocated" in msg.lower()
             or "failed to set up container networking" in msg.lower()
         )
@@ -1903,7 +1958,7 @@ async def _start_instance_local(app: "Application", replica: "ApplicationReplica
         except Exception as build_retry_exc:
             msg2 = str(build_retry_exc)
             bind2 = (
-                "bind for 0.0.0.0" in msg2.lower()
+                "bind for " in msg2.lower()
                 or "port is already allocated" in msg2.lower()
                 or "failed to set up container networking" in msg2.lower()
             )
@@ -2903,7 +2958,7 @@ async def remove_replica(app_id: int, replica_id: int, db: AsyncSession = Depend
 @router.post("/{app_id}/pull")
 async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None), db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
-    target_commit = (payload.commit.strip() if payload and payload.commit else None)
+    target_commit = _check_git_ref(payload.commit if payload else None)
     app_dir = pm.get_app_dir(app.name)
 
     if not os.path.exists(app_dir):
@@ -3722,7 +3777,7 @@ async def _sync_app_source(app: Application, app_dir: str, target_commit: Option
 async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(default=None), _user: dict = Depends(_auth.require_permission("apps.pull")), db: AsyncSession = Depends(get_db)):
     """Streaming SSE variant of git_pull. Each build log line is emitted as it happens."""
     app = await _get_or_404(app_id, db)
-    target_commit = (payload.commit.strip() if payload and payload.commit else None)
+    target_commit = _check_git_ref(payload.commit if payload else None)
     app_dir = pm.get_app_dir(app.name)
 
     if not os.path.exists(app_dir):
@@ -3888,42 +3943,6 @@ async def rebuild_docker_image_stream(app_id: int, _user: dict = Depends(_auth.r
     return StreamingResponse(_generate(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
 
-
-
-@router.get("/{app_id}/nginx-config")
-async def get_nginx_config(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.configure"))):
-    app = await _get_or_404(app_id, db)
-
-    safe = nm._safe_name(app.name)
-    config_path = os.path.join(nm.NGINX_SITES_DIR, safe)
-    if not os.path.exists(config_path):
-        generated = None
-        if app.domain:
-            backends = await _get_nginx_backends(app, db)
-            generated = nm.generate_config(
-                app.name, app.domain, backends,
-                app.ssl_cert_path, app.ssl_key_path,
-                app_id=app.id, mode=_get_nginx_mode(app),
-                extra_domains=json.loads(app.extra_domains or "[]"),
-                redirect_domains=json.loads(app.redirect_domains or "[]"),
-            )
-        return {"exists": False, "path": config_path, "content": generated, "active": False}
-    with open(config_path) as f:
-        content = f.read()
-    enabled_path = os.path.join(nm.NGINX_ENABLED_DIR, safe)
-    return {"exists": True, "path": config_path, "content": content, "active": os.path.exists(enabled_path)}
-
-
-@router.put("/{app_id}/nginx-config")
-async def save_nginx_config(app_id: int, payload: dict, _user: dict = Depends(_auth.require_permission("apps.configure")), db: AsyncSession = Depends(get_db)):
-    app = await _get_or_404(app_id, db)
-
-    content = payload.get("content", "")
-    ok, msg = nm.write_nginx_config(app.name, content)
-    if ok:
-        app.nginx_enabled = True
-        await db.commit()
-    return {"ok": ok, "message": msg}
 
 
 @router.get("/{app_id}/stats")
@@ -4521,7 +4540,7 @@ async def deploy_stream(
     if app_id in _deploys_in_progress:
         raise HTTPException(409, "A deploy is already in progress for this app — wait for it to finish.")
 
-    target_commit = (payload.commit or "").strip() or None
+    target_commit = _check_git_ref(payload.commit)
     loop = asyncio.get_running_loop()
     lines = pm.subscribe_logs(app_id)
     result_holder: dict = {}

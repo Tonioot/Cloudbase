@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time as _time
 from collections import deque
 from contextlib import asynccontextmanager
@@ -10,9 +11,8 @@ from typing import Optional
 import psutil
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, Depends, Body
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -121,15 +121,7 @@ def _restore_stuck_restart_configs(apps: list[Application]) -> None:
 
 
 def _docker_runtime_options(app: Application) -> dict:
-    return {
-        "cpu_limit": app.docker_cpu_limit,
-        "memory_limit_mb": app.docker_memory_limit_mb,
-        "read_only_root": bool(app.docker_read_only_root),
-        "tmpfs_enabled": bool(app.docker_tmpfs_enabled),
-        "tmpfs_size_mb": app.docker_tmpfs_size_mb,
-        "restart_policy": app.restart_policy or "no",
-        **db_links.runtime_options(app.id),
-    }
+    return applications._docker_runtime_options(app)
 
 
 # ── Background stats collector ────────────────────────────────────────────────
@@ -1080,6 +1072,15 @@ def read_panel_nginx() -> dict:
     }
 
 
+def _load_panel_https_domain() -> None:
+    """With an HTTPS panel domain the panel is only served through nginx: direct
+    requests to this port from other machines go to https://<domain>, so passwords
+    and session cookies never cross the network unencrypted."""
+    panel = read_panel_nginx()
+    https = panel.get("domain") and panel.get("ssl_cert_path") and panel.get("ssl_key_path")
+    _syscfg.set_panel_https_domain(panel["domain"] if https else None)
+
+
 def _refresh_panel_nginx() -> None:
     panel = read_panel_nginx()
     if not panel.get("domain"):
@@ -1263,6 +1264,7 @@ async def lifespan(app: FastAPI):
         tasks.append(asyncio.create_task(node_agent.start_agent()))
     else:
         await _startup_recovery()
+        _load_panel_https_domain()
         import deploys as _deploys
         tasks += [
             asyncio.create_task(_crash_monitor()),
@@ -1403,6 +1405,20 @@ def _resolve_required_permission(method: str, path: str) -> tuple[bool, str | No
     return False, None
 
 
+_NODE_AGENT_PATHS = re.compile(r"/api/apps/\d+/(source-archive|replicas/\d+/substatus)")
+
+
+def _is_local_client(request: Request) -> bool:
+    host = request.client.host if request.client else ""
+    return host in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
+
+def _is_node_traffic(request: Request, path: str) -> bool:
+    if path == "/api/health" or path.startswith(("/api/nodes/agent/", "/api/nodes/ws/")):
+        return True
+    return bool(request.headers.get("X-Node-Token")) and bool(_NODE_AGENT_PATHS.fullmatch(path))
+
+
 class _AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -1420,6 +1436,23 @@ class _AuthMiddleware(BaseHTTPMiddleware):
             page = nm.generate_cloudbase_node_html(state and state.main_url, state and state.node_name)
             return HTMLResponse(page, status_code=403)
 
+        # With an HTTPS panel domain, other machines reach the panel only through
+        # nginx (which connects from localhost). Node agents keep using this port.
+        # Over an SSH tunnel (ssh -L) the panel still opens here, from localhost.
+        panel_domain = _syscfg.get_panel_https_domain()
+        if panel_domain and not _is_local_client(request) and not _is_node_traffic(request, path):
+            if method in ("GET", "HEAD") and not path.startswith("/api/"):
+                query = f"?{request.url.query}" if request.url.query else ""
+                return RedirectResponse(f"https://{panel_domain}{path}{query}", status_code=302)
+            return JSONResponse({"detail": f"Use the panel at https://{panel_domain}"}, status_code=403)
+
+        # A browser sends Origin on every cross-origin write. Refuse writes from any
+        # other site (including apps on a sibling subdomain, which count as
+        # same-site and so do get the SameSite=Strict cookie).
+        if method not in ("GET", "HEAD", "OPTIONS") and path.startswith("/api/"):
+            if not auth.origin_allowed(request.headers.get("origin"), request.headers.get("host")):
+                return JSONResponse({"detail": "Cross-origin request refused"}, status_code=403)
+
         # Node-agent endpoints use X-Node-Token / hello message auth — bypass cookie auth
         if path.startswith("/api/nodes/agent/") or path.startswith("/api/nodes/ws/agent"):
             return await call_next(request)
@@ -1435,7 +1468,7 @@ class _AuthMiddleware(BaseHTTPMiddleware):
         if path.startswith("/api/") and path not in _PUBLIC:
             token = request.cookies.get(_COOKIE_NAME)
             if token:
-                user = auth.decode_token(token)
+                user = await auth.session_user(token)
                 if user:
                     # Root (built-in admin) bypasses permission checks entirely
                     if user["username"] == "admin":
@@ -1451,9 +1484,10 @@ class _AuthMiddleware(BaseHTTPMiddleware):
             agent_token = request.headers.get("X-Agent-Token", "")
             if agent_token and auth.verify_agent_token(agent_token):
                 return await call_next(request)
-            # Allow remote node agents via X-Node-Token (e.g. fetching source archives)
+            # Remote node agents (X-Node-Token) only reach the few app endpoints
+            # they call; those check that the node runs the app.
             node_token = request.headers.get("X-Node-Token", "")
-            if node_token:
+            if node_token and _NODE_AGENT_PATHS.fullmatch(path):
                 from sqlalchemy import select as _select, and_ as _and
                 from models import Node as _Node
                 async with AsyncSessionLocal() as _db:
@@ -1467,13 +1501,8 @@ class _AuthMiddleware(BaseHTTPMiddleware):
 
 
 app.add_middleware(_AuthMiddleware)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No CORS middleware: the panel is only used from its own origin, so browsers
+# must never let another site read its API responses.
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
 
@@ -1538,14 +1567,10 @@ async def health():
 
 @app.get("/api/auth/check")
 async def auth_check(request: Request, db: AsyncSession = Depends(get_db)):
-    token = request.cookies.get(_COOKIE_NAME)
-    user = auth.decode_token(token) if token else None
+    user = await auth.session_user(request.cookies.get(_COOKIE_NAME))
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
-    result = await db.execute(select(User).where(User.username == user["username"]))
-    db_user = result.scalar_one_or_none()
-    if not db_user:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    db_user = user["db_user"]
     is_root = db_user.username == "admin"
     perms: list[str] = []
     if is_root:
@@ -1585,15 +1610,21 @@ async def auth_check(request: Request, db: AsyncSession = Depends(get_db)):
 
 @app.post("/api/auth/login")
 async def login(req: LoginRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
-    auth._check_rate_limit(request.client.host if request.client else "unknown")
+    client_ip = request.client.host if request.client else "unknown"
+    if client_ip in ("127.0.0.1", "::1"):
+        # Through the local nginx: limit per visitor, not one shared bucket for everyone
+        client_ip = request.headers.get("x-real-ip") or client_ip
+    auth._check_rate_limit(client_ip)
     result = await db.execute(select(User).where(User.username == req.username))
     user = result.scalar_one_or_none()
     if not user or not auth.verify_password(req.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid username or password")
-    token = auth.create_access_token(user.username, user.role)
+    token = auth.create_access_token(user.username, user.role, user.session_version)
     expire_seconds = auth.get_token_expire_seconds()
-    response.set_cookie(key=_COOKIE_NAME, value=token, max_age=expire_seconds, **_COOKIE_OPTS)
-    await log_audit(db, "auth.login", actor=user.username, detail={"ip": request.client.host if request.client else "unknown"})
+    # Secure over HTTPS (nginx sets X-Forwarded-Proto); plain HTTP on an IP keeps working
+    https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    response.set_cookie(key=_COOKIE_NAME, value=token, max_age=expire_seconds, secure=https, **_COOKIE_OPTS)
+    await log_audit(db, "auth.login", actor=user.username, detail={"ip": client_ip})
     await db.commit()
     return {"ok": True, "expires_in": expire_seconds, "role": user.role}
 
@@ -1601,7 +1632,7 @@ async def login(req: LoginRequest, request: Request, response: Response, db: Asy
 @app.get("/api/auth/session")
 async def session_info(request: Request):
     token = request.cookies.get(_COOKIE_NAME)
-    if not token:
+    if not await auth.session_user(token):
         raise HTTPException(status_code=401, detail="Not authenticated")
     expires_in = auth.get_token_expires_in(token)
     if expires_in is None:
@@ -1612,8 +1643,15 @@ async def session_info(request: Request):
 @app.post("/api/auth/logout")
 async def logout(response: Response, request: Request):
     response.delete_cookie(key=_COOKIE_NAME, path="/")
-    actor = auth.get_current_actor(request.cookies.get(_COOKIE_NAME))
+    session = await auth.session_user(request.cookies.get(_COOKIE_NAME))
+    actor = session["username"] if session else "system"
     async with AsyncSessionLocal() as db:
+        if session:
+            # Revoke the token itself (it could have been copied), which signs
+            # this user out everywhere
+            db_user = await db.get(User, session["db_user"].id)
+            if db_user:
+                db_user.session_version = (db_user.session_version or 0) + 1
         await log_audit(db, "auth.logout", actor=actor)
         await db.commit()
     return {"ok": True}
@@ -1624,9 +1662,8 @@ class ChangePasswordRequest(BaseModel):
 
 
 @app.post("/api/auth/change-password")
-async def change_password(req: ChangePasswordRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    token = request.cookies.get(_COOKIE_NAME)
-    user_info = auth.decode_token(token) if token else None
+async def change_password(req: ChangePasswordRequest, request: Request, response: Response, db: AsyncSession = Depends(get_db)):
+    user_info = await auth.session_user(request.cookies.get(_COOKIE_NAME))
     if not user_info:
         raise HTTPException(status_code=401, detail="Not authenticated")
     if len(req.password) < 8:
@@ -1636,11 +1673,17 @@ async def change_password(req: ChangePasswordRequest, request: Request, db: Asyn
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.password_hash = auth.hash_password(req.password)
+    # Sign out every other session; this one gets a fresh token below
+    user.session_version = (user.session_version or 0) + 1
     # Keep legacy credentials file in sync for the admin user
     if user.username == "admin":
         auth.save_hashed_password(user.password_hash)
     await log_audit(db, "auth.change_password", actor=user.username, detail={"username": user.username})
     await db.commit()
+    expire_seconds = auth.get_token_expire_seconds()
+    https = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    response.set_cookie(key=_COOKIE_NAME, value=auth.create_access_token(user.username, user.role, user.session_version),
+                        max_age=expire_seconds, secure=https, **_COOKIE_OPTS)
     return {"ok": True}
 
 
@@ -1751,6 +1794,7 @@ async def update_user(user_id: int, req: UpdateUserRequest, current_user: dict =
         if len(req.password) < 8:
             raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
         user.password_hash = auth.hash_password(req.password)
+        user.session_version = (user.session_version or 0) + 1  # sign the user out
         if user.username == "admin":
             auth.save_hashed_password(user.password_hash)
         detail["password_changed"] = True
@@ -1876,6 +1920,7 @@ async def apply_cloudbase_nginx(
             log.warning("nginx refresh batch failed: %s", _e)
 
     asyncio.create_task(_refresh_apps())
+    _load_panel_https_domain()
     return {
         "ok": ok,
         "message": msg,
@@ -1910,6 +1955,7 @@ async def set_panel_domain(req: PanelDomainRequest, _: dict = Depends(auth.requi
     if not ok:
         raise HTTPException(500, f"Failed to apply nginx config: {msg}")
     nm.write_default_catch_all(cert, key)
+    _load_panel_https_domain()
     import certificates as _certs
     await _certs.forget_pending([domain])
     return {"ok": True, "domain": domain, "https": bool(cert and key)}
@@ -2036,9 +2082,12 @@ async def upload_system_cert(file: UploadFile = File(...), _: dict = Depends(aut
     safe_name = os.path.basename(file.filename or "cert").replace("..", "").lstrip("/")
     dest_dir = os.path.expanduser("~/.cloudbase/certs")
     os.makedirs(dest_dir, exist_ok=True)
+    if not safe_name or safe_name.startswith("."):
+        raise HTTPException(400, "Invalid file name")
     dest_path = os.path.join(dest_dir, safe_name)
     with open(dest_path, "wb") as f:
         f.write(await file.read())
+    os.chmod(dest_path, 0o600)  # may be a private key
     return {"path": dest_path}
 
 
@@ -2153,95 +2202,6 @@ app.include_router(database_backups_router.agent_router)
 app.include_router(database_backups_router.storage_router)
 
 
-# ── App preview reverse proxy ────────────────────────────────────────────────────────────────
-# Proxy authenticated requests to a running app's local port without needing
-# a public domain.  URL: /preview/{app_id}/{any/path}?query=...
-_preview_hop_headers = frozenset([
-    "host", "connection", "keep-alive", "proxy-authenticate",
-    "proxy-authorization", "te", "trailers", "transfer-encoding", "upgrade",
-])
-
-
-@app.api_route(
-    "/preview/{app_id}/{path:path}",
-    methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
-    include_in_schema=False,
-)
-async def preview_app(
-    app_id: int,
-    path: str,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    _user: dict = Depends(auth.require_permission("apps.view")),
-):
-    """Reverse-proxy to a running app instance — no domain required."""
-    from models import ApplicationReplica
-    app_row = await db.execute(
-        select(Application).where(Application.id == app_id)
-    )
-    application = app_row.scalar_one_or_none()
-    if not application:
-        raise HTTPException(404, "App not found")
-
-    # Find a running local replica and its external port
-    rep_result = await db.execute(
-        select(ApplicationReplica).where(
-            ApplicationReplica.app_id == app_id,
-            ApplicationReplica.status == "running",
-        )
-    )
-    replicas = rep_result.scalars().all()
-    local_port: Optional[int] = None
-    for replica in replicas:
-        if replica.external_port:
-            local_port = replica.external_port
-            break
-    if local_port is None:
-        # Fallback: use app's own external_port or port
-        local_port = application.external_port or application.port
-    if not local_port:
-        raise HTTPException(503, "App has no running instance with a known port")
-
-    target_url = f"http://127.0.0.1:{local_port}/{path}"
-    query = str(request.url.query)
-    if query:
-        target_url += f"?{query}"
-
-    # Forward headers, strip hop-by-hop
-    fwd_headers = {
-        k: v for k, v in request.headers.items()
-        if k.lower() not in _preview_hop_headers
-    }
-    fwd_headers["host"] = f"127.0.0.1:{local_port}"
-
-    body = await request.body()
-
-    import httpx
-    try:
-        async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
-            upstream = await client.request(
-                method=request.method,
-                url=target_url,
-                headers=fwd_headers,
-                content=body,
-            )
-    except httpx.ConnectError:
-        raise HTTPException(503, f"App is not reachable on port {local_port} — is it running?")
-    except httpx.TimeoutException:
-        raise HTTPException(504, "App did not respond in time")
-
-    resp_headers = {
-        k: v for k, v in upstream.headers.items()
-        if k.lower() not in _preview_hop_headers
-    }
-
-    return Response(
-        content=upstream.content,
-        status_code=upstream.status_code,
-        headers=resp_headers,
-        media_type=upstream.headers.get("content-type"),
-    )
-
 # ── Static / SPA ──────────────────────────────────────────────────────────────
 @app.middleware("http")
 async def _revalidate_frontend(request: Request, call_next):
@@ -2252,6 +2212,12 @@ async def _revalidate_frontend(request: Request, call_next):
     path = request.url.path
     if not path.startswith(("/api/", "/ws/")):
         response.headers.setdefault("Cache-Control", "no-cache")
+    # The panel may only be framed by itself (visitor page previews), never by
+    # another site (clickjacking); responses are never sniffed as another type.
+    response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'self'; base-uri 'self'; object-src 'none'")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "same-origin")
     return response
 
 

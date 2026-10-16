@@ -64,6 +64,12 @@ def ensure_network(name: str) -> None:
             log.info("[docker] Created network %s", name)
 
 
+def _host_port(external_port: int, docker_options: dict):
+    """Docker port binding: on localhost only when docker_options asks for it."""
+    bind_host = (docker_options or {}).get("bind_host")
+    return (bind_host, external_port) if bind_host else external_port
+
+
 def _apply_linked_databases(run_kwargs: dict, docker_options: dict) -> None:
     """Attach the container to the database network and add the URLs of linked
     databases: direct on the database's node, through a local proxy elsewhere.
@@ -713,12 +719,14 @@ def run_container(
 
     port_bindings = {}
     if internal_port and external_port:
-        port_bindings[f"{internal_port}/tcp"] = external_port
+        port_bindings[f"{internal_port}/tcp"] = _host_port(external_port, docker_options)
 
     run_kwargs = {
         "detach": True,
         "name": cname,
         "ports": port_bindings,
+        # setuid binaries (sudo, su) inside the image cannot raise privileges
+        "security_opt": ["no-new-privileges:true"],
         "environment": env_vars,
         "restart_policy": _restart_policy_config(docker_options.get("restart_policy")),
         "labels": {
@@ -1016,7 +1024,9 @@ def run_container_for_slot(
     run_kwargs = {
         "detach": True,
         "name": cname,
-        "ports": {f"{internal_port}/tcp": external_port},
+        "ports": {f"{internal_port}/tcp": _host_port(external_port, docker_options)},
+        # setuid binaries (sudo, su) inside the image cannot raise privileges
+        "security_opt": ["no-new-privileges:true"],
         "environment": env_vars,
         "restart_policy": {"Name": "no"},
         "labels": {
@@ -1117,12 +1127,14 @@ def run_replica_container(
 
     port_bindings = {}
     if internal_port and external_port:
-        port_bindings[f"{internal_port}/tcp"] = external_port
+        port_bindings[f"{internal_port}/tcp"] = _host_port(external_port, docker_options)
 
     run_kwargs = {
         "detach": True,
         "name": cname,
         "ports": port_bindings,
+        # setuid binaries (sudo, su) inside the image cannot raise privileges
+        "security_opt": ["no-new-privileges:true"],
         "environment": env_vars,
         "restart_policy": _replica_restart_policy_config(docker_options),
         "labels": {

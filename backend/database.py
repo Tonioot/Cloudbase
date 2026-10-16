@@ -212,6 +212,8 @@ async def init_db():
         existing_user_cols = {row[1] for row in result.fetchall()}
         if "role_id" not in existing_user_cols:
             await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN role_id INTEGER REFERENCES roles(id) ON DELETE SET NULL")
+        if "session_version" not in existing_user_cols:
+            await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0")
 
         # applications table — add github_token_id column if missing
         result = await conn.exec_driver_sql("PRAGMA table_info(applications)")

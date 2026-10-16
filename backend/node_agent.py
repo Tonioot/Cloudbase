@@ -645,7 +645,21 @@ async def _download_and_extract_source(client: httpx.AsyncClient, state, main_id
 
     def _extract(data: bytes) -> None:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
-            tar.extractall(path=tmp_dir)
+            # Never write outside tmp_dir: no absolute paths, ../ or links out of it
+            if hasattr(tarfile, "data_filter"):
+                tar.extractall(path=tmp_dir, filter="data")
+            else:  # Python without extraction filters
+                root = os.path.realpath(tmp_dir)
+                for m in tar.getmembers():
+                    dest = os.path.realpath(os.path.join(root, m.name))
+                    targets = [dest]
+                    if m.issym():
+                        targets.append(os.path.realpath(os.path.join(os.path.dirname(dest), m.linkname)))
+                    elif m.islnk():
+                        targets.append(os.path.realpath(os.path.join(root, m.linkname)))
+                    if m.isdev() or any(os.path.commonpath([root, t]) != root for t in targets):
+                        raise RuntimeError(f"Unsafe path in source archive: {m.name}")
+                tar.extractall(path=tmp_dir)
 
     await asyncio.to_thread(_extract, resp.content)
 
@@ -1146,10 +1160,31 @@ async def _stream_relay(send_fn, stream_id: str, local_ws_path: str) -> None:
         _active_streams.pop(stream_id, None)
         _agent_log(f"[stream] {stream_id} relay ended ({frames} frames total)")
 
+async def _maybe_upgrade_to_https(client: httpx.AsyncClient, state: AgentState, panel_url: Optional[str]) -> bool:
+    """Registered over plain http while the primary now has an HTTPS address: move
+    to it, so the node token, env vars and database traffic are encrypted. Only
+    after the HTTPS address proves to be the same primary (it accepts our token)."""
+    if not panel_url or not panel_url.startswith("https://") or state.main_url.startswith("https://"):
+        return False
+    new_url = _normalize_url(panel_url)
+    try:
+        r = await client.get(f"{new_url}/api/nodes/agent/my-replicas",
+                             headers={"X-Node-Token": state.auth_token}, timeout=15)
+        if r.status_code != 200:
+            raise RuntimeError(f"HTTP {r.status_code}")
+    except Exception as e:
+        _agent_log(f"[agent] Primary offers {new_url}, but it isn't usable from this node yet ({e}); staying on {state.main_url}")
+        return False
+    _agent_log(f"[agent] Switching the primary address from {state.main_url} to {new_url} (encrypted)")
+    state.main_url = new_url
+    _save_state(state)
+    return True
+
+
 async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState):
-    ws_url = _ws_url(state.main_url)
     attempt = 0
     while True:
+        ws_url = _ws_url(state.main_url)
         _agent_log(f"[agent] Connecting websocket to {ws_url} (attempt {attempt})")
         try:
             async with websockets.connect(ws_url, max_size=2**22, ping_interval=20, ping_timeout=20) as ws:
@@ -1203,6 +1238,9 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState):
                                 _active_streams.pop(sid, None)
                         elif mtype == "ping":
                             await _ws_send(json.dumps({"type": "pong", "ping_id": data.get("ping_id", "")}))
+                        elif mtype == "auth_ok":
+                            if await _maybe_upgrade_to_https(client, state, data.get("panel_url")):
+                                break  # reconnect on the new address
                 finally:
                     hb_task.cancel()
                     try:

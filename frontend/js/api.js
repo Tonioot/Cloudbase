@@ -182,8 +182,6 @@ export const api = {
       .then(r => { if (r.status === 401) { redirectToLogin(); return; } return r.json().then(d => { if (r.status === 403) throw new PermissionError(d.detail); if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`); return d; }); });
   },
   nginxRefresh:   (id)       => request('POST',  `/apps/${id}/nginx-refresh`),
-  getNginxConfig: (id) => request('GET',    `/apps/${id}/nginx-config`),
-  saveNginxConfig:(id, content) => request('PUT', `/apps/${id}/nginx-config`, { content }),
   getMaintenancePages:   (id)       => request('GET',  `/apps/${id}/maintenance-pages`),
   getDomainServer:       ()         => request('GET',  '/domains/server'),
   checkRepo:             (data)     => request('POST', '/apps/check-repo', data),

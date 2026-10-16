@@ -36,7 +36,10 @@ async def list_files(
 ):
     app = await _get_or_404(app_id, db)
 
-    base_dir, target = _resolve_target_path(app.working_dir or pm.get_app_dir(app.name), path)
+    source_dir = pm.app_source_dir(app)
+    if not source_dir:
+        raise HTTPException(404, "App source directory not found")
+    base_dir, target = _resolve_target_path(source_dir, path)
 
     if not os.path.exists(target):
         raise HTTPException(404, "Path not found")
@@ -68,7 +71,10 @@ async def get_file_content(
 ):
     app = await _get_or_404(app_id, db)
 
-    base_dir, target = _resolve_target_path(app.working_dir or pm.get_app_dir(app.name), path)
+    source_dir = pm.app_source_dir(app)
+    if not source_dir:
+        raise HTTPException(404, "App source directory not found")
+    base_dir, target = _resolve_target_path(source_dir, path)
 
     if not os.path.isfile(target):
         raise HTTPException(404, "File not found")

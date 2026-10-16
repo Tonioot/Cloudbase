@@ -42,6 +42,7 @@ export const GUIDES = [
   <span class="flow-box">Instance on that node</span>
 </div>
 <p>All public traffic enters through nginx on the primary. nginx spreads requests over every healthy instance of the app. Instances on the primary are reached directly on their host port; instances on other nodes are reached through a <strong>tunnel</strong> the node’s agent opens to the primary. Because the agent connects outwards, remote nodes don’t need any open inbound ports.</p>
+<p>An app with a domain (its own or an automatic subdomain) only listens on localhost, so it can’t be reached around nginx and HTTPS on <code>http://&lt;server-ip&gt;:&lt;port&gt;</code>. An app without a domain keeps its port open, since that is the only way to reach it. A change applies the next time the instances start.</p>
 
 <h2>What runs where</h2>
 <ul>
@@ -838,6 +839,7 @@ systemctl list-timers | grep certbot</pre>
 <p>Under <a href="/settings?s=domain">Settings → Domain &amp; SSL</a>, click <strong>Connect a domain</strong> next to the panel. It’s the same wizard as for apps: the domain, the DNS record with a live check, and a free certificate. The card then shows until when it’s valid.</p>
 <p>Set up the panel earlier with a certificate of your own, like a Cloudflare Origin certificate? It keeps working, and the card says so. <strong>Switch to a free certificate</strong> replaces it with one that renews itself.</p>
 <p>The panel’s nginx config is rewritten every time Cloudbase starts, so it always serves the verification folder Let’s Encrypt needs.</p>
+<p>Once the panel has a domain with HTTPS, it is only served over that domain: opening <code>http://&lt;server-ip&gt;:7823</code> sends you to <code>https://&lt;domain&gt;</code>, so passwords and sessions never travel unencrypted. Nodes that were connected over <code>http://</code> switch to the HTTPS address by themselves. Locked out because the domain or certificate broke? Open the panel through an SSH tunnel: <code>ssh -L 7823:127.0.0.1:7823 &lt;server&gt;</code>, then <code>http://127.0.0.1:7823</code>.</p>
 <p>Saving also regenerates the page shown while Cloudbase restarts and the page for hostnames that aren’t linked to an app.</p>
 
 <h2>Automatic app subdomains</h2>

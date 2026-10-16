@@ -1,5 +1,6 @@
 import { api, PermissionError } from './api.js';
 import { auditTableHTML } from './utils.js';
+import { esc } from './shell.js';
 
 const LIMIT = 100;
 let page = 0;
@@ -29,7 +30,7 @@ async function loadPage() {
     const msg = e instanceof PermissionError
       ? 'Je hebt geen toegang tot de audit logs (audit.view vereist).'
       : e.message;
-    wrap.innerHTML = `<div style="padding:20px;color:var(--red);font-size:13px">${msg}</div>`;
+    wrap.innerHTML = `<div style="padding:20px;color:var(--red);font-size:13px">${esc(msg)}</div>`;
   }
 }
 
@@ -41,7 +42,7 @@ function syncActionFilterOptions() {
   const actions = Array.from(new Set(allLoaded.map(e => e.action).filter(Boolean))).sort();
 
   sel.innerHTML = '<option value="">All actions</option>' +
-    actions.map(a => `<option value="${a}">${a}</option>`).join('');
+    actions.map(a => `<option value="${esc(a)}">${esc(a)}</option>`).join('');
 
   if (prev && actions.includes(prev)) {
     sel.value = prev;

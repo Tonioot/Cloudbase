@@ -243,7 +243,7 @@ function renderLinks() {
   list.querySelectorAll('[data-unlink]').forEach(btn => {
     btn.onclick = async () => {
       const link = links.find(l => l.id === parseInt(btn.dataset.unlink, 10));
-      const ok = await confirm(`Unlink ${esc(link.app_name)}?`,
+      const ok = await confirm(`Unlink ${link.app_name}?`,
         `${esc(link.app_name)} no longer gets <code>${esc(link.env_var_name)}</code> after its next restart.`);
       if (!ok) return;
       try {
@@ -423,7 +423,7 @@ async function copyValue(key) {
 
 async function lifecycle(action) {
   if (action === 'stop' || action === 'restart') {
-    const ok = await confirm(`${action === 'stop' ? 'Stop' : 'Restart'} ${esc(database.name)}?`,
+    const ok = await confirm(`${action === 'stop' ? 'Stop' : 'Restart'} ${database.name}?`,
       'Linked apps lose their database connection until it is running again.');
     if (!ok) return;
   }
@@ -836,7 +836,7 @@ async function checkUpdate() {
 
 async function updateEngine() {
   const d = database;
-  const ok = await confirm(`Update ${esc(d.name)}?`,
+  const ok = await confirm(`Update ${d.name}?`,
     `Installs the newest ${esc(d.engine_label)} ${esc(d.version)}.x release. A backup is made first, the database restarts briefly with the same data, and Cloudbase rolls back by itself if the new version doesn't start.`);
   if (!ok) return;
   try {

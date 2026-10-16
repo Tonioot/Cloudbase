@@ -14,6 +14,18 @@ _BASE_SSL_KEY_KEY = "base_ssl_key"
 
 _cache: Dict[str, str] = {}
 
+# The panel's domain when it is served over HTTPS (read from its nginx config), else None
+_panel_https_domain: str | None = None
+
+
+def set_panel_https_domain(domain: str | None) -> None:
+    global _panel_https_domain
+    _panel_https_domain = domain or None
+
+
+def get_panel_https_domain() -> str | None:
+    return _panel_https_domain
+
 
 def _normalize(value: str | None) -> str:
     return str(value or "").strip()

@@ -18,6 +18,7 @@ from models import Node, NodeCommand, NodeInvite
 from audit import log_audit
 import auth as _auth
 import config as _cfg
+import system_config as _syscfg
 
 log = logging.getLogger("cloudbase.nodes")
 
@@ -935,11 +936,14 @@ async def agent_ws(websocket: WebSocket):
 
         log.info("WS agent authenticated: node '%s' (id=%d) from %s", node.name, node_id, client_addr)
 
+        panel_domain = _syscfg.get_panel_https_domain()
         await websocket.send_json({
             "type": "auth_ok",
             "node_id": node_id,
             "heartbeat_interval": node.heartbeat_interval,
             "server_time": _utcnow().isoformat(),
+            # Agents registered over plain http move to this address themselves
+            "panel_url": f"https://{panel_domain}" if panel_domain else None,
         })
 
         event = _get_node_event(node_id)

@@ -144,7 +144,7 @@ function renderHeader_overview() {
         _detailItem('Last Seen', (node.is_local || node.websocket_connected) ? 'Connected' : timeAgo(node.last_seen), {
             valueClass: (node.is_local || node.websocket_connected) ? 'node-detail-value-live' : ''
         }),
-        _detailItem('Uptime', `<span id="n-uptime">—</span>`),
+        _detailItem('Uptime', `<span id="n-uptime">—</span>`, { html: true }),
         meta.hostname ? _detailItem('Hostname', meta.hostname) : '',
         meta.ip ? _detailItem('IP Address', meta.ip, { valueClass: 'node-detail-value-mono' }) : '',
         meta.os ? _detailItem('OS', meta.os_short || meta.os) : '',
@@ -161,9 +161,10 @@ function renderHeader_overview() {
     _initNodeCharts();
 }
 
-function _detailItem(label, val, { valueClass = '' } = {}) {
+// Values are escaped (most come from the node's own registration); html: true for trusted markup.
+function _detailItem(label, val, { valueClass = '', html = false } = {}) {
     const classes = ['node-detail-value', valueClass].filter(Boolean).join(' ');
-    return `<div class="node-detail-item"><span class="node-detail-label">${label}</span><span class="${classes}">${val}</span></div>`;
+    return `<div class="node-detail-item"><span class="node-detail-label">${label}</span><span class="${classes}">${html ? val : escHtml(val)}</span></div>`;
 }
 
 
@@ -377,11 +378,11 @@ function renderCommands(cmds) {
     list.innerHTML = cmds.map(c => `
         <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px">
             <div>
-                <div style="font-size:13px;font-weight:500;color:var(--text-primary)">${c.command_type}</div>
+                <div style="font-size:13px;font-weight:500;color:var(--text-primary)">${escHtml(c.command_type)}</div>
                 ${c.app_id ? `<div style="font-size:11px;color:var(--text-muted)">App #${c.app_id}</div>` : ''}
             </div>
             <div style="text-align:right">
-                <div style="font-size:12px;font-weight:600">${c.status}</div>
+                <div style="font-size:12px;font-weight:600">${escHtml(c.status)}</div>
                 <div style="font-size:11px;color:var(--text-muted)">${new Date(c.created_at).toLocaleTimeString()}</div>
             </div>
         </div>
@@ -464,7 +465,7 @@ async function loadHistory() {
             </div>`;
         }).join('');
     } catch (e) {
-        list.innerHTML = `<div style="color:var(--red);font-size:12px">${e.message}</div>`;
+        list.innerHTML = `<div style="color:var(--red);font-size:12px">${escHtml(e.message)}</div>`;
     }
 }
 
@@ -515,5 +516,5 @@ async function deleteNode() {
 
 
 function escHtml(v) {
-    return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }

@@ -85,13 +85,15 @@ export function confirm(title, body) {
     backdrop.className = 'dialog-backdrop';
     backdrop.innerHTML = `
       <div class="dialog">
-        <div class="dialog-title">${title}</div>
-        <div class="dialog-body" style="color:var(--text-secondary);font-size:13px;line-height:1.5">${body}</div>
+        <div class="dialog-title"></div>
+        <div class="dialog-body" style="color:var(--text-secondary);font-size:13px;line-height:1.5">${body ?? ''}</div>
         <div class="dialog-actions">
           <button class="btn btn-secondary" id="dlg-cancel">Cancel</button>
           <button class="btn btn-danger" id="dlg-ok">Confirm</button>
         </div>
       </div>`;
+    // The title is plain text (often an app, node or user name); the body may hold markup
+    backdrop.querySelector('.dialog-title').textContent = title;
     document.body.appendChild(backdrop);
     backdrop.querySelector('#dlg-cancel').onclick = () => { backdrop.remove(); resolve(false); };
     backdrop.querySelector('#dlg-ok').onclick    = () => { backdrop.remove(); resolve(true); };
@@ -105,16 +107,19 @@ export function prompt(title, label, initialValue = '') {
     backdrop.className = 'dialog-backdrop';
     backdrop.innerHTML = `
       <div class="dialog">
-        <div class="dialog-title">${title}</div>
+        <div class="dialog-title"></div>
         <div class="dialog-body">
-          <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${label}</div>
-          <input type="text" class="input" id="prompt-input" style="width:100%" value="${initialValue}" autofocus />
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px" id="prompt-label"></div>
+          <input type="text" class="input" id="prompt-input" style="width:100%" autofocus />
         </div>
         <div class="dialog-actions">
           <button class="btn btn-secondary" id="prompt-cancel">Cancel</button>
           <button class="btn btn-primary" id="prompt-ok">Save Changes</button>
         </div>
       </div>`;
+    backdrop.querySelector('.dialog-title').textContent = title;
+    backdrop.querySelector('#prompt-label').textContent = label;
+    backdrop.querySelector('#prompt-input').value = initialValue ?? '';
     document.body.appendChild(backdrop);
     const input = backdrop.querySelector('#prompt-input');
     input.focus();

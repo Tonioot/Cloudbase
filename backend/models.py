@@ -38,6 +38,8 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     role         = Column(String(10), nullable=False, default="viewer")  # legacy, kept for JWT compat
     role_id      = Column(Integer, ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True)
+    # Bumped on logout and password change: sessions issued before stop working
+    session_version = Column(Integer, nullable=False, default=0)
     created_at   = Column(DateTime, default=datetime.utcnow)
 
 

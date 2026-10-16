@@ -1,5 +1,6 @@
 import { api, wsNodeEvents, wsNodeStats, wsLocalNodeStats, wsNodeCommands } from './api.js';
 import { toast, confirm } from './utils.js';
+import { esc } from './shell.js';
 
 let _detailWs = { events: null, stats: null, commands: null };
 
@@ -152,12 +153,12 @@ function _renderOverviewTab(drawer, node) {
     <div style="display:flex;flex-direction:column;gap:16px">
       <!-- Info grid -->
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-        ${_pill('Status', `<span style="color:${node.status==='online'?'var(--green)':'var(--red)'}">${node.status}</span>`)}
+        ${_pill('Status', `<span style="color:${node.status==='online'?'var(--green)':'var(--red)'}">${esc(node.status)}</span>`)}
         ${_pill('Connection', node.is_local ? '<span style="color:var(--green)">Local ✓</span>' : node.websocket_connected ? '<span style="color:var(--green)">WebSocket ✓</span>' : node.status === 'online' ? '<span style="color:var(--yellow)">Connecting...</span>' : '<span style="color:var(--text-muted)">Offline</span>')}
         ${_pill('Last seen', lastSeen)}
-        ${_pill('Agent version', node.agent_version || 'unknown')}
-        ${node.api_base_url ? _pill('API URL', `<span style="font-family:monospace;font-size:11px">${node.api_base_url}</span>`) : ''}
-        ${node.public_host ? _pill('Public host', node.public_host) : ''}
+        ${_pill('Agent version', esc(node.agent_version || 'unknown'))}
+        ${node.api_base_url ? _pill('API URL', `<span style="font-family:monospace;font-size:11px">${esc(node.api_base_url)}</span>`) : ''}
+        ${node.public_host ? _pill('Public host', esc(node.public_host)) : ''}
       </div>
 
       <!-- Metrics -->
@@ -299,7 +300,7 @@ function _cmdRow(c) {
   const ts = c.created_at ? new Date(c.created_at).toLocaleTimeString() : '';
   return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius-sm);font-size:12px">
     <div>
-      <span style="color:var(--text-primary);font-weight:500">${c.command_type}</span>
+      <span style="color:var(--text-primary);font-weight:500">${esc(c.command_type)}</span>
       ${c.app_id ? `<span style="color:var(--text-muted);margin-left:6px">app #${c.app_id}</span>` : ''}
     </div>
     <div style="display:flex;align-items:center;gap:10px">
@@ -330,16 +331,16 @@ async function _setupHistoryTab(drawer, node) {
             : '';
           return `<div style="padding:10px 12px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius-sm)">
             <div style="display:flex;justify-content:space-between;margin-bottom:3px">
-              <span style="font-size:12px;font-weight:500;color:var(--text-primary)">${c.command_type}</span>
+              <span style="font-size:12px;font-weight:500;color:var(--text-primary)">${esc(c.command_type)}</span>
               <span style="font-size:12px;color:${statusColor};font-weight:500">${c.status}${dur ? ' · ' + dur : ''}</span>
             </div>
             <div style="font-size:11px;color:var(--text-muted)">${ts}${c.app_id ? ' · app #' + c.app_id : ''}</div>
-            ${c.error_message ? `<div style="font-size:11px;color:var(--red);margin-top:4px">${c.error_message}</div>` : ''}
+            ${c.error_message ? `<div style="font-size:11px;color:var(--red);margin-top:4px">${esc(c.error_message)}</div>` : ''}
           </div>`;
         }).join('')}
       </div>`;
   } catch (e) {
-    tab.innerHTML = `<div style="font-size:12px;color:var(--red)">Failed to load: ${e.message}</div>`;
+    tab.innerHTML = `<div style="font-size:12px;color:var(--red)">Failed to load: ${esc(e.message)}</div>`;
   }
 }
 

@@ -115,6 +115,16 @@ def get_app_dir(app_name: str) -> str:
     return os.path.join(APPS_BASE_DIR, _safe_dir_name(app_name))
 
 
+def app_source_dir(app) -> str | None:
+    """The app's source directory, but only when it lies inside APPS_BASE_DIR.
+    Anything else (an old or tampered working_dir) is never read, served or written."""
+    base = os.path.realpath(APPS_BASE_DIR)
+    path = os.path.realpath(app.working_dir or get_app_dir(app.name))
+    if path == base or os.path.commonpath([base, path]) != base:
+        return None
+    return path
+
+
 def detect_app_type_from_command(cmd: str) -> str:
     """Infer app type from the start command (used to name the Docker image label)."""
     cmd = cmd.strip().lower()

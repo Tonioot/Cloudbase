@@ -435,7 +435,7 @@ function renderApps() {
 
 async function appAction(app, action, btn) {
   if (action === 'stop' || action === 'restart') {
-    const ok = await confirm(`${action === 'stop' ? 'Stop' : 'Restart'} ${esc(app.name)}?`,
+    const ok = await confirm(`${action === 'stop' ? 'Stop' : 'Restart'} ${app.name}?`,
       action === 'stop' ? 'All running instances will be stopped.' : 'All running instances will be restarted.');
     if (!ok) return;
   }

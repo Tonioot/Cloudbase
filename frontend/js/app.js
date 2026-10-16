@@ -60,8 +60,6 @@ function _updateAppTypeVisibility(app) {
   if (networkSection)                networkSection.style.display = hide;
   // Maintenance Pages section
   if (el('maintenance-pages-section')) el('maintenance-pages-section').style.display = hide;
-  // Actions: nginx config editor is not applicable for no-web apps
-  if (el('tile-nginx'))               el('tile-nginx').style.display = hide;
 
   // Header: the ⋯ menu only holds downtime/update mode, which need nginx
   const moreMenu = el('btn-more-menu')?.closest('.menu-wrap');
@@ -83,7 +81,7 @@ export async function initApp() {
     document.body.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:center;height:100vh;flex-direction:column;gap:12px;color:var(--muted)">
         <div style="font-size:18px;color:var(--red)">Failed to load application</div>
-        <div style="font-size:13px">${err.message}</div>
+        <div style="font-size:13px">${escHtml(err.message)}</div>
         <a href="/" style="color:var(--text-2);font-size:13px;margin-top:8px">← Back to dashboard</a>
       </div>`;
     return;
@@ -162,11 +160,11 @@ function renderHeader() {
 
   document.getElementById('btn-start').addEventListener('click',   () => quickAction('start'));
   document.getElementById('btn-stop').addEventListener('click',    async () => {
-    const ok = await confirm('Stop App', `This will stop all running instances of <strong>${app.name}</strong>.`);
+    const ok = await confirm('Stop App', `This will stop all running instances of <strong>${escHtml(app.name)}</strong>.`);
     if (ok) quickAction('stop');
   });
   document.getElementById('btn-restart').addEventListener('click', async () => {
-    const ok = await confirm('Restart App', `This will restart all running instances of <strong>${app.name}</strong>.`);
+    const ok = await confirm('Restart App', `This will restart all running instances of <strong>${escHtml(app.name)}</strong>.`);
     if (ok) quickAction('restart');
   });
 
@@ -710,7 +708,7 @@ function _logAction(action, phase) {
 }
 
 function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
 
 /* ─── STATS — background collection ─────────────────────────────────────── */
@@ -1200,8 +1198,8 @@ async function loadDir(path) {
         const el = document.createElement('div');
         el.className = 'file-entry';
         el.innerHTML = entry.is_dir
-          ? `<span class="dir-icon">${icon.folder}</span><span>${entry.name}</span>`
-          : `<span class="file-icon">${icon.file}</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${entry.name}</span><span class="file-size">${fmtSize(entry.size)}</span>`;
+          ? `<span class="dir-icon">${icon.folder}</span><span>${escHtml(entry.name)}</span>`
+          : `<span class="file-icon">${icon.file}</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHtml(entry.name)}</span><span class="file-size">${fmtSize(entry.size)}</span>`;
 
         el.addEventListener('click', () => {
           if (entry.is_dir) loadDir(entry.path);
@@ -1214,7 +1212,7 @@ async function loadDir(path) {
   } catch (e) {
     console.error('[Files] Load failed:', e);
     list.innerHTML = `<div style="padding:16px;color:var(--red);font-size:12px">
-      <strong>Error loading files:</strong><br>${e.message}
+      <strong>Error loading files:</strong><br>${escHtml(e.message)}
     </div>`;
   }
 }
@@ -1223,7 +1221,7 @@ function renderBreadcrumb(parts) {
   const items = [{ label:'~', path:'' }, ...parts.map((p, i) => ({ label:p, path:parts.slice(0,i+1).join('/') }))];
   return items.map((item, i) => `
     ${i > 0 ? '<span class="sep">/</span>' : ''}
-    <button class="crumb-btn" data-path="${item.path}">${item.label}</button>
+    <button class="crumb-btn" data-path="${escHtml(item.path)}">${escHtml(item.label)}</button>
   `).join('');
 }
 
@@ -1237,7 +1235,7 @@ async function openFile(entry, el) {
 
   header.innerHTML = `
     ${icon.file}
-    <span class="file-path">${entry.path}</span>
+    <span class="file-path">${escHtml(entry.path)}</span>
     <span class="file-mime">Loading…</span>`;
 
   hint.style.display    = 'none';
@@ -1268,7 +1266,7 @@ async function initActivity() {
     }
     wrap.innerHTML = auditTableHTML(entries);
   } catch (e) {
-    wrap.innerHTML = `<div style="color:var(--red);padding:20px;font-size:13px">${e.message}</div>`;
+    wrap.innerHTML = `<div style="color:var(--red);padding:20px;font-size:13px">${escHtml(e.message)}</div>`;
   }
 }
 
@@ -1588,9 +1586,6 @@ function initSettings() {
   const dnsBtn = document.getElementById('btn-dns-setup');
   if (dnsBtn) dnsBtn.onclick = () => openDomainWizard(app, { onDone: _afterDomainChange });
 
-  // Advanced
-  document.getElementById('tile-nginx').onclick = openNginxModal;
-
   initSettingsNav();
   _watchSettingsDirty();
   _settingsBaseline = {};
@@ -1598,7 +1593,7 @@ function initSettings() {
 
   // Delete
   document.getElementById('btn-delete').onclick = async () => {
-    const ok = await confirm('Delete Application', `This will permanently remove "${app.name}" and all its files. This action cannot be undone.`);
+    const ok = await confirm('Delete Application', `This will permanently remove "${escHtml(app.name)}" and all its files. This action cannot be undone.`);
     if (!ok) return;
     try {
       await api.deleteApp(APP_ID);
@@ -2163,7 +2158,7 @@ function addEnvRow(container, key = '', value = '') {
 }
 
 function escAttr(s) {
-  return (s || '').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  return escHtml(s);
 }
 
 /* ─── INSTANCES TAB ─────────────────────────────────────────────────────── */
@@ -2199,7 +2194,7 @@ async function initInstances() {
         api.getInstanceStats(APP_ID).catch(() => ({})),
       ]);
     } catch (e) {
-      wrap.innerHTML = `<div style="color:var(--red);padding:12px;font-size:13px">Failed to load instances: ${e.message}</div>`;
+      wrap.innerHTML = `<div style="color:var(--red);padding:12px;font-size:13px">Failed to load instances: ${escHtml(e.message)}</div>`;
       return;
     }
 
@@ -2430,7 +2425,7 @@ async function initInstances() {
                 <div class="choice-list" role="radiogroup">
                   ${nodeOptions.map((n, i) => `
                     <label class="choice">
-                      <input type="radio" name="inst-node" value="${n.value}" ${i === 0 ? 'checked' : ''} />
+                      <input type="radio" name="inst-node" value="${escHtml(n.value)}" ${i === 0 ? 'checked' : ''} />
                       <span class="choice-dot" aria-hidden="true"></span>
                       <span class="choice-text"><span>${escHtml(n.name)}</span><small>${escHtml(n.meta)}</small></span>
                     </label>`).join('')}
@@ -2609,47 +2604,6 @@ async function saveSettings() {
     btn.textContent = 'Save changes';
     _refreshSettingsDirty();
   }
-}
-
-async function openNginxModal() {
-  const modal    = document.getElementById('nginx-modal');
-  const textarea = document.getElementById('nginx-config-textarea');
-  const pathEl   = document.getElementById('nginx-config-path');
-  const badge    = document.getElementById('nginx-status-badge');
-  const msgEl    = document.getElementById('nginx-save-msg');
-  msgEl.style.display = 'none';
-  textarea.value = 'Loading…';
-  modal.style.display = 'flex';
-
-  try {
-    const data = await api.getNginxConfig(APP_ID);
-    pathEl.textContent = data.path;
-    badge.textContent  = data.active ? '● Active' : data.exists ? '○ Inactive' : '○ Not created';
-    badge.style.color  = data.active ? 'var(--green)' : 'var(--text-muted)';
-    textarea.value = data.content || '# No config yet — fill in domain/port in Settings and save to generate one';
-  } catch (e) {
-    textarea.value = `Error: ${e.message}`;
-  }
-
-  const saveBtn = document.getElementById('nginx-save');
-  saveBtn.onclick = async () => {
-    saveBtn.disabled = true;
-    msgEl.style.display = 'none';
-    try {
-      const res = await api.saveNginxConfig(APP_ID, textarea.value);
-      msgEl.textContent = res.ok ? 'Saved & nginx reloaded successfully.' : `Error: ${res.message}`;
-      msgEl.style.display = 'block';
-      msgEl.style.color = res.ok ? 'var(--green)' : 'var(--red)';
-      if (res.ok) { badge.textContent = '● Active'; badge.style.color = 'var(--green)'; }
-    } catch (e) {
-      msgEl.textContent = e.message; msgEl.style.display = 'block'; msgEl.style.color = 'var(--red)';
-    } finally {
-      saveBtn.disabled = false;
-    }
-  };
-
-  document.getElementById('nginx-close').onclick = () => { modal.style.display = 'none'; };
-  modal.addEventListener('click', e => { if (e.target === modal) modal.style.display = 'none'; });
 }
 
 async function tileAction(endpoint, label) {
@@ -2884,10 +2838,10 @@ async function openCommitPicker() {
     }
 
     listEl.innerHTML = commits.map(commit => `
-      <button class="commit-row" data-commit="${commit.hash}">
+      <button class="commit-row" data-commit="${escHtml(commit.hash)}">
         <div class="commit-row-top">
-          <span class="commit-hash">${commit.short_hash}</span>
-          <span class="commit-time">${commit.relative_time}</span>
+          <span class="commit-hash">${escHtml(commit.short_hash)}</span>
+          <span class="commit-time">${escHtml(commit.relative_time)}</span>
         </div>
         <div class="commit-subject">${escHtml(commit.subject)}</div>
         <div class="commit-author">${escHtml(commit.author)}</div>

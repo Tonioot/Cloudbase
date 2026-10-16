@@ -17,7 +17,8 @@ from typing import Optional
 
 import bcrypt as _bcrypt
 from fastapi import Cookie, Depends, HTTPException, Request, status
-from jose import JWTError, jwt
+import jwt
+from jwt import PyJWTError as JWTError
 import config as _cfg
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -78,12 +79,13 @@ def save_hashed_password(hashed: str) -> None:
 
 
 # ── JWT helpers ───────────────────────────────────────────────────────────────
-def create_access_token(username: str, role: str) -> str:
+def create_access_token(username: str, role: str, session_version: int = 0) -> str:
     expire_seconds = get_token_expire_seconds()
     expire = datetime.now(timezone.utc) + timedelta(seconds=expire_seconds)
     payload = {
         "sub": username,
         "role": role,
+        "sv": int(session_version or 0),
         "exp": expire,
         "iat": datetime.now(timezone.utc),
     }
@@ -140,7 +142,19 @@ def decode_token(token: str) -> Optional[dict]:
     if not username:
         return None
     role = payload.get("role", "admin" if username == "admin" else "viewer")
-    return {"username": username, "role": role}
+    return {"username": username, "role": role, "sv": int(payload.get("sv", 0) or 0)}
+
+
+async def session_user(token: Optional[str]) -> Optional[dict]:
+    """Like decode_token, but also requires the user to still exist and the
+    session not to be revoked (logout / password change since it was issued)."""
+    user = decode_token(token) if token else None
+    if not user:
+        return None
+    db_user = await _get_db_user(user["username"])
+    if db_user is None or int(db_user.session_version or 0) != user["sv"]:
+        return None
+    return {**user, "db_user": db_user}
 
 
 async def get_user_permissions(username: str) -> set[str]:
@@ -200,18 +214,31 @@ def _check_rate_limit(ip: str) -> None:
     attempts.append(now)
 
 
+# ── Origin check (CSRF / cross-site WebSocket protection) ─────────────────────
+def origin_allowed(origin: Optional[str], host: Optional[str]) -> bool:
+    """True when a request either has no Origin (not from a browser page) or
+    comes from the panel's own origin. Apps on a sibling subdomain are same-site,
+    so the SameSite cookie alone does not stop them."""
+    if not origin:
+        return True
+    from urllib.parse import urlsplit
+    try:
+        netloc = urlsplit(origin).netloc.lower()
+    except ValueError:
+        return False
+    return bool(netloc) and netloc == (host or "").lower()
+
+
 # ── FastAPI dependencies ──────────────────────────────────────────────────────
 _COOKIE_NAME = "pdm_token"
 
 
-def require_auth(pdm_token: Optional[str] = Cookie(default=None)) -> dict:
+async def require_auth(pdm_token: Optional[str] = Cookie(default=None)) -> dict:
     """Require a valid session. Returns {"username": str, "role": str}."""
-    if not pdm_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    user = decode_token(pdm_token)
+    user = await session_user(pdm_token)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    return user
+    return {"username": user["username"], "role": user["role"]}
 
 
 async def _get_db_user(username: str):
@@ -230,14 +257,10 @@ async def _get_db_user(username: str):
 async def require_admin(pdm_token: Optional[str] = Cookie(default=None)) -> dict:
     """Require the user to have the built-in superadmin account OR the 'roles.manage'/'users.manage' scope.
     For backwards compatibility this still checks for full admin (all permissions)."""
-    if not pdm_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    user = decode_token(pdm_token)
+    user = await session_user(pdm_token)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    db_user = await _get_db_user(user["username"])
-    if db_user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    db_user = user.pop("db_user")
     # Superadmin always passes
     if db_user.username == "admin":
         return {**user, "role": db_user.role, "role_id": db_user.role_id, "permissions": None}
@@ -250,14 +273,10 @@ async def require_admin(pdm_token: Optional[str] = Cookie(default=None)) -> dict
 
 async def require_superadmin(pdm_token: Optional[str] = Cookie(default=None)) -> dict:
     """Require the built-in 'admin' superuser account. Only this account may manage users and roles."""
-    if not pdm_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    user = decode_token(pdm_token)
+    user = await session_user(pdm_token)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    db_user = await _get_db_user(user["username"])
-    if db_user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    db_user = user.pop("db_user")
     if db_user.username != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the superadmin account can manage users and roles")
     return {**user, "role": db_user.role, "role_id": db_user.role_id, "permissions": None}
@@ -266,14 +285,10 @@ async def require_superadmin(pdm_token: Optional[str] = Cookie(default=None)) ->
 def require_permission(permission: str):
     """Return a FastAPI dependency that requires the user to have a specific permission."""
     async def _dep(pdm_token: Optional[str] = Cookie(default=None)) -> dict:
-        if not pdm_token:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-        user = decode_token(pdm_token)
+        user = await session_user(pdm_token)
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-        db_user = await _get_db_user(user["username"])
-        if db_user is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        db_user = user.pop("db_user")
         # Superadmin bypasses all permission checks
         if db_user.username == "admin":
             return {**user, "role": db_user.role, "role_id": db_user.role_id, "permissions": None}
@@ -330,9 +345,11 @@ async def authorize_websocket(websocket, required_permission: str | None = None)
         await websocket.close(code=1008, reason="Invalid node token")
         return False
 
-    # Browser session cookie
-    token = websocket.cookies.get(_COOKIE_NAME)
-    user = decode_token(token) if token else None
+    # Browser session cookie — only from the panel's own pages
+    if not origin_allowed(websocket.headers.get("origin"), websocket.headers.get("host")):
+        await websocket.close(code=1008, reason="Cross-origin WebSocket refused")
+        return False
+    user = await session_user(websocket.cookies.get(_COOKIE_NAME))
     if not user:
         await websocket.close(code=1008, reason="Not authenticated")
         return False
