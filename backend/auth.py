@@ -215,18 +215,28 @@ def _check_rate_limit(ip: str) -> None:
 
 
 # ── Origin check (CSRF / cross-site WebSocket protection) ─────────────────────
-def origin_allowed(origin: Optional[str], host: Optional[str]) -> bool:
+def origin_allowed(origin: Optional[str], headers) -> bool:
     """True when a request either has no Origin (not from a browser page) or
     comes from the panel's own origin. Apps on a sibling subdomain are same-site,
-    so the SameSite cookie alone does not stop them."""
+    so the SameSite cookie alone does not stop them. The panel's own origin is the
+    Host it was asked for, the X-Forwarded-Host of a proxy in front of it (which may
+    rewrite Host), or the panel's HTTPS domain."""
     if not origin:
         return True
     from urllib.parse import urlsplit
+    import system_config as _syscfg
     try:
         netloc = urlsplit(origin).netloc.lower()
     except ValueError:
         return False
-    return bool(netloc) and netloc == (host or "").lower()
+    if not netloc:
+        return False
+    own = {(headers.get("host") or "").lower()}
+    own.update(h.strip().lower() for h in (headers.get("x-forwarded-host") or "").split(",") if h.strip())
+    panel_domain = _syscfg.get_panel_https_domain()
+    if panel_domain:
+        own.add(panel_domain.lower())
+    return netloc in own
 
 
 # ── FastAPI dependencies ──────────────────────────────────────────────────────
@@ -346,7 +356,7 @@ async def authorize_websocket(websocket, required_permission: str | None = None)
         return False
 
     # Browser session cookie — only from the panel's own pages
-    if not origin_allowed(websocket.headers.get("origin"), websocket.headers.get("host")):
+    if not origin_allowed(websocket.headers.get("origin"), websocket.headers):
         await websocket.close(code=1008, reason="Cross-origin WebSocket refused")
         return False
     user = await session_user(websocket.cookies.get(_COOKIE_NAME))

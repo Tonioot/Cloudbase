@@ -1413,6 +1413,14 @@ def _is_local_client(request: Request) -> bool:
     return host in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
 
 
+def _reached_through_domain(request: Request, panel_domain: str) -> bool:
+    """Already on the panel domain or HTTPS, e.g. through a Cloudflare Tunnel or
+    another proxy that doesn't connect from localhost. Redirecting those would
+    loop forever; only someone typing http://<ip>:<port> needs sending over."""
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    return host == panel_domain.lower() or request.headers.get("x-forwarded-proto") == "https"
+
+
 def _is_node_traffic(request: Request, path: str) -> bool:
     if path == "/api/health" or path.startswith(("/api/nodes/agent/", "/api/nodes/ws/")):
         return True
@@ -1440,7 +1448,8 @@ class _AuthMiddleware(BaseHTTPMiddleware):
         # nginx (which connects from localhost). Node agents keep using this port.
         # Over an SSH tunnel (ssh -L) the panel still opens here, from localhost.
         panel_domain = _syscfg.get_panel_https_domain()
-        if panel_domain and not _is_local_client(request) and not _is_node_traffic(request, path):
+        if (panel_domain and not _is_local_client(request) and not _is_node_traffic(request, path)
+                and not _reached_through_domain(request, panel_domain)):
             if method in ("GET", "HEAD") and not path.startswith("/api/"):
                 query = f"?{request.url.query}" if request.url.query else ""
                 return RedirectResponse(f"https://{panel_domain}{path}{query}", status_code=302)
@@ -1450,7 +1459,7 @@ class _AuthMiddleware(BaseHTTPMiddleware):
         # other site (including apps on a sibling subdomain, which count as
         # same-site and so do get the SameSite=Strict cookie).
         if method not in ("GET", "HEAD", "OPTIONS") and path.startswith("/api/"):
-            if not auth.origin_allowed(request.headers.get("origin"), request.headers.get("host")):
+            if not auth.origin_allowed(request.headers.get("origin"), request.headers):
                 return JSONResponse({"detail": "Cross-origin request refused"}, status_code=403)
 
         # Node-agent endpoints use X-Node-Token / hello message auth — bypass cookie auth
