@@ -27,6 +27,8 @@ from routers import databases as databases_router
 from routers import database_backups as database_backups_router
 from routers import domains as domains_router
 from routers import notifications as notifications_router
+from routers import cron as cron_router
+import cron as _cron
 import notify
 from env_crypto import decrypt_env
 from audit import log_audit
@@ -1285,6 +1287,7 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(databases_router.database_update_checker()),
             asyncio.create_task(notify.dispatcher()),
             asyncio.create_task(notify.watcher()),
+            asyncio.create_task(_cron.scheduler()),
         ]
         if os.environ.get("CLOUDBASE_DEV_DEMO_LOGS"):
             tasks.append(asyncio.create_task(_dev_demo_logs(os.environ["CLOUDBASE_DEV_DEMO_LOGS"])))
@@ -2209,6 +2212,7 @@ async def stream_system_logs(websocket: _WS, source: str = "server"):
 
 
 # ── Routers ───────────────────────────────────────────────────────────────────
+app.include_router(cron_router.router)  # before applications: /api/apps/cron/… would match /{app_id} routes
 app.include_router(applications.router)
 app.include_router(nodes.router)
 app.include_router(files.router)

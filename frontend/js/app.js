@@ -4,6 +4,7 @@ import { auditTableHTML, cssVar, icon, typeIcon, badge, toast, confirm, spinner,
 import { pickGitHubToken } from './sidebar.js';
 import { openDomainWizard, leCertName } from './domain-wizard.js';
 import { setCrumbs } from './shell.js';
+import { cronSummary, initRunsTab, runNow, toggleSchedule, scheduleEditorHTML, wireScheduleEditor } from './cron.js';
 
 const params = new URLSearchParams(location.search);
 const APP_ID = parseInt(params.get('id'));
@@ -46,15 +47,22 @@ window.addEventListener('cloudbase-role-ready', (evt) => {
 function _updateAppTypeVisibility(app) {
   const noWeb = !!app.no_web;
   const isStatic = app.app_type === 'static';
+  const isCron = !!app.cron;
   const hide = noWeb ? 'none' : '';
   const el = id => document.getElementById(id);
+
+  // Cron jobs: no instances to keep running — runs instead of restart/boot/autoscale
+  if (el('set-schedule'))        el('set-schedule').style.display = isCron ? '' : 'none';
+  if (el('cfg-restart-row'))     el('cfg-restart-row').style.display = isCron ? 'none' : '';
+  if (el('cfg-autostart-row'))   el('cfg-autostart-row').style.display = isCron ? 'none' : '';
+  if (el('cfg-autoscale-card'))  el('cfg-autoscale-card').style.display = isCron ? 'none' : '';
 
   // Settings panel
   if (el('cfg-port-field'))          el('cfg-port-field').style.display = (noWeb || isStatic) ? 'none' : '';
   if (el('cfg-docker-readonly-field')) el('cfg-docker-readonly-field').style.display = isStatic ? 'none' : '';
   if (el('cfg-env-static-hint'))     el('cfg-env-static-hint').style.display = isStatic ? '' : 'none';
-  if (el('cfg-cmd-label'))           el('cfg-cmd-label').textContent = isStatic ? 'Publish directory' : 'Start command';
-  if (el('cfg-cmd'))                 el('cfg-cmd').placeholder = isStatic ? 'auto-detect (root, dist, build, …)' : 'npm start';
+  if (el('cfg-cmd-label'))           el('cfg-cmd-label').textContent = isStatic ? 'Publish directory' : isCron ? 'Command' : 'Start command';
+  if (el('cfg-cmd'))                 el('cfg-cmd').placeholder = isStatic ? 'auto-detect (root, dist, build, …)' : isCron ? 'python manage.py send_reports' : 'npm start';
   // Network section
   const networkSection = el('net-domains')?.closest('.settings-group');
   if (networkSection)                networkSection.style.display = hide;
@@ -119,6 +127,7 @@ function _syncStatsViewFromAppStatus() {
 
 /* ─── Header ────────────────────────────────────────────────────────────── */
 function formatPortSummary(app) {
+  if (app.cron) return cronSummary(app);
   const replicas = app.replicas || [];
   const running = replicas.filter(r => r.status === 'running');
   const total = replicas.length;
@@ -152,8 +161,26 @@ function renderHeader() {
 
   const typeLabelEl = document.getElementById('app-service-type-badge');
   if (typeLabelEl) {
-    typeLabelEl.textContent = app.no_web ? 'Background Worker' : app.app_type === 'static' ? 'Static Site' : 'Web Service';
+    typeLabelEl.textContent = app.cron ? 'Cron Job' : app.no_web ? 'Background Worker' : app.app_type === 'static' ? 'Static Site' : 'Web Service';
     typeLabelEl.className = 'service-type-badge' + (app.no_web ? ' service-type-badge--worker' : '');
+  }
+
+  if (app.cron) {
+    const small = (id, text) => { const el = document.querySelector(`#${id} small`); if (el) el.textContent = text; };
+    small('menu-pull-rebuild', 'Build the new image; the next run uses it');
+    small('menu-rebuild', 'Build the image again; the next run uses it');
+    // A cron job has runs, not instances: Run now and Pause/Resume replace Start/Stop/Restart
+    ['btn-start', 'btn-stop', 'btn-restart'].forEach(id => { document.getElementById(id).style.display = 'none'; });
+    document.getElementById('btn-cron-run').style.display = '';
+    document.getElementById('btn-cron-toggle').style.display = '';
+    document.getElementById('btn-cron-run').addEventListener('click', async e => {
+      await runNow(APP_ID, e.currentTarget);
+      await refreshApp();
+      if (activeTab !== 'runs') switchTab('runs');
+    });
+    document.getElementById('btn-cron-toggle').addEventListener('click', async e => {
+      if (await toggleSchedule(app, e.currentTarget)) await refreshApp();
+    });
   }
 
   updateHeaderStatus();
@@ -327,6 +354,11 @@ function updateHeaderStatus() {
   btnStop.disabled    = (s === 'stopped') || busy;
   btnRestart.disabled = busy;
 
+  if (app.cron) {
+    document.getElementById('btn-cron-toggle').textContent = app.cron.enabled ? 'Pause' : 'Resume';
+    document.getElementById('btn-cron-run').disabled = s === 'running' || busy;
+  }
+
   const btnMaint  = document.getElementById('btn-maintenance-mode');
   const btnUpdate = document.getElementById('btn-update-mode');
   if (btnMaint && btnUpdate) {
@@ -475,13 +507,20 @@ function _waitForRemoteCommand(commandId, nodeId) {
 
 /* ─── Tabs ──────────────────────────────────────────────────────────────── */
 function initTabs() {
-  const tabs = ['logs', 'stats', 'files', 'instances', 'deployments', 'settings', 'activity'];
+  let tabs = ['runs', 'logs', 'stats', 'files', 'instances', 'deployments', 'settings', 'activity'];
+  // A cron job has runs instead of instances and metrics; other apps have no runs
+  const hidden = app.cron ? ['instances', 'stats'] : ['runs'];
+  hidden.forEach(t => { document.getElementById(`tab-${t}`).style.display = 'none'; });
+  if (app.cron) document.getElementById('tab-runs').style.display = '';
+  tabs = tabs.filter(t => !hidden.includes(t));
   tabs.forEach(t => {
     document.getElementById(`tab-${t}`).addEventListener('click', () => switchTab(t));
   });
   const saved = sessionStorage.getItem('cloudbase_active_tab');
-  switchTab(tabs.includes(saved) ? saved : 'logs');
+  switchTab(tabs.includes(saved) ? saved : app.cron ? 'runs' : 'logs');
 }
+
+let _runsTeardown = null;
 
 let activeTab = null;
 
@@ -511,6 +550,7 @@ function teardownTab(t) {
   if (t === 'stats') { statsTabActive = false; } // Keep statWs alive — data keeps accumulating
   if (t === 'instances' && _instancesRefreshTimer) { clearInterval(_instancesRefreshTimer); _instancesRefreshTimer = null; }
   if (t === 'deployments') { clearInterval(_deploysTimer); _deploysTimer = null; }
+  if (t === 'runs') { _runsTeardown?.(); _runsTeardown = null; }
 }
 
 function setupTab(t) {
@@ -521,6 +561,7 @@ function setupTab(t) {
   if (t === 'settings')  initSettings();
   if (t === 'deployments') initDeployments();
   if (t === 'activity')  initActivity();
+  if (t === 'runs')      _runsTeardown = initRunsTab(APP_ID, { getApp: () => app, onChange: refreshApp });
 }
 
 /* ─── LOGS ──────────────────────────────────────────────────────────────── */
@@ -1486,7 +1527,48 @@ function initAutoDeploySettings() {
   }).catch(fallback);
 }
 
+let _cronEditor = null;
+
+async function initCronSettings() {
+  if (!app.cron) return;
+  if (!_cronEditor) {
+    document.getElementById('cron-editor-slot').innerHTML = scheduleEditorHTML('cfg-cron');
+    _cronEditor = wireScheduleEditor(document.getElementById('set-schedule'), 'cfg-cron', app.cron);
+    document.getElementById('btn-cron-save').addEventListener('click', async e => {
+      const btn = e.currentTarget;
+      const status = document.getElementById('cfg-cron-status');
+      if (!_cronEditor.valid()) { toast('Fix the schedule first', 'error'); return; }
+      btn.disabled = true;
+      try {
+        const nodeId = parseInt(document.getElementById('cfg-cron-node').value, 10);
+        await api.updateCron(APP_ID, { ..._cronEditor.get(), ...(Number.isInteger(nodeId) ? { node_id: nodeId } : {}) });
+        app = await api.getApp(APP_ID);
+        updateHeaderStatus();
+        status.textContent = `Saved. ${app.cron.next_run_at ? 'Next run ' + new Date(app.cron.next_run_at).toLocaleString() : ''}`;
+        toast('Schedule saved');
+      } catch (err) {
+        toast(err.message, 'error');
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  } else {
+    _cronEditor.set(app.cron);
+  }
+  const sel = document.getElementById('cfg-cron-node');
+  try {
+    const nodes = await api.listNodes();
+    sel.innerHTML = nodes.filter(n => n.enabled !== false).map(n => {
+      const selected = app.node_id ? n.id === app.node_id : n.is_local;
+      return `<option value="${n.id}" ${selected ? 'selected' : ''}>${escHtml(n.is_local ? 'Primary (this server)' : n.name)}${n.status === 'offline' ? ' · offline' : ''}</option>`;
+    }).join('');
+  } catch {
+    sel.innerHTML = '<option value="">Primary (this server)</option>';
+  }
+}
+
 function initSettings() {
+  initCronSettings();
   const isViewer = !_canManageApps();
   _settingsInitialized = true;
 
@@ -1659,6 +1741,7 @@ const _SETTINGS_ICONS = {
   layout: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/>',
   code:   '<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>',
   bell:   '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
+  clock:  '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
   alert:  '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
 };
 const _settingsIcon = name =>

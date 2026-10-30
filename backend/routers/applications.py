@@ -26,6 +26,7 @@ import nginx_manager as nm
 import certificates as certs
 import token_vault
 import docker_manager as dm
+import cron as _cron
 import db_links
 from routers.nodes import ensure_local_node, queue_node_command, wait_for_node_command
 from env_crypto import encrypt_env, decrypt_env, encrypt_text, decrypt_text
@@ -102,6 +103,9 @@ class DeployRequest(BaseModel):
     app_type: Optional[str] = None         # "static" = serve files with nginx (start_command = publish dir)
     source_revision: Optional[str] = None
     image_revision: Optional[str] = None
+    cron_schedule: Optional[str] = None    # set = a cron job: runs start_command on this schedule
+    cron_timezone: Optional[str] = None
+    cron_timeout_seconds: Optional[int] = None
 
 
 class UpdateRequest(BaseModel):
@@ -1253,6 +1257,8 @@ async def upload_app_cert(app_id: int, file: UploadFile = File(...), _user: dict
 
 async def _sync_process_status(app, db) -> None:
     """Reconcile DB status with actual OS state. Uses port recovery as fallback."""
+    if app.cron_schedule:
+        return  # no instances: the scheduler keeps a cron job's status
     local_node = await ensure_local_node(db)
     node = await _get_app_node(app, db, local_node)
     if not node.is_local:
@@ -1396,6 +1402,13 @@ async def deploy_app(
             raise HTTPException(400, "Selected node is not available")
 
     is_static = (req.app_type or "").strip().lower() == "static"
+    is_cron = bool((req.cron_schedule or "").strip())
+    if is_cron:
+        if is_static:
+            raise HTTPException(400, "A static site can't be a cron job")
+        _cron.check_schedule(req.cron_schedule, req.cron_timezone)
+        if req.cron_timeout_seconds is not None and req.cron_timeout_seconds not in _cron.TIMEOUT_CHOICES:
+            raise HTTPException(400, f"cron_timeout_seconds must be one of {_cron.TIMEOUT_CHOICES}")
     if is_static:
         try:
             dm.resolve_static_dir("", req.start_command or "")
@@ -1403,7 +1416,7 @@ async def deploy_app(
             raise HTTPException(400, str(exc))
 
     # no_web apps (discord bots, background workers, etc.) don't need a port or nginx
-    is_no_web = bool(req.no_web) and not is_static
+    is_no_web = (bool(req.no_web) or is_cron) and not is_static
     node_id_for_port = target_node.id if target_node else local_node.id
     external_port = None if is_no_web else await _assign_external_port(req.external_port, node_id_for_port, None, db)
 
@@ -1435,12 +1448,16 @@ async def deploy_app(
         image_revision=req.image_revision,
         status="deploying",
         node_id=target_node.id if not target_node.is_local else None,
+        cron_schedule=" ".join(req.cron_schedule.split()) if is_cron else None,
+        cron_timezone=(req.cron_timezone or None) if is_cron else None,
+        cron_timeout_seconds=req.cron_timeout_seconds or 3600,
+        cron_enabled=True,
     )
     db.add(app)
     await db.commit()
     await db.refresh(app)
 
-    if not target_node.is_local:
+    if not target_node.is_local and not is_cron:
         # Nginx runs on the primary and reaches remote instances through
         # tunnels, so a custom domain is routed here too. The config itself is
         # written once instances start (that path requires this flag).
@@ -1452,7 +1469,7 @@ async def deploy_app(
 
     try:
         await _deploy_app(app)
-        app.status = "stopped"
+        app.status = _cron.status_of(app) if is_cron else "stopped"
 
         if app.domain and not app.no_web:
             app.nginx_enabled = True
@@ -2154,6 +2171,8 @@ async def _get_local_replica_logs(
 @router.post("/{app_id}/start")
 async def start_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.start")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
+    if app.cron_schedule:
+        return await _cron.set_enabled(app_id, True, actor)
     local_node = await ensure_local_node(db)
     replicas = await _load_app_replicas(app_id, db)
     if not replicas:
@@ -2207,6 +2226,8 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict
 @router.post("/{app_id}/stop")
 async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.stop")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
+    if app.cron_schedule:
+        return await _cron.set_enabled(app_id, False, actor)
     local_node = await ensure_local_node(db)
     replicas = await _load_app_replicas(app_id, db)
 
@@ -2241,6 +2262,8 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict 
 @router.post("/{app_id}/restart")
 async def restart_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.restart")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
+    if app.cron_schedule:
+        return await _cron.start_run(app_id, "manual", actor)
     local_node = await ensure_local_node(db)
     replicas = await _load_app_replicas(app_id, db)
     if not replicas:
@@ -2806,6 +2829,8 @@ async def delete_instance(
 
 @router.post("/{app_id}/scale")
 async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.scale")), actor: str = Depends(_auth.get_current_actor)):
+    if (await _get_or_404(app_id, db)).cron_schedule:
+        raise HTTPException(400, "A cron job has no instances: each run starts its own container")
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
 
@@ -4117,6 +4142,8 @@ def _app_to_dict(
         "auto_deploy_interval": getattr(app, "auto_deploy_interval", None) or 60,
         "replicas": replicas if replicas is not None else [],
         "replica_count": len(replicas) if replicas is not None else 0,
+        "node_id": app.node_id,
+        "cron": _cron.info(app),
     }
 
 

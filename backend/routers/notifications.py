@@ -335,7 +335,7 @@ async def app_notifications(
     if app is None:
         raise HTTPException(404, "App not found")
     rows = (await db.execute(select(NotificationChannel).order_by(NotificationChannel.id))).scalars().all()
-    app_events = {k for k, (_l, group, _s) in notify.EVENTS.items() if group in ("Deploys", "Apps", "Domains")}
+    app_events = {k for k, (_l, group, _s) in notify.EVENTS.items() if group in ("Deploys", "Apps", "Domains", "Cron jobs")}
     channels = []
     for ch in rows:
         scope = notify._list(ch.app_ids)

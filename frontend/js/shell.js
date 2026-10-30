@@ -38,7 +38,8 @@ export const ICONS = {
 };
 
 const STATUS_COLOR = {
-  running: 'var(--green)', online: 'var(--green)',
+  running: 'var(--green)', online: 'var(--green)', scheduled: 'var(--green)',
+  paused: 'var(--faint)',
   stopped: 'var(--faint)',
   error: 'var(--red)', crashed: 'var(--red)', offline: 'var(--red)', unhealthy: 'var(--red)', node_offline: 'var(--red)',
   deploying: 'var(--yellow)', starting: 'var(--yellow)', stopping: 'var(--yellow)', restarting: 'var(--yellow)', creating: 'var(--yellow)',
@@ -224,7 +225,7 @@ export function updateIndex(apps, nodes, databases) {
           <a class="menu-item${section === 'apps' && a.id === currentId ? ' active' : ''}" href="/app?id=${a.id}">
             <span class="dot" style="background:${statusColor(a.status)}"></span>
             <span class="menu-item-label">${esc(a.name)}</span>
-            <span class="menu-item-meta">${esc(a.no_web ? 'worker' : a.app_type === 'static' ? 'static' : a.app_type || '')}</span>
+            <span class="menu-item-meta">${esc(a.cron ? 'cron' : a.no_web ? 'worker' : a.app_type === 'static' ? 'static' : a.app_type || '')}</span>
           </a>`).join('')
       : '<div class="flyout-empty">No apps yet</div>';
   }

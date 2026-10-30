@@ -77,6 +77,11 @@ async def init_db():
             ("deploy_strategy",        "VARCHAR(20) NOT NULL DEFAULT 'rolling'"),
             ("auto_deploy_interval",   "INTEGER NOT NULL DEFAULT 60"),
             ("notifications_muted_until", "DATETIME"),
+            ("cron_schedule",          "VARCHAR(120)"),
+            ("cron_timezone",          "VARCHAR(64)"),
+            ("cron_enabled",           "BOOLEAN NOT NULL DEFAULT 1"),
+            ("cron_timeout_seconds",   "INTEGER NOT NULL DEFAULT 3600"),
+            ("cron_last_slot",         "DATETIME"),
         ]:
             if col in existing_columns:
                 continue

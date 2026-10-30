@@ -781,6 +781,23 @@ async def _wait_local_api(client, timeout: float = 90) -> None:
         await asyncio.sleep(2)
 
 
+async def cmd_cron_run(client, state, main_id, payload, headers):
+    """Run one cron job on this node: make sure the image is current, run the
+    container to completion and report exit code and output."""
+    import docker_manager as dm
+    await _wait_local_api(client)
+    local_id = await _ensure_replica_app_deployed(client, state, main_id, payload, headers)
+    run_id = int(payload["run_id"])
+    _agent_log(f"[cron] app={main_id} run={run_id} starting")
+    result = await asyncio.to_thread(
+        dm.run_job_container, int(local_id), run_id, payload.get("app_name") or "",
+        dm.image_name(int(local_id), payload.get("app_name") or ""), payload.get("command") or "",
+        payload.get("env_vars") or {}, payload.get("docker_options"), int(payload.get("timeout_seconds") or 3600),
+    )
+    _agent_log(f"[cron] app={main_id} run={run_id} exit={result.get('exit_code')} timed_out={result.get('timed_out')}")
+    return result
+
+
 async def cmd_start_replica(client, state, main_id, payload, headers):
     # Ensure the app source exists locally on this node. The replica container
     # itself still uses the main app id for naming, logs, and tunnel identity.
@@ -1080,9 +1097,26 @@ COMMAND_HANDLERS: Dict[str, Callable] = {
     "get_agent_logs": cmd_get_agent_logs,
     "delete_app": cmd_delete_app,
     "start_replica": cmd_start_replica,
+    "cron_run": cmd_cron_run,
     "stop_replica": cmd_stop_replica,
     "refresh_source": cmd_refresh_source,
 }
+
+# Commands that can take hours (a cron job): they run beside the command loop,
+# so the node keeps answering other commands, and report back over HTTP.
+_BACKGROUND_COMMANDS = {"cron_run"}
+
+
+async def _execute_in_background(client: httpx.AsyncClient, state: AgentState, cmd: dict) -> None:
+    status, res, err = await _execute_command(client, state, cmd)
+    for attempt in range(5):  # the primary may be restarting
+        try:
+            await _report_result(client, state, cmd["id"], status=status, result=res, error_message=err)
+            return
+        except Exception as e:
+            _agent_log(f"[agent] Could not report result of command {cmd['id']} (attempt {attempt + 1}): {e}")
+            await asyncio.sleep(10 * (attempt + 1))
+
 
 async def _execute_command(
     client: httpx.AsyncClient,
@@ -1221,6 +1255,9 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState):
 
                         if mtype == "command":
                             cmd = data["command"]
+                            if cmd.get("command_type") in _BACKGROUND_COMMANDS:
+                                asyncio.create_task(_execute_in_background(client, state, cmd))
+                                continue
                             status, res, err = await _execute_command(client, state, cmd, ws_main=ws, ws_send_fn=_ws_send)
                             # Streaming commands use id=-1 and have no DB record — never ACK them
                             if status != "streaming" and cmd.get("id", -1) != -1:

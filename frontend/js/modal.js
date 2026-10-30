@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { icon, spinner, toast, parseDotEnv, pickTextFile, mergeEnvIntoRows } from './utils.js';
 import { pickGitHubToken } from './sidebar.js';
+import { scheduleEditorHTML, wireScheduleEditor } from './cron.js';
 
 // ── Cert picker helper ────────────────────────────────────────────────────────
 let _certCache = null;
@@ -77,6 +78,9 @@ export function openDeployModal(onSuccess) {
   const form  = modal.querySelector('#deploy-form');
   let envCount = 0;
   let currentStep = 0;
+  const schedule = wireScheduleEditor(modal, 'f-cron');
+  modal._cronSchedule = schedule;
+  const appType = () => modal.querySelector('.app-type-btn.active')?.dataset.type;
 
   // ── Close ──────────────────────────────────────────────────────────────────
   const close = () => backdrop.remove();
@@ -102,14 +106,19 @@ export function openDeployModal(onSuccess) {
     // Process step: workers have no port; static sites get a publish directory
     // instead of a start command, and always listen on nginx's port 80.
     if (idx === 2) {
-      const type = modal.querySelector('.app-type-btn.active')?.dataset.type;
+      const type = appType();
       const isStatic = type === 'static';
-      modal.querySelector('#f-port-field').style.display = (type === 'worker' || isStatic) ? 'none' : '';
+      const isCron = type === 'cron';
+      modal.querySelector('#f-port-field').style.display = (type === 'worker' || isStatic || isCron) ? 'none' : '';
+      modal.querySelector('#f-cron-block').style.display = isCron ? '' : 'none';
       modal.querySelector('#f-cmd-label').innerHTML = isStatic
         ? 'Publish Directory <span class="hint">auto-detected if empty</span>'
+        : isCron ? 'Command <span class="hint">runs on every run</span>'
         : 'Start Command <span class="hint">auto-detected if empty</span>';
-      modal.querySelector('#f-cmd').placeholder = isStatic ? 'dist' : 'npm start';
+      modal.querySelector('#f-cmd').placeholder = isStatic ? 'dist' : isCron ? 'python manage.py send_reports' : 'npm start';
       modal.querySelector('#f-cmd-hint').style.display = isStatic ? '' : 'none';
+      modal.querySelector('#f-cmd-cron-hint').style.display = isCron ? '' : 'none';
+      if (isCron) schedule.check();
     }
     // Docker step: nginx (static sites) cannot run with a read-only root filesystem
     if (idx === 4) {
@@ -122,6 +131,11 @@ export function openDeployModal(onSuccess) {
 
   function validateStep(idx) {
     const errEl = modal.querySelector('#modal-error');
+    if (idx === 2 && appType() === 'cron' && !schedule.valid()) {
+      errEl.textContent = modal.querySelector('#f-cron-preview').textContent || 'Enter a valid schedule.';
+      errEl.style.display = 'block';
+      return false;
+    }
     if (idx === 1) {
       const name = modal.querySelector('#f-name').value.trim();
       const repo = modal.querySelector('#f-repo').value.trim();
@@ -279,7 +293,14 @@ function modalHTML() {
                 <div class="app-type-icon">${icon.cpu}</div>
                 <div class="app-type-info">
                   <div class="app-type-name">Background Worker</div>
-                  <div class="app-type-desc">No web server — runs without a port or nginx (Discord bots, queues, cron jobs)</div>
+                  <div class="app-type-desc">No web server — keeps running without a port or nginx (Discord bots, queue consumers)</div>
+                </div>
+              </button>
+              <button type="button" class="app-type-btn" data-type="cron">
+                <div class="app-type-icon">${icon.clock}</div>
+                <div class="app-type-info">
+                  <div class="app-type-name">Cron Job</div>
+                  <div class="app-type-desc">Runs a command on a schedule in a fresh container, then stops — backups, reports, cleanups</div>
                 </div>
               </button>
             </div>
@@ -326,7 +347,9 @@ function modalHTML() {
                 <label class="field-label" id="f-cmd-label">Start Command <span class="hint">auto-detected if empty</span></label>
                 <input class="input input-mono" id="f-cmd" placeholder="npm start" />
                 <div class="field-hint" id="f-cmd-hint" style="display:none">Folder that contains <code>index.html</code> (after the build, if any). Empty = auto-detect: repo root, or dist, build, out, public…</div>
+                <div class="field-hint" id="f-cmd-cron-hint" style="display:none">Runs in a fresh container on every run; the run succeeds when it exits with code 0. Empty = the image’s own command.</div>
               </div>
+              <div class="deploy-field-span-2" id="f-cron-block" style="display:none">${scheduleEditorHTML('f-cron')}</div>
               <div class="field deploy-field-span-2" id="f-build-field">
                 <label class="field-label">Build Command <span class="hint">optional</span></label>
                 <input class="input input-mono" id="f-build" placeholder="npm run build" />
@@ -448,7 +471,7 @@ async function handleDeploy(modal, form, onSuccess, close) {
     ...(tokenId
       ? { github_token_id: tokenId }
       : { github_token: modal.querySelector('#f-token').value.trim() || null }),
-    no_web:        modal.querySelector('.app-type-btn.active')?.dataset.type === 'worker',
+    no_web:        ['worker', 'cron'].includes(modal.querySelector('.app-type-btn.active')?.dataset.type),
     app_type:      modal.querySelector('.app-type-btn.active')?.dataset.type === 'static' ? 'static' : null,
     start_command: modal.querySelector('#f-cmd').value.trim() || null,
     build_command: modal.querySelector('#f-build').value.trim() || null,
@@ -460,6 +483,10 @@ async function handleDeploy(modal, form, onSuccess, close) {
     docker_tmpfs_size_mb: Number.isInteger(dockerTmpfsSize) ? dockerTmpfsSize : null,
     env_vars,
   };
+  if (modal.querySelector('.app-type-btn.active')?.dataset.type === 'cron') {
+    const c = modal._cronSchedule.get();
+    Object.assign(payload, { cron_schedule: c.schedule, cron_timezone: c.timezone || null, cron_timeout_seconds: c.timeout_seconds });
+  }
 
   try {
     const app = await api.deploy(payload);

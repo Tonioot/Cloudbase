@@ -92,6 +92,9 @@ async def run_deploy(
                 # Without a public route nginx can't swap instances
                 if strategy in ("rolling", "blue_green") and (app.no_web or not apps._has_public_nginx_domain(app)):
                     strategy = "restart"
+                # A cron job has nothing running: build, and the next run uses it
+                if app.cron_schedule:
+                    strategy = "rebuild"
 
                 dep = Deployment(app_id=app_id, trigger=trigger, strategy=strategy, status="running",
                                  actor=actor, branch=app.deploy_branch)
@@ -122,6 +125,9 @@ async def run_deploy(
                     res = await _rebuild(app, db, source_revision, push, restart=(strategy == "restart"), actor=actor)
                     message = (f"Deployed {commit_info}" if strategy == "restart" and res.get("restarted")
                                else f"Built {commit_info}")
+                    if app.cron_schedule:
+                        push("[Deploy] Image built. The next run of the job uses it.")
+                        message = f"Deployed {commit_info}; the next run uses it"
                 await apps.log_audit(db, "app.deploy", actor=actor, app_id=app_id,
                                      detail={"name": app.name, "commit": commit_info, "strategy": strategy, "trigger": trigger})
                 await db.commit()
@@ -160,7 +166,8 @@ async def _rebuild(app: Application, db, source_revision, push, *, restart: bool
         app.image_revision = source_revision
     await db.commit()
     if not restart:
-        push("[Docker] Image built. Restart or deploy to put it live.")
+        if not app.cron_schedule:
+            push("[Docker] Image built. Restart or deploy to put it live.")
         return {}
     replicas = await apps._load_app_replicas(app.id, db)
     if not apps._has_live_replicas(replicas):

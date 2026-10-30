@@ -41,13 +41,16 @@ EVENTS: dict[str, tuple[str, str, str]] = {
     "backup.failed":          ("Backup failed",                "Databases", "critical"),
     "backup.offsite_failed":  ("Off-site upload failed",       "Databases", "warning"),
     "cert.expiring":          ("Certificate not renewing",     "Domains",   "warning"),
+    "cron.failed":            ("Cron job failed",              "Cron jobs", "critical"),
+    "cron.missed":            ("Cron job skipped a run",       "Cron jobs", "warning"),
 }
 # Problems: they stay open and send the all-clear when they're fixed
 PROBLEM_EVENTS = {"instance.failed", "node.offline", "node.disk_high", "database.down",
-                  "backup.failed", "backup.offsite_failed", "cert.expiring"}
+                  "backup.failed", "backup.offsite_failed", "cert.expiring", "cron.failed"}
 # Sensible defaults for a new channel
 DEFAULT_EVENTS = ["deploy.failed", "deploy.rolled_back", "instance.failed", "node.offline",
-                  "node.disk_high", "database.down", "backup.failed", "backup.offsite_failed", "cert.expiring"]
+                  "node.disk_high", "database.down", "backup.failed", "backup.offsite_failed", "cert.expiring",
+                  "cron.failed", "cron.missed"]
 
 RETENTION_DAYS = 30
 _BACKOFF = [30, 120, 600, 1800, 3600]   # seconds before attempt 2, 3, …; then give up
@@ -82,7 +85,9 @@ _settings: Optional[dict] = None
 
 def _normalize_settings(raw: dict) -> dict:
     merged = {**DEFAULT_SETTINGS, **{k: v for k, v in (raw or {}).items() if k in DEFAULT_SETTINGS}}
-    merged["inbox_events"] = [e for e in EVENTS if e in set(merged["inbox_events"] or [])]
+    known = set((raw or {}).get("known_events") or EVENTS)  # events that existed when this was saved
+    wanted = set(merged["inbox_events"] or []) | {e for e in EVENTS if e not in known}
+    merged["inbox_events"] = [e for e in EVENTS if e in wanted]
     for key, choices in SETTING_CHOICES.items():
         if merged[key] not in choices:
             merged[key] = DEFAULT_SETTINGS[key]
@@ -110,11 +115,12 @@ async def load_settings(db=None) -> dict:
 async def save_settings(db, update: dict) -> dict:
     global _settings
     merged = _normalize_settings({**(await load_settings(db)), **update})
+    stored = {**merged, "known_events": list(EVENTS)}
     row = (await db.execute(select(SystemConfig).where(SystemConfig.key == SETTINGS_KEY))).scalar_one_or_none()
     if row is None:
-        db.add(SystemConfig(key=SETTINGS_KEY, value=json.dumps(merged)))
+        db.add(SystemConfig(key=SETTINGS_KEY, value=json.dumps(stored)))
     else:
-        row.value = json.dumps(merged)
+        row.value = json.dumps(stored)
     _settings = merged
     return merged
 

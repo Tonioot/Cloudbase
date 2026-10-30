@@ -97,6 +97,13 @@ class Application(Base):
     restart_page     = Column(Text, nullable=True)  # JSON: {title, message, color, custom_html}
     starting_page    = Column(Text, nullable=True)  # JSON: {title, message, color, custom_html}
     notifications_muted_until = Column(DateTime, nullable=True)  # events still reach the inbox, not the channels
+    # Cron job: an app with a schedule runs its start command on that schedule
+    # in a fresh container instead of keeping instances running.
+    cron_schedule        = Column(String(120), nullable=True)   # "*/15 * * * *", "@daily", …
+    cron_timezone        = Column(String(64), nullable=True)    # IANA name; None = UTC
+    cron_enabled         = Column(Boolean, default=True, nullable=False)  # False = paused
+    cron_timeout_seconds = Column(Integer, default=3600, nullable=False)
+    cron_last_slot       = Column(DateTime, nullable=True)      # last scheduled time handled (UTC)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -394,3 +401,21 @@ class NotificationDelivery(Base):
     error           = Column(Text, nullable=True)
     sent_at         = Column(DateTime, nullable=True)
     created_at      = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class CronRun(Base):
+    """One run of a cron job."""
+    __tablename__ = "cron_runs"
+
+    id            = Column(Integer, primary_key=True, index=True)
+    app_id        = Column(Integer, ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    node_id       = Column(Integer, ForeignKey("nodes.id", ondelete="SET NULL"), nullable=True)
+    trigger       = Column(String(20), nullable=False, default="schedule")  # schedule | manual
+    status        = Column(String(20), nullable=False, default="running")   # running | success | failed | timeout
+    scheduled_for = Column(DateTime, nullable=True)   # the slot it ran for (UTC); None for manual runs
+    exit_code     = Column(Integer, nullable=True)
+    error         = Column(Text, nullable=True)       # why it couldn't run (build failed, node offline, …)
+    output        = Column(Text, nullable=True)       # last part of the container's output
+    actor         = Column(String(100), nullable=True)
+    started_at    = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    finished_at   = Column(DateTime, nullable=True)

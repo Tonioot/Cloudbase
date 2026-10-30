@@ -395,6 +395,43 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
 },
 
 {
+  slug: 'cron-jobs',
+  group: 'Apps',
+  title: 'Cron jobs',
+  summary: 'Run a command on a schedule — backups, reports, cleanups — in a fresh container each time.',
+  keywords: 'cron job schedule scheduled task timer crontab periodic nightly hourly backup report cleanup run now pause timezone',
+  lead: 'A cron job is an app that runs its command on a schedule instead of staying up. Each run gets a fresh container that does its work and exits.',
+  body: `
+<h2>Creating one</h2>
+<p>Choose <strong>Cron Job</strong> under <em>New app</em>. The repository, build command and environment variables work like for any app; the <strong>command</strong> is what runs on every run (empty runs the image's own command). Pick a schedule, a timezone and how long a run may take.</p>
+
+<h2>Schedules</h2>
+<p>Five fields: minute, hour, day of month, month and day of week.</p>
+<pre>*/15 * * * *      every 15 minutes
+0 3 * * *         every day at 03:00
+30 9 * * 1-5      weekdays at 09:30
+0 0 1 * *         the first of every month at midnight
+*/10 9-17 * * *   every 10 minutes during office hours
+@hourly  @daily  @weekly  @monthly</pre>
+<p>Times are in the job's timezone, also across daylight saving time: a job at 02:30 runs exactly once on the nights the clocks change, and a job every 15 minutes keeps its rhythm. As in classic cron, when both day of month and day of week are set, a day matches if either one does. The editor shows the schedule in words and the next runs as you type.</p>
+
+<h2>Runs</h2>
+<p>The <strong>Runs</strong> tab lists every run: status, when it started, how long it took, whether it was scheduled or started by hand, and the exit code. Click a run for its output (the last 64 KB). While a job runs, its output also streams in the <strong>Logs</strong> tab. A run succeeds when the command exits with code 0. The last 200 runs are kept.</p>
+<ul>
+  <li><strong>Run now</strong> starts a run right away, also while the schedule is paused.</li>
+  <li><strong>Pause</strong> stops scheduled runs until you resume; a run that is going finishes. After resuming, the job starts at its next slot.</li>
+  <li><strong>Stop a run after</strong> — a run that takes longer is stopped and marked <em>timed out</em>.</li>
+</ul>
+
+<h2>Overlap and missed runs</h2>
+<p>A job never runs twice at the same time: when a slot comes up while the previous run is still going, it is skipped. When Cloudbase was down at a slot, the latest slot is still run if it was less than 10 minutes ago; older slots are skipped. Both are reported as <em>Cron job skipped a run</em> under <a href="/guides?g=notifications">notifications</a>; a failed or timed-out run as <em>Cron job failed</em>, with the end of its output, and the all-clear follows when a run succeeds again.</p>
+
+<h2>Deploys and nodes</h2>
+<p>Deploying a cron job builds the new image; the next run uses it — nothing has to be restarted, and auto-deploy works the same. Under <em>Settings → Schedule</em> you choose the node runs start on; another node builds the image itself on its first run. Resource limits and linked databases apply to every run.</p>
+`,
+},
+
+{
   slug: 'notifications',
   group: 'Apps',
   title: 'Notifications',

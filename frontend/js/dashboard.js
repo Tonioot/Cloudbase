@@ -1,6 +1,7 @@
 import { api, wsNodeEvents, PermissionError } from './api.js';
 import { icon, toast, confirm } from './utils.js';
 import { openDeployModal } from './modal.js';
+import { cronSummary } from './cron.js';
 import { renderDatabasesTable, openCreateDatabaseDialog } from './databases.js';
 import { statusColor, esc } from './shell.js';
 
@@ -133,12 +134,14 @@ async function loadAppStats() {
 const KINDS = { nodejs: 'Node.js', python: 'Python', go: 'Go', ruby: 'Ruby', php: 'PHP', java: 'Java', dotnet: '.NET', rust: 'Rust' };
 
 function appCategory(app) {
+  if (app.cron) return 'cron';
   if (app.no_web) return 'worker';
   if (app.app_type === 'static') return 'static';
   return 'web';
 }
 
 function appKind(app) {
+  if (app.cron) return 'Cron job';
   if (app.no_web) return 'Worker';
   if (app.app_type === 'static') return 'Static site';
   return KINDS[app.app_type] || 'Web service';
@@ -347,11 +350,14 @@ function timeAgo(iso) {
 const ACTION_ICONS = {
   start:   '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"/></svg>',
   stop:    '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>',
+  pause:   '<svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>',
+  resume:  '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/></svg>',
   restart: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>',
 };
 
 function appSubline(app) {
   if (app.status === 'error') return { text: app.last_error ? String(app.last_error).split('\n')[0] : 'Error', cls: 'error' };
+  if (app.cron) return { text: cronSummary(app), cls: '' };
   if (app.no_web) return { text: 'Background worker', cls: '' };
   if (app.app_url) return { text: app.app_url.replace(/^https?:\/\//, ''), cls: '' };
   if (app.domain) return { text: app.domain, cls: '' };
@@ -369,6 +375,7 @@ function appRowHTML(app) {
   const sub = appSubline(app);
   const busy = ['deploying', 'starting', 'stopping', 'restarting'].includes(app.status);
   const isRunning = app.status === 'running';
+  if (app.cron) return cronRowHTML(app, sub, busy);
 
   return `
     <tr class="clickable" data-app-id="${app.id}">
@@ -390,6 +397,35 @@ function appRowHTML(app) {
         <div class="row-actions">
           <button type="button" class="row-action" data-action="${isRunning ? 'stop' : 'start'}" data-perm="apps.${isRunning ? 'stop' : 'start'}" ${busy ? 'disabled' : ''} aria-label="${isRunning ? 'Stop' : 'Start'} ${esc(app.name)}" title="${isRunning ? 'Stop' : 'Start'}">${ACTION_ICONS[isRunning ? 'stop' : 'start']}</button>
           <button type="button" class="row-action" data-action="restart" data-perm="apps.restart" ${busy || !isRunning ? 'disabled' : ''} aria-label="Restart ${esc(app.name)}" title="Restart">${ACTION_ICONS.restart}</button>
+        </div>
+      </td>
+    </tr>`;
+}
+
+// A cron job: its node, no instances or live usage; Run now and Pause/Resume
+function cronRowHTML(app, sub, busy) {
+  const node = app.node_id ? nodesData.find(n => n.id === app.node_id) : null;
+  const paused = !app.cron.enabled;
+  return `
+    <tr class="clickable" data-app-id="${app.id}">
+      <td>
+        <div class="app-cell">
+          <span class="dot" style="background:${statusColor(app.status)}"></span>
+          <span class="app-cell-text">
+            <a class="app-cell-name" href="/app?id=${app.id}">${esc(app.name)}</a>
+            <span class="app-cell-sub">${esc(sub.text)}</span>
+          </span>
+        </div>
+      </td>
+      <td class="cell-muted">${esc(appKind(app))}</td>
+      <td class="cell-mono">${esc(nodeLabel(node))}</td>
+      <td class="num cell-muted">—</td>
+      <td class="num">—</td>
+      <td class="num">—</td>
+      <td>
+        <div class="row-actions">
+          <button type="button" class="row-action" data-action="restart" data-perm="apps.start" ${busy || app.status === 'running' ? 'disabled' : ''} aria-label="Run ${esc(app.name)} now" title="Run now">${ACTION_ICONS.start}</button>
+          <button type="button" class="row-action" data-action="${paused ? 'start' : 'stop'}" data-perm="apps.${paused ? 'start' : 'stop'}" ${busy ? 'disabled' : ''} aria-label="${paused ? 'Resume' : 'Pause'} ${esc(app.name)}" title="${paused ? 'Resume schedule' : 'Pause schedule'}">${paused ? ACTION_ICONS.resume : ACTION_ICONS.pause}</button>
         </div>
       </td>
     </tr>`;
@@ -418,7 +454,7 @@ function renderApps() {
       <thead>
         <tr><th>Name</th><th>Type</th><th>Node</th><th class="num">Instances</th><th class="num">CPU</th><th class="num">Memory</th><th><span class="sr-only">Actions</span></th></tr>
       </thead>
-      <tbody>${rows.length ? rows.map(appRowHTML).join('') : `<tr><td colspan="7" class="cell-muted" style="padding:28px 0;text-align:center">No ${_appFilter === 'worker' ? 'workers' : _appFilter + ' apps'}</td></tr>`}</tbody>
+      <tbody>${rows.length ? rows.map(appRowHTML).join('') : `<tr><td colspan="7" class="cell-muted" style="padding:28px 0;text-align:center">No ${_appFilter === 'worker' ? 'workers' : _appFilter === 'cron' ? 'cron jobs' : _appFilter + ' apps'}</td></tr>`}</tbody>
     </table>`;
   if (window._applyPermVisibility) window._applyPermVisibility(wrap);
 
@@ -434,6 +470,7 @@ function renderApps() {
 }
 
 async function appAction(app, action, btn) {
+  if (app.cron) return cronAction(app, action, btn);
   if (action === 'stop' || action === 'restart') {
     const ok = await confirm(`${action === 'stop' ? 'Stop' : 'Restart'} ${app.name}?`,
       action === 'stop' ? 'All running instances will be stopped.' : 'All running instances will be restarted.');
@@ -445,6 +482,20 @@ async function appAction(app, action, btn) {
     await fns[action](app.id);
     await loadApps();
     toast(`${app.name}: ${action} requested`);
+  } catch (e) {
+    toast(e.message, 'error');
+    btn.disabled = false;
+  }
+}
+
+async function cronAction(app, action, btn) {
+  if (action === 'stop' && !await confirm(`Pause ${app.name}?`, 'It won’t run on its schedule until you resume it.')) return;
+  btn.disabled = true;
+  try {
+    const fns = { start: api.resumeCron, stop: api.pauseCron, restart: api.runCronNow };
+    const res = await fns[action](app.id);
+    await loadApps();
+    toast(action === 'restart' ? `${app.name}: run #${res.id} started` : `${app.name}: schedule ${action === 'stop' ? 'paused' : 'resumed'}`);
   } catch (e) {
     toast(e.message, 'error');
     btn.disabled = false;

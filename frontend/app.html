@@ -55,6 +55,11 @@
           </button>
           <button class="btn" id="btn-stop" data-perm="apps.stop">Stop</button>
           <button class="btn" id="btn-restart" data-perm="apps.restart">Restart</button>
+          <button class="btn" id="btn-cron-run" data-perm="apps.start" style="display:none">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+            Run now
+          </button>
+          <button class="btn" id="btn-cron-toggle" data-perm="apps.stop" style="display:none">Pause</button>
 
           <div class="menu-wrap" data-perm="apps.pull">
             <button class="btn btn-primary" type="button" data-dropdown aria-haspopup="menu" aria-expanded="false" id="btn-deploy-menu">
@@ -107,6 +112,7 @@
 
       <!-- Tabs -->
       <nav class="tabs" aria-label="Application sections">
+        <button class="tab-btn" id="tab-runs" style="display:none">Runs</button>
         <button class="tab-btn" id="tab-logs">Logs</button>
         <button class="tab-btn" id="tab-instances">Instances</button>
         <button class="tab-btn" id="tab-deployments">Deployments</button>
@@ -119,6 +125,12 @@
 
     <!-- Tab panels -->
     <div class="detail-body">
+
+      <!-- RUNS (cron jobs) -->
+      <div class="tab-panel" id="panel-runs">
+        <div class="runs-summary" id="runs-summary"></div>
+        <div id="runs-table"><div class="apps-empty">Loading…</div></div>
+      </div>
 
       <!-- LOGS -->
       <div class="tab-panel" id="panel-logs">
@@ -314,6 +326,22 @@
               </div>
             </section>
 
+            <!-- Schedule (cron jobs) -->
+            <section class="settings-group sv2-sec" id="set-schedule" data-nav="Schedule" data-icon="clock" data-nosave style="display:none">
+              <header class="sv2-head"><h3>Schedule</h3><p>When the job runs, how long a run may take, and on which node.</p></header>
+              <div class="s3-card cron-settings">
+                <div id="cron-editor-slot"></div>
+                <div class="s3-row">
+                  <span class="s3-label"><label class="s3-title" for="cfg-cron-node">Run on</label><span class="s3-desc">Every run starts a fresh container on this node. Other nodes build the image on their first run.</span></span>
+                  <span class="s3-ctl"><select class="input" id="cfg-cron-node"></select></span>
+                </div>
+                <div class="s3-row" data-perm="apps.configure">
+                  <span class="s3-label"><span class="s3-desc" id="cfg-cron-status">A new schedule starts at its next slot; earlier slots aren’t caught up.</span></span>
+                  <button type="button" class="btn btn-primary btn-sm" id="btn-cron-save">Save schedule</button>
+                </div>
+              </div>
+            </section>
+
             <!-- Build & run -->
             <section class="settings-group sv2-sec" id="set-build" data-nav="Build & run" data-icon="hammer">
               <header class="sv2-head"><h3>Build &amp; run</h3><p>How the image is built and how the app starts.</p></header>
@@ -333,7 +361,7 @@
                   <span class="s3-label"><label class="s3-title" for="cfg-port">Internal port</label><span class="s3-desc">The port your app listens on inside the container.</span></span>
                   <span class="s3-ctl"><input class="input" id="cfg-port" type="number" placeholder="3000" /></span>
                 </div>
-                <div class="s3-row">
+                <div class="s3-row" id="cfg-restart-row">
                   <span class="s3-label"><label class="s3-title" for="cfg-restart-policy">When it crashes</label><span class="s3-desc">Gives up after 5 restarts in 60 seconds.</span></span>
                   <span class="s3-ctl">
                     <select class="input" id="cfg-restart-policy">
@@ -343,7 +371,7 @@
                     </select>
                   </span>
                 </div>
-                <label class="s3-row">
+                <label class="s3-row" id="cfg-autostart-row">
                   <span class="s3-label"><span class="s3-title">Start on boot</span><span class="s3-desc">Start this app when Cloudbase starts, for example after a server reboot.</span></span>
                   <span class="toggle"><input type="checkbox" id="cfg-autostart" /><span class="toggle-slider"></span></span>
                 </label>
@@ -437,7 +465,7 @@
                   <span class="s3-ctl"><input class="input" id="cfg-docker-tmpfs-size" type="number" min="1" step="1" placeholder="64" /></span>
                 </div>
               </div>
-              <div class="s3-card">
+              <div class="s3-card" id="cfg-autoscale-card">
                 <label class="s3-row">
                   <span class="s3-label"><span class="s3-title">Autoscaling</span><span class="s3-desc">Add instances on the primary when CPU is high, remove them when it drops.</span></span>
                   <span class="toggle"><input type="checkbox" id="cfg-autoscale-enabled" /><span class="toggle-slider"></span></span>

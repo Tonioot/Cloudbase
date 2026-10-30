@@ -921,3 +921,24 @@ a.icon-btn { text-decoration: none; }
 .an-channels .pill { color: var(--text); }
 .an-type { color: var(--muted); }
 .an-off { opacity: .55; }
+
+/* Runs tab (cron jobs) */
+.runs-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 20px; }
+.runs-card { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius); min-width: 0; }
+.runs-k { font-size: 12px; color: var(--muted); }
+.runs-v { font-size: 15px; color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runs-sub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.runs-sub code { font-size: 11.5px; color: var(--text-2); }
+.runs-table tr.cron-run td:first-child { width: 1%; }
+.run-detail td { padding: 0 0 14px !important; border-bottom: 1px solid var(--line); }
+.run-output pre {
+  margin: 0; max-height: 360px; overflow: auto; padding: 12px 14px; border-radius: var(--radius-sm);
+  background: var(--code); border: 1px solid var(--line); font-family: var(--font-mono); font-size: 12px;
+  line-height: 1.55; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.run-error { margin-bottom: 8px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--red-bg); border: 1px solid var(--red-border); color: var(--red); font-size: 12.5px; }
+@media (max-width: 1000px) { .runs-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) {
+  .runs-table th:nth-child(5), .runs-table td:nth-child(5), .runs-table th:nth-child(6), .runs-table td:nth-child(6) { display: none; }
+}
+.cron-settings .cron-editor { padding: 16px 18px; }

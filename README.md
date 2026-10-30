@@ -31,7 +31,7 @@ The goal is to keep multi-server application management transparent and easy to 
 
 **Apps & builds**
 
-* Web services, static sites and background workers
+* Web services, static sites, background workers and cron jobs
 * Uses your own `Dockerfile`, or generates one for Node.js, Python, Ruby, Go, PHP or a generic image
 * Separate build and start commands, Docker build caching
 * Encrypted environment variables, `.env` import, available during the build
@@ -42,6 +42,12 @@ The goal is to keep multi-server application management transparent and easy to 
 * Rolling and blue/green deploys with health checks and automatic rollback on failure
 * Auto-deploy on push: polls the branch every 1, 5 or 15 minutes — no webhook needed
 * Deploy history with full logs and one-click rollbacks to any earlier commit
+
+**Cron jobs**
+
+* Run a command on a schedule (cron syntax, any timezone) in a fresh container per run
+* Run history with exit code, duration and output; run now, pause and resume, time limits
+* No overlapping runs, missed runs reported, failures as notifications
 
 **Instances & scaling**
 
