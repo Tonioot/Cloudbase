@@ -307,6 +307,8 @@ def _docker_runtime_options(app: Application) -> dict:
         # host port must not be open to the internet as well. Without a domain
         # the host port is the only way in, so it stays public.
         "bind_host": "127.0.0.1" if _has_public_nginx_domain(app) else None,
+        # Workers have no web server: nothing to reach, so no port on the host
+        "publish_port": not app.no_web,
         **db_links.runtime_options(app.id),
     }
 
@@ -586,6 +588,11 @@ async def _restore_nginx_after_transition(
         pm._push_line(app_id, f"Failed to restore nginx after {transition_label}: {msg}")
 
 
+def _image_port(app: Application) -> int:
+    """The port the image is built for; 0 for workers and cron jobs (no EXPOSE)."""
+    return 0 if app.no_web else (app.port or 8000)
+
+
 def _image_build_kwargs(app: Application) -> dict:
     """Extra dm.build_image kwargs: the app's build step and env vars for it."""
     return {
@@ -608,7 +615,7 @@ def _node_build_payload(app: Application) -> dict:
         "app_type": app.app_type or "unknown",
         "start_command": app.start_command or "",
         "build_command": app.build_command or "",
-        "internal_port": app.port or 8000,
+        "internal_port": _image_port(app),
         "env_vars": decrypt_env(app.env_vars or ""),
     }
 
@@ -625,7 +632,7 @@ def _remote_replica_command_payload(app: Application, env_vars: dict, external_p
         "app_type": app_type or "unknown",
         "start_command": app.start_command,
         "build_command": app.build_command or "",
-        "internal_port": app.port or 8000,
+        "internal_port": _image_port(app),
         "external_port": external_port,
         "env_vars": env_vars,
         "restart_policy": app.restart_policy,
@@ -1044,7 +1051,7 @@ async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db), _n
             source_dir,
             app.app_type or "unknown",
             app.start_command or "",
-            app.port or 8000,
+            _image_port(app),
             **_dockerfile_build_kwargs(app),
         )
     except Exception as exc:
@@ -1139,7 +1146,7 @@ async def _deploy_app(app: Application):
         app_dir,
         app.app_type or "unknown",
         app.start_command or "",
-        app.port or 8000,
+        _image_port(app),
         **_dockerfile_build_kwargs(app),
     )
     log.info("[deploy] Deployment finished for app=%s", app.name)
@@ -1637,7 +1644,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
                 app.working_dir,
                 app.app_type or "unknown",
                 app.start_command or "",
-                app.port or 8000,
+                _image_port(app),
                 **_dockerfile_build_kwargs(app),
             )
         # Force image refresh on next start/restart so config changes are applied.
@@ -1800,6 +1807,11 @@ async def export_apps(req: ExportRequest, _user: dict = Depends(_auth.require_pe
             "update_page": json.loads(app.update_page or "{}"),
             "restart_page": json.loads(app.restart_page or "{}"),
             "starting_page": json.loads(app.starting_page or "{}"),
+            "no_web": bool(app.no_web),
+            "cron_schedule": app.cron_schedule,
+            "cron_timezone": app.cron_timezone,
+            "cron_enabled": bool(app.cron_enabled),
+            "cron_timeout_seconds": app.cron_timeout_seconds,
         })
 
     return {"exported_apps": export_data}
@@ -1827,7 +1839,16 @@ async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, _us
         if not target_node:
             target_node = local_node
 
-        import_external_port = await _assign_external_port(None, target_node.id, None, db)
+        # A cron job keeps its schedule when it is valid; otherwise it comes in as a worker
+        cron_schedule = " ".join((app_data.get("cron_schedule") or "").split()) or None
+        if cron_schedule:
+            try:
+                _cron.check_schedule(cron_schedule, app_data.get("cron_timezone"))
+            except HTTPException as e:
+                log.warning("[import] app %r: schedule dropped: %s", app_data.get("name"), e.detail)
+                cron_schedule = None
+        no_web = bool(app_data.get("no_web")) or bool(cron_schedule) or bool(app_data.get("cron_schedule"))
+        import_external_port = None if no_web else await _assign_external_port(None, target_node.id, None, db)
 
         app = Application(
             name=app_data.get("name"),
@@ -1861,16 +1882,22 @@ async def import_apps(req: ImportRequest, background_tasks: BackgroundTasks, _us
             update_page=json.dumps(app_data.get("update_page") or {}),
             restart_page=json.dumps(app_data.get("restart_page") or {}),
             starting_page=json.dumps(app_data.get("starting_page") or {}),
+            no_web=no_web,
+            cron_schedule=cron_schedule,
+            cron_timezone=(app_data.get("cron_timezone") or None) if cron_schedule else None,
+            cron_enabled=bool(app_data.get("cron_enabled", True)),
+            cron_timeout_seconds=(app_data.get("cron_timeout_seconds")
+                                  if app_data.get("cron_timeout_seconds") in _cron.TIMEOUT_CHOICES else 3600),
         )
         db.add(app)
         await db.commit()
         await db.refresh(app)
 
-        if target_node.is_local:
+        if target_node.is_local or app.cron_schedule:  # cron jobs are built on the primary
             try:
                 await _deploy_app(app)
-                app.status = "stopped"
-                if app.domain:
+                app.status = _cron.status_of(app) if app.cron_schedule else "stopped"
+                if app.domain and not app.no_web:
                     app.nginx_enabled = True
                     await _write_app_nginx_config(app, db, local_node)
             except Exception as e:
@@ -1917,7 +1944,7 @@ async def _start_instance_local(app: "Application", replica: "ApplicationReplica
         return await asyncio.to_thread(
             pm.start_docker_replica,
             app_id, replica.id, app.name,
-            app.port or 8000,
+            _image_port(app),
             ext_port,
             env_vars, docker_opts,
             app_id,  # image_app_id
@@ -1932,7 +1959,7 @@ async def _start_instance_local(app: "Application", replica: "ApplicationReplica
         await asyncio.to_thread(
             dm.build_image,
             app_id, app.name, app.working_dir, _push,
-            app.app_type or "unknown", app.start_command or "", app.port or 8000,
+            app.app_type or "unknown", app.start_command or "", _image_port(app),
             **_image_build_kwargs(app),
         )
         app.docker_image = dm.image_name(app_id, app.name)
@@ -3036,7 +3063,7 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
             dm.build_image,
             app_id, app.name, app_dir, _push,
             app.app_type or "unknown", app.start_command or "",
-            app.port or 8000,
+            _image_port(app),
             **_image_build_kwargs(app),
         )
     except Exception as e:
@@ -3106,7 +3133,7 @@ async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), 
         img = await asyncio.to_thread(
             dm.build_image,
             app_id, app.name, app.working_dir, _push,
-            app.app_type or "unknown", app.start_command or "", app.port or 8000,
+            app.app_type or "unknown", app.start_command or "", _image_port(app),
             **_image_build_kwargs(app),
         )
         source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
@@ -3223,7 +3250,7 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
                 new_img = await asyncio.to_thread(
                     dm.build_image,
                     app_id, app.name, app.working_dir, _push,
-                    app.app_type or "unknown", app.start_command or "", app.port or 8000,
+                    app.app_type or "unknown", app.start_command or "", _image_port(app),
                     **_image_build_kwargs(app),
                 )
             except Exception as e:
@@ -3244,7 +3271,7 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
                     "app_type": app.app_type or "unknown",
                     "start_command": app.start_command or "",
                     "build_command": app.build_command or "",
-                    "internal_port": app.port or 8000,
+                    "internal_port": _image_port(app),
                     "env_vars": env_vars,
                     "docker_options": _docker_runtime_options(app),
                     "source_revision": source_revision,
@@ -3490,7 +3517,7 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
                 new_img = await asyncio.to_thread(
                     dm.build_image,
                     app_id, app.name, app.working_dir, _push,
-                    app.app_type or "unknown", app.start_command or "", app.port or 8000,
+                    app.app_type or "unknown", app.start_command or "", _image_port(app),
                     **_image_build_kwargs(app),
                 )
             except Exception as e:
@@ -3511,7 +3538,7 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
                     "app_type": app.app_type or "unknown",
                     "start_command": app.start_command or "",
                     "build_command": app.build_command or "",
-                    "internal_port": app.port or 8000,
+                    "internal_port": _image_port(app),
                     "env_vars": env_vars,
                     "docker_options": _docker_runtime_options(app),
                     "source_revision": source_revision,
@@ -3839,7 +3866,7 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
                 dm.build_image,
                 app_id, app.name, app_dir, _docker_push,
                 app.app_type or "unknown", app.start_command or "",
-                app.port or 8000,
+                _image_port(app),
                 **_image_build_kwargs(app),
             )
             app.docker_image = dm.image_name(app_id, app.name)
@@ -3916,7 +3943,7 @@ async def rebuild_docker_image_stream(app_id: int, _user: dict = Depends(_auth.r
             img = await asyncio.to_thread(
                 dm.build_image,
                 app_id, app.name, app.working_dir, _push,
-                app.app_type or "unknown", app.start_command or "", app.port or 8000,
+                app.app_type or "unknown", app.start_command or "", _image_port(app),
                 **_image_build_kwargs(app),
             )
             source_revision = _refresh_app_source_revision(app)

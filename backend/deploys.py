@@ -158,7 +158,7 @@ async def _rebuild(app: Application, db, source_revision, push, *, restart: bool
     await asyncio.to_thread(
         dm.build_image,
         app.id, app.name, app.working_dir, lambda _aid, line: push(line),
-        app.app_type or "unknown", app.start_command or "", app.port or 8000,
+        app.app_type or "unknown", app.start_command or "", apps._image_port(app),
         **apps._image_build_kwargs(app),
     )
     app.docker_image = dm.image_name(app.id, app.name)

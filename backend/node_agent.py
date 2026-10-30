@@ -682,7 +682,8 @@ async def _build_image_local(local_id: int, app_name: str, app_dir: str, payload
 
     app_type = (payload.get("app_type") or "").strip().lower()
     start_cmd = payload.get("start_command") or ""
-    port = payload.get("internal_port") or payload.get("port") or 8000
+    port = payload.get("internal_port", payload.get("port"))
+    port = 8000 if port is None else port  # 0 = no port (worker, cron job)
 
     if not app_type or app_type == "unknown":
         app_type = pm.detect_app_type_from_command(start_cmd) if start_cmd else "unknown"

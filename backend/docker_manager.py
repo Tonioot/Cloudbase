@@ -231,22 +231,19 @@ _DOCKERFILES: dict[str, str] = {
 FROM node:20-alpine
 WORKDIR /app
 {nodejs_copy_pkg}COPY . .
-{build_step}EXPOSE {port}
-CMD {cmd_json}
+{build_step}{expose}CMD {cmd_json}
 """,
     "python": """\
 FROM python:3.11-slim
 WORKDIR /app
 {python_copy_req}COPY . .
-{build_step}EXPOSE {port}
-CMD {cmd_json}
+{build_step}{expose}CMD {cmd_json}
 """,
     "ruby": """\
 FROM ruby:3.2-slim
 WORKDIR /app
 {ruby_copy_gemfile}COPY . .
-{build_step}EXPOSE {port}
-CMD {cmd_json}
+{build_step}{expose}CMD {cmd_json}
 """,
     "go": """\
 FROM golang:1.22-alpine AS builder
@@ -257,23 +254,20 @@ RUN go build -o app .
 FROM alpine:latest
 WORKDIR /app
 COPY --from=builder /app/app .
-EXPOSE {port}
-CMD ["./app"]
+{expose}CMD ["./app"]
 """,
     "php": """\
 FROM php:8.2-cli
 WORKDIR /app
 COPY . .
-{build_step}EXPOSE {port}
-CMD {cmd_json}
+{build_step}{expose}CMD {cmd_json}
 """,
     "unknown": """\
 FROM ubuntu:22.04
 WORKDIR /app
 RUN apt-get update && apt-get install -y curl wget && rm -rf /var/lib/apt/lists/*
 COPY . .
-{build_step}EXPOSE {port}
-CMD {cmd_json}
+{build_step}{expose}CMD {cmd_json}
 """,
 }
 
@@ -431,7 +425,10 @@ def generate_dockerfile(
         return GENERATED_MARKER + _generate_static_dockerfile(app_dir, start_command, build_command, build_env_keys)
 
     template = _DOCKERFILES.get(app_type, _DOCKERFILES["unknown"])
+    # 0 = no port: workers and cron jobs serve nothing, so the image declares none
+    no_port = port == 0
     port = port or 8000
+    expose = "" if no_port else f"EXPOSE {port}\n"
     start_command = _normalize_docker_start_command(app_type, start_command, port)
 
     def _has_file(name: str) -> bool:
@@ -460,7 +457,7 @@ def generate_dockerfile(
         ),
     }
 
-    return GENERATED_MARKER + template.format(port=port, cmd_json=_cmd_to_json(start_command), **extras)
+    return GENERATED_MARKER + template.format(expose=expose, cmd_json=_cmd_to_json(start_command), **extras)
 
 
 _DEFAULT_DOCKERIGNORE = """\
@@ -718,7 +715,7 @@ def run_container(
         pass
 
     port_bindings = {}
-    if internal_port and external_port:
+    if internal_port and external_port and docker_options.get("publish_port", True):
         port_bindings[f"{internal_port}/tcp"] = _host_port(external_port, docker_options)
 
     run_kwargs = {
@@ -1126,7 +1123,7 @@ def run_replica_container(
         pass
 
     port_bindings = {}
-    if internal_port and external_port:
+    if internal_port and external_port and docker_options.get("publish_port", True):
         port_bindings[f"{internal_port}/tcp"] = _host_port(external_port, docker_options)
 
     run_kwargs = {
@@ -1189,7 +1186,8 @@ def run_replica_container(
                 _time.sleep(2)
             else:
                 raise
-    push_line_fn(app_id, f"[Replica] Container {replica_id} started: {container.short_id} (:{external_port} → :{internal_port})")
+    ports = f" (:{external_port} → :{internal_port})" if port_bindings else " (no port: background worker)"
+    push_line_fn(app_id, f"[Replica] Container {replica_id} started: {container.short_id}{ports}")
     return container.id
 
 

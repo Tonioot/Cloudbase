@@ -190,7 +190,7 @@ async def _ensure_local_image(app: Application, push) -> str:
     push("[Cron] Building image…")
     await asyncio.to_thread(
         dm.build_image, app.id, app.name, app.working_dir, lambda _aid, line: push(line),
-        app.app_type or "unknown", app.start_command or "", app.port or 8000,
+        app.app_type or "unknown", app.start_command or "", apps._image_port(app),
         **apps._image_build_kwargs(app),
     )
     async with AsyncSessionLocal() as db:
