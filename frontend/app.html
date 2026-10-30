@@ -331,9 +331,9 @@
               <header class="sv2-head"><h3>Schedule</h3><p>When the job runs, how long a run may take, and on which node.</p></header>
               <div class="s3-card cron-settings">
                 <div id="cron-editor-slot"></div>
-                <div class="s3-row">
-                  <span class="s3-label"><label class="s3-title" for="cfg-cron-node">Run on</label><span class="s3-desc">Every run starts a fresh container on this node. Other nodes build the image on their first run.</span></span>
-                  <span class="s3-ctl"><select class="input" id="cfg-cron-node"></select></span>
+                <div class="cron-row cron-row--card">
+                  <div class="cron-row-label"><span class="cron-row-title">Run on</span><span class="cron-row-desc">The node each run starts on</span></div>
+                  <div class="cron-chips" id="cfg-cron-node" role="group" aria-label="Run on"></div>
                 </div>
                 <div class="s3-row" data-perm="apps.configure">
                   <span class="s3-label"><span class="s3-desc" id="cfg-cron-status">A new schedule starts at its next slot; earlier slots aren’t caught up.</span></span>

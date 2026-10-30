@@ -941,4 +941,5 @@ a.icon-btn { text-decoration: none; }
 @media (max-width: 640px) {
   .runs-table th:nth-child(5), .runs-table td:nth-child(5), .runs-table th:nth-child(6), .runs-table td:nth-child(6) { display: none; }
 }
-.cron-settings .cron-editor { padding: 16px 18px; }
+.cron-settings .cron-editor { border: 0; border-radius: 0; }
+.cron-settings .cron-row--card { border-top: 1px solid var(--line); }

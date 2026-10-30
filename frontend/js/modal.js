@@ -349,12 +349,12 @@ function modalHTML() {
                 <div class="field-hint" id="f-cmd-hint" style="display:none">Folder that contains <code>index.html</code> (after the build, if any). Empty = auto-detect: repo root, or dist, build, out, public…</div>
                 <div class="field-hint" id="f-cmd-cron-hint" style="display:none">Runs in a fresh container on every run; the run succeeds when it exits with code 0. Empty = the image’s own command.</div>
               </div>
-              <div class="deploy-field-span-2" id="f-cron-block" style="display:none">${scheduleEditorHTML('f-cron')}</div>
               <div class="field deploy-field-span-2" id="f-build-field">
                 <label class="field-label">Build Command <span class="hint">optional</span></label>
                 <input class="input input-mono" id="f-build" placeholder="npm run build" />
                 <div class="field-hint">Runs once while the image is built — not on every start. Put <code>npm run build</code> here and keep the start command to <code>npm start</code>. Environment variables are available during the build.</div>
               </div>
+              <div class="deploy-field-span-2" id="f-cron-block" style="display:none">${scheduleEditorHTML('f-cron')}</div>
               <div class="field deploy-field-span-2" id="f-port-field">
                 <label class="field-label">Internal Port</label>
                 <input class="input" id="f-port" type="number" placeholder="3000" style="max-width:160px" />

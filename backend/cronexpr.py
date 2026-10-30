@@ -226,4 +226,15 @@ def describe(cron: Cron) -> str:
         elif not cron.any_day:
             parts.append(f"on day {_list(sorted(cron.days))} of the month")
         return " ".join(parts)
+
+    # Steps that don't divide the hour/day: cron restarts the count at :00 / 00:00
+    def uneven(values: list, size: int) -> Optional[int]:
+        if len(values) < 2 or values[0] != 0:
+            return None
+        step = values[1] - values[0]
+        return step if values == list(range(0, size, step)) else None
+    if len(hours) == 24 and all_days and (s := uneven(mins, 60)):
+        return f"Every {s} minutes, counted from :00 each hour"
+    if len(mins) == 1 and all_days and (s := uneven(hours, 24)):
+        return f"Every {s} hours at :{mins[0]:02d}, counted from midnight"
     return f"Custom: {cron.expr}"

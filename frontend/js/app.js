@@ -1540,7 +1540,7 @@ async function initCronSettings() {
       if (!_cronEditor.valid()) { toast('Fix the schedule first', 'error'); return; }
       btn.disabled = true;
       try {
-        const nodeId = parseInt(document.getElementById('cfg-cron-node').value, 10);
+        const nodeId = parseInt(document.querySelector('#cfg-cron-node [aria-pressed="true"]')?.dataset.value, 10);
         await api.updateCron(APP_ID, { ..._cronEditor.get(), ...(Number.isInteger(nodeId) ? { node_id: nodeId } : {}) });
         app = await api.getApp(APP_ID);
         updateHeaderStatus();
@@ -1555,15 +1555,19 @@ async function initCronSettings() {
   } else {
     _cronEditor.set(app.cron);
   }
-  const sel = document.getElementById('cfg-cron-node');
+  const chips = document.getElementById('cfg-cron-node');
   try {
     const nodes = await api.listNodes();
-    sel.innerHTML = nodes.filter(n => n.enabled !== false).map(n => {
+    chips.innerHTML = nodes.filter(n => n.enabled !== false).map(n => {
       const selected = app.node_id ? n.id === app.node_id : n.is_local;
-      return `<option value="${n.id}" ${selected ? 'selected' : ''}>${escHtml(n.is_local ? 'Primary (this server)' : n.name)}${n.status === 'offline' ? ' · offline' : ''}</option>`;
+      return `<button type="button" class="cron-chip" data-value="${n.id}" aria-pressed="${selected}" title="${n.status === 'offline' ? 'Offline' : ''}">${escHtml(n.is_local ? 'Primary' : n.name)}${n.status === 'offline' ? ' · offline' : ''}</button>`;
     }).join('');
+    chips.onclick = e => {
+      const b = e.target.closest('.cron-chip');
+      if (b) chips.querySelectorAll('.cron-chip').forEach(c => c.setAttribute('aria-pressed', String(c === b)));
+    };
   } catch {
-    sel.innerHTML = '<option value="">Primary (this server)</option>';
+    chips.innerHTML = '<button type="button" class="cron-chip" aria-pressed="true">Primary</button>';
   }
 }
 

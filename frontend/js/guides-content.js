@@ -406,7 +406,7 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
 <p>Choose <strong>Cron Job</strong> under <em>New app</em>. The repository, build command and environment variables work like for any app; the <strong>command</strong> is what runs on every run (empty runs the image's own command). Pick a schedule, a timezone and how long a run may take.</p>
 
 <h2>Schedules</h2>
-<p>Five fields: minute, hour, day of month, month and day of week.</p>
+<p>In <strong>Simple</strong> mode you pick the schedule in plain words: every 15 minutes, every 2 hours at :30, every day at 03:00, every week on chosen days, or every month on a day. Anything else goes in <strong>Cron expression</strong> mode, with the standard five fields: minute, hour, day of month, month and day of week. Both show the schedule in words and the next runs.</p>
 <pre>*/15 * * * *      every 15 minutes
 0 3 * * *         every day at 03:00
 30 9 * * 1-5      weekdays at 09:30
@@ -420,7 +420,7 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
 <ul>
   <li><strong>Run now</strong> starts a run right away, also while the schedule is paused.</li>
   <li><strong>Pause</strong> stops scheduled runs until you resume; a run that is going finishes. After resuming, the job starts at its next slot.</li>
-  <li><strong>Stop a run after</strong> — a run that takes longer is stopped and marked <em>timed out</em>.</li>
+  <li><strong>Time limit</strong> — the longest a run may take. A run that takes longer is stopped and marked <em>timed out</em>, so a job that hangs doesn’t keep running.</li>
 </ul>
 
 <h2>Overlap and missed runs</h2>
