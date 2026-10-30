@@ -300,6 +300,14 @@ def _absolute(link: Optional[str]) -> Optional[str]:
     return f"https://{domain}{link}"
 
 
+# Public copy of the Cloudbase mark for chat apps; the panel serves its own once it has a domain.
+_LOGO_FALLBACK = "https://raw.githubusercontent.com/Tonioot/Cloudbase/main/backend/assets/cloudbase-mark.png"
+
+
+def _logo_url() -> str:
+    return _absolute("/assets/cloudbase-mark.png") or _LOGO_FALLBACK
+
+
 def build_message(n: Notification, app_name: Optional[str], resolves_key: Optional[str] = None) -> channels.Message:
     return channels.Message(
         id=n.id, event=n.event, severity=n.severity, title=n.title, message=n.message or "",
@@ -308,7 +316,7 @@ def build_message(n: Notification, app_name: Optional[str], resolves_key: Option
         resolve=n.severity == "resolved",
         timestamp=n.created_at.replace(tzinfo=timezone.utc).isoformat(),
         event_label=EVENTS.get(n.event, (n.event,))[0], resolves_id=n.resolves_id,
-        settings_url=_absolute("/settings?s=notifications"),
+        settings_url=_absolute("/settings?s=notifications"), logo_url=_logo_url(),
     )
 
 
@@ -414,7 +422,7 @@ async def send_test(channel_type: str, config: dict) -> Optional[str]:
         message="If you can read this, the channel works.", url=_absolute("/settings?s=notifications"),
         app=None, dedupe_key="cloudbase-test", resolve=False,
         timestamp=datetime.now(timezone.utc).isoformat(),
-        event_label="Test", settings_url=_absolute("/settings?s=notifications"),
+        event_label="Test", settings_url=_absolute("/settings?s=notifications"), logo_url=_logo_url(),
     )
     try:
         await channels.send(channel_type, config, msg)

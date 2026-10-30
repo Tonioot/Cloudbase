@@ -2252,6 +2252,12 @@ if os.path.isdir(FRONTEND_DIR):
     async def favicon():
         return FileResponse(os.path.join(FRONTEND_DIR, "cloudbase.png"), media_type="image/svg+xml")
 
+    @app.get("/assets/cloudbase-mark.png", include_in_schema=False)
+    async def logo_mark():
+        # Small public logo: chat apps (Slack, Teams, Discord, ntfy) show it next to notifications
+        return FileResponse(os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "cloudbase-mark.png"),
+                            media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
     @app.get("/cloudbase.png", include_in_schema=False)
     async def logo():
         return FileResponse(os.path.join(FRONTEND_DIR, "cloudbase.png"), media_type="image/png")

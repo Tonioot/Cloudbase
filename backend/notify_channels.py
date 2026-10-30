@@ -12,6 +12,7 @@ import json
 import smtplib
 import ssl
 from dataclasses import dataclass, field
+from datetime import datetime
 from email.message import EmailMessage
 from typing import Optional
 
@@ -25,6 +26,7 @@ _USER_AGENT = "Cloudbase-Notifications"
 # Colours per severity for Slack, Discord and Teams
 _COLOURS = {"critical": "#dc2626", "warning": "#d97706", "info": "#2563eb", "resolved": "#16a34a"}
 _EMOJI = {"critical": "🔴", "warning": "🟠", "info": "🔵", "resolved": "🟢"}
+_SEVERITY = {"critical": "Critical", "warning": "Warning", "info": "Info", "resolved": "Resolved"}
 
 
 @dataclass
@@ -43,6 +45,19 @@ class Message:
     event_label: str = ""
     resolves_id: Optional[int] = None    # the alert this all-clear or reminder belongs to
     settings_url: Optional[str] = None
+    logo_url: Optional[str] = None       # public URL of the Cloudbase mark, for chat apps
+
+    @property
+    def kicker(self) -> str:
+        """'Critical · Deploy failed' — the line above the title."""
+        return f"{_SEVERITY.get(self.severity, '')} · {self.event_label}" if self.event_label else _SEVERITY.get(self.severity, '')
+
+    @property
+    def unix(self) -> int:
+        try:
+            return int(datetime.fromisoformat(self.timestamp).timestamp())
+        except ValueError:
+            return 0
 
     def payload(self) -> dict:
         return {
@@ -50,6 +65,7 @@ class Message:
             "status": "resolved" if self.resolve else "triggered",
             "title": self.title, "message": self.message, "app": self.app,
             "url": self.url, "dedupe_key": self.dedupe_key, "timestamp": self.timestamp,
+            "event_label": self.event_label, "source": "cloudbase",
         }
 
 
@@ -157,25 +173,54 @@ async def _post(url: str, *, json_body=None, content: Optional[bytes] = None, he
 
 # ── Senders ───────────────────────────────────────────────────────────────────
 
+def _slack_escape(text: str) -> str:
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 async def _send_slack(msg: Message, cfg: dict) -> None:
-    text = f"{_EMOJI.get(msg.severity, '')} *{msg.title}*"
+    head = [{"type": "mrkdwn", "text": f"*Cloudbase*  ·  {_slack_escape(msg.kicker)}"}]
+    if msg.logo_url:
+        head.insert(0, {"type": "image", "image_url": msg.logo_url, "alt_text": "Cloudbase"})
+    text = f"*{_slack_escape(msg.title)}*"
     if msg.message:
-        text += f"\n{msg.message}"
+        text += f"\n{_slack_escape(msg.message)}"
+    meta = ([f"App: *{_slack_escape(msg.app)}*"] if msg.app else []) + [
+        f"<!date^{msg.unix}^{{date_short_pretty}} at {{time}}|{msg.timestamp[:16].replace('T', ' ')} UTC>"]
+    blocks = [
+        {"type": "context", "elements": head},
+        {"type": "section", "text": {"type": "mrkdwn", "text": text[:2900]}},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": "  ·  ".join(meta)}]},
+    ]
     if msg.url:
-        text += f"\n<{msg.url}|Open in Cloudbase>"
+        blocks.append({"type": "actions", "elements": [
+            {"type": "button", "text": {"type": "plain_text", "text": "Open in Cloudbase"}, "url": msg.url}]})
     await _post(cfg["webhook_url"], json_body={
-        "text": f"{_EMOJI.get(msg.severity, '')} {msg.title}",  # notification preview
-        "attachments": [{"color": _COLOURS.get(msg.severity), "mrkdwn_in": ["text"], "text": text}],
+        "text": f"{msg.kicker}: {msg.title}",  # the notification preview
+        "username": "Cloudbase", "icon_url": msg.logo_url,  # only legacy webhooks honour these
+        "attachments": [{"color": _COLOURS.get(msg.severity), "blocks": blocks}],
     })
 
 
 async def _send_teams(msg: Message, cfg: dict) -> None:
-    body = [{"type": "TextBlock", "text": f"{_EMOJI.get(msg.severity, '')} {msg.title}",
-             "weight": "Bolder", "size": "Medium", "wrap": True}]
+    brand = [{"type": "Column", "width": "stretch", "verticalContentAlignment": "Center", "items": [
+        {"type": "TextBlock", "text": "Cloudbase", "weight": "Bolder", "spacing": "None"},
+        {"type": "TextBlock", "text": msg.kicker, "isSubtle": True, "spacing": "None", "size": "Small",
+         "color": {"critical": "Attention", "warning": "Warning", "resolved": "Good"}.get(msg.severity, "Default")},
+    ]}]
+    if msg.logo_url:
+        brand.insert(0, {"type": "Column", "width": "auto", "items": [
+            {"type": "Image", "url": msg.logo_url, "width": "32px", "height": "32px", "altText": "Cloudbase"}]})
+    body = [
+        {"type": "ColumnSet", "columns": brand},
+        {"type": "TextBlock", "text": msg.title, "weight": "Bolder", "size": "Medium", "wrap": True, "spacing": "Medium"},
+    ]
     if msg.message:
-        body.append({"type": "TextBlock", "text": msg.message, "wrap": True})
+        body.append({"type": "TextBlock", "text": msg.message, "wrap": True, "spacing": "Small"})
+    facts = ([{"title": "App", "value": msg.app}] if msg.app else []) + [
+        {"title": "Time", "value": f"{{{{DATE({msg.timestamp[:19]}Z, SHORT)}}}} {{{{TIME({msg.timestamp[:19]}Z)}}}}"}]
+    body.append({"type": "FactSet", "facts": facts, "spacing": "Medium"})
     card = {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-            "type": "AdaptiveCard", "version": "1.4", "body": body}
+            "type": "AdaptiveCard", "version": "1.4", "body": body, "msteams": {"width": "Full"}}
     if msg.url:
         card["actions"] = [{"type": "Action.OpenUrl", "title": "Open in Cloudbase", "url": msg.url}]
     await _post(cfg["webhook_url"], json_body={"type": "message", "attachments": [
@@ -185,13 +230,16 @@ async def _send_teams(msg: Message, cfg: dict) -> None:
 
 async def _send_pagerduty(msg: Message, cfg: dict) -> None:
     event = {"routing_key": cfg["routing_key"], "dedup_key": msg.dedupe_key,
-             "event_action": "resolve" if msg.resolve else "trigger"}
+             "event_action": "resolve" if msg.resolve else "trigger",
+             "client": "Cloudbase"}
+    if msg.settings_url:
+        event["client_url"] = msg.settings_url.split("/settings")[0]
     if not msg.resolve:
         event["payload"] = {
             "summary": msg.title[:1024], "source": msg.app or "cloudbase",
             "severity": {"critical": "critical", "warning": "warning"}.get(msg.severity, "info"),
-            "component": msg.app, "class": msg.event, "timestamp": msg.timestamp,
-            "custom_details": {"message": msg.message, **msg.detail},
+            "component": msg.app, "group": "cloudbase", "class": msg.event, "timestamp": msg.timestamp,
+            "custom_details": {"event": msg.event_label, "message": msg.message, **msg.detail},
         }
         if msg.url:
             event["links"] = [{"href": msg.url, "text": "Open in Cloudbase"}]
@@ -228,35 +276,60 @@ async def _send_webhook(msg: Message, cfg: dict) -> None:
 
 
 async def _send_discord(msg: Message, cfg: dict) -> None:
-    embed = {"title": f"{_EMOJI.get(msg.severity, '')} {msg.title}"[:256],
+    embed = {"author": {"name": msg.kicker},
+             "title": msg.title[:256],
              "description": (msg.message or "")[:4000],
              "color": int(_COLOURS.get(msg.severity, "#64748b")[1:], 16),
+             "footer": {"text": "Cloudbase"},
              "timestamp": msg.timestamp}
+    if msg.app:
+        embed["fields"] = [{"name": "App", "value": msg.app[:1024], "inline": True}]
     if msg.url:
         embed["url"] = msg.url
-    await _post(cfg["webhook_url"], json_body={"username": "Cloudbase", "embeds": [embed],
-                                               "allowed_mentions": {"parse": []}})
+    if msg.logo_url:
+        embed["footer"]["icon_url"] = msg.logo_url
+    body = {"username": "Cloudbase", "embeds": [embed], "allowed_mentions": {"parse": []}}
+    if msg.logo_url:
+        body["avatar_url"] = msg.logo_url
+    if msg.url:  # a link button, like the e-mail's (allowed on webhooks for links)
+        body["components"] = [{"type": 1, "components": [
+            {"type": 2, "style": 5, "label": "Open in Cloudbase", "url": msg.url}]}]
+    url = cfg["webhook_url"].strip()
+    if msg.url:  # ordinary webhooks only show (link) buttons when asked to
+        url += ("&" if "?" in url else "?") + "with_components=true"
+    await _post(url, json_body=body)
 
 
 async def _send_telegram(msg: Message, cfg: dict) -> None:
-    text = f"{_EMOJI.get(msg.severity, '')} <b>{html.escape(msg.title)}</b>"
+    e = html.escape
+    text = f"{_EMOJI.get(msg.severity, '')} <b>{e(msg.title)}</b>\n<i>{e(msg.kicker)}</i>"
     if msg.message:
-        text += f"\n{html.escape(msg.message)}"
+        text += f"\n\n{e(msg.message)}"
+    if msg.app:
+        text += f"\n\nApp: <code>{e(msg.app)}</code>"
+    text += "\n\n<b>Cloudbase</b>"
+    body = {"chat_id": cfg["chat_id"].strip(), "text": text[:4096],
+            "parse_mode": "HTML", "disable_web_page_preview": True}
     if msg.url:
-        text += f'\n<a href="{html.escape(msg.url)}">Open in Cloudbase</a>'
-    await _post(f"https://api.telegram.org/bot{cfg['bot_token'].strip()}/sendMessage", json_body={
-        "chat_id": cfg["chat_id"].strip(), "text": text[:4096],
-        "parse_mode": "HTML", "disable_web_page_preview": True,
-    })
+        body["reply_markup"] = {"inline_keyboard": [[{"text": "Open in Cloudbase", "url": msg.url}]]}
+    await _post(f"https://api.telegram.org/bot{cfg['bot_token'].strip()}/sendMessage", json_body=body)
 
 
 async def _send_ntfy(msg: Message, cfg: dict) -> None:
-    body = {"topic": cfg["topic"].strip(), "title": msg.title, "message": msg.message or msg.title,
+    lines = [f"**{msg.kicker}**"]
+    if msg.message:
+        lines += ["", msg.message]
+    if msg.app:
+        lines += ["", f"App: {msg.app}"]
+    body = {"topic": cfg["topic"].strip(), "title": msg.title, "message": "\n".join(lines), "markdown": True,
             "priority": {"critical": 5, "warning": 4, "resolved": 3}.get(msg.severity, 3),
             "tags": [{"critical": "rotating_light", "warning": "warning",
                       "resolved": "white_check_mark"}.get(msg.severity, "information_source")]}
+    if msg.logo_url:
+        body["icon"] = msg.logo_url
     if msg.url:
         body["click"] = msg.url
+        body["actions"] = [{"action": "view", "label": "Open in Cloudbase", "url": msg.url}]
     headers = {"Authorization": f"Bearer {cfg['token']}"} if cfg.get("token") else None
     await _post(cfg["server"].strip().rstrip("/"), json_body=body, headers=headers)
 
