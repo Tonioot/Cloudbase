@@ -1,4 +1,4 @@
-// Settings pages: /settings?s=domain|system|users|backups|tokens|transfer|logs|account
+// Settings pages: /settings?s=domain|system|users|backups|notifications|tokens|transfer|logs|account
 //
 // Each section is a full page (title, description, grouped forms) instead of
 // the modals these used to be. The sidebar links here and marks the active one.
@@ -6,7 +6,7 @@
 import { api, wsSystemLogs } from './api.js';
 import { createLogViewer, fillComponentSelect } from './logviewer.js';
 import { setCrumbs } from './shell.js';
-import { toast, confirm } from './utils.js';
+import { toast, confirm, timeAgo } from './utils.js';
 import { openPanelDomainWizard, openBaseDomainWizard } from './domain-wizard.js';
 
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -16,6 +16,7 @@ export const SETTINGS_SECTIONS = {
   system:   { title: 'System settings',  sub: 'Session length, port ranges and resource limits for this Cloudbase installation.' },
   users:    { title: 'Users & roles',    sub: 'Who can sign in to this panel, and what each role is allowed to do.' },
   backups:  { title: 'Backup storage',   sub: 'Keep a copy of every database backup outside this server, in S3-compatible storage.' },
+  notifications: { title: 'Notifications', sub: 'Where Cloudbase reports problems and deploys — Slack, Teams, PagerDuty, e-mail, webhooks and more — and which events go where.' },
   tokens:   { title: 'GitHub tokens',    sub: 'Saved access tokens for private repositories. Pick one when you create or edit an app.' },
   transfer: { title: 'Export / import',  sub: 'Move app configurations between Cloudbase installations, or keep a backup.' },
   logs:     { title: 'System logs',      sub: 'Everything Cloudbase itself logs — deploys, autoscaler, nginx, nodes, databases — in one place, live.' },
@@ -28,6 +29,7 @@ const RENDER = {
   logs: renderLogs,
   users: renderUsers,
   backups: renderBackupStorage,
+  notifications: renderNotifications,
   tokens: renderTokens,
   transfer: renderTransfer,
   account: renderAccount,
@@ -826,6 +828,303 @@ async function loadTokens() {
   } catch (e) {
     list.innerHTML = notice(esc(e.message));
   }
+}
+
+/* ─── Notifications ─────────────────────────────────────────────────────── */
+
+function renderNotifications(root) {
+  root.innerHTML = `
+    ${actionBar('Cloudbase sends a problem once, and the all-clear when it is fixed.', 'notif-save', 'Save events')}
+    ${group('Channels', 'Each channel stores its tokens and webhook URLs encrypted. A channel can be limited to certain apps, for example a team’s own Slack channel.',
+      `<div id="nc-list"><div class="settings-note">Loading…</div></div>
+       <div class="field" style="margin:12px 0 0"><button class="btn btn-sm" id="nc-add">Add channel</button></div>`)}
+    ${group('Events', 'Which events each channel receives. Problems such as an offline node stay open until they are fixed; PagerDuty closes its incident by itself.',
+      `<div id="nc-matrix"><div class="settings-note">Loading…</div></div>`)}
+    ${group('Delivery log', 'The last messages that were sent, or that are being retried. Failed messages are retried after 30 seconds, 2 and 10 minutes, half an hour and an hour.',
+      `<div id="nc-log"><div class="settings-note">Loading…</div></div>`)}
+  `;
+
+  const state = { catalog: null, channels: [], apps: [], dirty: new Set() };
+  const typeLabel = t => state.catalog?.channel_types.find(c => c.type === t)?.label || t;
+  document.getElementById('notif-save').disabled = true;
+
+  const load = async () => {
+    try {
+      const [catalog, channels, apps] = await Promise.all([
+        state.catalog || api.getNotificationCatalog(),
+        api.listNotificationChannels(),
+        api.listApps().catch(() => []),
+      ]);
+      Object.assign(state, { catalog, channels, apps });
+      state.dirty.clear();
+      document.getElementById('notif-save').disabled = true;
+      setStatus('');
+      renderChannelList(state, typeLabel, load);
+      renderMatrix(state);
+    } catch (e) {
+      document.getElementById('nc-list').innerHTML = notice(esc(e.message));
+    }
+    loadDeliveryLog();
+  };
+  load();
+
+  document.getElementById('nc-add').onclick = () => state.catalog && openChannelDialog(state, null, load);
+
+  document.getElementById('nc-matrix').addEventListener('change', e => {
+    const box = e.target.closest('input[data-ch]');
+    if (!box) return;
+    const ch = state.channels.find(c => String(c.id) === box.dataset.ch);
+    const events = new Set(ch.events);
+    box.checked ? events.add(box.dataset.ev) : events.delete(box.dataset.ev);
+    ch.events = state.catalog.events.map(ev => ev.key).filter(k => events.has(k));
+    state.dirty.add(ch.id);
+    document.getElementById('notif-save').disabled = false;
+    setStatus('Unsaved changes');
+  });
+
+  document.getElementById('notif-save').onclick = async () => {
+    const btn = document.getElementById('notif-save');
+    btn.disabled = true;
+    setStatus('Saving…');
+    try {
+      for (const id of state.dirty) {
+        await api.updateNotificationChannel(id, channelPayload(state.channels.find(c => c.id === id)));
+      }
+      setStatus('Saved', 'ok');
+      state.dirty.clear();
+    } catch (e) {
+      setStatus(e.message, 'error');
+      btn.disabled = false;
+    }
+  };
+}
+
+/** A channel as it is sent back on save: empty secrets keep the stored ones. */
+function channelPayload(ch, overrides = {}) {
+  const { _secrets_set, ...config } = ch.config || {};
+  return { name: ch.name, type: ch.type, enabled: ch.enabled, events: ch.events, app_ids: ch.app_ids, config, ...overrides };
+}
+
+function renderChannelList(state, typeLabel, reload) {
+  const list = document.getElementById('nc-list');
+  if (!state.channels.length) {
+    list.innerHTML = '<div class="settings-note">No channels yet. Notifications still show up under the bell in the top bar.</div>';
+    return;
+  }
+  const appName = id => state.apps.find(a => a.id === id)?.name || `app ${id}`;
+  list.innerHTML = state.channels.map(ch => {
+    const tone = !ch.enabled ? '' : ch.last_status === 'failed' ? 'bad' : ch.last_status === 'sent' ? 'ok' : '';
+    const scope = ch.app_ids.length ? `Only ${ch.app_ids.map(appName).map(esc).join(', ')}` : 'All apps and the platform';
+    const last = !ch.enabled ? 'Turned off'
+      : ch.last_status === 'failed' ? `Last message failed: ${esc(ch.last_error || '')}`
+      : ch.last_sent_at ? `Last message ${timeAgo(ch.last_sent_at)}` : 'Nothing sent yet';
+    return `
+      <div class="https-card nc-card" data-id="${ch.id}">
+        <span class="https-dot ${tone}"></span>
+        <span class="https-text">
+          <strong>${esc(ch.name)} <span class="nc-type">${esc(typeLabel(ch.type))}</span></strong>
+          <span>${scope} · ${ch.events.length} event${ch.events.length === 1 ? '' : 's'}</span>
+          <span class="${ch.last_status === 'failed' && ch.enabled ? 'nc-error' : ''}">${last}</span>
+        </span>
+        <span class="https-actions">
+          <button class="btn btn-sm" data-act="test">Test</button>
+          <button class="btn btn-sm" data-act="edit">Edit</button>
+          <button class="btn btn-sm btn-ghost btn-danger-text" data-act="delete">Delete</button>
+        </span>
+      </div>`;
+  }).join('');
+
+  list.querySelectorAll('[data-act]').forEach(btn => {
+    const ch = state.channels.find(c => String(c.id) === btn.closest('[data-id]').dataset.id);
+    btn.onclick = async () => {
+      if (btn.dataset.act === 'edit') return openChannelDialog(state, ch, reload);
+      if (btn.dataset.act === 'delete') {
+        if (!await confirm(`Delete channel "${ch.name}"?`, 'Messages that are still waiting for it are dropped.')) return;
+        try { await api.deleteNotificationChannel(ch.id); toast('Channel deleted'); reload(); }
+        catch (e) { toast(e.message, 'error'); }
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+      try {
+        const res = await api.testNotificationChannel({ type: ch.type, config: channelPayload(ch).config, channel_id: ch.id });
+        res.ok ? toast(`Test message sent to ${ch.name}`) : toast(res.error, 'error');
+      } catch (e) { toast(e.message, 'error'); }
+      btn.disabled = false;
+      btn.textContent = 'Test';
+    };
+  });
+}
+
+function renderMatrix(state) {
+  const el = document.getElementById('nc-matrix');
+  if (!state.channels.length) {
+    el.innerHTML = '<div class="settings-note">Add a channel first.</div>';
+    return;
+  }
+  const sevDot = sev => `<span class="nc-sev" data-sev="${sev}"></span>`;
+  let lastGroup = null;
+  const rows = state.catalog.events.map(ev => {
+    const head = ev.group !== lastGroup
+      ? `<tr class="nc-group"><td colspan="${state.channels.length + 1}">${esc(ev.group)}</td></tr>` : '';
+    lastGroup = ev.group;
+    return head + `
+      <tr>
+        <td class="nc-event">${sevDot(ev.severity)}${esc(ev.label)}</td>
+        ${state.channels.map(ch => `
+          <td class="nc-cell"><input type="checkbox" data-ch="${ch.id}" data-ev="${ev.key}" ${ch.events.includes(ev.key) ? 'checked' : ''}
+            aria-label="${esc(ev.label)} → ${esc(ch.name)}" /></td>`).join('')}
+      </tr>`;
+  }).join('');
+  el.innerHTML = `
+    <div class="nc-matrix-wrap">
+      <table class="table nc-matrix">
+        <thead><tr><th></th>${state.channels.map(ch => `<th class="nc-cell">${esc(ch.name)}</th>`).join('')}</tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+async function loadDeliveryLog() {
+  const el = document.getElementById('nc-log');
+  if (!el) return;
+  let rows;
+  try { rows = await api.listNotificationDeliveries(30); }
+  catch (e) { el.innerHTML = notice(esc(e.message)); return; }
+  if (!rows.length) {
+    el.innerHTML = '<div class="settings-note">Nothing sent yet.</div>';
+    return;
+  }
+  const status = d => d.status === 'sent' ? `<span class="badge badge-running">Sent</span>`
+    : d.status === 'failed' ? `<span class="badge badge-error">Failed</span>`
+    : `<span class="badge badge-pending">${d.attempts ? `Retrying (${d.attempts})` : 'Sending'}</span>`;
+  el.innerHTML = `
+    <table class="table settings-table">
+      <thead><tr><th>Message</th><th>Channel</th><th>Status</th><th></th></tr></thead>
+      <tbody>${rows.map(d => `
+        <tr data-id="${d.id}">
+          <td><div class="nc-log-title">${esc(d.notification.title)}</div>
+              <div class="cell-muted nc-log-sub">${timeAgo(d.created_at)}${d.error ? ` · ${esc(d.error)}` : ''}</div></td>
+          <td>${esc(d.channel.name)}</td>
+          <td>${status(d)}</td>
+          <td class="row-actions">${d.status !== 'sent' ? '<button class="btn btn-sm btn-ghost" data-act="retry">Retry now</button>' : ''}</td>
+        </tr>`).join('')}</tbody>
+    </table>`;
+  el.querySelectorAll('[data-act="retry"]').forEach(btn => {
+    btn.onclick = async () => {
+      btn.disabled = true;
+      try {
+        await api.retryNotificationDelivery(btn.closest('tr').dataset.id);
+        setTimeout(loadDeliveryLog, 2500);
+      } catch (e) { toast(e.message, 'error'); btn.disabled = false; }
+    };
+  });
+}
+
+function openChannelDialog(state, ch, reload) {
+  const edit = !!ch;
+  const types = state.catalog.channel_types;
+  const fieldsHTML = (type, values = {}) => {
+    const spec = types.find(t => t.type === type);
+    const secrets = new Set(values._secrets_set || []);
+    return spec.fields.map(f => {
+      const id = `ncf-${f.key}`;
+      const hint = f.help ? `<div class="field-hint">${esc(f.help)}</div>` : '';
+      const label = `<label class="field-label" for="${id}">${esc(f.label)}${f.required ? '' : ' <span class="hint">optional</span>'}</label>`;
+      if (f.kind.startsWith('select:')) {
+        const opts = f.kind.slice(7).split('|');
+        return `<div class="field">${label}<select class="input" id="${id}" data-key="${f.key}">
+          ${opts.map(o => `<option value="${o}" ${values[f.key] === o ? 'selected' : ''}>${{ starttls: 'STARTTLS', tls: 'TLS', none: 'None' }[o] || o}</option>`).join('')}
+        </select>${hint}</div>`;
+      }
+      const secret = f.kind === 'secret';
+      const placeholder = secret && secrets.has(f.key) ? 'Saved; leave empty to keep' : '';
+      const value = secret ? '' : esc(values[f.key] ?? (f.key === 'smtp_port' ? '587' : f.key === 'server' ? 'https://ntfy.sh' : ''));
+      return `<div class="field">${label}<input class="input${secret ? ' input-mono' : ''}" id="${id}" data-key="${f.key}"
+        ${secret ? 'type="password" autocomplete="new-password"' : f.kind === 'number' ? 'inputmode="numeric"' : ''}
+        value="${value}" placeholder="${placeholder}" spellcheck="false" />${hint}</div>`;
+    }).join('');
+  };
+
+  const dlg = openDialog(edit ? `Edit ${esc(ch.name)}` : 'New notification channel', `
+    <div class="form-pair">
+      <div class="field">
+        <label class="field-label" for="nc-type">Type</label>
+        <select class="input" id="nc-type" ${edit ? 'disabled' : ''}>
+          ${types.map(t => `<option value="${t.type}" ${edit && ch.type === t.type ? 'selected' : ''}>${esc(t.label)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label class="field-label" for="nc-name">Name</label>
+        <input class="input" id="nc-name" value="${edit ? esc(ch.name) : ''}" placeholder="#alerts-prod" autocomplete="off" />
+      </div>
+    </div>
+    <div id="nc-fields">${fieldsHTML(edit ? ch.type : types[0].type, edit ? ch.config : {})}</div>
+    <details class="settings-advanced" ${edit && ch.app_ids.length ? 'open' : ''}>
+      <summary>Only for certain apps</summary>
+      <div class="settings-advanced-body">
+        <div class="field-hint" style="margin:0 0 8px">Leave empty for every app plus nodes, databases and backups. With apps selected, this channel only gets their deploys, instance problems and certificates.</div>
+        <div class="check-list nc-apps">
+          ${state.apps.length ? state.apps.map(a => `
+            <label class="check-row"><input type="checkbox" value="${a.id}" ${edit && ch.app_ids.includes(a.id) ? 'checked' : ''} />
+              <span class="check-row-name">${esc(a.name)}</span></label>`).join('') : '<div class="settings-note" style="padding:10px 14px">No apps yet.</div>'}
+        </div>
+      </div>
+    </details>
+    <label class="toggle-row form-toggle" style="margin-top:12px">
+      <span><span class="field-label">Send messages</span><span class="field-hint">Turn off to pause this channel without losing its settings.</span></span>
+      <span class="toggle"><input type="checkbox" id="nc-enabled" ${!edit || ch.enabled ? 'checked' : ''} /><span class="toggle-slider"></span></span>
+    </label>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:4px">
+      <button class="btn btn-sm" id="nc-test">Send test message</button>
+      <span class="field-hint" id="nc-test-result" style="margin:0"></span>
+    </div>`, { saveLabel: edit ? 'Save' : 'Add channel', wide: true });
+
+  const $ = sel => dlg.el.querySelector(sel);
+  const type = () => $('#nc-type').value;
+  $('#nc-type').onchange = () => { $('#nc-fields').innerHTML = fieldsHTML(type()); };
+  setTimeout(() => $('#nc-name').focus(), 30);
+
+  const config = () => Object.fromEntries([...dlg.el.querySelectorAll('#nc-fields [data-key]')].map(i => [i.dataset.key, i.value.trim()]));
+  const payload = () => ({
+    name: $('#nc-name').value.trim() || types.find(t => t.type === type()).label,
+    type: type(),
+    config: config(),
+    enabled: $('#nc-enabled').checked,
+    events: edit ? ch.events : state.catalog.default_events,
+    app_ids: [...dlg.el.querySelectorAll('.nc-apps input:checked')].map(i => parseInt(i.value, 10)),
+  });
+
+  $('#nc-test').onclick = async () => {
+    const out = $('#nc-test-result');
+    $('#nc-test').disabled = true;
+    out.style.color = '';
+    out.textContent = 'Sending…';
+    try {
+      const res = await api.testNotificationChannel({ type: type(), config: config(), channel_id: edit ? ch.id : null });
+      out.style.color = res.ok ? 'var(--green)' : 'var(--red)';
+      out.textContent = res.ok ? 'Sent. Check that it arrived.' : res.error;
+    } catch (e) {
+      out.style.color = 'var(--red)';
+      out.textContent = e.message;
+    }
+    $('#nc-test').disabled = false;
+  };
+
+  dlg.saveBtn.onclick = async () => {
+    dlg.saveBtn.disabled = true;
+    dlg.error('');
+    try {
+      if (edit) await api.updateNotificationChannel(ch.id, payload());
+      else await api.createNotificationChannel(payload());
+      toast(edit ? 'Channel saved' : 'Channel added');
+      dlg.close();
+      reload();
+    } catch (e) {
+      dlg.error(e.message);
+      dlg.saveBtn.disabled = false;
+    }
+  };
 }
 
 /* ─── Export / import ───────────────────────────────────────────────────── */

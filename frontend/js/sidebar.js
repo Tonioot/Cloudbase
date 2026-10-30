@@ -251,7 +251,7 @@ async function initRoleBasedUI() {
         'databases.view','databases.create','databases.manage','databases.credentials','databases.backup','databases.delete',
         'system.manage',
         'users.manage','roles.manage',
-        'audit.view','tokens.manage',
+        'audit.view','tokens.manage','notifications.view','notifications.manage',
       ];
       ALL_KNOWN_PERMS.forEach(p => { if (!perms.has(p)) window._hiddenPerms.add(p); });
 

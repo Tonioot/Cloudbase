@@ -26,6 +26,8 @@ from routers import roles as roles_router
 from routers import databases as databases_router
 from routers import database_backups as database_backups_router
 from routers import domains as domains_router
+from routers import notifications as notifications_router
+import notify
 from env_crypto import decrypt_env
 from audit import log_audit
 import auth
@@ -1281,6 +1283,8 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(database_backups_router.backup_scheduler()),
             asyncio.create_task(databases_router.database_stats_sampler()),
             asyncio.create_task(databases_router.database_update_checker()),
+            asyncio.create_task(notify.dispatcher()),
+            asyncio.create_task(notify.watcher()),
         ]
         if os.environ.get("CLOUDBASE_DEV_DEMO_LOGS"):
             tasks.append(asyncio.create_task(_dev_demo_logs(os.environ["CLOUDBASE_DEV_DEMO_LOGS"])))
@@ -1316,6 +1320,7 @@ _PERMISSION_WRITE_MAP = (
     ("/api/users",     "users.manage"),
     ("/api/roles",     "roles.manage"),
     ("/api/audit-log", "audit.view"),
+    ("/api/notifications", "notifications.manage"),
 )
 
 _PERMISSION_READ_MAP = (
@@ -1326,6 +1331,7 @@ _PERMISSION_READ_MAP = (
     ("/api/users",     "users.manage"),
     ("/api/roles",     "roles.manage"),
     ("/api/audit-log", "audit.view"),
+    ("/api/notifications", "notifications.view"),
 )
 
 # Per-path overrides — used when the prefix default doesn't fit the endpoint's semantics.
@@ -1359,6 +1365,12 @@ _PERMISSION_PREFIX_OVERRIDES: tuple[tuple[str, str, str | None], ...] = (
     ("POST",   "/api/databases",             "databases.view"),
     ("PATCH",  "/api/databases/",            "databases.view"),
     ("DELETE", "/api/databases/",            "databases.view"),
+    # Notifications: marking the inbox read is part of viewing; per-app muting is app config
+    ("POST",   "/api/notifications/read",    "notifications.view"),
+    ("GET",    "/api/notifications/apps/",   "apps.view"),
+    ("PUT",    "/api/notifications/apps/",   "apps.configure"),
+    ("GET",    "/api/notifications/channels", "notifications.manage"),
+    ("GET",    "/api/notifications/deliveries", "notifications.manage"),
 )
 
 # Sub-path → permission overrides for /api/apps/* endpoints based on URL segments.
@@ -2209,6 +2221,7 @@ app.include_router(databases_router.relay_router)
 app.include_router(database_backups_router.router)
 app.include_router(database_backups_router.agent_router)
 app.include_router(database_backups_router.storage_router)
+app.include_router(notifications_router.router)
 
 
 # ── Static / SPA ──────────────────────────────────────────────────────────────
@@ -2266,6 +2279,11 @@ if os.path.isdir(FRONTEND_DIR):
     @app.get("/audit", include_in_schema=False)
     async def audit_page():
         return FileResponse(os.path.join(FRONTEND_DIR, "audit.html"))
+
+    @app.get("/notifications.html", include_in_schema=False)
+    @app.get("/notifications", include_in_schema=False)
+    async def notifications_page():
+        return FileResponse(os.path.join(FRONTEND_DIR, "notifications.html"))
 
     @app.get("/settings.html", include_in_schema=False)
     @app.get("/settings", include_in_schema=False)

@@ -40,6 +40,8 @@ class User(Base):
     role_id      = Column(Integer, ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True)
     # Bumped on logout and password change: sessions issued before stop working
     session_version = Column(Integer, nullable=False, default=0)
+    # Notifications created after this moment count as unread for this user
+    notifications_read_at = Column(DateTime, nullable=True)
     created_at   = Column(DateTime, default=datetime.utcnow)
 
 
@@ -94,6 +96,7 @@ class Application(Base):
     update_page      = Column(Text, nullable=True)  # JSON: {title, message, color, custom_html}
     restart_page     = Column(Text, nullable=True)  # JSON: {title, message, color, custom_html}
     starting_page    = Column(Text, nullable=True)  # JSON: {title, message, color, custom_html}
+    notifications_muted_until = Column(DateTime, nullable=True)  # events still reach the inbox, not the channels
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -337,3 +340,55 @@ class DatabaseLink(Base):
     app_id       = Column(Integer, ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True)
     env_var_name = Column(String(100), nullable=False)
     created_at   = Column(DateTime, default=datetime.utcnow)
+
+
+class NotificationChannel(Base):
+    """Somewhere notifications are sent: Slack, PagerDuty, e-mail, a webhook…"""
+    __tablename__ = "notification_channels"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    name         = Column(String(100), nullable=False)
+    type         = Column(String(20), nullable=False)   # see notify.CHANNEL_TYPES
+    config       = Column(Text, nullable=False)          # encrypted JSON (holds secrets)
+    enabled      = Column(Boolean, default=True, nullable=False)
+    events       = Column(Text, nullable=True)           # JSON list of event keys this channel receives
+    app_ids      = Column(Text, nullable=True)           # JSON list; empty = every app and all non-app events
+    last_status  = Column(String(10), nullable=True)     # sent | failed
+    last_error   = Column(Text, nullable=True)
+    last_sent_at = Column(DateTime, nullable=True)
+    created_at   = Column(DateTime, default=datetime.utcnow)
+    updated_at   = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class Notification(Base):
+    """One event in the inbox. Problems (with a dedupe_key) stay open until resolved."""
+    __tablename__ = "notifications"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    event       = Column(String(60), nullable=False, index=True)
+    severity    = Column(String(10), nullable=False, default="info")  # info | warning | critical | resolved
+    title       = Column(String(300), nullable=False)
+    message     = Column(Text, nullable=True)
+    app_id      = Column(Integer, ForeignKey("applications.id", ondelete="SET NULL"), nullable=True, index=True)
+    link        = Column(String(300), nullable=True)     # panel path, e.g. /app?id=3
+    dedupe_key  = Column(String(120), nullable=True, index=True)
+    state       = Column(String(10), nullable=True)      # open | resolved; None for one-off events
+    resolves_id = Column(Integer, ForeignKey("notifications.id", ondelete="SET NULL"), nullable=True)
+    muted       = Column(Boolean, default=False, nullable=False)
+    created_at  = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    resolved_at = Column(DateTime, nullable=True)
+
+
+class NotificationDelivery(Base):
+    """One notification on its way to one channel; retried with backoff."""
+    __tablename__ = "notification_deliveries"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    notification_id = Column(Integer, ForeignKey("notifications.id", ondelete="CASCADE"), nullable=False, index=True)
+    channel_id      = Column(Integer, ForeignKey("notification_channels.id", ondelete="CASCADE"), nullable=False, index=True)
+    status          = Column(String(10), nullable=False, default="pending")  # pending | sent | failed
+    attempts        = Column(Integer, nullable=False, default=0)
+    next_attempt_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    error           = Column(Text, nullable=True)
+    sent_at         = Column(DateTime, nullable=True)
+    created_at      = Column(DateTime, default=datetime.utcnow, nullable=False)

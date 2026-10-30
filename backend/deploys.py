@@ -18,6 +18,7 @@ from typing import Callable, Optional
 from fastapi import HTTPException
 from sqlalchemy import select
 
+import notify
 import process_manager as pm
 from database import AsyncSessionLocal
 from models import Application, Deployment
@@ -72,6 +73,7 @@ async def run_deploy(
 
     collector = asyncio.create_task(_collect())
     dep_id: Optional[int] = None
+    app_name, commit_label = f"app {app_id}", None
     try:
         # A webhook deploy shouldn't fail just because the autoscaler is busy
         # adding/removing an instance — wait for that to finish first.
@@ -83,6 +85,7 @@ async def run_deploy(
                 app = await db.get(Application, app_id)
                 if not app:
                     raise HTTPException(404, "App not found")
+                app_name = app.name
                 if not app.working_dir or not os.path.exists(app.working_dir):
                     raise HTTPException(400, "No working directory — deploy the app first")
 
@@ -101,6 +104,7 @@ async def run_deploy(
                     app, app.working_dir, commit, push, branch=app.deploy_branch or None,
                 )
                 sha, subject, author = await asyncio.to_thread(_commit_details, app.working_dir)
+                commit_label = f"{sha[:7]} {subject or ''}".strip() if sha else None
                 dep.commit_sha, dep.commit_message, dep.commit_author = sha, subject, author
                 dep.branch = await asyncio.to_thread(apps._current_branch, app.working_dir)
                 await db.commit()
@@ -122,12 +126,17 @@ async def run_deploy(
                                      detail={"name": app.name, "commit": commit_info, "strategy": strategy, "trigger": trigger})
                 await db.commit()
         await _finish(dep_id, "success", None, captured)
+        await _notify(app_id, app_name, trigger, commit_label, None)
         return {"message": message, "commit": commit_info, "strategy": strategy, "deployment_id": dep_id, **(res or {})}
     except HTTPException as exc:
         await _finish(dep_id, "failed", str(exc.detail), captured)
+        if dep_id is not None:
+            await _notify(app_id, app_name, trigger, commit_label, str(exc.detail))
         raise
     except Exception as exc:
         await _finish(dep_id, "failed", str(exc), captured)
+        if dep_id is not None:
+            await _notify(app_id, app_name, trigger, commit_label, str(exc))
         raise HTTPException(500, str(exc)) from exc
     finally:
         collector.cancel()
@@ -178,6 +187,22 @@ async def _finish(dep_id: Optional[int], status: str, error: Optional[str], capt
                 await db.commit()
     except Exception as e:
         log.warning("Could not record deployment %s: %s", dep_id, e)
+
+
+async def _notify(app_id: int, app_name: str, trigger: str, commit: Optional[str], error: Optional[str]) -> None:
+    what = {"auto": "Auto-deploy", "rollback": "Rollback"}.get(trigger, "Deploy")
+    lines = [f"Commit: {commit}"] if commit else []
+    if error is None:
+        await notify.emit("deploy.succeeded", f"{what} of {app_name} succeeded", "\n".join(lines),
+                          app_id=app_id, link=f"/app?id={app_id}")
+    elif "rolled back" in error:
+        # The new instance failed its health check; the old version kept serving.
+        await notify.emit("deploy.rolled_back", f"{what} of {app_name} was rolled back",
+                          "\n".join(lines + [error, "The previous version is still live."]),
+                          app_id=app_id, link=f"/app?id={app_id}")
+    else:
+        await notify.emit("deploy.failed", f"{what} of {app_name} failed", "\n".join(lines + [error]),
+                          app_id=app_id, link=f"/app?id={app_id}")
 
 
 # ── Auto-deploy ────────────────────────────────────────────────────────────

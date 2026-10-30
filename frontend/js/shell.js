@@ -6,6 +6,7 @@
 //   btn-manage-users, btn-change-password, btn-logout, session-timer-bar.
 
 import { api } from './api.js';
+import { mountBell } from './notifications.js';
 
 const svg = (body, size = 17) =>
   `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
@@ -33,6 +34,7 @@ export const ICONS = {
   logout:   svg('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>', 15),
   plus:     svg('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>', 15),
   arrow:    svg('<polyline points="9 6 15 12 9 18"/>', 14),
+  bell:     svg('<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>', 15),
 };
 
 const STATUS_COLOR = {
@@ -51,6 +53,7 @@ function currentSection() {
   if (p.startsWith('/app')) return 'apps';
   if (p.startsWith('/node')) return 'nodes';
   if (p.startsWith('/audit')) return 'audit';
+  if (p.startsWith('/notifications')) return 'notifications';
   if (p.startsWith('/settings')) return 'settings';
   if (p.startsWith('/guides')) return 'guides';
   return 'overview';
@@ -61,6 +64,7 @@ const DEFAULT_CRUMBS = {
   apps: ['Apps'],
   nodes: ['Nodes'],
   audit: ['Audit log'],
+  notifications: ['Notifications'],
   databases: ['Databases'],
   settings: ['Settings'],
   guides: ['Guides'],
@@ -101,6 +105,7 @@ function railHTML(active) {
       ${setting('btn-system-settings', 'system', 'sliders', 'System settings', 'data-perm="system.manage"')}
       ${setting('btn-manage-users', 'users', 'users', 'Users &amp; roles', 'style="display:none"')}
       ${setting('btn-backup-storage', 'backups', 'database', 'Backup storage', 'data-perm="system.manage"')}
+      ${setting('btn-notification-settings', 'notifications', 'bell', 'Notifications', 'data-perm="notifications.manage"')}
       ${setting('btn-system-logs', 'logs', 'logs', 'System logs', 'data-perm="system.manage"')}
       ${setting('btn-github-tokens', 'tokens', 'key', 'GitHub tokens', 'data-perm="tokens.manage"')}
       ${setting('btn-export-import', 'transfer', 'transfer', 'Export / import', 'data-perm="apps.configure"')}
@@ -268,6 +273,7 @@ function paletteCommands() {
     { group: 'Actions', label: 'Toggle theme', icon: ICONS.moon, run: () => { window.cbTheme?.cycle(); syncThemeButton(); }, keywords: 'dark light appearance' },
     { group: 'Go to', label: 'Overview', icon: ICONS.overview, run: go('/'), keywords: 'dashboard home' },
     { group: 'Go to', label: 'Audit log', icon: ICONS.audit, run: go('/audit'), keywords: 'history events' },
+    { group: 'Go to', label: 'Notifications', icon: ICONS.bell, run: go('/notifications'), keywords: 'alerts inbox problems' },
     { group: 'Go to', label: 'Guides', icon: ICONS.guides, run: go('/guides'), keywords: 'docs documentation help how' },
   ];
   for (const a of index.apps) {
@@ -284,6 +290,7 @@ function paletteCommands() {
     ['btn-system-settings', 'System settings', ICONS.sliders, 'ports limits session'],
     ['btn-manage-users', 'Users & roles', ICONS.users, 'permissions accounts'],
     ['btn-backup-storage', 'Backup storage', ICONS.database, 's3 r2 backblaze offsite off-site bucket'],
+    ['btn-notification-settings', 'Notification channels', ICONS.bell, 'alerts slack teams pagerduty email webhook discord telegram ntfy'],
     ['btn-github-tokens', 'GitHub tokens', ICONS.key, 'private repository'],
     ['btn-export-import', 'Export / import apps', ICONS.transfer, 'backup json'],
     ['btn-change-password', 'Account & password', ICONS.lock, 'change password'],
@@ -391,6 +398,7 @@ function mount() {
     bar.id = 'topbar';
     bar.innerHTML = topbarHTML();
     main.prepend(bar);
+    mountBell(bar);
     setCrumbs(DEFAULT_CRUMBS[section]);
   }
 

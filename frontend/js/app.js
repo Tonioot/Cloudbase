@@ -1606,9 +1606,44 @@ function initSettings() {
   // Maintenance pages section
   initMaintenanceSettings();
   _initMaintModal();
+  initAppNotifications();
 
   if (isViewer) _disableSettingsForViewer();
   else _enableSettingsForEditor();
+}
+
+/** Settings → Notifications: mute this app and see which channels get its events. */
+async function initAppNotifications() {
+  const desc = document.getElementById('an-mute-desc');
+  const list = document.getElementById('an-channels');
+  if (!desc) return;
+  const show = data => {
+    const until = data.muted_until ? new Date(data.muted_until) : null;
+    desc.textContent = until
+      ? `Muted until ${until.toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' })}. Events still show up under the bell, but aren’t sent.`
+      : 'Not muted. Mute it during maintenance or a migration, so a known problem doesn’t page anyone.';
+    document.getElementById('an-mute-btn').textContent = until ? 'Muted' : 'Mute…';
+    if (!data.channels) return;
+    const TYPE = { slack: 'Slack', teams: 'Teams', pagerduty: 'PagerDuty', email: 'E-mail', webhook: 'Webhook', discord: 'Discord', telegram: 'Telegram', ntfy: 'ntfy' };
+    list.innerHTML = data.channels.length
+      ? `<div class="an-channels">${data.channels.map(c => `
+          <span class="pill${c.enabled ? '' : ' an-off'}" title="${escHtml(c.events.join(', '))}">
+            ${escHtml(c.name)} <span class="an-type">${TYPE[c.type] || escHtml(c.type)}${c.only_this_app ? ' · this app only' : ''}</span>
+          </span>`).join('')}</div>`
+      : '<span class="s3-desc">No channel gets this app’s events yet.</span>';
+  };
+  try { show(await api.getAppNotifications(APP_ID)); }
+  catch (e) { desc.textContent = e.message; list.innerHTML = ''; return; }
+
+  document.querySelectorAll('#set-notifications [data-mute]').forEach(btn => {
+    btn.onclick = async () => {
+      const minutes = parseInt(btn.dataset.mute, 10);
+      try {
+        show(await api.muteAppNotifications(APP_ID, minutes));
+        toast(minutes ? 'Notifications for this app are muted' : 'Notifications for this app are on again');
+      } catch (e) { toast(e.message, 'error'); }
+    };
+  });
 }
 
 /** Settings tab: the nav on the left picks the one section that is shown. */
@@ -1623,6 +1658,7 @@ const _SETTINGS_ICONS = {
   cpu:    '<rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>',
   layout: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/>',
   code:   '<path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/>',
+  bell:   '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
   alert:  '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
 };
 const _settingsIcon = name =>

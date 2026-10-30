@@ -76,6 +76,7 @@ async def init_db():
             ("deploy_branch",          "VARCHAR(200)"),
             ("deploy_strategy",        "VARCHAR(20) NOT NULL DEFAULT 'rolling'"),
             ("auto_deploy_interval",   "INTEGER NOT NULL DEFAULT 60"),
+            ("notifications_muted_until", "DATETIME"),
         ]:
             if col in existing_columns:
                 continue
@@ -214,6 +215,14 @@ async def init_db():
             await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN role_id INTEGER REFERENCES roles(id) ON DELETE SET NULL")
         if "session_version" not in existing_user_cols:
             await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0")
+        if "notifications_read_at" not in existing_user_cols:
+            await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN notifications_read_at DATETIME")
+
+        # notifications — find the open problem for a dedupe key quickly
+        await conn.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_notifications_key_state "
+            "ON notifications (dedupe_key, state)"
+        )
 
         # applications table — add github_token_id column if missing
         result = await conn.exec_driver_sql("PRAGMA table_info(applications)")
@@ -254,6 +263,8 @@ async def init_db():
         ("databases.delete",      "Delete databases"),
         # Observability
         ("audit.view",        "View audit logs"),
+        ("notifications.view",   "See notifications in the panel"),
+        ("notifications.manage", "Manage notification channels and which events they receive"),
         # System & users
         ("system.manage",     "Manage Cloudbase server settings, server logs and nginx"),
         ("users.manage",      "Create, edit and delete users"),
@@ -329,7 +340,7 @@ async def init_db():
         # Built-in roles are reset to their canonical permission set on every startup
         # so they cannot drift from the source of truth.
         from sqlalchemy import delete as _delete
-        viewer_perms = ["apps.view", "nodes.view", "databases.view", "audit.view"]
+        viewer_perms = ["apps.view", "nodes.view", "databases.view", "audit.view", "notifications.view"]
         admin_perms  = [p for p, _ in ALL_PERMISSIONS]
 
         for role_name, role_desc, perms in [

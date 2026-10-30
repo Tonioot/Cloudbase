@@ -915,3 +915,9 @@ a.icon-btn { text-decoration: none; }
   .cblog-comp { grid-column: 2; grid-row: 1; }
   .cblog-body { grid-column: 1 / -1; }
 }
+
+/* Settings → Notifications */
+.an-channels { display: flex; flex-wrap: wrap; gap: 6px; }
+.an-channels .pill { color: var(--text); }
+.an-type { color: var(--muted); }
+.an-off { opacity: .55; }

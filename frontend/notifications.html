@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cloudbase — Notifications</title>
+  <link rel="icon" type="image/png" href="/cloudbase.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="css/variables.css" />
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/components.css" />
+  <link rel="stylesheet" href="css/pages.css" />
+</head>
+<body>
+
+<div class="shell">
+
+  <aside class="rail" id="rail"></aside>
+
+  <main class="main-content">
+    <div class="page">
+
+      <div class="page-title-row">
+        <h1>Notifications</h1>
+        <span class="page-title-meta" id="notif-summary"></span>
+        <div class="page-title-actions">
+          <select class="input" id="notif-filter" aria-label="Filter" style="width:180px">
+            <option value="">Everything</option>
+            <option value="problems">Warnings and critical</option>
+            <option value="open">Open problems</option>
+          </select>
+          <a class="btn" href="/settings?s=notifications" data-perm="notifications.manage">Channels</a>
+        </div>
+      </div>
+
+      <div class="notif-list" id="notif-list"><div class="apps-empty">Loading…</div></div>
+      <div style="text-align:center;padding:24px 0 0">
+        <button class="btn" id="notif-more" style="display:none">Load more</button>
+      </div>
+
+    </div>
+  </main>
+
+</div>
+
+<div id="toast-container"></div>
+
+<script type="module">
+  import { api } from './js/api.js';
+  import { initSidebar } from './js/sidebar.js';
+  import { initNotificationsPage } from './js/notifications.js';
+
+  try {
+    await api.checkAuth();
+  } catch {
+    location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search);
+  }
+
+  await initSidebar();
+  initNotificationsPage();
+</script>
+</body>
+</html>

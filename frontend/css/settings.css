@@ -158,3 +158,23 @@
   .syslog-panel .logs-toolbar .input { flex: 1 1 100%; max-width: none; }
   .syslog-panel .logs-live { margin-left: 0; }
 }
+
+/* Notifications */
+.nc-card + .nc-card { margin-top: 8px; }
+.nc-card .https-dot { align-self: flex-start; margin-top: 6px; }
+.nc-type { margin-left: 6px; font-size: 11.5px; font-weight: 400; color: var(--muted); border: 1px solid var(--line-strong); border-radius: 999px; padding: 0 7px; }
+.https-text .nc-error { color: var(--red); overflow-wrap: anywhere; }
+.nc-matrix-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+.nc-matrix { margin: 0; }
+.nc-matrix th, .nc-matrix td { padding-top: 9px; padding-bottom: 9px; }
+.nc-matrix .nc-cell { text-align: center; width: 1%; white-space: nowrap; padding-left: 18px; padding-right: 18px; }
+.nc-matrix th.nc-cell { font-weight: 500; color: var(--text-2); max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.nc-matrix input { accent-color: var(--text); width: 15px; height: 15px; cursor: pointer; }
+.nc-group td { font-size: 12px; color: var(--faint); padding-top: 14px; padding-bottom: 4px; }
+.nc-event { color: var(--text); white-space: nowrap; }
+.nc-sev { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 10px; vertical-align: 1px; background: var(--text-2); }
+.nc-sev[data-sev="critical"] { background: var(--red); }
+.nc-sev[data-sev="warning"] { background: var(--yellow); }
+.nc-log-title { color: var(--text); }
+.nc-log-sub { font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+.nc-matrix td:first-child, .nc-matrix th:first-child { padding-left: 14px; }

@@ -487,6 +487,31 @@
               </div>
             </section>
 
+            <!-- Notifications -->
+            <section class="settings-group sv2-sec" id="set-notifications" data-nav="Notifications" data-icon="bell" data-nosave data-perm="notifications.view">
+              <header class="sv2-head"><h3>Notifications</h3><p>Deploys, crashed instances and certificates of this app. Channels are set up under Settings → Notifications.</p></header>
+              <div class="s3-card">
+                <div class="s3-row">
+                  <span class="s3-label"><span class="s3-title">Mute this app</span><span class="s3-desc" id="an-mute-desc">Loading…</span></span>
+                  <div class="menu-wrap" data-perm="apps.configure">
+                    <button type="button" class="btn btn-sm" data-dropdown aria-expanded="false" id="an-mute-btn">Mute…</button>
+                    <div class="dropdown" style="min-width:180px">
+                      <button type="button" class="menu-item" data-mute="60">For 1 hour</button>
+                      <button type="button" class="menu-item" data-mute="480">For 8 hours</button>
+                      <button type="button" class="menu-item" data-mute="1440">For 24 hours</button>
+                      <button type="button" class="menu-item" data-mute="10080">For a week</button>
+                      <div class="menu-sep"></div>
+                      <button type="button" class="menu-item" data-mute="0">Unmute</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="s3-row s3-row--stack">
+                  <span class="s3-label"><span class="s3-title">Channels</span><span class="s3-desc">Where this app’s events go.</span></span>
+                  <div id="an-channels"><span class="s3-desc">Loading…</span></div>
+                </div>
+              </div>
+            </section>
+
             <!-- Danger zone -->
             <section class="settings-group sv2-sec settings-group--danger" id="set-danger" data-nav="Danger zone" data-icon="alert" data-nosave data-perm="apps.delete">
               <header class="sv2-head"><h3>Danger zone</h3><p>Can’t be undone.</p></header>
