@@ -1371,6 +1371,7 @@ _PERMISSION_PREFIX_OVERRIDES: tuple[tuple[str, str, str | None], ...] = (
     ("PUT",    "/api/notifications/apps/",   "apps.configure"),
     ("GET",    "/api/notifications/channels", "notifications.manage"),
     ("GET",    "/api/notifications/deliveries", "notifications.manage"),
+    ("GET",    "/api/notifications/settings", "notifications.manage"),
 )
 
 # Sub-path → permission overrides for /api/apps/* endpoints based on URL segments.

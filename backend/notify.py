@@ -25,7 +25,7 @@ import system_config
 from database import AsyncSessionLocal
 from env_crypto import decrypt_text, encrypt_text
 from models import (Application, ApplicationReplica, Database, Node, Notification,
-                    NotificationChannel, NotificationDelivery)
+                    NotificationChannel, NotificationDelivery, SystemConfig)
 
 log = logging.getLogger("cloudbase.notify")
 
@@ -42,6 +42,9 @@ EVENTS: dict[str, tuple[str, str, str]] = {
     "backup.offsite_failed":  ("Off-site upload failed",       "Databases", "warning"),
     "cert.expiring":          ("Certificate not renewing",     "Domains",   "warning"),
 }
+# Problems: they stay open and send the all-clear when they're fixed
+PROBLEM_EVENTS = {"instance.failed", "node.offline", "node.disk_high", "database.down",
+                  "backup.failed", "backup.offsite_failed", "cert.expiring"}
 # Sensible defaults for a new channel
 DEFAULT_EVENTS = ["deploy.failed", "deploy.rolled_back", "instance.failed", "node.offline",
                   "node.disk_high", "database.down", "backup.failed", "backup.offsite_failed", "cert.expiring"]
@@ -50,13 +53,74 @@ RETENTION_DAYS = 30
 _BACKOFF = [30, 120, 600, 1800, 3600]   # seconds before attempt 2, 3, …; then give up
 _DISPATCH_IDLE_SECONDS = 10
 _WATCH_SECONDS = 30
-_NODE_OFFLINE_GRACE = timedelta(seconds=60)
-_PROBLEM_GRACE_SECONDS = 60            # instances and databases must stay down this long (not a blip mid-deploy)
-_DISK_HIGH, _DISK_OK = 90.0, 85.0
-_CERT_WARN_DAYS = 14                    # certbot renews at 30 days left; 14 means it keeps failing
+_DISK_HYSTERESIS = 5.0                 # a disk alert clears 5 points below the threshold
 _CERT_CHECK_SECONDS = 6 * 3600
 
 _wake = asyncio.Event()
+
+# ── Settings (Settings → Notifications → Rules and the In-app column) ─────────
+
+SETTINGS_KEY = "notifications.settings"
+DEFAULT_SETTINGS = {
+    "inbox_events": list(EVENTS),     # shown under the bell
+    "node_offline_minutes": 1,        # a node is reported after being offline this long
+    "down_minutes": 1,                # instances and databases: not a blip mid-deploy
+    "disk_percent": 90,
+    "cert_days": 14,                  # certbot renews at 30 days left; 14 means it keeps failing
+    "remind_hours": 0,                # repeat open problems to channels; 0 = never
+    "send_resolved": True,            # send the all-clear when a problem is fixed
+}
+SETTING_CHOICES = {
+    "node_offline_minutes": [1, 2, 5, 10, 15, 30],
+    "down_minutes": [1, 2, 5, 10, 15],
+    "disk_percent": [80, 85, 90, 95],
+    "cert_days": [7, 14, 21],
+    "remind_hours": [0, 1, 4, 12, 24],
+}
+_settings: Optional[dict] = None
+
+
+def _normalize_settings(raw: dict) -> dict:
+    merged = {**DEFAULT_SETTINGS, **{k: v for k, v in (raw or {}).items() if k in DEFAULT_SETTINGS}}
+    merged["inbox_events"] = [e for e in EVENTS if e in set(merged["inbox_events"] or [])]
+    for key, choices in SETTING_CHOICES.items():
+        if merged[key] not in choices:
+            merged[key] = DEFAULT_SETTINGS[key]
+    merged["send_resolved"] = bool(merged["send_resolved"])
+    return merged
+
+
+async def load_settings(db=None) -> dict:
+    global _settings
+    async def _read(session):
+        row = (await session.execute(select(SystemConfig).where(SystemConfig.key == SETTINGS_KEY))).scalar_one_or_none()
+        try:
+            return json.loads(row.value) if row and row.value else {}
+        except ValueError:
+            return {}
+    if db is not None:
+        raw = await _read(db)
+    else:
+        async with AsyncSessionLocal() as session:
+            raw = await _read(session)
+    _settings = _normalize_settings(raw)
+    return _settings
+
+
+async def save_settings(db, update: dict) -> dict:
+    global _settings
+    merged = _normalize_settings({**(await load_settings(db)), **update})
+    row = (await db.execute(select(SystemConfig).where(SystemConfig.key == SETTINGS_KEY))).scalar_one_or_none()
+    if row is None:
+        db.add(SystemConfig(key=SETTINGS_KEY, value=json.dumps(merged)))
+    else:
+        row.value = json.dumps(merged)
+    _settings = merged
+    return merged
+
+
+async def settings() -> dict:
+    return _settings if _settings is not None else await load_settings()
 
 
 def _utcnow() -> datetime:
@@ -158,16 +222,19 @@ async def emit(
                 if open_:
                     return None
             muted = await _is_muted(db, app_id)
+            in_inbox = event in (await settings())["inbox_events"]
+            targets = [] if muted else await _channels_for(db, event, app_id)
+            if not key and not in_inbox and not targets:
+                return None  # nobody wants it (problems are still recorded, to know when they clear)
             n = Notification(
                 event=event, severity=severity or EVENTS.get(event, ("", "", "info"))[2],
                 title=title[:300], message=(message or "")[:4000], app_id=app_id, link=link,
-                dedupe_key=key, state="open" if key else None, muted=muted,
+                dedupe_key=key, state="open" if key else None, muted=muted, in_inbox=in_inbox,
             )
             db.add(n)
             await db.flush()
-            if not muted:
-                for ch in await _channels_for(db, event, app_id):
-                    db.add(NotificationDelivery(notification_id=n.id, channel_id=ch.id))
+            for ch in targets:
+                db.add(NotificationDelivery(notification_id=n.id, channel_id=ch.id))
             await db.commit()
             log.info("%s: %s", event, title, extra={"app_id": app_id} if app_id else None)
             _wake.set()
@@ -190,13 +257,13 @@ async def resolve(key: str, title: str, message: str = "", *, silent: bool = Fal
                 return
             now = _utcnow()
             problem.state, problem.resolved_at = "resolved", now
-            if silent:
+            if silent or not (await settings())["send_resolved"]:
                 await db.commit()
                 return
             n = Notification(
                 event=problem.event, severity="resolved", title=title[:300], message=(message or "")[:4000],
                 app_id=problem.app_id, link=problem.link, dedupe_key=key, state="resolved",
-                resolves_id=problem.id, muted=problem.muted, resolved_at=now,
+                resolves_id=problem.id, muted=problem.muted, resolved_at=now, in_inbox=problem.in_inbox,
             )
             db.add(n)
             await db.flush()
@@ -375,7 +442,7 @@ def _duration(seconds: int) -> str:
 _bad_since: dict[str, float] = {}  # instance/database problem key → when it was first seen
 
 
-_cert_problems: dict[str, tuple[str, str, Optional[int], str]] = {}  # key → (title, message, app_id, link)
+_cert_days: dict[str, tuple[int, Optional[int]]] = {}  # certificate name → (days left, app id)
 _cert_checked_at = 0.0
 
 
@@ -385,29 +452,23 @@ async def _check_certificates() -> None:
     async with AsyncSessionLocal() as db:
         apps = (await db.execute(select(Application.id, Application.name, Application.ssl_cert_path)
                                  .where(Application.ssl_cert_path.is_not(None)))).all()
-    found: dict[str, tuple[str, str, Optional[int], str]] = {}
-    seen: set[str] = set()
-    for app_id, app_name, cert_path in apps:
+    found: dict[str, tuple[int, Optional[int]]] = {}
+    for app_id, _app_name, cert_path in apps:
         name = certificates.name_from_path(cert_path)
-        if not name or name in seen:
+        if not name or name in found:
             continue
-        seen.add(name)
         info = await asyncio.to_thread(certificates.info, name)
-        if info and info["days_left"] <= _CERT_WARN_DAYS:
-            days = info["days_left"]
-            found[f"cert.expiring:{name}"] = (
-                f"Certificate for {name} expires in {days} day{'s' if days != 1 else ''}",
-                "Let's Encrypt renews certificates 30 days before they expire, so renewal keeps failing. "
-                "Check that the domain still points to this server and that port 80 is reachable.",
-                app_id, f"/app?id={app_id}",
-            )
-    _cert_problems.clear()
-    _cert_problems.update(found)
+        if info:
+            found[name] = (info["days_left"], app_id)
+    _cert_days.clear()
+    _cert_days.update(found)
     _cert_checked_at = asyncio.get_running_loop().time()
 
 
 async def _watch_once() -> None:
     now = _utcnow()
+    cfg = await settings()
+    disk_high = float(cfg["disk_percent"])
     problems: dict[str, tuple] = {}   # key → (event, title, message, app_id, link)
     resolutions: dict[str, tuple] = {}  # key → (title, message) for problems that are fixed
     gone: set[str] = set()             # keys whose subject no longer exists: close silently
@@ -427,7 +488,7 @@ async def _watch_once() -> None:
         node_ids.add(node.id)
         key = f"node.offline:{node.id}"
         if (node.enabled and not node.is_local and node.status == "offline"
-                and node.offline_since and now - node.offline_since >= _NODE_OFFLINE_GRACE):
+                and node.offline_since and now - node.offline_since >= timedelta(minutes=cfg["node_offline_minutes"])):
             problems[key] = ("node.offline", f"Node {node.name} is offline",
                              "Its instances are out of the load balancer and come back by themselves when it reconnects. "
                              "Instances on other nodes keep serving.", None, f"/node?id={node.id}")
@@ -436,7 +497,7 @@ async def _watch_once() -> None:
                                 f"It came back {_duration(open_[key])} after the alert.")
         key = f"node.disk_high:{node.id}"
         disk = node.node_disk_percent
-        if disk is not None and (disk >= _DISK_HIGH or (key in open_ and disk >= _DISK_OK)):
+        if disk is not None and (disk >= disk_high or (key in open_ and disk >= disk_high - _DISK_HYSTERESIS)):
             problems[key] = ("node.disk_high", f"Disk on {node.name} is {disk:.0f}% full",
                              "Builds, logs and backups stop working when the disk is full. "
                              "Clean up old Docker images (docker system prune) or add space.", None, f"/node?id={node.id}")
@@ -476,10 +537,15 @@ async def _watch_once() -> None:
             await _check_certificates()
         except Exception as e:
             log.debug("certificate check failed: %s", e)
-    for key, (title, message, app_id, link) in _cert_problems.items():
-        problems[key] = ("cert.expiring", title, message, app_id, link)
+    for name, (days, app_id) in _cert_days.items():
+        if days <= cfg["cert_days"]:
+            problems[f"cert.expiring:{name}"] = (
+                "cert.expiring", f"Certificate for {name} expires in {days} day{'s' if days != 1 else ''}",
+                "Let's Encrypt renews certificates 30 days before they expire, so renewal keeps failing. "
+                "Check that the domain still points to this server and that port 80 is reachable.",
+                app_id, f"/app?id={app_id}")
     for key in open_:
-        if key.startswith("cert.expiring:") and key not in _cert_problems and _cert_checked_at:
+        if key.startswith("cert.expiring:") and key not in problems and _cert_checked_at:
             resolutions[key] = (f"Certificate for {key.split(':', 1)[1]} was renewed", "")
 
     # Subjects that were deleted
@@ -500,7 +566,7 @@ async def _watch_once() -> None:
             continue
         if event in ("instance.failed", "database.down"):
             first = _bad_since.setdefault(key, loop_time)
-            if loop_time - first < _PROBLEM_GRACE_SECONDS:
+            if loop_time - first < cfg["down_minutes"] * 60:
                 continue
         await emit(event, title, message, app_id=app_id, link=link, key=key)
     for key, (title, message) in resolutions.items():
@@ -508,6 +574,45 @@ async def _watch_once() -> None:
             await resolve(key, title, message)
     for key in gone - set(problems):
         await resolve(key, "", silent=True)
+    if cfg["remind_hours"]:
+        await _remind(cfg["remind_hours"])
+
+
+async def _remind(hours: int) -> None:
+    """Send problems that are still open again, to the channels that got them."""
+    now = _utcnow()
+    due_before = now - timedelta(hours=hours)
+    async with AsyncSessionLocal() as db:
+        problems = (await db.execute(
+            select(Notification).where(
+                Notification.state == "open", Notification.muted == False,  # noqa: E712
+                Notification.severity.in_(["warning", "critical"]),
+            )
+        )).scalars().all()
+        sent = 0
+        for p in problems:
+            if (p.reminded_at or p.created_at) > due_before:
+                continue
+            channel_ids = set((await db.execute(
+                select(NotificationDelivery.channel_id).where(NotificationDelivery.notification_id == p.id)
+            )).scalars().all())
+            p.reminded_at = now
+            if not channel_ids:
+                continue
+            n = Notification(
+                event=p.event, severity=p.severity, title=f"Still open: {p.title}"[:300],
+                message=f"Open for {_duration(int((now - p.created_at).total_seconds()))}.\n{p.message or ''}".strip()[:4000],
+                app_id=p.app_id, link=p.link, dedupe_key=p.dedupe_key, resolves_id=p.id, in_inbox=False,
+            )
+            db.add(n)
+            await db.flush()
+            for channel_id in channel_ids:
+                db.add(NotificationDelivery(notification_id=n.id, channel_id=channel_id))
+            sent += 1
+        await db.commit()
+    if sent:
+        log.info("reminded about %s open problem(s)", sent)
+        _wake.set()
 
 
 async def watcher() -> None:

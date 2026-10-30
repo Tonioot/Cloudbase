@@ -167,14 +167,35 @@
 .nc-matrix-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
 .nc-matrix { margin: 0; }
 .nc-matrix th, .nc-matrix td { padding-top: 9px; padding-bottom: 9px; }
-.nc-matrix .nc-cell { text-align: center; width: 1%; padding-left: 12px; padding-right: 12px; }
-.nc-matrix th.nc-cell { font-weight: 500; color: var(--text-2); vertical-align: bottom; white-space: normal; }
-/* Long channel names wrap (up to three lines) instead of widening the table */
-.nc-ch-name {
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
-  min-width: 64px; max-width: 120px; margin: 0 auto; line-height: 1.35; overflow-wrap: anywhere;
+.nc-matrix .nc-cell { text-align: center; width: 104px; min-width: 104px; padding-left: 8px; padding-right: 8px; }
+.nc-matrix th.nc-cell { font-weight: 500; color: var(--text-2); vertical-align: bottom; }
+/* Channel names stay on one line; the full name shows on hover */
+.nc-ch-name { display: block; max-width: 96px; margin: 0 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nc-matrix .nc-inbox { border-right: 1px solid var(--line); }
+.nc-matrix th.nc-inbox { color: var(--text); }
+
+/* Checkbox in the panel's style: a rounded square that fills when on */
+.nc-check { position: relative; display: inline-flex; width: 18px; height: 18px; vertical-align: middle; cursor: pointer; }
+.nc-check input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.nc-check span {
+  position: relative; width: 18px; height: 18px; border-radius: 5px;
+  border: 1px solid color-mix(in srgb, var(--muted) 60%, transparent); background: var(--field);
+  transition: background var(--transition), border-color var(--transition);
 }
-.nc-matrix input { accent-color: var(--text); width: 15px; height: 15px; cursor: pointer; }
+.nc-check span::after {
+  content: ''; position: absolute; left: 5.5px; top: 2px; width: 5px; height: 9px;
+  border: solid var(--bg); border-width: 0 2px 2px 0; transform: rotate(45deg); opacity: 0;
+}
+.nc-check:hover span { border-color: var(--muted); }
+.nc-check input:checked + span { background: var(--text); border-color: var(--text); }
+.nc-check input:checked + span::after { opacity: 1; }
+.nc-check input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nc-rules { margin-bottom: 0; }
+.nc-rules .s3-row { flex-wrap: wrap; row-gap: 10px; }
+.nc-rules .s3-label { min-width: 240px; }
+.nc-rules .segmented { flex-shrink: 0; }
+.nc-rules .segmented button { min-width: 44px; }
+.nc-event-sub { margin-left: 8px; font-size: 11.5px; color: var(--muted); }
 .nc-group td { font-size: 12px; color: var(--faint); padding-top: 14px; padding-bottom: 4px; }
 .nc-event { color: var(--text); white-space: nowrap; }
 .nc-sev { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 10px; vertical-align: 1px; background: var(--text-2); }
@@ -195,4 +216,8 @@
 @media (max-width: 1280px) {
   .settings-group.settings-group--matrix { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .settings-group--matrix .settings-group-sub { max-width: 640px; }
+}
+@media (max-width: 640px) {
+  .nc-matrix .nc-event { white-space: normal; min-width: 170px; }
+  .nc-event-sub { display: block; margin: 2px 0 0 17px; }
 }

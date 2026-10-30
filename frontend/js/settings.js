@@ -834,33 +834,43 @@ async function loadTokens() {
 
 function renderNotifications(root) {
   root.innerHTML = `
-    ${actionBar('Cloudbase sends a problem once, and the all-clear when it is fixed.', 'notif-save', 'Save events')}
+    ${actionBar('Cloudbase sends a problem once, and the all-clear when it is fixed.', 'notif-save', 'Save changes')}
     ${group('Channels', 'Each channel stores its tokens and webhook URLs encrypted. A channel can be limited to certain apps, for example a team’s own Slack channel.',
       `<div id="nc-list"><div class="settings-note">Loading…</div></div>
        <div class="field" style="margin:12px 0 0"><button class="btn btn-sm" id="nc-add">Add channel</button></div>`)}
-    ${group('Events', 'Which events each channel receives. Problems such as an offline node stay open until they are fixed; PagerDuty closes its incident by itself.',
+    ${group('Events', 'What goes where. <strong>In-app</strong> is the bell in the top bar; turn an event off there to keep the inbox quiet. A problem is sent once, and its all-clear goes to the same places when it’s fixed.',
       `<div id="nc-matrix"><div class="settings-note">Loading…</div></div>`, 'settings-group--matrix')}
+    ${group('Rules', 'When something counts as a problem, whether open problems are repeated, and whether the all-clear is sent.',
+      `<div id="nc-rules"><div class="settings-note">Loading…</div></div>`)}
     ${group('Delivery log', 'The last messages that were sent, or that are being retried. Failed messages are retried after 30 seconds, 2 and 10 minutes, half an hour and an hour.',
       `<div id="nc-log"><div class="settings-note">Loading…</div></div>`)}
   `;
 
-  const state = { catalog: null, channels: [], apps: [], dirty: new Set() };
+  const state = { catalog: null, settings: null, channels: [], apps: [], dirty: new Set() };
   const typeLabel = t => state.catalog?.channel_types.find(c => c.type === t)?.label || t;
-  document.getElementById('notif-save').disabled = true;
+  const saveBtn = document.getElementById('notif-save');
+  saveBtn.disabled = true;
+  const markDirty = what => {
+    state.dirty.add(what);
+    saveBtn.disabled = false;
+    setStatus('Unsaved changes');
+  };
 
   const load = async () => {
     try {
-      const [catalog, channels, apps] = await Promise.all([
+      const [catalog, settings, channels, apps] = await Promise.all([
         state.catalog || api.getNotificationCatalog(),
+        api.getNotificationSettings(),
         api.listNotificationChannels(),
         api.listApps().catch(() => []),
       ]);
-      Object.assign(state, { catalog, channels, apps });
+      Object.assign(state, { catalog, settings, channels, apps });
       state.dirty.clear();
-      document.getElementById('notif-save').disabled = true;
+      saveBtn.disabled = true;
       setStatus('');
       renderChannelList(state, typeLabel, load);
       renderMatrix(state);
+      renderRules(state);
     } catch (e) {
       document.getElementById('nc-list').innerHTML = notice(esc(e.message));
     }
@@ -873,30 +883,86 @@ function renderNotifications(root) {
   document.getElementById('nc-matrix').addEventListener('change', e => {
     const box = e.target.closest('input[data-ch]');
     if (!box) return;
-    const ch = state.channels.find(c => String(c.id) === box.dataset.ch);
-    const events = new Set(ch.events);
-    box.checked ? events.add(box.dataset.ev) : events.delete(box.dataset.ev);
-    ch.events = state.catalog.events.map(ev => ev.key).filter(k => events.has(k));
-    state.dirty.add(ch.id);
-    document.getElementById('notif-save').disabled = false;
-    setStatus('Unsaved changes');
+    const order = state.catalog.events.map(ev => ev.key);
+    const toggle = list => {
+      const set = new Set(list);
+      box.checked ? set.add(box.dataset.ev) : set.delete(box.dataset.ev);
+      return order.filter(k => set.has(k));
+    };
+    if (box.dataset.ch === 'inbox') {
+      state.settings.inbox_events = toggle(state.settings.inbox_events);
+      markDirty('settings');
+    } else {
+      const ch = state.channels.find(c => String(c.id) === box.dataset.ch);
+      ch.events = toggle(ch.events);
+      markDirty(ch.id);
+    }
   });
 
-  document.getElementById('notif-save').onclick = async () => {
-    const btn = document.getElementById('notif-save');
-    btn.disabled = true;
+  const rules = document.getElementById('nc-rules');
+  rules.addEventListener('click', e => {
+    const btn = e.target.closest('[data-rule] button');
+    if (!btn) return;
+    const group = btn.closest('[data-rule]');
+    group.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+    state.settings[group.dataset.rule] = parseInt(btn.dataset.value, 10);
+    markDirty('settings');
+  });
+  rules.addEventListener('change', e => {
+    if (e.target.id !== 'nr-send-resolved') return;
+    state.settings.send_resolved = e.target.checked;
+    markDirty('settings');
+    renderMatrix(state);
+  });
+
+  saveBtn.onclick = async () => {
+    saveBtn.disabled = true;
     setStatus('Saving…');
     try {
-      for (const id of state.dirty) {
-        await api.updateNotificationChannel(id, channelPayload(state.channels.find(c => c.id === id)));
+      for (const what of state.dirty) {
+        if (what === 'settings') await api.saveNotificationSettings(state.settings);
+        else await api.updateNotificationChannel(what, channelPayload(state.channels.find(c => c.id === what)));
       }
-      setStatus('Saved', 'ok');
       state.dirty.clear();
+      setStatus('Saved', 'ok');
     } catch (e) {
       setStatus(e.message, 'error');
-      btn.disabled = false;
+      saveBtn.disabled = false;
     }
   };
+}
+
+const RULES = [
+  { key: 'node_offline_minutes', title: 'Offline node', desc: 'Report a node after it has been offline this long. Short network blips stay quiet.',
+    option: v => `${v} min` },
+  { key: 'down_minutes', title: 'Failed instance or database', desc: 'Report after it has been down this long, so a short failure during a deploy isn’t reported.',
+    option: v => `${v} min` },
+  { key: 'disk_percent', title: 'Disk almost full', desc: 'Warn when a node’s disk is fuller than this. The warning clears 5 points lower.',
+    option: v => `${v}%` },
+  { key: 'cert_days', title: 'Certificate not renewing', desc: 'Warn this many days before a certificate expires. Let’s Encrypt renews 30 days ahead.',
+    option: v => `${v} days` },
+  { key: 'remind_hours', title: 'Repeat open problems', desc: 'Send warnings and critical problems that are still open again, to the channels that got them.',
+    option: v => v === 0 ? 'Off' : `${v}h` },
+];
+
+function renderRules(state) {
+  const el = document.getElementById('nc-rules');
+  el.innerHTML = `
+    <div class="s3-card nc-rules">
+      ${RULES.map(r => `
+        <div class="s3-row">
+          <span class="s3-label"><span class="s3-title">${r.title}</span><span class="s3-desc">${r.desc}</span></span>
+          <div class="segmented" role="group" aria-label="${r.title}" data-rule="${r.key}">
+            ${state.catalog.setting_choices[r.key].map(v =>
+              `<button type="button" data-value="${v}" aria-pressed="${state.settings[r.key] === v}">${r.option(v)}</button>`).join('')}
+          </div>
+        </div>`).join('')}
+      <label class="s3-row">
+        <span class="s3-label"><span class="s3-title">Send the all-clear</span>
+          <span class="s3-desc">When a problem is fixed — a node is back online, a backup works again — say so, in the inbox and to every channel that got the alert. PagerDuty then closes its incident.</span></span>
+        <span class="toggle"><input type="checkbox" id="nr-send-resolved" ${state.settings.send_resolved ? 'checked' : ''} /><span class="toggle-slider"></span></span>
+      </label>
+    </div>`;
 }
 
 /** A channel as it is sent back on save: empty secrets keep the stored ones. */
@@ -958,31 +1024,37 @@ function renderChannelList(state, typeLabel, reload) {
 
 function renderMatrix(state) {
   const el = document.getElementById('nc-matrix');
-  if (!state.channels.length) {
-    el.innerHTML = '<div class="settings-note">Add a channel first.</div>';
-    return;
-  }
-  const sevDot = sev => `<span class="nc-sev" data-sev="${sev}"></span>`;
+  const columns = [
+    { id: 'inbox', name: 'In-app', title: 'Under the bell in the top bar', events: state.settings.inbox_events },
+    ...state.channels.map(ch => ({ id: ch.id, name: ch.name, title: ch.name, events: ch.events })),
+  ];
+  const check = (col, ev) => `
+    <label class="nc-check">
+      <input type="checkbox" data-ch="${col.id}" data-ev="${ev.key}" ${col.events.includes(ev.key) ? 'checked' : ''}
+        aria-label="${esc(ev.label)}: ${esc(col.name)}" /><span aria-hidden="true"></span>
+    </label>`;
   let lastGroup = null;
   const rows = state.catalog.events.map(ev => {
     const head = ev.group !== lastGroup
-      ? `<tr class="nc-group"><td colspan="${state.channels.length + 1}"><span>${esc(ev.group)}</span></td></tr>` : '';
+      ? `<tr class="nc-group"><td colspan="${columns.length + 1}"><span>${esc(ev.group)}</span></td></tr>` : '';
     lastGroup = ev.group;
     return head + `
       <tr>
-        <td class="nc-event">${sevDot(ev.severity)}${esc(ev.label)}</td>
-        ${state.channels.map(ch => `
-          <td class="nc-cell"><input type="checkbox" data-ch="${ch.id}" data-ev="${ev.key}" ${ch.events.includes(ev.key) ? 'checked' : ''}
-            aria-label="${esc(ev.label)} → ${esc(ch.name)}" /></td>`).join('')}
+        <td class="nc-event"><span class="nc-sev" data-sev="${ev.severity}"></span>${esc(ev.label)}${ev.problem && state.settings.send_resolved
+          ? '<span class="nc-event-sub" title="Also sends the all-clear when it’s fixed">+ all-clear</span>' : ''}</td>
+        ${columns.map(col => `<td class="nc-cell${col.id === 'inbox' ? ' nc-inbox' : ''}">${check(col, ev)}</td>`).join('')}
       </tr>`;
   }).join('');
   el.innerHTML = `
     <div class="nc-matrix-wrap">
       <table class="table nc-matrix">
-        <thead><tr><th></th>${state.channels.map(ch => `<th class="nc-cell"><span class="nc-ch-name" title="${esc(ch.name)}">${esc(ch.name)}</span></th>`).join('')}</tr></thead>
+        <thead><tr><th></th>${columns.map(col => `
+          <th class="nc-cell${col.id === 'inbox' ? ' nc-inbox' : ''}"><span class="nc-ch-name" title="${esc(col.title)}">${esc(col.name)}</span></th>`).join('')}
+        </tr></thead>
         <tbody>${rows}</tbody>
       </table>
-    </div>`;
+    </div>
+    ${state.channels.length ? '' : '<div class="field-hint" style="margin-top:10px">Add a channel above to also send events to Slack, e-mail, PagerDuty and others.</div>'}`;
 }
 
 async function loadDeliveryLog() {

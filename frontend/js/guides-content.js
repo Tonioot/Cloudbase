@@ -427,6 +427,10 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
 <p>The <em>Events</em> table chooses which events each channel receives — for example everything in Slack, but only outages in PagerDuty. A channel can also be limited to certain apps, such as a team's own Slack channel; it then only gets those apps' deploys, instance problems and certificates.</p>
 <p>A message that can't be delivered is retried after 30 seconds, 2 and 10 minutes, half an hour and an hour. The <em>Delivery log</em> shows what was sent and why something failed.</p>
 
+<h2>In-app and rules</h2>
+<p>The first column of the <em>Events</em> table, <strong>In-app</strong>, is the bell in the top bar. Turn off events you don't want to see there — for example successful deploys — while they still go to a channel if you want.</p>
+<p>Under <em>Rules</em> you set when something counts as a problem: how long a node must be offline (1 to 30 minutes), how long an instance or database must be down, the disk percentage and how many days before expiry a certificate is reported. <em>Repeat open problems</em> sends warnings and critical problems that are still open again — every hour up to once a day — to the channels that got them. <em>Send the all-clear</em> decides whether a fixed problem is reported as fixed; rows marked <em>+ all-clear</em> in the table are the problems this applies to.</p>
+
 <h2>Muting an app</h2>
 <p>During maintenance or a migration, mute the app under its <strong>Settings → Notifications</strong>, for an hour up to a week. Its events still show up under the bell, but aren't sent to channels.</p>
 

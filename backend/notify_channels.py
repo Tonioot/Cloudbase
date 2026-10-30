@@ -41,7 +41,7 @@ class Message:
     timestamp: str         # ISO 8601, UTC
     detail: dict = field(default_factory=dict)
     event_label: str = ""
-    resolves_id: Optional[int] = None    # the alert this all-clear belongs to
+    resolves_id: Optional[int] = None    # the alert this all-clear or reminder belongs to
     settings_url: Optional[str] = None
 
     def payload(self) -> dict:

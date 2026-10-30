@@ -373,8 +373,10 @@ class Notification(Base):
     link        = Column(String(300), nullable=True)     # panel path, e.g. /app?id=3
     dedupe_key  = Column(String(120), nullable=True, index=True)
     state       = Column(String(10), nullable=True)      # open | resolved; None for one-off events
-    resolves_id = Column(Integer, ForeignKey("notifications.id", ondelete="SET NULL"), nullable=True)
+    resolves_id = Column(Integer, ForeignKey("notifications.id", ondelete="SET NULL"), nullable=True)  # all-clear or reminder of
     muted       = Column(Boolean, default=False, nullable=False)
+    in_inbox    = Column(Boolean, default=True, nullable=False)  # shown under the bell (Settings → In-app column)
+    reminded_at = Column(DateTime, nullable=True)                # last reminder of this open problem
     created_at  = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     resolved_at = Column(DateTime, nullable=True)
 

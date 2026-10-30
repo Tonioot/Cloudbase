@@ -218,6 +218,15 @@ async def init_db():
         if "notifications_read_at" not in existing_user_cols:
             await conn.exec_driver_sql("ALTER TABLE users ADD COLUMN notifications_read_at DATETIME")
 
+        result = await conn.exec_driver_sql("PRAGMA table_info(notifications)")
+        existing_notif_cols = {row[1] for row in result.fetchall()}
+        for col, definition in [
+            ("in_inbox",    "BOOLEAN NOT NULL DEFAULT 1"),
+            ("reminded_at", "DATETIME"),
+        ]:
+            if col not in existing_notif_cols:
+                await conn.exec_driver_sql(f"ALTER TABLE notifications ADD COLUMN {col} {definition}")
+
         # notifications — find the open problem for a dedupe key quickly
         await conn.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS ix_notifications_key_state "

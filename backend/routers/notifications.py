@@ -50,7 +50,8 @@ async def list_notifications(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(_view),
 ):
-    q = select(Notification).order_by(Notification.id.desc()).limit(max(1, min(limit, 200)))
+    q = (select(Notification).where(Notification.in_inbox == True)  # noqa: E712
+         .order_by(Notification.id.desc()).limit(max(1, min(limit, 200))))
     if before:
         q = q.where(Notification.id < before)
     if severity:
@@ -72,12 +73,12 @@ async def list_notifications(
 
 
 async def _counts(db: AsyncSession, me: Optional[User]) -> dict:
-    q = select(func.count(Notification.id))
+    q = select(func.count(Notification.id)).where(Notification.in_inbox == True)  # noqa: E712
     if me and me.notifications_read_at:
         q = q.where(Notification.created_at > me.notifications_read_at)
     unread = (await db.execute(q)).scalar() or 0
     open_ = (await db.execute(
-        select(func.count(Notification.id)).where(Notification.state == "open")
+        select(func.count(Notification.id)).where(Notification.state == "open", Notification.in_inbox == True)  # noqa: E712
     )).scalar() or 0
     return {"unread": unread, "open": open_}
 
@@ -104,9 +105,10 @@ async def mark_read(db: AsyncSession = Depends(get_db), user: dict = Depends(_vi
 async def catalog(_user: dict = Depends(_view)):
     """Events and channel types, for the settings screen."""
     return {
-        "events": [{"key": k, "label": label, "group": group, "severity": sev}
+        "events": [{"key": k, "label": label, "group": group, "severity": sev, "problem": k in notify.PROBLEM_EVENTS}
                    for k, (label, group, sev) in notify.EVENTS.items()],
         "default_events": notify.DEFAULT_EVENTS,
+        "setting_choices": notify.SETTING_CHOICES,
         "channel_types": [
             {"type": t, "label": spec["label"], "fields": [
                 {"key": k, "label": label, "kind": kind, "required": required, "help": help_}
@@ -115,6 +117,43 @@ async def catalog(_user: dict = Depends(_view)):
             for t, spec in notify_channels.CHANNEL_TYPES.items()
         ],
     }
+
+
+# ── Rules ─────────────────────────────────────────────────────────────────────
+
+class SettingsRequest(BaseModel):
+    inbox_events: Optional[list[str]] = None
+    node_offline_minutes: Optional[int] = None
+    down_minutes: Optional[int] = None
+    disk_percent: Optional[int] = None
+    cert_days: Optional[int] = None
+    remind_hours: Optional[int] = None
+    send_resolved: Optional[bool] = None
+
+
+@router.get("/settings")
+async def get_settings(db: AsyncSession = Depends(get_db), _user: dict = Depends(_manage)):
+    return await notify.load_settings(db)
+
+
+@router.put("/settings")
+async def put_settings(
+    req: SettingsRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_manage),
+    actor: str = Depends(_auth.get_current_actor),
+):
+    update = req.model_dump(exclude_none=True)
+    unknown = [e for e in update.get("inbox_events", []) if e not in notify.EVENTS]
+    if unknown:
+        raise HTTPException(400, f"Unknown event '{unknown[0]}'")
+    for key, value in update.items():
+        if key in notify.SETTING_CHOICES and value not in notify.SETTING_CHOICES[key]:
+            raise HTTPException(400, f"{key} must be one of {notify.SETTING_CHOICES[key]}")
+    saved = await notify.save_settings(db, update)
+    await log_audit(db, "notifications.settings", actor=actor, detail={k: v for k, v in update.items() if k != "inbox_events"})
+    await db.commit()
+    return saved
 
 
 # ── Channels ──────────────────────────────────────────────────────────────────
