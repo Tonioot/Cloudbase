@@ -17,6 +17,8 @@ from typing import Optional
 
 import httpx
 
+import notify_email
+
 _TIMEOUT = httpx.Timeout(15.0, connect=10.0)
 _USER_AGENT = "Cloudbase-Notifications"
 
@@ -38,6 +40,9 @@ class Message:
     resolve: bool
     timestamp: str         # ISO 8601, UTC
     detail: dict = field(default_factory=dict)
+    event_label: str = ""
+    resolves_id: Optional[int] = None    # the alert this all-clear belongs to
+    settings_url: Optional[str] = None
 
     def payload(self) -> dict:
         return {
@@ -210,22 +215,7 @@ def _smtp_send(cfg: dict, email: EmailMessage) -> None:
 
 
 async def _send_email(msg: Message, cfg: dict) -> None:
-    email = EmailMessage()
-    email["Subject"] = f"[Cloudbase] {msg.title}"
-    email["From"] = cfg["from_address"].strip()
-    email["To"] = ", ".join(a.strip() for a in cfg["to"].split(",") if a.strip())
-    email.set_content(_text(msg) + "\n\n— Cloudbase")
-    link = (f'<p><a href="{html.escape(msg.url)}" style="color:#2563eb">Open in Cloudbase</a></p>'
-            if msg.url else "")
-    email.add_alternative(
-        f'<div style="font-family:system-ui,sans-serif;max-width:560px">'
-        f'<div style="border-left:4px solid {_COLOURS.get(msg.severity, "#64748b")};padding:4px 12px">'
-        f'<h2 style="margin:0 0 8px;font-size:17px">{html.escape(msg.title)}</h2>'
-        f'<p style="margin:0;white-space:pre-wrap;color:#334155">{html.escape(msg.message or "")}</p>'
-        f'{link}</div><p style="color:#94a3b8;font-size:12px">Sent by Cloudbase</p></div>',
-        subtype="html",
-    )
-    await asyncio.to_thread(_smtp_send, cfg, email)
+    await asyncio.to_thread(_smtp_send, cfg, notify_email.build(msg, cfg))
 
 
 async def _send_webhook(msg: Message, cfg: dict) -> None:

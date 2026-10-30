@@ -420,7 +420,7 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
   <li><strong>Slack</strong> — an Incoming Webhook URL.</li>
   <li><strong>Microsoft Teams</strong> — a webhook URL from the channel's Workflows (“Post to a channel when a webhook request is received”).</li>
   <li><strong>PagerDuty</strong> — the integration key of an Events API v2 integration on a service.</li>
-  <li><strong>E-mail</strong> — any SMTP server: your mail provider, Mailgun, Postmark, Amazon SES, …</li>
+  <li><strong>E-mail</strong> — any SMTP server: your mail provider, Mailjet, Mailgun, Postmark, Amazon SES, … The mail is sent as an automatic system message with tracking switched off: no open pixel, and links go straight to the panel. To keep it out of spam, verify the From domain at your provider and set up SPF, DKIM and DMARC.</li>
   <li><strong>Webhook</strong> — a JSON POST to your own URL (see below).</li>
   <li><strong>Discord</strong>, <strong>Telegram</strong> and <strong>ntfy</strong> — for smaller teams and phones.</li>
 </ul>

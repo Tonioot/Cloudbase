@@ -839,7 +839,7 @@ function renderNotifications(root) {
       `<div id="nc-list"><div class="settings-note">Loading…</div></div>
        <div class="field" style="margin:12px 0 0"><button class="btn btn-sm" id="nc-add">Add channel</button></div>`)}
     ${group('Events', 'Which events each channel receives. Problems such as an offline node stay open until they are fixed; PagerDuty closes its incident by itself.',
-      `<div id="nc-matrix"><div class="settings-note">Loading…</div></div>`)}
+      `<div id="nc-matrix"><div class="settings-note">Loading…</div></div>`, 'settings-group--matrix')}
     ${group('Delivery log', 'The last messages that were sent, or that are being retried. Failed messages are retried after 30 seconds, 2 and 10 minutes, half an hour and an hour.',
       `<div id="nc-log"><div class="settings-note">Loading…</div></div>`)}
   `;
@@ -966,7 +966,7 @@ function renderMatrix(state) {
   let lastGroup = null;
   const rows = state.catalog.events.map(ev => {
     const head = ev.group !== lastGroup
-      ? `<tr class="nc-group"><td colspan="${state.channels.length + 1}">${esc(ev.group)}</td></tr>` : '';
+      ? `<tr class="nc-group"><td colspan="${state.channels.length + 1}"><span>${esc(ev.group)}</span></td></tr>` : '';
     lastGroup = ev.group;
     return head + `
       <tr>
@@ -979,7 +979,7 @@ function renderMatrix(state) {
   el.innerHTML = `
     <div class="nc-matrix-wrap">
       <table class="table nc-matrix">
-        <thead><tr><th></th>${state.channels.map(ch => `<th class="nc-cell">${esc(ch.name)}</th>`).join('')}</tr></thead>
+        <thead><tr><th></th>${state.channels.map(ch => `<th class="nc-cell"><span class="nc-ch-name" title="${esc(ch.name)}">${esc(ch.name)}</span></th>`).join('')}</tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;

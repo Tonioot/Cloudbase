@@ -240,6 +240,8 @@ def build_message(n: Notification, app_name: Optional[str], resolves_key: Option
         dedupe_key=n.dedupe_key or resolves_key or f"cloudbase-{n.id}",
         resolve=n.severity == "resolved",
         timestamp=n.created_at.replace(tzinfo=timezone.utc).isoformat(),
+        event_label=EVENTS.get(n.event, (n.event,))[0], resolves_id=n.resolves_id,
+        settings_url=_absolute("/settings?s=notifications"),
     )
 
 
@@ -345,6 +347,7 @@ async def send_test(channel_type: str, config: dict) -> Optional[str]:
         message="If you can read this, the channel works.", url=_absolute("/settings?s=notifications"),
         app=None, dedupe_key="cloudbase-test", resolve=False,
         timestamp=datetime.now(timezone.utc).isoformat(),
+        event_label="Test", settings_url=_absolute("/settings?s=notifications"),
     )
     try:
         await channels.send(channel_type, config, msg)

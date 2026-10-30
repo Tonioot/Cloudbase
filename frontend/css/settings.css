@@ -167,8 +167,13 @@
 .nc-matrix-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
 .nc-matrix { margin: 0; }
 .nc-matrix th, .nc-matrix td { padding-top: 9px; padding-bottom: 9px; }
-.nc-matrix .nc-cell { text-align: center; width: 1%; white-space: nowrap; padding-left: 18px; padding-right: 18px; }
-.nc-matrix th.nc-cell { font-weight: 500; color: var(--text-2); max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.nc-matrix .nc-cell { text-align: center; width: 1%; padding-left: 12px; padding-right: 12px; }
+.nc-matrix th.nc-cell { font-weight: 500; color: var(--text-2); vertical-align: bottom; white-space: normal; }
+/* Long channel names wrap (up to three lines) instead of widening the table */
+.nc-ch-name {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+  min-width: 64px; max-width: 120px; margin: 0 auto; line-height: 1.35; overflow-wrap: anywhere;
+}
 .nc-matrix input { accent-color: var(--text); width: 15px; height: 15px; cursor: pointer; }
 .nc-group td { font-size: 12px; color: var(--faint); padding-top: 14px; padding-bottom: 4px; }
 .nc-event { color: var(--text); white-space: nowrap; }
@@ -178,6 +183,16 @@
 .nc-log-title { color: var(--text); }
 .nc-log-sub { font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
 .nc-matrix td:first-child, .nc-matrix th:first-child { padding-left: 14px; }
+.nc-matrix td:last-child, .nc-matrix th:last-child { padding-right: 14px; }
+.nc-matrix .nc-event { padding-right: 16px; }
 .settings-group-bd { min-width: 0; }  /* wide tables scroll inside instead of widening the page */
 #nc-fields { display: flex; flex-direction: column; gap: inherit; }
 #nc-fields:empty { display: none; }
+/* Event names stay in view while the channels scroll sideways */
+.nc-matrix .nc-event, .nc-matrix thead th:first-child { position: sticky; left: 0; z-index: 1; background: var(--bg); }
+.nc-matrix .nc-group span { position: sticky; left: 14px; }
+/* Narrower screens: the description goes above, so the table gets the full width */
+@media (max-width: 1280px) {
+  .settings-group.settings-group--matrix { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .settings-group--matrix .settings-group-sub { max-width: 640px; }
+}
