@@ -178,3 +178,6 @@
 .nc-log-title { color: var(--text); }
 .nc-log-sub { font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
 .nc-matrix td:first-child, .nc-matrix th:first-child { padding-left: 14px; }
+.settings-group-bd { min-width: 0; }  /* wide tables scroll inside instead of widening the page */
+#nc-fields { display: flex; flex-direction: column; gap: inherit; }
+#nc-fields:empty { display: none; }

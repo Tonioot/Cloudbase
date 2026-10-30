@@ -394,6 +394,59 @@ tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
 `,
 },
 
+{
+  slug: 'notifications',
+  group: 'Apps',
+  title: 'Notifications',
+  summary: 'Hear about failed deploys, crashes, offline nodes and failing backups in Slack, Teams, PagerDuty, e-mail and more.',
+  keywords: 'notifications alerts slack teams pagerduty email e-mail smtp webhook discord telegram ntfy mute on-call incident bell inbox',
+  lead: 'Cloudbase tells you when something needs attention — under the bell in the top bar, and in the channels you connect.',
+  body: `
+<h2>What Cloudbase reports</h2>
+<ul>
+  <li><strong>Deploys</strong> — a deploy failed, a new version failed its health check and was rolled back (the old version keeps serving), or a deploy succeeded.</li>
+  <li><strong>Instances</strong> — an instance crashed too often and was given up on, or failed to start. Reported after it stays down for a minute, so a blip during a deploy doesn't page anyone.</li>
+  <li><strong>Nodes</strong> — a node has been offline for a minute, or its disk is more than 90% full.</li>
+  <li><strong>Databases</strong> — a database is down or unhealthy, a backup failed, or uploading backups to off-site storage fails.</li>
+  <li><strong>Certificates</strong> — a certificate expires within 14 days. Let's Encrypt renews 30 days ahead, so this means renewal keeps failing.</li>
+</ul>
+
+<h2>Problems open and close by themselves</h2>
+<p>A problem is reported once. While it lasts, Cloudbase doesn't send it again; when it is fixed — the node reconnects, the next backup succeeds — every channel that got the alert gets the all-clear. PagerDuty receives both with the same key, so the incident opens and resolves on its own.</p>
+
+<h2>Channels</h2>
+<p>Add channels under <a href="/settings?s=notifications">Settings → Notifications</a>. Tokens and webhook URLs are stored encrypted; use <em>Test</em> to send a test message.</p>
+<ul>
+  <li><strong>Slack</strong> — an Incoming Webhook URL.</li>
+  <li><strong>Microsoft Teams</strong> — a webhook URL from the channel's Workflows (“Post to a channel when a webhook request is received”).</li>
+  <li><strong>PagerDuty</strong> — the integration key of an Events API v2 integration on a service.</li>
+  <li><strong>E-mail</strong> — any SMTP server: your mail provider, Mailgun, Postmark, Amazon SES, …</li>
+  <li><strong>Webhook</strong> — a JSON POST to your own URL (see below).</li>
+  <li><strong>Discord</strong>, <strong>Telegram</strong> and <strong>ntfy</strong> — for smaller teams and phones.</li>
+</ul>
+<p>The <em>Events</em> table chooses which events each channel receives — for example everything in Slack, but only outages in PagerDuty. A channel can also be limited to certain apps, such as a team's own Slack channel; it then only gets those apps' deploys, instance problems and certificates.</p>
+<p>A message that can't be delivered is retried after 30 seconds, 2 and 10 minutes, half an hour and an hour. The <em>Delivery log</em> shows what was sent and why something failed.</p>
+
+<h2>Muting an app</h2>
+<p>During maintenance or a migration, mute the app under its <strong>Settings → Notifications</strong>, for an hour up to a week. Its events still show up under the bell, but aren't sent to channels.</p>
+
+<h2>Webhook format</h2>
+<pre>POST https://your-url
+Content-Type: application/json
+X-Cloudbase-Event: deploy.failed
+X-Cloudbase-Signature: sha256=&lt;HMAC-SHA256 of the body with your signing secret&gt;
+
+{"id": 42, "event": "deploy.failed", "severity": "critical", "status": "triggered",
+ "title": "Deploy of api failed", "message": "…", "app": "api",
+ "url": "https://panel.example.com/app?id=3", "dedupe_key": "cloudbase-42",
+ "timestamp": "2026-10-30T12:00:00+00:00"}</pre>
+<p><code>status</code> is <code>triggered</code> or <code>resolved</code>; a resolve carries the <code>dedupe_key</code> of the problem it closes. <code>url</code> is only set when the panel has its own domain. Severity is <code>info</code>, <code>warning</code>, <code>critical</code> or <code>resolved</code>.</p>
+
+<h2>Who sees what</h2>
+<p>The bell and the <a href="/notifications">inbox</a> need the <code>notifications.view</code> permission (part of the Viewer role); managing channels needs <code>notifications.manage</code>. Notifications are kept for 30 days.</p>
+`,
+},
+
 
 /* ─── Databases ────────────────────────────────────────────────────────── */
 

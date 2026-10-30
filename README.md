@@ -63,6 +63,7 @@ The goal is to keep multi-server application management transparent and easy to 
 * Live logs per instance, build and deploy output
 * CPU, memory, network and disk metrics with seven days of history
 * Activity per app and a global audit log
+* Notifications in the panel and to Slack, Microsoft Teams, PagerDuty, e-mail, webhooks, Discord, Telegram and ntfy — problems resolve themselves when fixed
 * Users and custom roles with fine-grained permissions
 * App export/import and full CLI backups
 
