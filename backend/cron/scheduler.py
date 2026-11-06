@@ -23,7 +23,7 @@ from containers import naming as containers_naming
 from containers import jobs as containers_jobs
 from containers import build as containers_build
 from containers import replicas as containers_replicas
-from notify import engine as notify
+from notify import emit as notify_emit
 from containers import processes as pm
 from core.database import AsyncSessionLocal
 from core.env_crypto import decrypt_env
@@ -286,14 +286,14 @@ async def _execute(run_id: int) -> None:
     took = f"{duration:.1f}s" if duration < 90 else f"{duration / 60:.1f} min"
     if status == "success":
         push(f"[Cron] Run #{run_id} succeeded in {took}")
-        await notify.resolve(f"cron.failed:{app_id}", f"Cron job {app.name} succeeded again",
+        await notify_emit.resolve(f"cron.failed:{app_id}", f"Cron job {app.name} succeeded again",
                              f"Run #{run_id} finished in {took}.")
         return
     what = {"timeout": f"timed out after {took}", "failed": "failed"}[status]
     detail = error or (f"Exit code {exit_code}." if exit_code is not None else "")
     push(f"[Cron] Run #{run_id} {what}" + (f": {detail}" if detail else ""))
     tail = "\n".join(((result or {}).get("output") or "").strip().splitlines()[-12:])
-    await notify.emit("cron.failed", f"Cron job {app.name} {what}",
+    await notify_emit.emit("cron.failed", f"Cron job {app.name} {what}",
                       "\n".join(x for x in [detail, tail] if x), app_id=app_id,
                       link=f"/app?id={app_id}", key=f"cron.failed:{app_id}",
                       severity="critical" if status == "timeout" or error else None)
@@ -304,7 +304,7 @@ async def _execute(run_id: int) -> None:
 async def _missed(app: Application, slot: datetime, reason: str) -> None:
     log.warning("[cron] %s missed its %s run: %s", app.name, slot.isoformat(), reason, extra={"app_id": app.id})
     pm._push_line(app.id, f"[Cron] Skipped the run of {slot:%Y-%m-%d %H:%M} UTC: {reason}")
-    await notify.emit("cron.missed", f"Cron job {app.name} skipped a run", reason,
+    await notify_emit.emit("cron.missed", f"Cron job {app.name} skipped a run", reason,
                       app_id=app.id, link=f"/app?id={app.id}")
 
 

@@ -15,7 +15,8 @@ from core.database import AsyncSessionLocal, init_db
 from core.runtime import IS_NODE
 from cron import scheduler as _cron
 from nginx.panel import _load_panel_https_domain
-from notify import engine as notify
+from notify import dispatch as notify_dispatch
+from notify import watch as notify_watch
 from dbs import backup_scheduler as dbs_backup_scheduler
 from dbs import workers as dbs_workers
 from workers.autoscaler import _autoscaler
@@ -67,8 +68,8 @@ async def _start_panel_tasks() -> list[asyncio.Task]:
         asyncio.create_task(dbs_backup_scheduler.backup_scheduler()),
         asyncio.create_task(dbs_workers.database_stats_sampler()),
         asyncio.create_task(dbs_workers.database_update_checker()),
-        asyncio.create_task(notify.dispatcher()),
-        asyncio.create_task(notify.watcher()),
+        asyncio.create_task(notify_dispatch.dispatcher()),
+        asyncio.create_task(notify_watch.watcher()),
         asyncio.create_task(_cron.scheduler()),
     ]
     if os.environ.get("CLOUDBASE_DEV_DEMO_LOGS"):

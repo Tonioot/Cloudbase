@@ -18,7 +18,7 @@ from typing import Callable, Optional
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from notify import engine as notify
+from notify import emit as notify_emit
 from containers import processes as pm
 from core.database import AsyncSessionLocal
 from core.models import Application, Deployment
@@ -208,15 +208,15 @@ async def _notify(app_id: int, app_name: str, trigger: str, commit: Optional[str
     what = {"auto": "Auto-deploy", "rollback": "Rollback"}.get(trigger, "Deploy")
     lines = [f"Commit: {commit}"] if commit else []
     if error is None:
-        await notify.emit("deploy.succeeded", f"{what} of {app_name} succeeded", "\n".join(lines),
+        await notify_emit.emit("deploy.succeeded", f"{what} of {app_name} succeeded", "\n".join(lines),
                           app_id=app_id, link=f"/app?id={app_id}")
     elif "rolled back" in error:
         # The new instance failed its health check; the old version kept serving.
-        await notify.emit("deploy.rolled_back", f"{what} of {app_name} was rolled back",
+        await notify_emit.emit("deploy.rolled_back", f"{what} of {app_name} was rolled back",
                           "\n".join(lines + [error, "The previous version is still live."]),
                           app_id=app_id, link=f"/app?id={app_id}")
     else:
-        await notify.emit("deploy.failed", f"{what} of {app_name} failed", "\n".join(lines + [error]),
+        await notify_emit.emit("deploy.failed", f"{what} of {app_name} failed", "\n".join(lines + [error]),
                           app_id=app_id, link=f"/app?id={app_id}")
 
 

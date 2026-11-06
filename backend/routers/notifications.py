@@ -10,7 +10,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import auth as _auth
-from notify import engine as notify
+from notify import events as notify_events
+from notify import settings as notify_settings
+from notify import config as notify_config
+from notify import dispatch as notify_dispatch
 from notify import channels as notify_channels
 from core.audit import log_audit
 from core.database import get_db
@@ -105,10 +108,10 @@ async def mark_read(db: AsyncSession = Depends(get_db), user: dict = Depends(_vi
 async def catalog(_user: dict = Depends(_view)):
     """Events and channel types, for the settings screen."""
     return {
-        "events": [{"key": k, "label": label, "group": group, "severity": sev, "problem": k in notify.PROBLEM_EVENTS}
-                   for k, (label, group, sev) in notify.EVENTS.items()],
-        "default_events": notify.DEFAULT_EVENTS,
-        "setting_choices": notify.SETTING_CHOICES,
+        "events": [{"key": k, "label": label, "group": group, "severity": sev, "problem": k in notify_events.PROBLEM_EVENTS}
+                   for k, (label, group, sev) in notify_events.EVENTS.items()],
+        "default_events": notify_events.DEFAULT_EVENTS,
+        "setting_choices": notify_settings.SETTING_CHOICES,
         "channel_types": [
             {"type": t, "label": spec["label"], "fields": [
                 {"key": k, "label": label, "kind": kind, "required": required, "help": help_}
@@ -133,7 +136,7 @@ class SettingsRequest(BaseModel):
 
 @router.get("/settings")
 async def get_settings(db: AsyncSession = Depends(get_db), _user: dict = Depends(_manage)):
-    return await notify.load_settings(db)
+    return await notify_settings.load_settings(db)
 
 
 @router.put("/settings")
@@ -144,13 +147,13 @@ async def put_settings(
     actor: str = Depends(_auth.get_current_actor),
 ):
     update = req.model_dump(exclude_none=True)
-    unknown = [e for e in update.get("inbox_events", []) if e not in notify.EVENTS]
+    unknown = [e for e in update.get("inbox_events", []) if e not in notify_events.EVENTS]
     if unknown:
         raise HTTPException(400, f"Unknown event '{unknown[0]}'")
     for key, value in update.items():
-        if key in notify.SETTING_CHOICES and value not in notify.SETTING_CHOICES[key]:
-            raise HTTPException(400, f"{key} must be one of {notify.SETTING_CHOICES[key]}")
-    saved = await notify.save_settings(db, update)
+        if key in notify_settings.SETTING_CHOICES and value not in notify_settings.SETTING_CHOICES[key]:
+            raise HTTPException(400, f"{key} must be one of {notify_settings.SETTING_CHOICES[key]}")
+    saved = await notify_settings.save_settings(db, update)
     await log_audit(db, "notifications.settings", actor=actor, detail={k: v for k, v in update.items() if k != "inbox_events"})
     await db.commit()
     return saved
@@ -176,8 +179,8 @@ class TestRequest(BaseModel):
 def _channel_dict(ch: NotificationChannel) -> dict:
     return {
         "id": ch.id, "name": ch.name, "type": ch.type, "enabled": ch.enabled,
-        "events": notify._list(ch.events), "app_ids": notify._list(ch.app_ids),
-        "config": notify.public_config(ch.type, notify.load_config(ch)),
+        "events": notify_config._list(ch.events), "app_ids": notify_config._list(ch.app_ids),
+        "config": notify_config.public_config(ch.type, notify_config.load_config(ch)),
         "last_status": ch.last_status, "last_error": ch.last_error, "last_sent_at": _iso(ch.last_sent_at),
     }
 
@@ -187,11 +190,11 @@ async def _apply(ch: NotificationChannel, req: ChannelRequest, db: AsyncSession)
         raise HTTPException(400, f"Unknown channel type '{req.type}'")
     if ch.id is not None and ch.type != req.type:
         raise HTTPException(400, "The type of a channel can't be changed")
-    config = notify.merge_config(req.type, notify.load_config(ch) if ch.config else {}, req.config)
+    config = notify_config.merge_config(req.type, notify_config.load_config(ch) if ch.config else {}, req.config)
     error = notify_channels.validate(req.type, config)
     if error:
         raise HTTPException(400, error)
-    unknown = [e for e in req.events if e not in notify.EVENTS]
+    unknown = [e for e in req.events if e not in notify_events.EVENTS]
     if unknown:
         raise HTTPException(400, f"Unknown event '{unknown[0]}'")
     if req.app_ids:
@@ -201,7 +204,7 @@ async def _apply(ch: NotificationChannel, req: ChannelRequest, db: AsyncSession)
     ch.name, ch.type, ch.enabled = req.name.strip(), req.type, req.enabled
     ch.events = json.dumps(list(dict.fromkeys(req.events)))
     ch.app_ids = json.dumps(sorted(set(req.app_ids))) if req.app_ids else None
-    notify.store_config(ch, config)
+    notify_config.store_config(ch, config)
 
 
 @router.get("/channels")
@@ -271,12 +274,12 @@ async def test_channel(req: TestRequest, db: AsyncSession = Depends(get_db), _us
     if req.channel_id:
         ch = await db.get(NotificationChannel, req.channel_id)
         if ch is not None and ch.type == req.type:
-            stored = notify.load_config(ch)
-    config = notify.merge_config(req.type, stored, req.config)
+            stored = notify_config.load_config(ch)
+    config = notify_config.merge_config(req.type, stored, req.config)
     error = notify_channels.validate(req.type, config)
     if error:
         raise HTTPException(400, error)
-    error = await notify.send_test(req.type, config)
+    error = await notify_dispatch.send_test(req.type, config)
     return {"ok": error is None, "error": error}
 
 
@@ -314,7 +317,7 @@ async def retry_delivery(delivery_id: int, db: AsyncSession = Depends(get_db), _
         raise HTTPException(409, "Already sent")
     d.status, d.next_attempt_at, d.attempts = "pending", datetime.utcnow(), 0
     await db.commit()
-    notify.wake()
+    notify_dispatch.wake()
     return {"ok": True}
 
 
@@ -335,11 +338,11 @@ async def app_notifications(
     if app is None:
         raise HTTPException(404, "App not found")
     rows = (await db.execute(select(NotificationChannel).order_by(NotificationChannel.id))).scalars().all()
-    app_events = {k for k, (_l, group, _s) in notify.EVENTS.items() if group in ("Deploys", "Apps", "Domains", "Cron jobs")}
+    app_events = {k for k, (_l, group, _s) in notify_events.EVENTS.items() if group in ("Deploys", "Apps", "Domains", "Cron jobs")}
     channels = []
     for ch in rows:
-        scope = notify._list(ch.app_ids)
-        events = [e for e in notify._list(ch.events) if e in app_events]
+        scope = notify_config._list(ch.app_ids)
+        events = [e for e in notify_config._list(ch.events) if e in app_events]
         if (scope and app_id not in scope) or not events:
             continue
         channels.append({"id": ch.id, "name": ch.name, "type": ch.type, "enabled": ch.enabled,

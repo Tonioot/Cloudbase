@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from dbs import engines as db_engines, offsite as db_offsite, state as dbs_state, ops as dbs_ops, provision as dbs_provision
 from dbs import backup_restore as dbs_backup_restore
-from notify import engine as notify
+from notify import emit as notify_emit
 from core.audit import log_audit
 from core.database import DATA_DIR, AsyncSessionLocal
 from core.models import DatabaseBackup, Database, Node
@@ -154,11 +154,11 @@ async def _offsite_upload(backup_id: int) -> None:
             await db.commit()
     # One problem for the storage as a whole: it's retried hourly and usually a settings issue
     if status == "failed":
-        await notify.emit("backup.offsite_failed", "Off-site backup upload failed",
+        await notify_emit.emit("backup.offsite_failed", "Off-site backup upload failed",
                           f"{error}\nCheck Settings → Backup storage. Cloudbase retries every hour.",
                           link="/settings?s=backups", key="backup.offsite_failed")
     else:
-        await notify.resolve("backup.offsite_failed", "Off-site backup uploads work again")
+        await notify_emit.resolve("backup.offsite_failed", "Off-site backup uploads work again")
 
 
 async def _offsite_catch_up(limit: int = 3) -> None:
@@ -223,7 +223,7 @@ async def run_backup(database_id: int, trigger: str, actor: Optional[str] = None
                 backup.status, backup.error, backup.finished_at = "failed", str(e)[:2000], datetime.utcnow()
                 await db.commit()
         log.warning("[backup] database %s (%s): %s", database_id, trigger, e)
-        await notify.emit("backup.failed", f"Backup of database {spec['name']} failed",
+        await notify_emit.emit("backup.failed", f"Backup of database {spec['name']} failed",
                           str(e)[:1000], link=f"/database?id={database_id}", key=f"backup.failed:{database_id}")
         raise
 
@@ -233,7 +233,7 @@ async def run_backup(database_id: int, trigger: str, actor: Optional[str] = None
         backup.size_bytes, backup.sha256 = info["size_bytes"], info["sha256"]
         await db.commit()
     log.info("[backup] database %s: %s backup %s done (%s bytes)", database_id, trigger, backup_id, info["size_bytes"])
-    await notify.resolve(f"backup.failed:{database_id}", f"Backups of database {spec['name']} work again",
+    await notify_emit.resolve(f"backup.failed:{database_id}", f"Backups of database {spec['name']} work again",
                          f"Backup {backup_id} succeeded.")
     asyncio.create_task(_offsite_upload(backup_id))
     return backup_id
