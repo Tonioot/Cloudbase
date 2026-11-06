@@ -11,11 +11,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from containers import processes as pm
 from containers import manager as dm
-from routers.nodes import (
-    ensure_local_node, queue_node_command, wait_for_node_command,
-    subscribe_node_stream, unsubscribe_node_stream,
-    _node_ws_connections,
-)
+from nodes.registry import ensure_local_node
+from nodes.commands import queue_node_command, wait_for_node_command
+from nodes.state import subscribe_node_stream, unsubscribe_node_stream, _node_ws_connections
 
 from core import system_logs
 

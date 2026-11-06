@@ -20,6 +20,7 @@ from dbs import engines as db_engines
 from dbs import manager as db_manager
 from dbs import proxy as db_proxy
 from core.env_crypto import decrypt_text
+from core.models import Database, DatabaseLink, Node
 
 log = logging.getLogger("cloudbase.databases")
 
@@ -38,7 +39,6 @@ def decrypt_credentials(database) -> dict:
 
 
 async def refresh(db: AsyncSession) -> None:
-    from core.models import Database, DatabaseLink, Node
 
     local = (await db.execute(select(Node.id).where(Node.is_local == True))).scalar_one_or_none()
     db_proxy.set_local_node_id(local)

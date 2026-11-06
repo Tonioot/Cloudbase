@@ -21,6 +21,7 @@ import logging
 from typing import Awaitable, Callable, Optional
 
 from core import config as _cfg
+from dbs import tls as db_tls
 
 log = logging.getLogger("cloudbase.db-proxy")
 # Upgrading a PostgreSQL connection to TLS (start_tls) makes asyncio log a harmless
@@ -435,7 +436,6 @@ async def reconcile_public(specs: list[dict]) -> None:
             try:
                 ctx = None
                 if mode in ("tls", "postgres"):
-                    from dbs import tls as db_tls
                     ctx = await asyncio.to_thread(db_tls.server_context, tuple(spec.get("hosts") or ()))
                 port = public_port(db_id)
                 server = await asyncio.start_server(

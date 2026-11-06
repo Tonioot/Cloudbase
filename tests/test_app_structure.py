@@ -121,6 +121,12 @@ def _local_imports(path: Path, module_names: set[str]):
             yield found, id(node) not in toplevel
 
 
+def _area(module: str) -> str:
+    """routers.applications.crud -> routers.applications; anything else is its own area."""
+    parts = module.split(".")
+    return ".".join(parts[:2]) if parts[0] == "routers" and len(parts) > 1 else module
+
+
 def _layering() -> dict:
     names = set(MODULES)
     upward, lazy = [], {}
@@ -134,8 +140,8 @@ def _layering() -> dict:
             # Logic must not depend on HTTP routers, and routers must not depend on each
             # other: shared logic belongs in a service. Only main may wire routers together.
             for target in targets:
-                if target.startswith("routers.") and mod != "main":
-                    upward.append(f"{mod} -> {target}")
+                if target.startswith("routers.") and mod != "main" and _area(target) != _area(mod):
+                    upward.append(f"{mod} -> {_area(target)}")
     return {"upward_imports": sorted(set(upward)), "function_level_imports": dict(sorted(lazy.items()))}
 
 

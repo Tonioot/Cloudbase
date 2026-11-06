@@ -26,7 +26,7 @@ from core.audit import log_audit
 from core.database import AsyncSessionLocal, DATA_DIR, get_db
 from core.models import Database, DatabaseBackup, Node
 from routers import databases as dbs
-from routers.nodes import get_node_by_token_or_401
+from nodes.registry import get_node_by_token_or_401
 
 router = APIRouter(prefix="/api/databases", tags=["database-backups"])
 agent_router = APIRouter(prefix="/api/nodes/agent/databases", tags=["database-backups"])

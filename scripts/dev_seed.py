@@ -27,7 +27,7 @@ async def seed_demo() -> None:
     from sqlalchemy import select
     from core.database import init_db, AsyncSessionLocal
     from core.models import Application, ApplicationReplica
-    from routers.nodes import ensure_local_node
+    from nodes.registry import ensure_local_node
     from core.env_crypto import encrypt_env
 
     await init_db()

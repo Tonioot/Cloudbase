@@ -29,7 +29,9 @@ from core.audit import log_audit
 from core.database import get_db, AsyncSessionLocal
 from core.env_crypto import encrypt_text, decrypt_env
 from core.models import Application, ApplicationReplica, Database, DatabaseLink, DatabaseStatsHistory, Node, SystemConfig
-from routers.nodes import queue_node_command, wait_for_node_command, get_node_by_token_or_401
+from nodes.commands import queue_node_command, wait_for_node_command
+from nodes.registry import get_node_by_token_or_401
+from dbs import tls as db_tls
 
 router = APIRouter(prefix="/api/databases", tags=["databases"])
 # Node-facing WebSockets for database connections across nodes.
@@ -366,7 +368,6 @@ async def list_engines(_user: dict = Depends(_auth.require_permission("databases
 @router.get("/tls-ca.crt")
 async def tls_ca(_user: dict = Depends(_auth.require_permission("databases.view"))):
     """The CA that signs the public database ports, to verify the server."""
-    from dbs import tls as db_tls
     pem = await asyncio.to_thread(db_tls.ca_pem)
     return Response(pem, media_type="application/x-pem-file",
                     headers={"Content-Disposition": 'attachment; filename="cloudbase-database-ca.crt"'})

@@ -20,6 +20,8 @@ from pydantic import BaseModel
 from core import auth as _auth
 from nginx import certificates as certs
 from nginx import manager as nm
+from nodes.registry import _detect_public_ip
+from core import config as _cfg
 
 log = logging.getLogger("cloudbase.domains")
 router = APIRouter(prefix="/api/domains", tags=["domains"])
@@ -62,7 +64,6 @@ def _clean_domain(value: str) -> str:
 async def _server_ip() -> Optional[str]:
     if _server_ip_cache["ip"] and time.time() - _server_ip_cache["at"] < 600:
         return _server_ip_cache["ip"]
-    from routers.nodes import _detect_public_ip
     ip = await asyncio.to_thread(_detect_public_ip)
     if ip:
         _server_ip_cache.update(ip=ip, at=time.time())
@@ -291,7 +292,6 @@ async def request_certificate(req: CertificateRequest, _user: dict = Depends(_au
     email = (req.email or "").strip()
     if email:
         try:
-            from core import config as _cfg
             _cfg.save_config_sections({"acme": {"email": email}})
         except Exception as e:
             log.warning("Could not remember ACME email: %s", e)

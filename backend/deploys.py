@@ -22,6 +22,16 @@ from notify import engine as notify
 from containers import processes as pm
 from core.database import AsyncSessionLocal
 from core.models import Application, Deployment
+from apps import state as apps_state
+from apps import deploy as apps_deploy
+from apps import git as apps_git
+from core.audit import log_audit as apps_log_audit
+from apps import nginx_sync as apps_nginx_sync
+from nodes.registry import ensure_local_node as apps_ensure_local_node
+from apps import runtime as apps_runtime
+from apps.lifecycle import restart_app_now
+from apps import images as apps_images
+from containers import manager as dm
 
 log = logging.getLogger("cloudbase.deploys")
 
@@ -52,7 +62,6 @@ async def run_deploy(
     public domain can't be rolled through nginx; they are rebuilt and their
     running instances restarted. Raises HTTPException on failure.
     """
-    from routers import applications as apps  # late import: applications imports a lot
 
     def push(line: str) -> None:
         pm._push_line(app_id, str(line))
@@ -78,9 +87,9 @@ async def run_deploy(
         # A webhook deploy shouldn't fail just because the autoscaler is busy
         # adding/removing an instance — wait for that to finish first.
         deadline = asyncio.get_running_loop().time() + 900
-        while app_id in apps._scaling_in_progress and asyncio.get_running_loop().time() < deadline:
+        while app_id in apps_state._scaling_in_progress and asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(2)
-        with apps._single_deploy(app_id):
+        with apps_deploy._single_deploy(app_id):
             async with AsyncSessionLocal() as db:
                 app = await db.get(Application, app_id)
                 if not app:
@@ -90,7 +99,7 @@ async def run_deploy(
                     raise HTTPException(400, "No working directory — deploy the app first")
 
                 # Without a public route nginx can't swap instances
-                if strategy in ("rolling", "blue_green") and (app.no_web or not apps._has_public_nginx_domain(app)):
+                if strategy in ("rolling", "blue_green") and (app.no_web or not apps_nginx_sync._has_public_nginx_domain(app)):
                     strategy = "restart"
                 # A cron job has nothing running: build, and the next run uses it
                 if app.cron_schedule:
@@ -103,23 +112,23 @@ async def run_deploy(
                 dep_id = dep.id
                 push(f"[Deploy] {trigger.capitalize()} deploy started ({strategy.replace('_', '/')})")
 
-                commit_info, source_revision = await apps._sync_app_source(
+                commit_info, source_revision = await apps_git._sync_app_source(
                     app, app.working_dir, commit, push, branch=app.deploy_branch or None,
                 )
                 sha, subject, author = await asyncio.to_thread(_commit_details, app.working_dir)
                 commit_label = f"{sha[:7]} {subject or ''}".strip() if sha else None
                 dep.commit_sha, dep.commit_message, dep.commit_author = sha, subject, author
-                dep.branch = await asyncio.to_thread(apps._current_branch, app.working_dir)
+                dep.branch = await asyncio.to_thread(apps_git._current_branch, app.working_dir)
                 await db.commit()
 
                 if strategy == "rolling":
                     push("[Deploy] Starting rolling deploy…")
-                    res = await apps._do_rolling_deploy(app_id, db, actor)
+                    res = await apps_deploy._do_rolling_deploy(app_id, db, actor)
                     message = f"Rolled out {commit_info}"
                 elif strategy == "blue_green":
                     push("[Deploy] Starting blue/green deploy…")
-                    local_node = await apps.ensure_local_node(db)
-                    res = await apps._do_zero_downtime_deploy(app_id, db, local_node, actor)
+                    local_node = await apps_ensure_local_node(db)
+                    res = await apps_deploy._do_zero_downtime_deploy(app_id, db, local_node, actor)
                     message = f"Switched to {commit_info}"
                 else:
                     res = await _rebuild(app, db, source_revision, push, restart=(strategy == "restart"), actor=actor)
@@ -128,7 +137,7 @@ async def run_deploy(
                     if app.cron_schedule:
                         push("[Deploy] Image built. The next run of the job uses it.")
                         message = f"Deployed {commit_info}; the next run uses it"
-                await apps.log_audit(db, "app.deploy", actor=actor, app_id=app_id,
+                await apps_log_audit(db, "app.deploy", actor=actor, app_id=app_id,
                                      detail={"name": app.name, "commit": commit_info, "strategy": strategy, "trigger": trigger})
                 await db.commit()
         await _finish(dep_id, "success", None, captured)
@@ -151,15 +160,13 @@ async def run_deploy(
 
 async def _rebuild(app: Application, db, source_revision, push, *, restart: bool, actor: str) -> dict:
     """Build the image; with `restart`, restart the app's running instances."""
-    from routers import applications as apps
-    from containers import manager as dm
 
     push("[Docker] Building image…")
     await asyncio.to_thread(
         dm.build_image,
         app.id, app.name, app.working_dir, lambda _aid, line: push(line),
-        app.app_type or "unknown", app.start_command or "", apps._image_port(app),
-        **apps._image_build_kwargs(app),
+        app.app_type or "unknown", app.start_command or "", apps_images._image_port(app),
+        **apps_images._image_build_kwargs(app),
     )
     app.docker_image = dm.image_name(app.id, app.name)
     if source_revision:
@@ -169,12 +176,12 @@ async def _rebuild(app: Application, db, source_revision, push, *, restart: bool
         if not app.cron_schedule:
             push("[Docker] Image built. Restart or deploy to put it live.")
         return {}
-    replicas = await apps._load_app_replicas(app.id, db)
-    if not apps._has_live_replicas(replicas):
+    replicas = await apps_runtime._load_app_replicas(app.id, db)
+    if not apps_runtime._has_live_replicas(replicas):
         push("[Deploy] App isn’t running — the new version starts the next time you start it.")
         return {"restarted": False}
     push("[Deploy] Restarting instances with the new image…")
-    await apps.restart_app(app.id, db=db, _user={}, actor=actor)
+    await restart_app_now(app.id, db, actor)
     return {"restarted": True}
 
 
@@ -220,12 +227,11 @@ _LOOP_SECONDS = 15
 
 
 def _remote_head(app: Application, branch: str) -> Optional[str]:
-    from routers import applications as apps
-    token = apps._decrypt_github_token(app.github_token)
+    token = apps_git._decrypt_github_token(app.github_token)
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     try:
         r = subprocess.run(
-            ["git", "ls-remote", apps._build_clone_url(app.repo_url, token), f"refs/heads/{branch}"],
+            ["git", "ls-remote", apps_git._build_clone_url(app.repo_url, token), f"refs/heads/{branch}"],
             capture_output=True, text=True, timeout=20, env=env,
         )
     except Exception:
@@ -236,12 +242,11 @@ def _remote_head(app: Application, branch: str) -> Optional[str]:
 
 
 async def _check_app(app_id: int) -> None:
-    from routers import applications as apps
     async with AsyncSessionLocal() as db:
         app = await db.get(Application, app_id)
         if not app or not app.auto_deploy or not app.working_dir or not os.path.exists(app.working_dir):
             return
-        branch = app.deploy_branch or await asyncio.to_thread(apps._current_branch, app.working_dir)
+        branch = app.deploy_branch or await asyncio.to_thread(apps_git._current_branch, app.working_dir)
         current = (app.source_revision or "").replace("-dirty", "")
     head = await asyncio.to_thread(_remote_head, app, branch)
     if not head or head == current or _failed_sha.get(app_id) == head:
@@ -259,7 +264,7 @@ async def _check_app(app_id: int) -> None:
         )).first()
     if seen:
         return
-    if app_id in apps._deploys_in_progress:
+    if app_id in apps_state._deploys_in_progress:
         return  # the next round picks up whatever is newest by then
     log.info("[auto-deploy] app %s: new commit %s on %s", app_id, head[:7], branch)
     try:

@@ -9,6 +9,7 @@ from collections import deque
 from typing import Optional
 
 from core import config as _cfg
+from dbs import proxy as db_proxy
 
 log = logging.getLogger("cloudbase.docker")
 
@@ -75,7 +76,6 @@ def _apply_linked_databases(run_kwargs: dict, docker_options: dict) -> None:
     The app's own env vars win when a name is set in both places."""
     linked = docker_options.get("linked_databases") or []
     if linked:
-        from dbs import proxy as db_proxy
         linked_env, hosts = db_proxy.resolve_links(linked)
         run_kwargs["environment"] = {**linked_env, **(run_kwargs.get("environment") or {})}
         if hosts:

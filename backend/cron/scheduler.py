@@ -25,6 +25,11 @@ from containers import processes as pm
 from core.database import AsyncSessionLocal
 from core.env_crypto import decrypt_env
 from core.models import Application, CronRun, Node
+from core.audit import log_audit
+from apps import git as apps_git
+from apps import images as apps_images
+from apps import runtime as apps_runtime
+from nodes.commands import queue_node_command, wait_for_node_command
 
 log = logging.getLogger("cloudbase.cron")
 
@@ -109,7 +114,6 @@ async def _set_app_status(app_id: int) -> None:
 
 async def set_enabled(app_id: int, enabled: bool, actor: str) -> dict:
     """Pause or resume the schedule. A resumed job starts at the next slot."""
-    from core.audit import log_audit
     async with AsyncSessionLocal() as db:
         app = await db.get(Application, app_id)
         if app is None or not app.cron_schedule:
@@ -127,7 +131,6 @@ async def set_enabled(app_id: int, enabled: bool, actor: str) -> dict:
 async def update_settings(app_id: int, actor: str, *, schedule: Optional[str] = None, tz_name: Optional[str] = None,
                           timeout_seconds: Optional[int] = None, node_id: Optional[int] = None,
                           clear_node: bool = False) -> dict:
-    from core.audit import log_audit
     async with AsyncSessionLocal() as db:
         app = await db.get(Application, app_id)
         if app is None or not app.cron_schedule:
@@ -180,9 +183,8 @@ async def start_run(app_id: int, trigger: str, actor: str, slot: Optional[dateti
 
 
 async def _ensure_local_image(app: Application, push) -> str:
-    from routers import applications as apps
     img = dm.image_name(app.id, app.name)
-    desired = await asyncio.to_thread(apps._refresh_app_source_revision, app)
+    desired = await asyncio.to_thread(apps_git._refresh_app_source_revision, app)
     if dm.image_exists(img) and (not desired or app.image_revision == desired):
         return img
     if not app.working_dir:
@@ -190,8 +192,8 @@ async def _ensure_local_image(app: Application, push) -> str:
     push("[Cron] Building image…")
     await asyncio.to_thread(
         dm.build_image, app.id, app.name, app.working_dir, lambda _aid, line: push(line),
-        app.app_type or "unknown", app.start_command or "", apps._image_port(app),
-        **apps._image_build_kwargs(app),
+        app.app_type or "unknown", app.start_command or "", apps_images._image_port(app),
+        **apps_images._image_build_kwargs(app),
     )
     async with AsyncSessionLocal() as db:
         fresh = await db.get(Application, app.id)
@@ -203,9 +205,8 @@ async def _ensure_local_image(app: Application, push) -> str:
 
 
 async def _run_local(app: Application, run_id: int, push) -> dict:
-    from routers import applications as apps
     img = await _ensure_local_image(app, push)
-    options = apps._docker_runtime_options(app)
+    options = apps_runtime._docker_runtime_options(app)
     return await asyncio.to_thread(
         dm.run_job_container, app.id, run_id, app.name, img, app.start_command or "",
         decrypt_env(app.env_vars or ""), options, app.cron_timeout_seconds or 3600,
@@ -215,11 +216,9 @@ async def _run_local(app: Application, run_id: int, push) -> dict:
 
 async def _run_remote(app: Application, node: Node, run_id: int) -> dict:
     import json
-    from routers import applications as apps
-    from routers.nodes import queue_node_command, wait_for_node_command
     if not (node.enabled and node.status == "online"):
         raise RuntimeError(f"Node '{node.name}' is offline")
-    payload = apps._remote_replica_command_payload(app, decrypt_env(app.env_vars or ""), 0)
+    payload = apps_runtime._remote_replica_command_payload(app, decrypt_env(app.env_vars or ""), 0)
     payload.update({"run_id": run_id, "command": app.start_command or "",
                     "timeout_seconds": app.cron_timeout_seconds or 3600})
     async with AsyncSessionLocal() as db:

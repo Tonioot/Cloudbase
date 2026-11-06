@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from nginx import manager as nm
+from core import config as _cfg
 
 log = logging.getLogger("cloudbase.certificates")
 
@@ -172,7 +173,6 @@ class CertificateError(Exception):
 
 
 def acme_email() -> str:
-    from core import config as _cfg
     return (_cfg._config.get("acme") or {}).get("email") or ""
 
 

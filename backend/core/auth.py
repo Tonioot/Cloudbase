@@ -20,6 +20,10 @@ from fastapi import Cookie, HTTPException, status
 import jwt
 from jwt import PyJWTError as JWTError
 from core import config as _cfg
+from core.database import AsyncSessionLocal
+from core.models import User, Permission, role_permissions
+from core import system_config as _syscfg
+from core.models import Node
 
 # ── Config ────────────────────────────────────────────────────────────────────
 CREDENTIALS_FILE = os.path.expanduser("~/.cloudbase/credentials")
@@ -159,8 +163,6 @@ async def session_user(token: Optional[str]) -> Optional[dict]:
 
 async def get_user_permissions(username: str) -> set[str]:
     """Return the set of permission names for a user, loaded live from the DB."""
-    from core.database import AsyncSessionLocal
-    from core.models import User, Permission, role_permissions
     from sqlalchemy import select
     try:
         async with AsyncSessionLocal() as db:
@@ -224,7 +226,6 @@ def origin_allowed(origin: Optional[str], headers) -> bool:
     if not origin:
         return True
     from urllib.parse import urlsplit
-    from core import system_config as _syscfg
     try:
         netloc = urlsplit(origin).netloc.lower()
     except ValueError:
@@ -253,8 +254,6 @@ async def require_auth(pdm_token: Optional[str] = Cookie(default=None)) -> dict:
 
 async def _get_db_user(username: str):
     """Return the live DB User object or None."""
-    from core.database import AsyncSessionLocal
-    from core.models import User
     from sqlalchemy import select
     try:
         async with AsyncSessionLocal() as db:
@@ -323,8 +322,6 @@ async def authorize_websocket(websocket, required_permission: str | None = None)
     # Remote node agent token
     node_token = websocket.headers.get("x-node-token", "")
     if node_token:
-        from core.database import AsyncSessionLocal
-        from core.models import Node
         from sqlalchemy import select
         try:
             async with AsyncSessionLocal() as db:

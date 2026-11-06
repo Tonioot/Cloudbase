@@ -25,6 +25,7 @@ from core import system_config
 from core.database import AsyncSessionLocal
 from core.env_crypto import decrypt_text, encrypt_text
 from core.models import Application, ApplicationReplica, Database, Node, Notification, NotificationChannel, NotificationDelivery, SystemConfig
+from nginx import certificates
 
 log = logging.getLogger("cloudbase.notify")
 
@@ -460,7 +461,6 @@ _cert_checked_at = 0.0
 
 
 async def _check_certificates() -> None:
-    from nginx import certificates
     global _cert_checked_at
     async with AsyncSessionLocal() as db:
         apps = (await db.execute(select(Application.id, Application.name, Application.ssl_cert_path)

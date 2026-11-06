@@ -9,6 +9,7 @@ DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR}/cloudbase.db"
 
 from sqlalchemy import event as _sa_event
 from sqlalchemy.pool import NullPool
+from core.env_crypto import decrypt_text, encrypt_text
 
 engine = create_async_engine(
     DATABASE_URL,
@@ -38,7 +39,6 @@ async def get_db():
 
 async def init_db():
     import datetime as _dt
-    from core.env_crypto import decrypt_text, encrypt_text
     # Importing every model registers its table with Base.metadata for create_all below.
     from core.models import Application, Node, NodeInvite, NodeCommand, AuditLog, StatsHistory, User, SystemConfig, Role, Permission, role_permissions  # noqa: F401
     async with engine.begin() as conn:

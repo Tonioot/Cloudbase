@@ -21,7 +21,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from core.database import AsyncSessionLocal, init_db, get_db
 from core.models import Application, User, Role, Permission, role_permissions
-from routers import applications, files, logs, stats, nodes, audit as audit_router
+from routers import files, logs, stats, audit as audit_router, applications, nodes
+from nodes import registry as nodes_registry
+from nodes import recovery as nodes_recovery
+from apps import runtime as apps_runtime
 from routers import roles as roles_router
 from routers import databases as databases_router
 from routers import database_backups as database_backups_router
@@ -73,9 +76,9 @@ async def _node_health_monitor():
     while True:
         try:
             async with AsyncSessionLocal() as db:
-                await nodes.ensure_local_node(db)
-                await nodes.mark_stale_nodes_offline(db)
-                await nodes.recover_stranded_replicas(db)
+                await nodes_registry.ensure_local_node(db)
+                await nodes_recovery.mark_stale_nodes_offline(db)
+                await nodes_recovery.recover_stranded_replicas(db)
         except asyncio.CancelledError:
             return
         except Exception:
@@ -125,7 +128,7 @@ def _restore_stuck_restart_configs(apps: list[Application]) -> None:
 
 
 def _docker_runtime_options(app: Application) -> dict:
-    return applications._docker_runtime_options(app)
+    return apps_runtime._docker_runtime_options(app)
 
 
 # ── Background stats collector ────────────────────────────────────────────────
@@ -135,7 +138,6 @@ async def _stats_collector():
     while True:
         try:
             # Short read — session closed before any Docker/thread work begins.
-            from core.models import Node as _Node, ApplicationReplica as _AppReplica
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
                     select(Application).where(Application.status == "running")
@@ -252,8 +254,6 @@ async def _remote_replica_stats_poller():
     await asyncio.sleep(20)
     while True:
         try:
-            from routers.nodes import queue_node_command, wait_for_node_command, _node_ws_connections
-            from core.models import ApplicationReplica as _AR, Application as _App, Node as _Node
 
             async with AsyncSessionLocal() as db:
                 local_node_result = await db.execute(select(_Node).where(_Node.is_local == True))
@@ -273,7 +273,6 @@ async def _remote_replica_stats_poller():
 
             # Poll local replica stats in-process (no command queue needed)
             if local_replicas:
-                from containers import manager as _dm
                 import time as _time
 
                 async def _poll_local_replica(r):
@@ -374,7 +373,6 @@ async def _remote_replica_stats_poller():
             # their history (live charts on open + the DB history writer) would only
             # fill while someone has the app's stats open. One frame per app,
             # merged over all nodes it runs on.
-            from routers.stats import _aggregate_frames
             for app_id, frames in app_frames.items():
                 merged = _aggregate_frames(frames)
                 merged.update({"status": "running", "docker": True, "timestamp": int(_time.time() * 1000)})
@@ -398,7 +396,6 @@ _HISTORY_MAX_POINTS = 240   # longer ranges are averaged down to this many point
 async def _overview_sampler():
     import datetime as _dt
     from sqlalchemy import delete as _delete
-    from core.models import ApplicationReplica as _AR, Node as _Node, OverviewHistory, NodeMetricsHistory
     await asyncio.sleep(5)
     rounds = 0
     while True:
@@ -489,7 +486,6 @@ async def _stats_history_writer():
     via the stats WebSocket relay in routers/stats.py, so we just write whatever has accumulated.
     """
     import datetime as _dt
-    from core.models import StatsHistory
     from sqlalchemy import delete as _delete
     await asyncio.sleep(30)
     _cleanup_counter = 0
@@ -547,14 +543,6 @@ async def _autoscaler():
     the app's live log and the audit log (actor "autoscaler").
     """
     import datetime as _dt
-    from core.models import StatsHistory, ApplicationReplica, Node
-    from routers.applications import (
-        _assign_external_port, _start_instance_local, _wait_new_instance_healthy,
-        _write_app_nginx_config, _has_public_nginx_domain, ensure_local_node,
-        _remote_replica_command_payload, _deploys_in_progress, _scaling_in_progress,
-        DEPLOY_HEALTH_TIMEOUT_SECONDS,
-    )
-    from routers.nodes import queue_node_command, wait_for_node_command
 
     alog = logging.getLogger("cloudbase.autoscaler")
     # Fast up, slow down (no flapping):
@@ -876,7 +864,6 @@ async def _node_command_cleanup():
     Keeps the table small so scans for 'queued' commands stay fast.
     """
     import datetime as _dt
-    from core.models import NodeCommand as _NC
     from sqlalchemy import delete as _del
     await asyncio.sleep(60)
     while True:
@@ -904,8 +891,6 @@ async def _orphan_replica_cleanup():
     longer have a corresponding ApplicationReplica row. Prevents replicas from
     piling up on the host (which starves memory and destabilises container DNS).
     """
-    from containers import manager as _dm
-    from core.models import ApplicationReplica, Node as _Node
 
     await asyncio.sleep(120)
     while True:
@@ -953,9 +938,6 @@ async def _docker_cleanup_loop():
     Every node is cleaned about once a day, and sooner when its disk gets
     full: at 80% at most hourly, at 90% with the aggressive settings.
     """
-    from containers import manager as _dm
-    from core.models import Node as _Node
-    from routers.nodes import run_node_docker_cleanup
     await asyncio.sleep(600)
     last_run: dict[int, float] = {}
     while True:
@@ -993,7 +975,6 @@ async def _crash_monitor():
     while True:
         try:
             async with AsyncSessionLocal() as db:
-                from core.models import Node as _Node, ApplicationReplica
                 local_node_result = await db.execute(select(_Node).where(_Node.is_local == True))
                 local_node_obj = local_node_result.scalar_one_or_none()
 
@@ -1027,7 +1008,6 @@ async def _crash_monitor():
                         pm._push_line(a.id, f"⚠ Instance {replica.id} exited.")
                         await db.commit()
                         try:
-                            from routers.applications import _write_app_nginx_config as _wanc, _has_public_nginx_domain as _hpnd
                             if local_node_obj and _hpnd(a):
                                 await _wanc(a, db, local_node_obj)
                         except Exception:
@@ -1045,7 +1025,6 @@ async def _crash_monitor():
                         pm._push_line(a.id, f"✖ Instance {replica.id} crashed {MAX_RESTARTS_PER_WINDOW}× — giving up.")
                         await db.commit()
                         try:
-                            from routers.applications import _write_app_nginx_config as _wanc, _has_public_nginx_domain as _hpnd
                             if local_node_obj and _hpnd(a):
                                 await _wanc(a, db, local_node_obj)
                         except Exception:
@@ -1078,13 +1057,11 @@ async def _crash_monitor():
                     all_rep_result = await db.execute(
                         select(ApplicationReplica).where(ApplicationReplica.app_id == a.id)
                     )
-                    from routers.applications import _derive_app_status_from_instances
                     a.status = _derive_app_status_from_instances(all_rep_result.scalars().all())
                     await db.commit()
                     # If this restart attempt failed, the backend is dead — remove it from nginx upstream
                     if replica.status in ("error", "stopped"):
                         try:
-                            from routers.applications import _write_app_nginx_config as _wanc, _has_public_nginx_domain as _hpnd
                             if local_node_obj and _hpnd(a):
                                 await _wanc(a, db, local_node_obj)
                         except Exception:
@@ -1142,8 +1119,7 @@ async def _startup_recovery() -> None:
     """Bring local instances, nginx configs and the panel config in line with the DB."""
     # Recover running instances and auto-start
     async with AsyncSessionLocal() as db:
-        from core.models import ApplicationReplica, Node as _Node
-        await nodes.ensure_local_node(db)
+        await nodes_registry.ensure_local_node(db)
 
         # Recover replica container statuses
         rep_result = await db.execute(select(ApplicationReplica))
@@ -1186,7 +1162,6 @@ async def _startup_recovery() -> None:
         for r in all_replicas:
             replica_map.setdefault(r.app_id, []).append(r)
 
-        from routers.applications import _derive_app_status_from_instances
         for a in apps:
             app_replicas = replica_map.get(a.id)
             if app_replicas:
@@ -1219,8 +1194,6 @@ async def _startup_recovery() -> None:
     # Regenerate nginx configs from live instance state so stale configs on disk
     # (written before the instance-based model) are replaced with correct upstreams.
     async with AsyncSessionLocal() as db:
-        from routers.applications import _write_app_nginx_config as _startup_nginx
-        from routers.nodes import ensure_local_node as _startup_local_node
         _startup_base = _syscfg.get_base_domain_cached()
         result = await db.execute(select(Application))
         _startup_local = await _startup_local_node(db)
@@ -1309,7 +1282,6 @@ async def lifespan(app: FastAPI):
     else:
         await _startup_recovery()
         _load_panel_https_domain()
-        import deploys as _deploys
         tasks += [
             asyncio.create_task(_crash_monitor()),
             asyncio.create_task(_stats_collector()),
@@ -1555,7 +1527,6 @@ class _AuthMiddleware(BaseHTTPMiddleware):
             node_token = request.headers.get("X-Node-Token", "")
             if node_token and _NODE_AGENT_PATHS.fullmatch(path):
                 from sqlalchemy import select as _select, and_ as _and
-                from core.models import Node as _Node
                 async with AsyncSessionLocal() as _db:
                     _res = await _db.execute(
                         _select(_Node).where(_and(_Node.auth_token == node_token, _Node.enabled == True))
@@ -1584,7 +1555,6 @@ async def node_metrics_history(node_id: int, hours: float = 1,
                                db: AsyncSession = Depends(get_db)):
     """cpu / memory / disk samples for one node over the last `hours` (oldest first)."""
     import datetime as _dt
-    from core.models import NodeMetricsHistory as _NMH
     hours = max(0.25, min(hours, 24 * _HISTORY_RETENTION_DAYS))
     since = _dt.datetime.utcnow() - _dt.timedelta(hours=hours)
     res = await db.execute(
@@ -1602,7 +1572,6 @@ async def overview_history(hours: float = 1,
                            db: AsyncSession = Depends(get_db)):
     """Cluster samples for the dashboard sparklines over the last `hours` (oldest first)."""
     import datetime as _dt
-    from core.models import OverviewHistory as _OH
     hours = max(0.25, min(hours, 24 * _HISTORY_RETENTION_DAYS))
     since = _dt.datetime.utcnow() - _dt.timedelta(hours=hours)
     res = await db.execute(select(_OH).where(_OH.timestamp >= since).order_by(_OH.timestamp.asc()))
@@ -1967,8 +1936,6 @@ async def apply_cloudbase_nginx(
 
     # Regenerate nginx for all apps in background
     async def _refresh_apps():
-        from routers.nodes import ensure_local_node as _eln
-        from routers.applications import _write_app_nginx_config as _wanc
         try:
             async with AsyncSessionLocal() as _db:
                 _apps = (await _db.execute(select(Application))).scalars().all()
@@ -2022,7 +1989,6 @@ async def set_panel_domain(req: PanelDomainRequest, _: dict = Depends(auth.requi
         raise HTTPException(500, f"Failed to apply nginx config: {msg}")
     nm.write_default_catch_all(cert, key)
     _load_panel_https_domain()
-    from nginx import certificates as _certs
     await _certs.forget_pending([domain])
     return {"ok": True, "domain": domain, "https": bool(cert and key)}
 
@@ -2047,8 +2013,6 @@ async def set_base_domain(req: BaseDomainRequest, db: AsyncSession = Depends(get
 async def _refresh_all_app_nginx() -> None:
     """Rewrite every app's nginx config (after base domain changes). This also
     schedules automatic certificates for apps on the base domain."""
-    from routers.nodes import ensure_local_node as _eln
-    from routers.applications import _write_app_nginx_config as _wanc
     try:
         async with AsyncSessionLocal() as _db:
             _apps = (await _db.execute(select(Application))).scalars().all()
@@ -2211,6 +2175,32 @@ async def get_system_logs(
 
 
 from fastapi import WebSocket as _WS, WebSocketDisconnect as _WSD
+from core.models import ApplicationReplica as _AR, Node as _Node, OverviewHistory, NodeMetricsHistory
+from core.models import StatsHistory, ApplicationReplica, Node
+from apps.validation import _assign_external_port
+from apps.runtime import _start_instance_local, _remote_replica_command_payload
+from apps.deploy import _wait_new_instance_healthy
+from apps.nginx_sync import _write_app_nginx_config, _has_public_nginx_domain
+from nodes.registry import ensure_local_node
+from apps.state import _deploys_in_progress, _scaling_in_progress, DEPLOY_HEALTH_TIMEOUT_SECONDS
+from nodes.commands import queue_node_command, wait_for_node_command
+from core.models import NodeCommand as _NC
+from containers import manager as _dm
+from nodes.recovery import run_node_docker_cleanup
+from apps.runtime import _derive_app_status_from_instances
+from apps.nginx_sync import _write_app_nginx_config as _startup_nginx
+from nodes.registry import ensure_local_node as _startup_local_node
+import deploys as _deploys
+from core.models import NodeMetricsHistory as _NMH
+from core.models import OverviewHistory as _OH
+from nodes.registry import ensure_local_node as _eln
+from apps.nginx_sync import _write_app_nginx_config as _wanc
+from nginx import certificates as _certs
+from core.models import ApplicationReplica as _AppReplica
+from nodes.state import _node_ws_connections
+from core.models import Application as _App
+from routers.stats import _aggregate_frames
+from apps.nginx_sync import _has_public_nginx_domain as _hpnd
 
 @app.websocket("/ws/system/logs")
 async def stream_system_logs(websocket: _WS, source: str = "server"):

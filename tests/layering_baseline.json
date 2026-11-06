@@ -1,36 +1,12 @@
 {
   "upward_imports": [
-    "cron.scheduler -> routers.applications",
-    "cron.scheduler -> routers.nodes",
-    "deploys -> routers.applications",
-    "routers.applications -> routers.nodes",
     "routers.database_backups -> routers.databases",
-    "routers.database_backups -> routers.nodes",
-    "routers.databases -> routers.database_backups",
-    "routers.databases -> routers.nodes",
-    "routers.domains -> routers.nodes",
-    "routers.logs -> routers.nodes",
-    "routers.nodes -> routers.applications",
-    "routers.stats -> routers.applications",
-    "routers.stats -> routers.nodes"
+    "routers.databases -> routers.database_backups"
   ],
   "function_level_imports": {
-    "containers.manager": 1,
-    "core.auth": 7,
-    "core.database": 3,
-    "cron.scheduler": 6,
-    "dbs.links": 1,
-    "dbs.proxy": 6,
-    "deploys": 5,
-    "main": 34,
-    "nginx.certificates": 1,
-    "nginx.manager": 2,
-    "node_agent": 29,
-    "notify.engine": 1,
-    "routers.applications": 5,
-    "routers.databases": 3,
-    "routers.domains": 2,
-    "routers.nodes": 24,
-    "routers.stats": 1
+    "core.database": 2,
+    "dbs.proxy": 5,
+    "nginx.manager": 1,
+    "routers.databases": 2
   }
 }

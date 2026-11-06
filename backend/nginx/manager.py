@@ -4,6 +4,7 @@ import subprocess
 import hashlib
 
 from core import paths
+from core import system_config as _scfg
 
 log = logging.getLogger("cloudbase.nginx")
 
@@ -453,7 +454,6 @@ def generate_config(
 
     # Auto-subdomain: if base_domain is configured, include {slug}.{base_domain}
     # as the primary domain (when no custom domain is set) or as an extra server_name.
-    from core import system_config as _scfg
     _using_auto_sub = False
     _base = _scfg.get_base_domain_cached()
     if _base and (app_name or "").strip().lower() != "cloudbase":

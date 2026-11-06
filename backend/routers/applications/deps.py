@@ -1,0 +1,61 @@
+from fastapi import Request, HTTPException, Depends
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from core.database import get_db
+from core.models import Node, ApplicationReplica
+from core import auth as _auth
+from core import auth as _auth_mod
+
+async def _request_can_manage_apps(request: Request) -> bool:
+    """Return True if the requester has apps.configure (or is superadmin)."""
+    token = request.cookies.get("pdm_token")
+    user = await _auth.session_user(token)
+    if not user:
+        return False
+    if user.get("username") == "admin":
+        return True
+    perms = await _auth.get_user_permissions(user["username"])
+    return "apps.configure" in perms
+
+
+async def _source_archive_auth(request: Request, app_id: int, db: AsyncSession = Depends(get_db)):
+    # Only the agent of a node that runs this app may fetch its source.
+    await _require_node_agent_for_app()(request, app_id, db)
+
+
+def _require_node_agent_for_app(app_id_param: str = "app_id"):
+    """Dependency factory that authenticates node-agent calls and verifies the
+    calling node actually has a replica for the requested app.
+
+    Accepts either:
+    - X-Agent-Token: local agent — trusted unconditionally (runs on this machine).
+    - X-Node-Token: remote node — validated against DB and must have a replica of app_id.
+    """
+    async def _dep(request: Request, app_id: int, db: AsyncSession = Depends(get_db)):
+        agent_token = request.headers.get("X-Agent-Token", "")
+        if agent_token:
+            if not _auth_mod.verify_agent_token(agent_token):
+                raise HTTPException(status_code=401, detail="Invalid agent token")
+            return
+
+        node_token = request.headers.get("X-Node-Token", "")
+        if not node_token:
+            raise HTTPException(status_code=401, detail="Node agent token required")
+
+        node_result = await db.execute(
+            select(Node).where(Node.auth_token == node_token, Node.enabled == True)
+        )
+        node = node_result.scalar_one_or_none()
+        if node is None:
+            raise HTTPException(status_code=401, detail="Invalid or disabled node token")
+
+        replica_result = await db.execute(
+            select(ApplicationReplica).where(
+                ApplicationReplica.app_id == app_id,
+                ApplicationReplica.node_id == node.id,
+            )
+        )
+        if replica_result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=403, detail="Node has no replica for this app")
+
+    return _dep

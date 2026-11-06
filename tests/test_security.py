@@ -93,8 +93,14 @@ def test_login_rate_limit_blocks_after_five_attempts():
 # ── input checks in front of git ──────────────────────────────────────────────
 @pytest.fixture(scope="module")
 def apps():
-    import routers.applications as applications  # a hard import: a broken module must fail CI, not skip
-    return applications
+    """The git/shell input checks, wherever they live (a hard import: broken modules must fail CI)."""
+    from types import SimpleNamespace
+    from apps import git, validation
+    return SimpleNamespace(
+        _check_git_ref=validation._check_git_ref,
+        _check_repo_url=validation._check_repo_url,
+        _build_clone_url=git._build_clone_url,
+    )
 
 
 @pytest.mark.parametrize("ref", ["main", "feature/x-1", "v1.2.3", "a1b2c3d", "HEAD~2", "origin/main", None, "  "])

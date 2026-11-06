@@ -13,11 +13,10 @@ from core import auth
 from containers import processes as pm
 from core.database import AsyncSessionLocal
 from core.models import Application, ApplicationReplica, Node
-from routers.nodes import (
-    ensure_local_node, queue_node_command, wait_for_node_command,
-    subscribe_node_stream, unsubscribe_node_stream,
-    _node_ws_connections,
-)
+from nodes.registry import ensure_local_node
+from nodes.commands import queue_node_command, wait_for_node_command
+from nodes.state import subscribe_node_stream, unsubscribe_node_stream, _node_ws_connections
+from apps.replica_stats import local_app_aggregate_stats
 
 log = logging.getLogger("cloudbase.stats")
 router = APIRouter(tags=["stats"])
@@ -142,7 +141,6 @@ async def _open_remote_stream(node: Node, app_id: int, app_name: str, out_q: asy
 
 async def _stream_local_container_stats(websocket: WebSocket, app_id: int) -> None:
     """Every 2s send aggregated stats of this host's replica containers of app_id."""
-    from routers.applications import local_app_aggregate_stats
     try:
         while True:
             frame = await local_app_aggregate_stats(app_id)

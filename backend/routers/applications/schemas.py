@@ -1,0 +1,140 @@
+from typing import Optional
+from pydantic import BaseModel
+
+class DeployRequest(BaseModel):
+    name: str
+    repo_url: str
+    github_token: Optional[str] = None
+    github_token_id: Optional[str] = None   # ID of a saved vault token
+    domain: Optional[str] = None
+    extra_domains: Optional[list] = None      # additional domains/subdomains
+    redirect_domains: Optional[list] = None   # domains that redirect to primary
+    ssl_cert_path: Optional[str] = None
+    ssl_key_path: Optional[str] = None
+    start_command: Optional[str] = None
+    build_command: Optional[str] = None      # runs once during the image build
+    port: Optional[int] = None               # internal port (inside container)
+    external_port: Optional[int] = None      # host port — auto-assigned if omitted
+    docker_cpu_limit: Optional[float] = None
+    docker_memory_limit_mb: Optional[int] = None
+    docker_read_only_root: Optional[bool] = None
+    docker_tmpfs_enabled: Optional[bool] = None
+    docker_tmpfs_size_mb: Optional[int] = None
+    env_vars: Optional[dict] = None
+    node_id: Optional[int] = None
+    auto_start: Optional[bool] = None
+    restart_policy: Optional[str] = None   # no | always | on-failure
+    no_web: Optional[bool] = None          # True = no web server, skip nginx + port assignment
+    app_type: Optional[str] = None         # "static" = serve files with nginx (start_command = publish dir)
+    source_revision: Optional[str] = None
+    image_revision: Optional[str] = None
+    cron_schedule: Optional[str] = None    # set = a cron job: runs start_command on this schedule
+    cron_timezone: Optional[str] = None
+    cron_timeout_seconds: Optional[int] = None
+
+
+class UpdateRequest(BaseModel):
+    domain: Optional[str] = None
+    extra_domains: Optional[list] = None      # additional domains/subdomains
+    redirect_domains: Optional[list] = None   # domains that redirect to primary
+    ssl_cert_path: Optional[str] = None
+    ssl_key_path: Optional[str] = None
+    start_command: Optional[str] = None
+    build_command: Optional[str] = None      # "" clears it
+    port: Optional[int] = None               # internal port
+    external_port: Optional[int] = None      # host port
+    docker_cpu_limit: Optional[float] = None
+    docker_memory_limit_mb: Optional[int] = None
+    docker_read_only_root: Optional[bool] = None
+    docker_tmpfs_enabled: Optional[bool] = None
+    docker_tmpfs_size_mb: Optional[int] = None
+    env_vars: Optional[dict] = None       # new/changed values only (write-only UI)
+    env_var_keys: Optional[list] = None   # full set of remaining key names (None = keep all)
+    github_token: Optional[str] = None
+    github_token_id: Optional[str] = None   # ID of a saved vault token
+    auto_start:     Optional[bool] = None
+    restart_policy: Optional[str] = None   # no | always | on-failure
+    source_revision: Optional[str] = None
+    image_revision: Optional[str] = None
+    autoscale_enabled:      Optional[bool]  = None
+    autoscale_min_replicas: Optional[int]   = None
+    autoscale_max_replicas: Optional[int]   = None
+    autoscale_cpu_target:   Optional[float] = None
+    auto_deploy:            Optional[bool]  = None
+    deploy_branch:          Optional[str]   = None   # "" = the checked-out branch
+    deploy_strategy:        Optional[str]   = None   # rolling | blue_green
+    auto_deploy_interval:   Optional[int]   = None   # seconds
+
+
+class MaintenancePageConfig(BaseModel):
+    title: Optional[str] = ""
+    message: Optional[str] = ""
+    color: Optional[str] = "#f85149"
+    status_url: Optional[str] = None
+    custom_html: Optional[str] = None
+    logo_data: Optional[str] = None    # base64 data-URL for logo image
+    theme: Optional[str] = "auto"      # auto (visitor's system) | light | dark
+    brand_name: Optional[str] = None   # shown next to the logo in the header
+    background: Optional[str] = "none" # none | glow | grid
+
+
+class ExportRequest(BaseModel):
+    app_ids: Optional[list[int]] = None # If None or empty, export all
+
+
+class ImportRequest(BaseModel):
+    apps: list[dict]
+    target_node_id: Optional[int] = None # Optional override node
+
+
+class PullRequest(BaseModel):
+    commit: Optional[str] = None
+
+
+class MaintenanceSettings(BaseModel):
+    downtime_page: MaintenancePageConfig = MaintenancePageConfig()
+    update_page: MaintenancePageConfig = MaintenancePageConfig(color="#f0883e")
+    restart_page: MaintenancePageConfig = MaintenancePageConfig(color="#388bfd")
+    starting_page: MaintenancePageConfig = MaintenancePageConfig(color="#388bfd")
+
+
+class CheckRepoRequest(BaseModel):
+    repo_url: str
+    github_token: Optional[str] = None
+    github_token_id: Optional[str] = None
+
+
+class ScaleRequest(BaseModel):
+    node_id: Optional[int] = None
+    docker_cpu_limit: Optional[float] = None
+    docker_memory_limit_mb: Optional[int] = None
+    docker_read_only_root: Optional[bool] = None
+    docker_tmpfs_enabled: Optional[bool] = None
+    docker_tmpfs_size_mb: Optional[int] = None
+
+
+class RunReplicaRequest(BaseModel):
+    replica_id: int
+    internal_port: int
+    external_port: int
+    env_vars: Optional[dict] = None
+    docker_options: Optional[dict] = None
+    local_app_id: Optional[int] = None
+    # app_name is supplied by the remote agent so this endpoint never needs a
+    # local DB lookup (the app only lives in the main node's database).
+    app_name: Optional[str] = None
+
+
+class _SubstatusUpdate(BaseModel):
+    substatus: Optional[str] = None
+
+
+class RenderPageRequest(BaseModel):
+    page_type: str
+    page: MaintenancePageConfig
+
+
+class GitDeployRequest(BaseModel):
+    commit: Optional[str] = None          # None = latest on the current branch
+    strategy: str = "rebuild"             # rebuild | rolling | blue_green
+    trigger: str = "manual"               # manual | rollback
