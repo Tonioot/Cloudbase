@@ -7,7 +7,8 @@ import subprocess
 from typing import Optional
 from fastapi import HTTPException
 from core.models import Application
-from containers import processes as pm, manager as dm
+from containers import processes as pm
+from containers import dockerfiles as containers_dockerfiles
 from core import token_vault
 from core.env_crypto import decrypt_text, encrypt_text
 from apps.images import _dockerfile_build_kwargs, _image_port
@@ -273,7 +274,7 @@ async def _deploy_app(app: Application):
     if app.app_type != "static":
         app.app_type = pm.detect_app_type_from_command(app.start_command) if app.start_command else "unknown"
 
-    dm.ensure_dockerfile(
+    containers_dockerfiles.ensure_dockerfile(
         app_dir,
         app.app_type or "unknown",
         app.start_command or "",

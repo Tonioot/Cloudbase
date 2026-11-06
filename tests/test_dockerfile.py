@@ -1,15 +1,15 @@
-from containers import manager as dm
+from containers import dockerfiles as containers_dockerfiles
 
 
 def _gen(app_type="nodejs", **kw):
     kw.setdefault("start_command", "npm start")
     kw.setdefault("port", 3000)
-    return dm.generate_dockerfile(app_type, **kw)
+    return containers_dockerfiles.generate_dockerfile(app_type, **kw)
 
 
 def test_generated_dockerfile_starts_with_marker():
     for app_type in ("nodejs", "python", "ruby", "go", "php", "unknown", "static"):
-        assert _gen(app_type).startswith(dm.GENERATED_MARKER), app_type
+        assert _gen(app_type).startswith(containers_dockerfiles.GENERATED_MARKER), app_type
 
 
 def test_start_command_becomes_exec_form():
@@ -17,7 +17,7 @@ def test_start_command_becomes_exec_form():
 
 
 def test_shell_syntax_start_command_runs_through_sh():
-    assert dm._cmd_to_json("a && b") == '["/bin/sh", "-c", "a && b"]'
+    assert containers_dockerfiles._cmd_to_json("a && b") == '["/bin/sh", "-c", "a && b"]'
 
 
 def test_no_port_means_no_expose():
@@ -26,9 +26,9 @@ def test_no_port_means_no_expose():
 
 
 def test_uvicorn_start_command_binds_all_interfaces():
-    out = dm._normalize_docker_start_command("python", "uvicorn app:app --host 127.0.0.1", 8000)
+    out = containers_dockerfiles._normalize_docker_start_command("python", "uvicorn app:app --host 127.0.0.1", 8000)
     assert "--host 0.0.0.0" in out and "127.0.0.1" not in out
-    assert "--host 0.0.0.0" in dm._normalize_docker_start_command("python", "uvicorn app:app", 8000)
+    assert "--host 0.0.0.0" in containers_dockerfiles._normalize_docker_start_command("python", "uvicorn app:app", 8000)
 
 
 def test_build_step_without_buildkit_passes_no_env(buildkit):
@@ -88,30 +88,30 @@ def test_npm_ci_used_only_with_a_lockfile(tmp_path):
 
 def test_static_site_without_build_is_just_nginx(tmp_path):
     (tmp_path / "index.html").write_text("hi")
-    out = dm.generate_dockerfile("static", "", 0, app_dir=str(tmp_path))
+    out = containers_dockerfiles.generate_dockerfile("static", "", 0, app_dir=str(tmp_path))
     assert "FROM nginx:alpine" in out and "node:" not in out and "EXPOSE 80" in out
 
 
 def test_static_site_with_build_is_multi_stage(tmp_path):
-    out = dm.generate_dockerfile("static", "dist", 0, app_dir=str(tmp_path), build_command="npm run build")
+    out = containers_dockerfiles.generate_dockerfile("static", "dist", 0, app_dir=str(tmp_path), build_command="npm run build")
     assert "AS builder" in out and "COPY --from=builder /app/dist/" in out
 
 
 def test_static_publish_dir_cannot_escape_the_repo():
     import pytest
     with pytest.raises(ValueError):
-        dm.resolve_static_dir("", "../etc")
+        containers_dockerfiles.resolve_static_dir("", "../etc")
 
 
 def test_ensure_dockerfile_never_overwrites_a_custom_one(tmp_path):
     (tmp_path / "Dockerfile").write_text("FROM scratch\n")  # no marker, no .git -> the user's own
-    dm.ensure_dockerfile(str(tmp_path), "nodejs", "npm start", 3000)
+    containers_dockerfiles.ensure_dockerfile(str(tmp_path), "nodejs", "npm start", 3000)
     assert (tmp_path / "Dockerfile").read_text() == "FROM scratch\n"
 
 
 def test_ensure_dockerfile_regenerates_its_own(tmp_path):
-    dm.ensure_dockerfile(str(tmp_path), "nodejs", "npm start", 3000)
+    containers_dockerfiles.ensure_dockerfile(str(tmp_path), "nodejs", "npm start", 3000)
     first = (tmp_path / "Dockerfile").read_text()
-    dm.ensure_dockerfile(str(tmp_path), "nodejs", "node server.js", 3000)
+    containers_dockerfiles.ensure_dockerfile(str(tmp_path), "nodejs", "node server.js", 3000)
     assert (tmp_path / "Dockerfile").read_text() != first
     assert (tmp_path / ".dockerignore").exists()

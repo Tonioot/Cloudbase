@@ -11,7 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 import datetime as _dt
 from core.models import StatsHistory, Application, ApplicationReplica, Node
-from containers import processes as pm, manager as dm
+from containers import processes as pm
+from containers import cleanup as containers_cleanup
+from containers import dockerfiles as containers_dockerfiles
 from nginx import manager as nm, certificates as certs
 from cron import scheduler as _cron
 from nodes.registry import ensure_local_node
@@ -127,7 +129,7 @@ async def deploy_app(
             raise HTTPException(400, f"cron_timeout_seconds must be one of {_cron.TIMEOUT_CHOICES}")
     if is_static:
         try:
-            dm.resolve_static_dir("", req.start_command or "")
+            containers_dockerfiles.resolve_static_dir("", req.start_command or "")
         except ValueError as exc:
             raise HTTPException(400, str(exc))
 
@@ -148,7 +150,7 @@ async def deploy_app(
         ssl_key_path=req.ssl_key_path,
         start_command=req.start_command,
         build_command=(req.build_command or "").strip() or None,
-        port=dm.STATIC_INTERNAL_PORT if is_static else req.port,
+        port=containers_dockerfiles.STATIC_INTERNAL_PORT if is_static else req.port,
         app_type="static" if is_static else None,
         external_port=external_port,
         env_vars=encrypt_env(req.env_vars or {}),
@@ -271,7 +273,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
             dockerfile_changed = True
         if app.app_type == "static":
             try:
-                dm.resolve_static_dir("", req.start_command)
+                containers_dockerfiles.resolve_static_dir("", req.start_command)
             except ValueError as exc:
                 raise HTTPException(400, str(exc))
         app.start_command = req.start_command
@@ -349,7 +351,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
     if dockerfile_changed:
         if app.working_dir and os.path.exists(app.working_dir):
             await asyncio.to_thread(
-                dm.ensure_dockerfile,
+                containers_dockerfiles.ensure_dockerfile,
                 app.working_dir,
                 app.app_type or "unknown",
                 app.start_command or "",
@@ -454,7 +456,7 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dic
             )
 
     await _best_effort_stop_legacy_app_container(app_id)
-    await asyncio.to_thread(dm.remove_image, app_id, app.name)
+    await asyncio.to_thread(containers_cleanup.remove_image, app_id, app.name)
 
     _best_effort_remove_app_nginx(app.name)
     _best_effort_delete_app_certificate(app)

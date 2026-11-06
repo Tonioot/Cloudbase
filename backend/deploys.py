@@ -31,7 +31,8 @@ from nodes.registry import ensure_local_node as apps_ensure_local_node
 from apps import runtime as apps_runtime
 from apps.lifecycle import restart_app_now
 from apps import images as apps_images
-from containers import manager as dm
+from containers import naming as containers_naming
+from containers import build as containers_build
 
 log = logging.getLogger("cloudbase.deploys")
 
@@ -163,12 +164,12 @@ async def _rebuild(app: Application, db, source_revision, push, *, restart: bool
 
     push("[Docker] Building image…")
     await asyncio.to_thread(
-        dm.build_image,
+        containers_build.build_image,
         app.id, app.name, app.working_dir, lambda _aid, line: push(line),
         app.app_type or "unknown", app.start_command or "", apps_images._image_port(app),
         **apps_images._image_build_kwargs(app),
     )
-    app.docker_image = dm.image_name(app.id, app.name)
+    app.docker_image = containers_naming.image_name(app.id, app.name)
     if source_revision:
         app.image_revision = source_revision
     await db.commit()

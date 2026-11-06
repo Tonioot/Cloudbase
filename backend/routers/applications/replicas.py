@@ -7,7 +7,9 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db, AsyncSessionLocal
 from core.models import Application, ApplicationReplica, Node
-from containers import processes as pm, manager as dm
+from containers import processes as pm
+from containers import naming as containers_naming
+from containers import stats_logs as containers_stats_logs
 from nodes.registry import ensure_local_node
 from nodes.commands import queue_node_command, wait_for_node_command
 from core.env_crypto import decrypt_env
@@ -101,8 +103,8 @@ async def get_replica_stats_remote(app_id: int, replica_id: int, _node: None = D
     This avoids app-level aggregate ambiguity when replica mapping is in transition.
     """
     import time as _time
-    cname = dm.replica_container_name(app_id, replica_id)
-    stats = await asyncio.to_thread(dm.get_container_stats_by_name, cname)
+    cname = containers_naming.replica_container_name(app_id, replica_id)
+    stats = await asyncio.to_thread(containers_stats_logs.get_container_stats_by_name, cname)
     if not stats or stats.get("status") != "running":
         return {"status": "stopped", "docker": True}
     stats["timestamp"] = int(_time.time() * 1000)
@@ -219,7 +221,7 @@ async def get_replica_logs(
     node_result = await db.execute(select(Node).where(Node.id == replica.node_id)) if replica.node_id else None
     rep_node = (node_result.scalar_one_or_none() if node_result else None)
 
-    container_name = dm.replica_container_name(app_id, replica_id)
+    container_name = containers_naming.replica_container_name(app_id, replica_id)
 
     if rep_node is None or rep_node.is_local:
         # Local — read directly

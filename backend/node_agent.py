@@ -19,7 +19,12 @@ import psutil
 
 from core import config as _cfg
 from core import paths
-from containers import manager as dm
+from containers import client as containers_client
+from containers import naming as containers_naming
+from containers import replicas as containers_replicas
+from containers import cleanup as containers_cleanup
+from containers import build as containers_build
+from containers import jobs as containers_jobs
 from containers import processes as pm
 from dbs import manager as db_manager
 from dbs import proxy as db_proxy
@@ -431,7 +436,7 @@ def _parse_docker_created(value: str) -> Optional[float]:
 
 
 def _list_replica_containers() -> list[tuple[str, Optional[float]]]:
-    client = dm._get_client()
+    client = containers_client._get_client()
     out = []
     for c in client.containers.list(all=True, filters={"name": "cloudbase-app-"}):
         out.append((c.name, _parse_docker_created(c.attrs.get("Created") or "")))
@@ -439,7 +444,7 @@ def _list_replica_containers() -> list[tuple[str, Optional[float]]]:
 
 
 def _remove_container(name: str) -> None:
-    dm._get_client().containers.get(name).remove(force=True)
+    containers_client._get_client().containers.get(name).remove(force=True)
 
 
 async def _cleanup_orphaned_replica_containers(client: httpx.AsyncClient, state: AgentState) -> None:
@@ -552,7 +557,7 @@ async def cmd_get_stats(client, state, main_id, payload, headers):
 
 async def cmd_docker_cleanup(client, state, main_id, payload, headers):
     """Remove superseded images and trim the build cache on this node."""
-    return await asyncio.to_thread(dm.cleanup_docker, bool(payload.get("aggressive")))
+    return await asyncio.to_thread(containers_cleanup.cleanup_docker, bool(payload.get("aggressive")))
 
 
 async def cmd_get_replica_stats(client, state, main_id, payload, headers):
@@ -691,7 +696,7 @@ async def _build_image_local(local_id: int, app_name: str, app_dir: str, payload
     if not app_type or app_type == "unknown":
         app_type = pm.detect_app_type_from_command(start_cmd) if start_cmd else "unknown"
 
-    img = dm.image_name(local_id, app_name)
+    img = containers_naming.image_name(local_id, app_name)
 
     _agent_log(f"[build] Building image {img} for {platform.machine()} in {app_dir}")
 
@@ -699,7 +704,7 @@ async def _build_image_local(local_id: int, app_name: str, app_dir: str, payload
         _agent_log(f"[build] {line}")
 
     await asyncio.to_thread(
-        dm.build_image,
+        containers_build.build_image,
         local_id, app_name, app_dir, _push,
         app_type, start_cmd, port,
         build_command=payload.get("build_command") or "",
@@ -739,7 +744,7 @@ async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id
         desired_app_type = pm.detect_app_type_from_command(desired_start_command) if desired_start_command else "unknown"
 
     # Check if we already have a valid image built under main_id
-    img = dm.image_name(int(main_id), app_name)
+    img = containers_naming.image_name(int(main_id), app_name)
     if _local_image_ok(img):
         if not desired_revision:
             _agent_log(f"[deploy] Image {img} already present, skipping build")
@@ -791,8 +796,8 @@ async def cmd_cron_run(client, state, main_id, payload, headers):
     run_id = int(payload["run_id"])
     _agent_log(f"[cron] app={main_id} run={run_id} starting")
     result = await asyncio.to_thread(
-        dm.run_job_container, int(local_id), run_id, payload.get("app_name") or "",
-        dm.image_name(int(local_id), payload.get("app_name") or ""), payload.get("command") or "",
+        containers_jobs.run_job_container, int(local_id), run_id, payload.get("app_name") or "",
+        containers_naming.image_name(int(local_id), payload.get("app_name") or ""), payload.get("command") or "",
         payload.get("env_vars") or {}, payload.get("docker_options"), int(payload.get("timeout_seconds") or 3600),
     )
     _agent_log(f"[cron] app={main_id} run={run_id} exit={result.get('exit_code')} timed_out={result.get('timed_out')}")
@@ -807,12 +812,12 @@ async def cmd_start_replica(client, state, main_id, payload, headers):
 
     # If the container is already running (node briefly disconnected), just
     # reconnect the tunnel instead of doing a full stop/start cycle.
-    if dm.is_replica_container_running(int(main_id), replica_id):
+    if containers_replicas.is_replica_container_running(int(main_id), replica_id):
         _agent_log(f"[agent] replica={replica_id} container already running, reconnecting tunnel only")
         local_port = payload.get("external_port", 8000)
         _start_tunnel_task(state, replica_id, local_port)
         try:
-            container_id = dm._get_client().containers.get(dm.replica_container_name(int(main_id), replica_id)).id
+            container_id = containers_client._get_client().containers.get(containers_naming.replica_container_name(int(main_id), replica_id)).id
         except Exception:
             container_id = None
         return {"container_id": container_id, "replica_id": replica_id, "reused": True}

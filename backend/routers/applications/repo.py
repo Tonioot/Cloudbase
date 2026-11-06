@@ -6,7 +6,8 @@ from fastapi import HTTPException, Query, Depends, APIRouter
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
-from containers import processes as pm, manager as dm
+from containers import processes as pm
+from containers import dockerfiles as containers_dockerfiles
 from core import auth as _auth
 from apps.git import _current_branch, _decrypt_github_token, _fetch_origin, _git_app_dir_or_404, _ls_remote, _normalize_repo_url, _recent_git_commits, _resolve_token
 from apps.images import _dockerfile_build_kwargs, _image_port
@@ -50,7 +51,7 @@ async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db), _n
     # Dockerfile as the repository's own.
     try:
         await asyncio.to_thread(
-            dm.ensure_dockerfile,
+            containers_dockerfiles.ensure_dockerfile,
             source_dir,
             app.app_type or "unknown",
             app.start_command or "",

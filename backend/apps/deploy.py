@@ -7,7 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal
 from core.models import ApplicationReplica, Node
-from containers import processes as pm, manager as dm
+from containers import processes as pm
+from containers import naming as containers_naming
+from containers import replicas as containers_replicas
+from containers import build as containers_build
 from nginx import manager as nm
 from nodes.registry import ensure_local_node
 from nodes.commands import queue_node_command, wait_for_node_command
@@ -90,7 +93,7 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
                 def _push(_aid, line):
                     pm._push_line(app_id, str(line))
                 new_img = await asyncio.to_thread(
-                    dm.build_image,
+                    containers_build.build_image,
                     app_id, app.name, app.working_dir, _push,
                     app.app_type or "unknown", app.start_command or "", _image_port(app),
                     **_image_build_kwargs(app),
@@ -267,7 +270,7 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
 
         # Stop old replica
         if tnode.is_local:
-            await asyncio.to_thread(dm.stop_replica_container, app_id, old_replica.id)
+            await asyncio.to_thread(containers_replicas.stop_replica_container, app_id, old_replica.id)
         else:
             await queue_node_command(
                 db, node_id=tnode.id, app_id=app_id,
@@ -287,7 +290,7 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
     if new_img:
         app.docker_image = new_img
     else:
-        app.docker_image = dm.image_name(app_id, app.name)
+        app.docker_image = containers_naming.image_name(app_id, app.name)
     if source_revision:
         app.image_revision = source_revision
 
@@ -348,7 +351,7 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
                 def _push(_aid, line):
                     pm._push_line(app_id, str(line))
                 new_img = await asyncio.to_thread(
-                    dm.build_image,
+                    containers_build.build_image,
                     app_id, app.name, app.working_dir, _push,
                     app.app_type or "unknown", app.start_command or "", _image_port(app),
                     **_image_build_kwargs(app),
@@ -486,7 +489,7 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
     if new_img:
         app.docker_image = new_img
     else:
-        app.docker_image = dm.image_name(app_id, app.name)
+        app.docker_image = containers_naming.image_name(app_id, app.name)
     if source_revision:
         app.image_revision = source_revision
     await db.flush()
@@ -518,7 +521,7 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
     )
     for old_r in old_res.scalars().all():
         if old_r.node_id is None or old_r.node_id == local_node.id:
-            await asyncio.to_thread(dm.stop_replica_container, app_id, old_r.id)
+            await asyncio.to_thread(containers_replicas.stop_replica_container, app_id, old_r.id)
             await db.delete(old_r)
             pm._push_line(app_id, f"[ZD] Stopped old local instance {old_r.id}.")
         else:
@@ -552,7 +555,7 @@ async def _wait_new_instance_healthy(app_id: int, replica_id: int, port: int, is
         if await asyncio.to_thread(_local_http_service_ready, port):
             return True, ""
         if is_local:
-            if not await asyncio.to_thread(dm.is_replica_container_running, app_id, replica_id):
+            if not await asyncio.to_thread(containers_replicas.is_replica_container_running, app_id, replica_id):
                 return False, "container is no longer running (check the instance logs)"
         else:
             async with AsyncSessionLocal() as _poll_db:
@@ -576,7 +579,7 @@ async def _zd_rollback(app_id: int, local_node_id: int, new_entries: list[tuple[
                 victim = await _rb_db.get(ApplicationReplica, new_rid)
                 if victim:
                     if tnode.is_local:
-                        await asyncio.to_thread(dm.stop_replica_container, app_id, new_rid)
+                        await asyncio.to_thread(containers_replicas.stop_replica_container, app_id, new_rid)
                     else:
                         await queue_node_command(
                             _rb_db, node_id=tnode.id, app_id=app_id,

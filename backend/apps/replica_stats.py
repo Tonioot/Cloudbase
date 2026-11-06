@@ -2,7 +2,10 @@ import asyncio
 from typing import Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.models import Application, Node
-from containers import processes as pm, manager as dm
+from containers import processes as pm
+from containers import client as containers_client
+from containers import stats_logs as containers_stats_logs
+from containers import naming as containers_naming
 from apps.runtime import _load_app_replicas, _resolve_replica_node
 
 def _aggregate_replica_stats_frames(frames: list[dict]) -> dict:
@@ -48,8 +51,8 @@ async def _get_local_replica_stats(
         if replica.status != "running":
             continue
         stats = await asyncio.to_thread(
-            dm.get_container_stats_by_name,
-            dm.replica_container_name(app.id, replica.id),
+            containers_stats_logs.get_container_stats_by_name,
+            containers_naming.replica_container_name(app.id, replica.id),
         )
         if stats:
             frames.append(stats)
@@ -74,8 +77,8 @@ async def _get_local_replica_logs(
             continue
         lines.extend(
             await asyncio.to_thread(
-                dm.get_recent_container_logs_by_name,
-                dm.replica_container_name(app.id, replica.id),
+                containers_stats_logs.get_recent_container_logs_by_name,
+                containers_naming.replica_container_name(app.id, replica.id),
                 limit,
             )
         )
@@ -89,7 +92,7 @@ async def local_app_aggregate_stats(app_id: int) -> dict:
     nothing about apps) can use it too.
     """
     import re as _re
-    client = dm._get_client()
+    client = containers_client._get_client()
     pattern = _re.compile(rf"^cloudbase-app-{app_id}-replica-(\d+)$")
     try:
         containers = client.containers.list(filters={"name": f"cloudbase-app-{app_id}-replica-"})
@@ -102,7 +105,7 @@ async def local_app_aggregate_stats(app_id: int) -> dict:
 
     frames = []
     for c in running:
-        s = await asyncio.to_thread(dm.get_container_stats_by_name, c.name)
+        s = await asyncio.to_thread(containers_stats_logs.get_container_stats_by_name, c.name)
         if s:
             frames.append(s)
 

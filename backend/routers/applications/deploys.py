@@ -10,7 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from core.models import Deployment, ApplicationReplica, Node
-from containers import processes as pm, manager as dm
+from containers import processes as pm
+from containers import naming as containers_naming
+from containers import build as containers_build
 from nodes.registry import ensure_local_node
 from nodes.commands import queue_node_command
 from core.audit import log_audit
@@ -84,7 +86,7 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
 
     try:
         await asyncio.to_thread(
-            dm.build_image,
+            containers_build.build_image,
             app_id, app.name, app_dir, _push,
             app.app_type or "unknown", app.start_command or "",
             _image_port(app),
@@ -93,7 +95,7 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
     except Exception as e:
         raise HTTPException(500, f"Failed to rebuild Docker image: {e}") from e
 
-    app.docker_image = dm.image_name(app_id, app.name)
+    app.docker_image = containers_naming.image_name(app_id, app.name)
     if source_revision:
         app.image_revision = source_revision
     await log_audit(db, "app.pull", actor=actor, app_id=app_id, detail={"name": app.name, "commit": commit_info})
@@ -155,7 +157,7 @@ async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), 
 
     try:
         img = await asyncio.to_thread(
-            dm.build_image,
+            containers_build.build_image,
             app_id, app.name, app.working_dir, _push,
             app.app_type or "unknown", app.start_command or "", _image_port(app),
             **_image_build_kwargs(app),
@@ -251,13 +253,13 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
                 _q(str(line))
 
             await asyncio.to_thread(
-                dm.build_image,
+                containers_build.build_image,
                 app_id, app.name, app_dir, _docker_push,
                 app.app_type or "unknown", app.start_command or "",
                 _image_port(app),
                 **_image_build_kwargs(app),
             )
-            app.docker_image = dm.image_name(app_id, app.name)
+            app.docker_image = containers_naming.image_name(app_id, app.name)
             if source_revision:
                 app.image_revision = source_revision
             await db.commit()
@@ -329,7 +331,7 @@ async def rebuild_docker_image_stream(app_id: int, _user: dict = Depends(_auth.r
                 _q(str(line))
 
             img = await asyncio.to_thread(
-                dm.build_image,
+                containers_build.build_image,
                 app_id, app.name, app.working_dir, _push,
                 app.app_type or "unknown", app.start_command or "", _image_port(app),
                 **_image_build_kwargs(app),

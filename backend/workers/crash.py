@@ -4,7 +4,8 @@ from sqlalchemy import select
 from core.database import AsyncSessionLocal
 from core.models import Application, Node as _Node, ApplicationReplica
 from core.env_crypto import decrypt_env
-from containers import processes as pm, manager as dm
+from containers import processes as pm
+from containers import replicas as containers_replicas
 from core import config as _cfg
 from apps.runtime import _derive_app_status_from_instances
 from apps.nginx_sync import _write_app_nginx_config as _wanc, _has_public_nginx_domain as _hpnd
@@ -44,7 +45,7 @@ async def _crash_monitor():
                     if r_node and not r_node.is_local:
                         continue  # remote replicas managed by their agent
 
-                    alive = await asyncio.to_thread(dm.is_replica_container_running, replica.app_id, replica.id)
+                    alive = await asyncio.to_thread(containers_replicas.is_replica_container_running, replica.app_id, replica.id)
                     if alive:
                         continue
 

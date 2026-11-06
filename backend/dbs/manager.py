@@ -21,7 +21,8 @@ import time
 from typing import Optional
 
 from dbs import engines as db_engines
-from containers import manager as dm
+from containers import client as containers_client
+from containers import stats_logs as containers_stats_logs
 
 log = logging.getLogger("cloudbase.databases")
 
@@ -160,7 +161,7 @@ def _run_container(client, spec: dict):
     if not spec.get("image_override"):
         _ensure_image(client, image, db_id)
     _progress[db_id] = "Starting the container"
-    dm.ensure_network(NETWORK)
+    containers_client.ensure_network(NETWORK)
 
     run_kwargs = {
         "detach": True,
@@ -342,7 +343,7 @@ def container_address(database_id: int) -> tuple[str, int]:
 
 
 def stats(database_id: int, data_dir: Optional[str] = None) -> dict:
-    data = dm.get_container_stats_by_name(container_name(database_id))
+    data = containers_stats_logs.get_container_stats_by_name(container_name(database_id))
     if data and data_dir:
         try:
             client = _client()
@@ -370,7 +371,7 @@ def stats_many(items: list[dict]) -> dict[str, dict]:
 
 
 def logs(database_id: int, lines: int = 300) -> list[str]:
-    return dm.get_recent_container_logs_by_name(container_name(database_id), lines)
+    return containers_stats_logs.get_recent_container_logs_by_name(container_name(database_id), lines)
 
 
 # ── Backups ───────────────────────────────────────────────────────────────────

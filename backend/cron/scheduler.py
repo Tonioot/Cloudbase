@@ -19,7 +19,10 @@ from fastapi import HTTPException
 from sqlalchemy import delete, select
 
 from cron import expr as cronexpr
-from containers import manager as dm
+from containers import naming as containers_naming
+from containers import jobs as containers_jobs
+from containers import build as containers_build
+from containers import replicas as containers_replicas
 from notify import engine as notify
 from containers import processes as pm
 from core.database import AsyncSessionLocal
@@ -183,15 +186,15 @@ async def start_run(app_id: int, trigger: str, actor: str, slot: Optional[dateti
 
 
 async def _ensure_local_image(app: Application, push) -> str:
-    img = dm.image_name(app.id, app.name)
+    img = containers_naming.image_name(app.id, app.name)
     desired = await asyncio.to_thread(apps_git._refresh_app_source_revision, app)
-    if dm.image_exists(img) and (not desired or app.image_revision == desired):
+    if containers_jobs.image_exists(img) and (not desired or app.image_revision == desired):
         return img
     if not app.working_dir:
         raise RuntimeError("No source yet — deploy the job first")
     push("[Cron] Building image…")
     await asyncio.to_thread(
-        dm.build_image, app.id, app.name, app.working_dir, lambda _aid, line: push(line),
+        containers_build.build_image, app.id, app.name, app.working_dir, lambda _aid, line: push(line),
         app.app_type or "unknown", app.start_command or "", apps_images._image_port(app),
         **apps_images._image_build_kwargs(app),
     )
@@ -208,7 +211,7 @@ async def _run_local(app: Application, run_id: int, push) -> dict:
     img = await _ensure_local_image(app, push)
     options = apps_runtime._docker_runtime_options(app)
     return await asyncio.to_thread(
-        dm.run_job_container, app.id, run_id, app.name, img, app.start_command or "",
+        containers_jobs.run_job_container, app.id, run_id, app.name, img, app.start_command or "",
         decrypt_env(app.env_vars or ""), options, app.cron_timeout_seconds or 3600,
         lambda line: pm._push_line(app.id, line),
     )
@@ -376,8 +379,8 @@ async def _recover() -> None:
             app.status = status_of(app)
         await db.commit()
     try:
-        for name in await asyncio.to_thread(dm.list_job_containers):
-            await asyncio.to_thread(dm.remove_container_by_name, name)
+        for name in await asyncio.to_thread(containers_jobs.list_job_containers):
+            await asyncio.to_thread(containers_replicas.remove_container_by_name, name)
     except Exception as e:
         log.debug("could not clean up job containers: %s", e)
 

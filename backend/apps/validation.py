@@ -7,7 +7,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.models import Application, ApplicationReplica
 from nginx import manager as nm
-from containers import manager as dm
+from containers import apps as containers_apps
 
 async def _assign_external_port(requested: Optional[int], node_id: int, exclude_app_id: Optional[int], db: AsyncSession) -> int:
     """Return requested port if free, else auto-pick the next free port in [8000, 8999]."""
@@ -33,7 +33,7 @@ async def _assign_external_port(requested: Optional[int], node_id: int, exclude_
             raise HTTPException(400, f"External port {requested} is already used by another app on this node")
         return requested
 
-    return await asyncio.to_thread(dm.pick_free_external_port, used)
+    return await asyncio.to_thread(containers_apps.pick_free_external_port, used)
 
 
 async def _check_domain_conflicts(

@@ -10,7 +10,8 @@ from core.models import Application, ApplicationReplica, Node
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from containers import processes as pm
-from containers import manager as dm
+from containers import naming as containers_naming
+from containers import client as containers_client
 from nodes.registry import ensure_local_node
 from nodes.commands import queue_node_command, wait_for_node_command
 from nodes.state import subscribe_node_stream, unsubscribe_node_stream, _node_ws_connections
@@ -112,7 +113,7 @@ async def _follow_local_app_containers(websocket: WebSocket, app_id: int) -> Non
 
     def _reader(name: str, tail: int) -> None:
         try:
-            stream = dm._get_client().containers.get(name).logs(stream=True, follow=True, timestamps=False, tail=tail)
+            stream = containers_client._get_client().containers.get(name).logs(stream=True, follow=True, timestamps=False, tail=tail)
             streams.append(stream)
             for raw in stream:
                 loop.call_soon_threadsafe(q.put_nowait, raw.decode("utf-8", errors="replace").rstrip())
@@ -123,7 +124,7 @@ async def _follow_local_app_containers(websocket: WebSocket, app_id: int) -> Non
 
     def _running_containers() -> list[str]:
         try:
-            return [c.name for c in dm._get_client().containers.list(filters={"name": prefix})
+            return [c.name for c in containers_client._get_client().containers.list(filters={"name": prefix})
                     if c.name.startswith(prefix)]
         except Exception:
             return []
@@ -300,7 +301,7 @@ async def stream_replica_logs(app_id: int, replica_id: int, websocket: WebSocket
             node = (await db.execute(select(Node).where(Node.id == replica.node_id))).scalar_one_or_none()
         app_name = app.name
 
-    cname = dm.replica_container_name(app_id, replica_id)
+    cname = containers_naming.replica_container_name(app_id, replica_id)
 
     if node is None or node.is_local:
         # Follow the container directly; the blocking docker stream runs in a thread
@@ -311,7 +312,7 @@ async def stream_replica_logs(app_id: int, replica_id: int, websocket: WebSocket
 
         def _reader():
             try:
-                c = dm._get_client().containers.get(cname)
+                c = containers_client._get_client().containers.get(cname)
                 stream = c.logs(stream=True, follow=True, timestamps=False, tail=300)
                 holder["stream"] = stream
                 for raw in stream:

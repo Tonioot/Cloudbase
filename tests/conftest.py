@@ -21,7 +21,7 @@ import pytest  # noqa: E402
 @pytest.fixture
 def buildkit(monkeypatch):
     """Pretend BuildKit is (un)available, without running docker."""
-    from containers import manager as docker_manager
+    from containers import buildkit as docker_manager
 
     def _set(value: bool):
         monkeypatch.setattr(docker_manager, "_buildkit_available", value)

@@ -8,7 +8,10 @@ from nodes import registry as nodes_registry
 from apps import runtime as apps_runtime
 from core.env_crypto import decrypt_env
 from nginx import manager as nm
-from containers import processes as pm, manager as dm
+from containers import processes as pm
+from containers import replicas as containers_replicas
+from containers import stats_logs as containers_stats_logs
+from containers import naming as containers_naming
 from core import system_config as _syscfg
 from apps.runtime import _derive_app_status_from_instances
 from apps.nginx_sync import _write_app_nginx_config as _startup_nginx
@@ -83,7 +86,7 @@ async def _startup_recovery() -> None:
                 continue  # remote replicas managed by their own agent
             if replica.status in ("starting", "stopping", "deploying"):
                 continue
-            alive = dm.is_replica_container_running(replica.app_id, replica.id)
+            alive = containers_replicas.is_replica_container_running(replica.app_id, replica.id)
             new_status = "running" if alive else "stopped"
             if new_status != replica.status:
                 replica.status = new_status
@@ -91,9 +94,9 @@ async def _startup_recovery() -> None:
             if alive:
                 # Re-attach to the replica's own container (not the legacy cloudbase-app-{id}
                 # name), otherwise live logs stay silent after a Cloudbase restart.
-                dm.attach_container_log_tailer(
+                containers_stats_logs.attach_container_log_tailer(
                     replica.app_id, pm.log_buffers, pm._push_container_line, asyncio.get_event_loop(),
-                    cname=dm.replica_container_name(replica.app_id, replica.id),
+                    cname=containers_naming.replica_container_name(replica.app_id, replica.id),
                 )
 
         # Kill any orphan legacy containers (cloudbase-app-{id} without replica row)

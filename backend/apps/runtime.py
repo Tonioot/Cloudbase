@@ -6,7 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal
 import datetime as _dt
 from core.models import Deployment, NodeCommand, StatsHistory, ApplicationReplica, Node, Application, AuditLog
-from containers import processes as pm, manager as dm
+from containers import processes as pm
+from containers import naming as containers_naming
+from containers import build as containers_build
+from containers import replicas as containers_replicas
 from core import applog
 from dbs import links as db_links
 from nodes.registry import ensure_local_node
@@ -140,7 +143,7 @@ async def _sync_process_status(app, db) -> None:
                 age = (_dt.datetime.utcnow() - (replica.updated_at or replica.created_at)).total_seconds()
                 if age < 15:
                     continue
-            alive = await asyncio.to_thread(dm.is_replica_container_running, app.id, replica.id)
+            alive = await asyncio.to_thread(containers_replicas.is_replica_container_running, app.id, replica.id)
             new_status = "running" if alive else "stopped"
             if replica.status != new_status:
                 replica.status = new_status
@@ -211,12 +214,12 @@ async def _start_instance_local(app: "Application", replica: "ApplicationReplica
             pm._push_line(app_id, str(line))
         await _set_replica_substatus(replica.id, "building_image")
         await asyncio.to_thread(
-            dm.build_image,
+            containers_build.build_image,
             app_id, app.name, app.working_dir, _push,
             app.app_type or "unknown", app.start_command or "", _image_port(app),
             **_image_build_kwargs(app),
         )
-        app.docker_image = dm.image_name(app_id, app.name)
+        app.docker_image = containers_naming.image_name(app_id, app.name)
         built_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
         if built_revision:
             app.image_revision = built_revision

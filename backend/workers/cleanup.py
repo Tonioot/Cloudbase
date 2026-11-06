@@ -4,7 +4,9 @@ import time as _time
 from sqlalchemy import select
 from core.database import AsyncSessionLocal
 from core.models import Node as _Node, ApplicationReplica, NodeCommand as _NC
-from containers import manager as _dm
+from containers import replicas as containers_replicas
+from containers import cleanup as containers_cleanup
+from containers import client as containers_client
 from nodes.recovery import run_node_docker_cleanup
 
 log = logging.getLogger("cloudbase.main")
@@ -47,7 +49,7 @@ async def _orphan_replica_cleanup():
     await asyncio.sleep(120)
     while True:
         try:
-            containers = await asyncio.to_thread(_dm.list_replica_containers)
+            containers = await asyncio.to_thread(containers_replicas.list_replica_containers)
             if containers:
                 async with AsyncSessionLocal() as db:
                     # Local node id — we only manage local containers here.
@@ -72,7 +74,7 @@ async def _orphan_replica_cleanup():
                         is_dead = c["status"] in ("exited", "dead", "created")
                         is_orphan = rid not in live_ids
                         if is_dead or is_orphan:
-                            removed = await asyncio.to_thread(_dm.remove_container_by_name, c["name"])
+                            removed = await asyncio.to_thread(containers_replicas.remove_container_by_name, c["name"])
                             if removed:
                                 reason = "dead" if is_dead else "no DB row"
                                 log.info("[orphan-cleanup] removed replica container %s (%s)", c["name"], reason)
@@ -99,9 +101,9 @@ async def _docker_cleanup_loop():
             now = _time.time()
             for node in nodes:
                 if node.is_local:
-                    if not await asyncio.to_thread(_dm.is_docker_available):
+                    if not await asyncio.to_thread(containers_client.is_docker_available):
                         continue
-                    disk = await asyncio.to_thread(_dm.disk_percent)
+                    disk = await asyncio.to_thread(containers_cleanup.disk_percent)
                 else:
                     if node.status == "offline":
                         continue

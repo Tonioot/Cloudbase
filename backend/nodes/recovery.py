@@ -11,7 +11,7 @@ from core.models import Application, ApplicationReplica
 from core.env_crypto import decrypt_env
 from apps.runtime import _remote_replica_command_payload
 from containers import processes as pm
-from containers import manager as _dm
+from containers import cleanup as containers_cleanup
 from core import system_config as _syscfg
 from apps.nginx_sync import _write_app_nginx_config
 from apps.git import _refresh_app_source_revision as _rsr
@@ -195,7 +195,7 @@ async def run_node_docker_cleanup(node: Node, aggressive: bool = False) -> dict:
     """Clean up Docker on one node: in-process for the local node, through the
     agent for a remote one. Returns the cleanup summary dict."""
     if node.is_local:
-        return await asyncio.to_thread(_dm.cleanup_docker, aggressive)
+        return await asyncio.to_thread(containers_cleanup.cleanup_docker, aggressive)
     if node.id not in _node_ws_connections:
         return {"skipped": "Node agent is not connected"}
     async with AsyncSessionLocal() as db:

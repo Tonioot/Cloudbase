@@ -7,7 +7,9 @@ import psutil
 from sqlalchemy import select
 from core.database import AsyncSessionLocal
 from core.models import Application, Node as _Node, ApplicationReplica as _AR, OverviewHistory, NodeMetricsHistory, StatsHistory, ApplicationReplica as _AppReplica, Application as _App
-from containers import processes as pm, manager as dm, manager as _dm
+from containers import processes as pm
+from containers import naming as containers_naming
+from containers import stats_logs as containers_stats_logs
 from nodes.commands import wait_for_node_command, queue_node_command
 from nodes.state import _node_ws_connections
 from routers.stats import _aggregate_frames
@@ -57,8 +59,8 @@ async def _stats_collector():
                         # Instance-based: aggregate stats from all running replicas
                         stats_list = await asyncio.gather(*[
                             asyncio.to_thread(
-                                dm.get_container_stats_by_name,
-                                dm.replica_container_name(a.id, r.id),
+                                containers_stats_logs.get_container_stats_by_name,
+                                containers_naming.replica_container_name(a.id, r.id),
                             )
                             for r in app_replicas
                         ])
@@ -104,8 +106,8 @@ async def _stats_collector():
             # Per-replica stats: store latest snapshot for local replicas
             async def _one_replica(replica):
                 try:
-                    cname = dm.replica_container_name(replica.app_id, replica.id)
-                    s = await asyncio.to_thread(dm.get_container_stats_by_name, cname)
+                    cname = containers_naming.replica_container_name(replica.app_id, replica.id)
+                    s = await asyncio.to_thread(containers_stats_logs.get_container_stats_by_name, cname)
                     if not s:
                         return
                     timestamp = int(_time.time() * 1000)
@@ -162,8 +164,8 @@ async def _remote_replica_stats_poller():
 
                 async def _poll_local_replica(r):
                     try:
-                        cname = _dm.replica_container_name(r.app_id, r.id)
-                        snap = await asyncio.to_thread(_dm.get_container_stats_by_name, cname)
+                        cname = containers_naming.replica_container_name(r.app_id, r.id)
+                        snap = await asyncio.to_thread(containers_stats_logs.get_container_stats_by_name, cname)
                         if snap and snap.get("cpu_percent") is not None:
                             snap["timestamp"] = int(_time.time() * 1000)
                             pm.set_replica_stats(r.id, {"replica_id": r.id, **snap})

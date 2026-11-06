@@ -5,7 +5,10 @@ from collections import deque
 from typing import Optional
 
 from core import applog
-from containers import manager as dm
+from containers import apps as containers_apps
+from containers import naming as containers_naming
+from containers import replicas as containers_replicas
+from containers import stats_logs as containers_stats_logs
 
 APPS_BASE_DIR = os.path.expanduser("~/.cloudbase/apps")
 
@@ -153,7 +156,7 @@ def stop_docker_app(app_id: int) -> bool:
         log_buffers.setdefault(aid, deque(maxlen=5000)).append(str(line))
         _push_line(aid, line)
 
-    return dm.stop_container(app_id, push_line_fn=_push)
+    return containers_apps.stop_container(app_id, push_line_fn=_push)
 
 
 def start_docker_replica(
@@ -171,9 +174,9 @@ def start_docker_replica(
         log_buffers.setdefault(aid, deque(maxlen=5000)).append(str(line))
         _push_line(aid, line)
 
-    img = dm.image_name(image_app_id if image_app_id is not None else app_id, app_name)
+    img = containers_naming.image_name(image_app_id if image_app_id is not None else app_id, app_name)
     try:
-        container_id = dm.run_replica_container(
+        container_id = containers_replicas.run_replica_container(
             app_id, replica_id, app_name, img,
             internal_port, external_port, env_vars or {}, docker_options, _push,
         )
@@ -183,9 +186,9 @@ def start_docker_replica(
         raise RuntimeError(message) from e
 
     if _main_loop is not None and not _main_loop.is_closed():
-        dm.attach_container_log_tailer(
+        containers_stats_logs.attach_container_log_tailer(
             app_id, log_buffers, _push_container_line, _main_loop,
-            cname=dm.replica_container_name(app_id, replica_id),
+            cname=containers_naming.replica_container_name(app_id, replica_id),
         )
 
     return container_id
@@ -197,19 +200,19 @@ def stop_docker_replica(app_id: int, replica_id: int) -> bool:
         log_buffers.setdefault(aid, deque(maxlen=5000)).append(str(line))
         _push_line(aid, line)
 
-    return dm.stop_replica_container(app_id, replica_id, push_line_fn=_push)
+    return containers_replicas.stop_replica_container(app_id, replica_id, push_line_fn=_push)
 
 
 def is_docker_app_running(app_id: int) -> bool:
-    return dm.is_container_running(app_id)
+    return containers_apps.is_container_running(app_id)
 
 
 def get_docker_stats(app_id: int) -> dict:
-    return dm.get_container_stats(app_id)
+    return containers_stats_logs.get_container_stats(app_id)
 
 
 def get_recent_docker_logs(app_id: int, lines: int = 300) -> list[str]:
     buf = log_buffers.get(app_id)
     if buf:
         return list(buf)[-lines:]
-    return dm.get_recent_container_logs(app_id, lines)
+    return containers_stats_logs.get_recent_container_logs(app_id, lines)
