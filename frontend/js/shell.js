@@ -108,7 +108,7 @@ function railHTML(active) {
       ${setting('btn-backup-storage', 'backups', 'database', 'Backup storage', 'data-perm="system.manage"')}
       ${setting('btn-notification-settings', 'notifications', 'bell', 'Notifications', 'data-perm="notifications.manage"')}
       ${setting('btn-system-logs', 'logs', 'logs', 'System logs', 'data-perm="system.manage"')}
-      ${setting('btn-github-tokens', 'tokens', 'key', 'GitHub tokens', 'data-perm="tokens.manage"')}
+      ${setting('btn-github-tokens', 'tokens', 'key', 'Git tokens', 'data-perm="tokens.manage"')}
       ${setting('btn-export-import', 'transfer', 'transfer', 'Export / import', 'data-perm="apps.configure"')}
     </nav>
 
@@ -292,7 +292,7 @@ function paletteCommands() {
     ['btn-manage-users', 'Users & roles', ICONS.users, 'permissions accounts'],
     ['btn-backup-storage', 'Backup storage', ICONS.database, 's3 r2 backblaze offsite off-site bucket'],
     ['btn-notification-settings', 'Notification channels', ICONS.bell, 'alerts slack teams pagerduty email webhook discord telegram ntfy'],
-    ['btn-github-tokens', 'GitHub tokens', ICONS.key, 'private repository'],
+    ['btn-github-tokens', 'Git tokens', ICONS.key, 'private repository github gitlab gitea bitbucket access token'],
     ['btn-export-import', 'Export / import apps', ICONS.transfer, 'backup json'],
     ['btn-change-password', 'Account & password', ICONS.lock, 'change password'],
     ['btn-logout', 'Sign out', ICONS.logout, 'logout'],

@@ -78,15 +78,6 @@ class MaintenancePageConfig(BaseModel):
     background: Optional[str] = "none" # none | glow | grid
 
 
-class ExportRequest(BaseModel):
-    app_ids: Optional[list[int]] = None # If None or empty, export all
-
-
-class ImportRequest(BaseModel):
-    apps: list[dict]
-    target_node_id: Optional[int] = None # Optional override node
-
-
 class PullRequest(BaseModel):
     commit: Optional[str] = None
 

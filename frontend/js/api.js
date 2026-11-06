@@ -26,6 +26,19 @@ async function request(method, path, body) {
   return data;
 }
 
+// Export and import send and receive files, which request() (JSON only) cannot.
+async function transferRequest(path, opts) {
+  const res = await fetch(BASE + path, { credentials: 'same-origin', ...opts });
+  if (res.status === 401) { redirectToLogin(); return; }
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.detail || `HTTP ${res.status}`);
+  }
+  const type = res.headers.get('content-type') || '';
+  if (type.includes('application/json')) return res.json();
+  return { blob: await res.blob(), filename: (res.headers.get('content-disposition') || '').match(/filename="([^"]+)"/)?.[1] };
+}
+
 export const api = {
   health:        ()          => request('GET',    '/health'),
   checkAuth:     ()          => request('GET',    '/auth/check'),
@@ -135,8 +148,17 @@ export const api = {
   deploy:   (payload)  => request('POST',   '/apps', payload),
   updateApp:(id, data) => request('PUT',    `/apps/${id}`, data),
   deleteApp:(id)       => request('DELETE', `/apps/${id}`),
-  exportApps:(appIds)  => request('POST',   '/apps/export', { app_ids: appIds }),
-  importApps:(apps, targetNodeId) => request('POST', '/apps/import', { apps, target_node_id: targetNodeId }),
+  exportTransfer: (appIds, passphrase, password) => transferRequest('/transfer/export', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ app_ids: appIds, passphrase, password }),
+  }),
+  importTransfer: (file, passphrase, targetNodeId) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('passphrase', passphrase);
+    if (targetNodeId) form.append('target_node_id', String(targetNodeId));
+    return transferRequest('/transfer/import', { method: 'POST', body: form });
+  },
   start:    (id)       => request('POST',   `/apps/${id}/start`),
   stop:     (id)       => request('POST',   `/apps/${id}/stop`),
   restart:  (id)       => request('POST',   `/apps/${id}/restart`),

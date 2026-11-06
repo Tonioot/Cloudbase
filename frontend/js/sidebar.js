@@ -174,7 +174,7 @@ async function initSessionTimer() {
 export async function pickGitHubToken(tokenInput, tokenIdInput) {
   let tokens = [];
   try { tokens = await api.listGitHubTokens(); } catch { return; }
-  if (!tokens.length) { toast('No saved tokens — save one under Settings → GitHub tokens', 'warn'); return; }
+  if (!tokens.length) { toast('No saved tokens — save one under Settings → Git tokens', 'warn'); return; }
 
   document.querySelectorAll('.gh-token-picker').forEach(p => p.remove());
 

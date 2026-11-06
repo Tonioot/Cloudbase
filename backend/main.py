@@ -11,7 +11,7 @@ from core import applog, system_logs
 from core import config as _cfg
 from core.access import _AuthMiddleware
 from lifespan import lifespan
-from routers import applications, audit as audit_router, cron as cron_router, domains as domains_router, files, frontend, logs, nodes, notifications as notifications_router, overview, panel_logs, panel_settings, roles as roles_router, session, users, databases as databases_router, database_backups as database_backups_router
+from routers import applications, audit as audit_router, cron as cron_router, domains as domains_router, files, frontend, logs, nodes, notifications as notifications_router, overview, panel_logs, panel_settings, roles as roles_router, session, transfer, users, databases as databases_router, database_backups as database_backups_router
 from routers import stats as routers_stats
 
 # Must run after the imports above: it replaces any root handlers an imported
@@ -30,7 +30,7 @@ app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
 # Order matters: the first route that matches a request wins (tests/test_app_structure.py
 # checks that no route is shadowed).
-for _router in (overview.router, session.router, users.router, panel_settings.router, panel_logs.router):
+for _router in (overview.router, session.router, users.router, panel_settings.router, panel_logs.router, transfer.router):
     app.include_router(_router)
 app.include_router(cron_router.router)  # before applications: /api/apps/cron/… would match /{app_id} routes
 app.include_router(applications.router)

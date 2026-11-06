@@ -284,7 +284,7 @@ async def init_db():
         ("system.manage",     "Manage Cloudbase server settings, server logs and nginx"),
         ("users.manage",      "Create, edit and delete users"),
         ("roles.manage",      "Create, edit and delete roles"),
-        ("tokens.manage",     "Manage GitHub tokens"),
+        ("tokens.manage",     "Manage Git tokens (access tokens for private repositories)"),
     ]
 
     # Rename stale permission names that may already exist in the database

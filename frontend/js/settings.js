@@ -17,7 +17,7 @@ export const SETTINGS_SECTIONS = {
   users:    { title: 'Users & roles',    sub: 'Who can sign in to this panel, and what each role is allowed to do.' },
   backups:  { title: 'Backup storage',   sub: 'Keep a copy of every database backup outside this server, in S3-compatible storage.' },
   notifications: { title: 'Notifications', sub: 'Where Cloudbase reports problems and deploys — Slack, Teams, PagerDuty, e-mail, webhooks and more — and which events go where.' },
-  tokens:   { title: 'GitHub tokens',    sub: 'Saved access tokens for private repositories. Pick one when you create or edit an app.' },
+  tokens:   { title: 'Git tokens',       sub: 'Saved access tokens for private repositories on GitHub, GitLab, Bitbucket, Gitea and other Git hosts (HTTPS). Pick one when you create or edit an app.' },
   transfer: { title: 'Export / import',  sub: 'Move app configurations between Cloudbase installations, or keep a backup.' },
   logs:     { title: 'System logs',      sub: 'Everything Cloudbase itself logs — deploys, autoscaler, nginx, nodes, databases — in one place, live.' },
   account:  { title: 'Account',          sub: 'Your own sign-in details.' },
@@ -703,7 +703,7 @@ async function openUserDialog(user = null) {
   };
 }
 
-const PERM_GROUP_LABELS = { apps: 'Apps', nodes: 'Nodes', system: 'System', users: 'Users', roles: 'Roles', audit: 'Audit log', tokens: 'GitHub tokens' };
+const PERM_GROUP_LABELS = { apps: 'Apps', nodes: 'Nodes', system: 'System', users: 'Users', roles: 'Roles', audit: 'Audit log', tokens: 'Git tokens' };
 
 async function openRoleDialog(role = null, perms = null) {
   if (!perms) { try { perms = await api.listPermissions(); } catch (e) { toast(e.message, 'error'); return; } }
@@ -760,7 +760,7 @@ async function openRoleDialog(role = null, perms = null) {
   };
 }
 
-/* ─── GitHub tokens ─────────────────────────────────────────────────────── */
+/* ─── Git tokens ─────────────────────────────────────────────────────── */
 
 function renderTokens(root) {
   root.innerHTML = `
@@ -1202,30 +1202,49 @@ function openChannelDialog(state, ch, reload) {
 /* ─── Export / import ───────────────────────────────────────────────────── */
 
 function renderTransfer(root) {
+  const plainHttp = location.protocol !== 'https:';
   root.innerHTML = `
-    ${group('Export', 'Downloads a JSON file with the configuration of the selected apps: repository, commands, port, domains, Docker limits and maintenance pages.',
+    ${group('Export', 'Downloads one encrypted file with the selected apps: repository, commands, domains, Docker limits, the number of instances, environment variables and Git tokens.',
       `<div class="settings-list-head">
          <label class="check-inline"><input type="checkbox" id="exp-all" checked /> Select all</label>
-         <button class="btn btn-primary btn-sm" id="exp-go">Download JSON</button>
        </div>
        <div id="exp-list" class="check-list"></div>
-       <div class="field-hint">Environment variables and GitHub tokens are left out on purpose — add them again after importing.</div>`)}
-    ${group('Import', 'Creates each app with one instance and deploys it from its repository. Apps whose name already exists are skipped.',
+       <div class="field">
+         <label class="field-label" for="exp-pass">Passphrase for the file</label>
+         <input class="input" id="exp-pass" type="password" autocomplete="new-password" placeholder="At least 12 characters" />
+         <div class="field-hint">The file contains every secret of these apps. Without this passphrase it cannot be opened, and it cannot be recovered if you lose it.</div>
+       </div>
+       <div class="field">
+         <label class="field-label" for="exp-pass2">Repeat passphrase</label>
+         <input class="input" id="exp-pass2" type="password" autocomplete="new-password" />
+       </div>
+       <div class="field">
+         <label class="field-label" for="exp-pw">Your account password</label>
+         <input class="input" id="exp-pw" type="password" autocomplete="current-password" />
+         <div class="field-hint">Asked again because the file contains your secrets.</div>
+       </div>
+       ${plainHttp ? '<div class="field-hint" data-tone="error">This page is not using https. On a private network that works, but the passphrase and the file travel unencrypted: use https when you can.</div>' : ''}
+       <div class="field"><button class="btn btn-primary btn-sm" id="exp-go">Download export</button></div>`)}
+    ${group('Import', 'Creates the apps from an export file with their environment variables, Git tokens and instances, then builds and starts the ones that were running. Apps whose name already exists are skipped.',
       `<div class="field">
          <label class="field-label">Export file</label>
          <div class="cert-upload-row">
            <span class="cert-filename" id="imp-name">No file selected</span>
            <button type="button" class="btn btn-sm" id="imp-browse">Choose file</button>
-           <input type="file" id="imp-file" accept=".json,application/json" hidden>
+           <input type="file" id="imp-file" accept=".cloudbase,application/octet-stream" hidden>
          </div>
-         <div class="field-hint" id="imp-summary"></div>
        </div>
        <div class="field">
-         <label class="field-label" for="imp-node">Target node</label>
-         <select class="input" id="imp-node"><option value="">Same node as in the export</option></select>
-         <div class="field-hint">Override this to put every imported app on one node.</div>
+         <label class="field-label" for="imp-pass">Passphrase</label>
+         <input class="input" id="imp-pass" type="password" autocomplete="off" />
        </div>
-       <div class="field"><button class="btn btn-primary btn-sm" id="imp-go" disabled>Import apps</button></div>`)}
+       <div class="field">
+         <label class="field-label" for="imp-node">Place instances on</label>
+         <select class="input" id="imp-node"><option value="">This server (primary)</option></select>
+         <div class="field-hint">Every imported app gets its instances on this one node. You can scale to other nodes afterwards.</div>
+       </div>
+       <div class="field"><button class="btn btn-primary btn-sm" id="imp-go" disabled>Import</button></div>
+       <div id="imp-result"></div>`)}
   `;
 
   // Export
@@ -1248,18 +1267,24 @@ function renderTransfer(root) {
   expGo.onclick = async () => {
     const checks = [...expList.querySelectorAll('.exp-check')];
     const ids = checks.filter(c => c.checked).map(c => parseInt(c.value, 10));
+    const pass = document.getElementById('exp-pass').value;
     if (checks.length && !ids.length) return toast('Select at least one app', 'error');
+    if (pass.length < 12) return toast('Use a passphrase of at least 12 characters', 'error');
+    if (pass !== document.getElementById('exp-pass2').value) return toast('The two passphrases are not the same', 'error');
+    const pw = document.getElementById('exp-pw').value;
+    if (!pw) return toast('Enter your account password', 'error');
     expGo.disabled = true;
     try {
-      const res = await api.exportApps(ids.length === checks.length ? null : ids);
-      const blob = new Blob([JSON.stringify(res.exported_apps, null, 2)], { type: 'application/json' });
+      const res = await api.exportTransfer(ids.length === checks.length ? null : ids, pass, pw);
       const a = Object.assign(document.createElement('a'), {
-        href: URL.createObjectURL(blob),
-        download: `cloudbase_apps_${new Date().toISOString().slice(0, 10)}.json`,
+        href: URL.createObjectURL(res.blob),
+        download: res.filename || `cloudbase-export-${new Date().toISOString().slice(0, 10)}.cloudbase`,
       });
       a.click();
       URL.revokeObjectURL(a.href);
-      toast(`Exported ${res.exported_apps.length} app${res.exported_apps.length === 1 ? '' : 's'}`);
+      ['exp-pass', 'exp-pass2', 'exp-pw'].forEach(id => { document.getElementById(id).value = ''; });
+      const n = ids.length || checks.length;
+      toast(`Exported ${n} app${n === 1 ? '' : 's'}`);
     } catch (e) {
       toast(e.message, 'error');
     } finally {
@@ -1268,49 +1293,45 @@ function renderTransfer(root) {
   };
 
   // Import
-  let data = null;
+  let file = null;
   const fileInput = document.getElementById('imp-file');
-  const summary = document.getElementById('imp-summary');
   const impGo = document.getElementById('imp-go');
+  const impPass = document.getElementById('imp-pass');
+  const result = document.getElementById('imp-result');
+  const ready = () => { impGo.disabled = !(file && impPass.value); };
   document.getElementById('imp-browse').onclick = () => fileInput.click();
   fileInput.onchange = () => {
-    const file = fileInput.files[0];
-    if (!file) return;
+    file = fileInput.files[0] || null;
     const name = document.getElementById('imp-name');
-    name.textContent = file.name;
-    name.classList.add('has-value');
-    file.text().then(text => {
-      try {
-        data = JSON.parse(text);
-        if (!Array.isArray(data)) throw new Error('expected a list of apps');
-        summary.textContent = `${data.length} app${data.length === 1 ? '' : 's'}: ${data.map(a => a.name).filter(Boolean).join(', ')}`;
-        summary.dataset.tone = '';
-        impGo.disabled = !data.length;
-      } catch (e) {
-        data = null;
-        summary.textContent = `This isn't a Cloudbase export (${e.message}).`;
-        summary.dataset.tone = 'error';
-        impGo.disabled = true;
-      }
-    });
+    name.textContent = file ? file.name : 'No file selected';
+    name.classList.toggle('has-value', !!file);
+    ready();
   };
+  impPass.oninput = ready;
   api.listNodes().then(nodes => {
     const sel = document.getElementById('imp-node');
-    nodes.forEach(n => sel.insertAdjacentHTML('beforeend', `<option value="${n.id}">${esc(n.is_local ? `${n.name} (primary)` : n.name)}</option>`));
+    nodes.filter(n => !n.is_local).forEach(n => sel.insertAdjacentHTML('beforeend', `<option value="${n.id}">${esc(n.name)}</option>`));
   }).catch(() => {});
+
+  const li = (text, tone) => `<li${tone ? ` data-tone="${tone}"` : ''}>${esc(text)}</li>`;
   impGo.onclick = async () => {
-    if (!data) return;
-    const nodeVal = document.getElementById('imp-node').value;
     impGo.disabled = true;
-    summary.textContent = 'Importing…';
+    result.innerHTML = '<div class="field-hint">Importing…</div>';
     try {
-      await api.importApps(data, nodeVal ? parseInt(nodeVal, 10) : null);
-      toast('Apps imported');
-      summary.textContent = 'Imported. The apps are deploying — follow them from the overview.';
+      const nodeVal = document.getElementById('imp-node').value;
+      const res = await api.importTransfer(file, impPass.value, nodeVal ? parseInt(nodeVal, 10) : null);
+      impPass.value = '';
+      const done = res.imported.map(a => li(`${a.name} — ${a.instances} instance${a.instances === 1 ? '' : 's'}${a.will_start ? ', will start' : ''}`));
+      const skipped = res.skipped.map(s => li(`${s.name} — skipped: ${s.reason}`, 'error'));
+      const warns = res.warnings.map(w => li(w));
+      result.innerHTML = `
+        <div class="field-hint">${res.imported.length} imported, ${res.skipped.length} skipped.${res.imported.length ? ' Building and starting runs in the background: follow it from the overview.' : ''}</div>
+        <ul class="settings-note">${done.join('')}${skipped.join('')}${warns.join('')}</ul>`;
+      if (res.imported.length) toast('Apps imported');
     } catch (e) {
-      summary.textContent = `Import failed: ${e.message}`;
-      summary.dataset.tone = 'error';
-      impGo.disabled = false;
+      result.innerHTML = `<div class="field-hint" data-tone="error">Import failed: ${esc(e.message)}</div>`;
+    } finally {
+      ready();
     }
   };
 }

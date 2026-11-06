@@ -126,7 +126,7 @@ cloudbase stop</pre>
 <ul>
   <li><strong>Application name</strong> — lowercase, used for the folder, the Docker image and the automatic subdomain.</li>
   <li><strong>Repository URL</strong> — the HTTPS URL of a GitHub repository.</li>
-  <li><strong>GitHub token</strong> — only for private repositories. Paste one, or click <em>Saved</em> to pick one stored under <a href="/settings?s=tokens">GitHub tokens</a>.</li>
+  <li><strong>Access token</strong> — only for private repositories. Paste one, or click <em>Saved</em> to pick one stored under <a href="/settings?s=tokens">Git tokens</a>.</li>
 </ul>
 
 <h2>3. Process</h2>
@@ -1096,7 +1096,7 @@ tail -n 100 ~/.cloudbase/logs/node-agent.log # what the agent did</pre>
   <tr><td><code>system.manage</code></td><td>Domain &amp; SSL, system settings, server logs and nginx</td></tr>
   <tr><td><code>users.manage</code></td><td>Create, edit and delete users</td></tr>
   <tr><td><code>roles.manage</code></td><td>Create, edit and delete roles</td></tr>
-  <tr><td><code>tokens.manage</code></td><td>Manage saved GitHub tokens</td></tr>
+  <tr><td><code>tokens.manage</code></td><td>Manage saved Git tokens</td></tr>
 </table>
 <p>The panel hides what a user isn’t allowed to do, and the API refuses it as well — hiding a button is not the only protection.</p>
 
@@ -1117,11 +1117,11 @@ tail -n 100 ~/.cloudbase/logs/node-agent.log # what the agent did</pre>
   slug: 'github-tokens',
   group: 'Administration',
   title: 'Private repositories',
-  summary: 'Creating a GitHub token, saving it in Cloudbase and using it for apps.',
-  keywords: 'github token private repository pat fine-grained access',
-  lead: 'Public repositories need nothing. For private ones, Cloudbase uses a GitHub access token to clone and pull.',
+  summary: 'Creating an access token on your Git host, saving it in Cloudbase and using it for apps.',
+  keywords: 'git token github gitlab gitea bitbucket codeberg private repository pat fine-grained access',
+  lead: 'Public repositories need nothing. For private ones, Cloudbase uses an access token from your Git host to clone and pull. GitHub, GitLab, Bitbucket, Gitea and Forgejo work over HTTPS; SSH addresses do not.',
   body: `
-<h2>Creating a token on GitHub</h2>
+<h2>Creating a token (GitHub example)</h2>
 <ol class="guide-steps">
   <li>On GitHub, go to <strong>Settings → Developer settings → Personal access tokens → Fine-grained tokens</strong>.</li>
   <li>Choose the repositories Cloudbase should deploy (or the organisation as resource owner).</li>
@@ -1129,9 +1129,10 @@ tail -n 100 ~/.cloudbase/logs/node-agent.log # what the agent did</pre>
   <li>Pick an expiry date and generate the token.</li>
 </ol>
 <p>A classic token works too; it needs the <code>repo</code> scope, which grants more than necessary.</p>
+<p>On GitLab, Gitea or Forgejo create a personal or project access token with read access to the repository. On Bitbucket use a repository access token; an app password (username plus password) is not supported.</p>
 
 <h2>Saving it in Cloudbase</h2>
-<p>Under <a href="/settings?s=tokens">Settings → GitHub tokens</a>, give the token a label and save it. It’s stored encrypted and only its last four characters are shown again. When creating or editing an app, click <strong>Saved</strong> next to the token field to pick it.</p>
+<p>Under <a href="/settings?s=tokens">Settings → Git tokens</a>, give the token a label and save it. It’s stored encrypted and only its last four characters are shown again. When creating or editing an app, click <strong>Saved</strong> next to the token field to pick it.</p>
 <p>You can also paste a token directly into an app; it’s then stored with that app only.</p>
 
 <h2>When a token expires</h2>
@@ -1143,16 +1144,16 @@ tail -n 100 ~/.cloudbase/logs/node-agent.log # what the agent did</pre>
   slug: 'backups',
   group: 'Administration',
   title: 'Backups & moving apps',
-  summary: 'App exports, full backups with the CLI, and moving to a new server.',
+  summary: 'Encrypted app exports with their secrets, full backups with the CLI, and moving to a new server.',
   keywords: 'backup export import restore migrate move server json tar',
-  lead: 'There are two kinds of backup: app configuration as JSON from the panel, and a full backup of the Cloudbase database and credentials from the command line.',
+  lead: 'There are two kinds of backup: an encrypted export of your apps (with environment variables and Git tokens) from the panel, and a full backup of the Cloudbase database and credentials from the command line.',
   body: `
 <h2>Exporting apps (panel)</h2>
-<p>Under <a href="/settings?s=transfer">Settings → Export / import</a>, select apps and download a JSON file. It contains each app’s configuration: repository, type, build and start command, port, domains and certificate paths, restart policy, Docker limits and maintenance pages.</p>
-<p>Deliberately <strong>not</strong> included: environment variables and GitHub tokens (secrets don’t belong in a file you pass around), source code (it comes from Git), and container data. Keep a copy of each app’s <code>.env</code> somewhere safe so you can re-import it.</p>
+<p>Under <a href="/settings?s=transfer">Settings → Export / import</a>, select apps, choose a passphrase and enter your account password. You get one encrypted <code>.cloudbase</code> file with each app’s repository, type, build and start command, port, domains, restart policy, Docker limits, auto-deploy and autoscale settings, maintenance pages, the <strong>number of instances</strong>, its <strong>environment variables</strong> and its <strong>Git token</strong>.</p>
+<p>The secrets are written inside the encrypted file, because the key that protects them on this server does not exist on another one. Without the passphrase the file is useless; if you lose the passphrase it cannot be recovered. Over plain <code>http</code> from a public address the export is refused. Not included: source code (it comes from Git), container data and database contents (use the database backups), and the node an app ran on.</p>
 
 <h2>Importing apps</h2>
-<p>Choose the file on the same page. Cloudbase creates each app with one instance and deploys it from its repository. Apps whose name already exists are skipped. Use <strong>Target node</strong> to put everything on one node; otherwise the primary is used. Afterwards, add environment variables and tokens, and scale up where needed.</p>
+<p>Choose the file on the same page and enter its passphrase. Cloudbase checks every app the way creating one does (name, repository, domains, limits), creates it with the same number of instances, and then clones, builds and starts the apps that were running when they were exported, one after the other in the background. Apps whose name already exists are skipped and listed with the reason. <strong>Place instances on</strong> picks the node for all of them; the default is this server. You can scale to other nodes afterwards.</p>
 
 <h2>Full backup (CLI)</h2>
 <pre>cloudbase backup ~/cloudbase-backup.tar.gz

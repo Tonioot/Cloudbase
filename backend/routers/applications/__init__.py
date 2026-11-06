@@ -6,7 +6,6 @@ from routers.applications import crud
 from routers.applications import create
 from routers.applications import update
 from routers.applications import delete
-from routers.applications import transfer
 from routers.applications import repo
 from routers.applications import certs
 from routers.applications import lifecycle
@@ -23,7 +22,6 @@ router.include_router(crud.router)
 router.include_router(create.router)
 router.include_router(update.router)
 router.include_router(delete.router)
-router.include_router(transfer.router)
 router.include_router(repo.router)
 router.include_router(certs.router)
 router.include_router(lifecycle.router)

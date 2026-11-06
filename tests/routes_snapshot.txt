@@ -115,8 +115,6 @@ PATCH   /api/nodes/{node_id}
 POST    /api/apps
 POST    /api/apps/check-repo
 POST    /api/apps/cron/preview
-POST    /api/apps/export
-POST    /api/apps/import
 POST    /api/apps/{app_id}/certs/upload
 POST    /api/apps/{app_id}/cron/pause
 POST    /api/apps/{app_id}/cron/resume
@@ -177,6 +175,8 @@ POST    /api/system/nginx-config
 POST    /api/system/nginx-default-catchall
 POST    /api/system/panel-domain
 POST    /api/system/settings
+POST    /api/transfer/export
+POST    /api/transfer/import
 POST    /api/users
 PUT     /api/apps/{app_id}
 PUT     /api/apps/{app_id}/cron

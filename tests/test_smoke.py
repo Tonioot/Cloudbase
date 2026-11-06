@@ -5,24 +5,6 @@ Everything runs against the throwaway home directory from conftest.py, never a r
 import pytest
 from fastapi.testclient import TestClient
 
-PASSWORD = "smoke-test-password"
-
-
-@pytest.fixture(scope="module")
-def client():
-    from core import auth
-    auth.save_hashed_password(auth.hash_password(PASSWORD))   # known credentials for the seeded admin
-    import main
-    with TestClient(main.app, base_url="http://localhost") as c:
-        yield c
-
-
-@pytest.fixture(scope="module")
-def admin(client):
-    r = client.post("/api/auth/login", json={"username": "admin", "password": PASSWORD})
-    assert r.status_code == 200, r.text
-    return client
-
 
 def test_health_is_public(client):
     assert client.get("/api/health").status_code == 200
