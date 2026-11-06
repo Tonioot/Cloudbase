@@ -110,6 +110,7 @@ GET     /settings
 GET     /settings.html
 GET     /{full_path:path}
 MOUNT /css
+MOUNT /fonts
 MOUNT /js
 PATCH   /api/apps/{app_id}/replicas/{replica_id}/substatus
 PATCH   /api/databases/{database_id}

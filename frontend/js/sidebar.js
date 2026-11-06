@@ -29,6 +29,7 @@ function wireLogout() {
   btn.dataset.wired = '1';
   btn.addEventListener('click', async () => {
     await api.logout().catch(() => {});
+    try { sessionStorage.removeItem('cb-index'); sessionStorage.removeItem('cb-hidden-perms'); } catch { /* ignore */ }
     location.href = '/login';
   });
 }
@@ -243,6 +244,10 @@ async function initRoleBasedUI() {
 
     const perms = new Set(data.permissions || []);
 
+    // The answer is in: drop the rules remembered from the previous page and keep the new ones for the next
+    document.getElementById('perm-hide-rules-cache')?.remove();
+    try { sessionStorage.setItem('cb-hidden-perms', '[]'); } catch { /* ignore */ }
+
     if (!isRoot) {
       // Build the set of permissions the user LACKS — used to hide data-perm elements
       const ALL_KNOWN_PERMS = [
@@ -254,6 +259,7 @@ async function initRoleBasedUI() {
         'audit.view','tokens.manage','notifications.view','notifications.manage',
       ];
       ALL_KNOWN_PERMS.forEach(p => { if (!perms.has(p)) window._hiddenPerms.add(p); });
+      try { sessionStorage.setItem('cb-hidden-perms', JSON.stringify([...window._hiddenPerms])); } catch { /* ignore */ }
 
       // Hide static data-perm elements now
       _applyPermVisibility();

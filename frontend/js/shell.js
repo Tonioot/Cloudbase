@@ -211,8 +211,19 @@ export function setCrumbs(items) {
 let index = { apps: [], nodes: [], databases: [], loaded: false };
 
 /** Called by sidebar.js whenever apps/nodes/databases are (re)loaded. */
-export function updateIndex(apps, nodes, databases) {
+// The lists are remembered for the next page in this tab, so the sidebar is filled at once
+// instead of popping in after the server has answered. They are refreshed right after.
+const INDEX_KEY = 'cb-index';
+const HIDDEN_PERMS_KEY = 'cb-hidden-perms';
+
+export function updateIndex(apps, nodes, databases, fromCache = false) {
   index = { apps: apps || [], nodes: nodes || [], databases: databases || [], loaded: true };
+  if (!fromCache) {
+    try {
+      const text = JSON.stringify({ apps: index.apps, nodes: index.nodes, databases: index.databases });
+      if (text.length < 400000) sessionStorage.setItem(INDEX_KEY, text);
+    } catch { /* storage unavailable or full: the sidebar just fills a moment later */ }
+  }
   const section = currentSection();
   const q = new URLSearchParams(location.search);
   const currentId = parseInt(q.get('id'), 10);
@@ -387,6 +398,18 @@ function mount() {
   if (!rail) return;
   const section = currentSection();
   rail.innerHTML = railHTML(section);
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(INDEX_KEY) || 'null');
+    if (cached) updateIndex(cached.apps, cached.nodes, cached.databases, true);
+    // Menu items this user may not use stay hidden from the first frame, as they were on the last page
+    const hidden = JSON.parse(sessionStorage.getItem(HIDDEN_PERMS_KEY) || '[]').filter(p => /^[a-z]+\.[a-z_]+$/.test(p));
+    if (hidden.length) {
+      const style = document.createElement('style');
+      style.id = 'perm-hide-rules-cache';
+      style.textContent = `${hidden.map(p => `[data-perm="${p}"]`).join(',')}{display:none!important}`;
+      document.head.appendChild(style);
+    }
+  } catch { /* nothing remembered yet */ }
   api.health().then(h => {
     const el = document.getElementById('rail-version');
     if (el && h?.version) el.textContent = `Cloudbase v${h.version}`;

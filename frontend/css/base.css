@@ -52,6 +52,15 @@ code, kbd, pre, .mono { font-family: var(--font-mono); }
 }
 
 /* ─── Sidebar ───────────────────────────────────────────────────────────── */
+/* Switching pages: the browser keeps showing the old page until the new one can be drawn and cross-fades
+   the two. The sidebar is a layer of its own, so it stays put instead of flashing. */
+@view-transition { navigation: auto; }
+.rail { view-transition-name: rail; }
+::view-transition-old(root), ::view-transition-new(root) { animation-duration: .12s; }
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
+}
+
 .rail {
   flex: 0 0 var(--rail-width);
   width: var(--rail-width);

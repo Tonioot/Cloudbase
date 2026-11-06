@@ -51,3 +51,7 @@ ruff check backend tests scripts
 - Moved or renamed a module? `tests/test_references.py` checks every `from x import y` and `module.attr`; `tests/test_scripts.py` checks the Python snippets inside `start.sh` / `install.sh`.
 - Added or removed an endpoint on purpose? Regenerate the snapshot: `UPDATE_SNAPSHOTS=1 pytest tests/test_app_structure.py`, and review the diff of `tests/routes_snapshot.txt`.
 - Tests run against a throwaway home directory (`tests/conftest.py`); they never touch `~/.cloudbase`.
+
+## The frontend
+
+Plain HTML pages with their own CSS and ES modules, no build step. `core/frontend_assets.py` makes switching between pages quick when a page leaves the server: `?v=<content hash>` on every css/js URL (cached for a year, see `routers/frontend.py`), an import map so `import './x.js'` hits the same cache, `modulepreload` for the whole module graph (one parallel round instead of a chain of 4-6), self-hosted fonts in `frontend/fonts/` (named after their content hash), and the page colour set inline. In the browser the sidebar lists and hidden menu items are remembered per tab (`sessionStorage`, `cb-index`, `cb-hidden-perms`) so they are there from the first frame, and `@view-transition` keeps the old page up until the new one can be drawn. `tests/test_frontend.py` checks all of it.
