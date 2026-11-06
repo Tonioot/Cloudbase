@@ -12,7 +12,7 @@ from containers import naming as containers_naming
 from containers import stats_logs as containers_stats_logs
 from nodes.commands import wait_for_node_command, queue_node_command
 from nodes.state import _node_ws_connections
-from routers.stats import _aggregate_frames
+from apps.stream import _aggregate_frames
 from core.history import _HISTORY_RETENTION_DAYS, _OVERVIEW_SAMPLE_SECONDS
 
 log = logging.getLogger("cloudbase.main")

@@ -1,7 +1,5 @@
 {
-  "upward_imports": [
-    "workers.stats -> routers.stats"
-  ],
+  "upward_imports": [],
   "function_level_imports": {
     "core.database": 2,
     "dbs.proxy": 4,

@@ -11,7 +11,8 @@ from core import applog, system_logs
 from core import config as _cfg
 from core.access import _AuthMiddleware
 from lifespan import lifespan
-from routers import applications, audit as audit_router, cron as cron_router, domains as domains_router, files, frontend, logs, nodes, notifications as notifications_router, overview, panel_logs, panel_settings, roles as roles_router, session, stats, users, databases as databases_router, database_backups as database_backups_router
+from routers import applications, audit as audit_router, cron as cron_router, domains as domains_router, files, frontend, logs, nodes, notifications as notifications_router, overview, panel_logs, panel_settings, roles as roles_router, session, users, databases as databases_router, database_backups as database_backups_router
+from routers import stats as routers_stats
 
 # Must run after the imports above: it replaces any root handlers an imported
 # module installed (node_agent used to, which sent everything to node-agent.log).
@@ -36,7 +37,7 @@ app.include_router(applications.router)
 app.include_router(nodes.router)
 app.include_router(files.router)
 app.include_router(logs.router)
-app.include_router(stats.router)
+app.include_router(routers_stats.router)
 app.include_router(audit_router.router)
 app.include_router(roles_router.router)
 app.include_router(domains_router.router)
