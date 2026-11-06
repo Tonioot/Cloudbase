@@ -17,23 +17,23 @@ from sqlalchemy import select, func, or_, update, delete
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_db, AsyncSessionLocal
+from core.database import get_db, AsyncSessionLocal
 import datetime as _dt
-from models import Application, ApplicationReplica, Node, StatsHistory, NodeCommand, AuditLog, Deployment
-import process_manager as pm
-import applog
-import nginx_manager as nm
-import certificates as certs
-import token_vault
-import docker_manager as dm
-import cron as _cron
-import db_links
+from core.models import Application, ApplicationReplica, Node, StatsHistory, NodeCommand, AuditLog, Deployment
+from containers import processes as pm
+from core import applog
+from nginx import manager as nm
+from nginx import certificates as certs
+from core import token_vault
+from containers import manager as dm
+from cron import scheduler as _cron
+from dbs import links as db_links
 from routers.nodes import ensure_local_node, queue_node_command, wait_for_node_command
-from env_crypto import encrypt_env, decrypt_env, encrypt_text, decrypt_text
-from audit import log_audit
-import auth as _auth
-import config as _cfg
-import system_config as _syscfg
+from core.env_crypto import encrypt_env, decrypt_env, encrypt_text, decrypt_text
+from core.audit import log_audit
+from core import auth as _auth
+from core import config as _cfg
+from core import system_config as _syscfg
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 log = logging.getLogger("cloudbase.apps")
@@ -2388,7 +2388,7 @@ def _require_node_agent_for_app(app_id_param: str = "app_id"):
     - X-Node-Token: remote node — validated against DB and must have a replica of app_id.
     """
     async def _dep(request: Request, app_id: int, db: AsyncSession = Depends(get_db)):
-        import auth as _auth_mod
+        from core import auth as _auth_mod
         agent_token = request.headers.get("X-Agent-Token", "")
         if agent_token:
             if not _auth_mod.verify_agent_token(agent_token):
@@ -3185,7 +3185,7 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
     While one replica is cycling, the others keep serving traffic — no downtime page is shown.
     Falls back to a normal ZD deploy when only one replica is running.
     """
-    from database import AsyncSessionLocal
+    from core.database import AsyncSessionLocal
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
 
@@ -3446,7 +3446,7 @@ async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), 
 
 
 async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: Node, actor: str):
-    from database import AsyncSessionLocal
+    from core.database import AsyncSessionLocal
     app = await _get_or_404(app_id, db)
 
     if not _has_public_nginx_domain(app):
@@ -3718,7 +3718,7 @@ async def _wait_new_instance_healthy(app_id: int, replica_id: int, port: int, is
 
 async def _zd_rollback(app_id: int, local_node_id: int, new_entries: list[tuple["Node", int]], db: "AsyncSession") -> None:
     """Best-effort cleanup of new replicas created during a failed ZD deploy."""
-    from database import AsyncSessionLocal
+    from core.database import AsyncSessionLocal
     for tnode, new_rid in new_entries:
         try:
             async with AsyncSessionLocal() as _rb_db:

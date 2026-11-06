@@ -4,8 +4,8 @@ import threading
 from collections import deque
 from typing import Optional
 
-import applog
-import docker_manager as dm
+from core import applog
+from containers import manager as dm
 
 APPS_BASE_DIR = os.path.expanduser("~/.cloudbase/apps")
 

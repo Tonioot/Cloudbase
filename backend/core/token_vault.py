@@ -8,7 +8,7 @@ import os
 import uuid
 from typing import Optional
 
-from env_crypto import encrypt_text, decrypt_text
+from core.env_crypto import encrypt_text, decrypt_text
 
 _TOKENS_FILE = os.path.expanduser("~/.cloudbase/github_tokens.json")
 _LEGACY_FILE = os.path.expanduser("~/.pdmanager/github_tokens.json")

@@ -16,7 +16,7 @@ sys.path.insert(0, os.path.abspath(BACKEND))
 
 
 def write_credentials(password: str) -> None:
-    import auth
+    from core import auth
     if auth.load_hashed_password():
         return
     auth.save_hashed_password(auth.hash_password(password))
@@ -25,10 +25,10 @@ def write_credentials(password: str) -> None:
 
 async def seed_demo() -> None:
     from sqlalchemy import select
-    from database import init_db, AsyncSessionLocal
-    from models import Application, ApplicationReplica
+    from core.database import init_db, AsyncSessionLocal
+    from core.models import Application, ApplicationReplica
     from routers.nodes import ensure_local_node
-    from env_crypto import encrypt_env
+    from core.env_crypto import encrypt_env
 
     await init_db()
     async with AsyncSessionLocal() as db:
@@ -154,8 +154,8 @@ def _demo_log_templates(app_type: str) -> tuple[list[str], list[str]]:
 async def seed_demo_logs() -> None:
     """Write demo log output for every app; the dev server streams it (CLOUDBASE_DEV_DEMO_LOGS)."""
     from sqlalchemy import select
-    from database import init_db, AsyncSessionLocal
-    from models import Application
+    from core.database import init_db, AsyncSessionLocal
+    from core.models import Application
 
     await init_db()
     async with AsyncSessionLocal() as db:

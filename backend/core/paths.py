@@ -1,0 +1,13 @@
+"""Where things live on disk, resolved once. Nothing else should use __file__ for this."""
+import os
+
+BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+REPO_DIR = os.path.dirname(BACKEND_DIR)
+
+FRONTEND_DIR = os.path.join(REPO_DIR, "frontend")
+ASSETS_DIR = os.path.join(BACKEND_DIR, "assets")
+REPO_CONFIG_FILE = os.path.join(REPO_DIR, "config.yaml")
+VERSION_FILE = os.path.join(REPO_DIR, "VERSION")
+# Written next to the code (not in ~/.cloudbase): start.sh backs this file up and restores it.
+AGENT_STATE_FILE = os.path.join(BACKEND_DIR, "agent_state.json")
+LOGO_FILE = os.path.join(ASSETS_DIR, "cloudbase-mark.png")

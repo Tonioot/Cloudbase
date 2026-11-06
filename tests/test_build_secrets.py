@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-import docker_manager as dm
+from containers import manager as dm
 
 SECRET = "s3cr3t-value-123"
 

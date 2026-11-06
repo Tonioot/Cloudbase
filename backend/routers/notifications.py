@@ -9,12 +9,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import auth as _auth
-import notify
-import notify_channels
-from audit import log_audit
-from database import get_db
-from models import Application, Notification, NotificationChannel, NotificationDelivery, User
+from core import auth as _auth
+from notify import engine as notify
+from notify import channels as notify_channels
+from core.audit import log_audit
+from core.database import get_db
+from core.models import Application, Notification, NotificationChannel, NotificationDelivery, User
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 

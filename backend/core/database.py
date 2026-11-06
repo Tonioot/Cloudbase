@@ -38,9 +38,9 @@ async def get_db():
 
 async def init_db():
     import datetime as _dt
-    from env_crypto import decrypt_text, encrypt_text
+    from core.env_crypto import decrypt_text, encrypt_text
     # Importing every model registers its table with Base.metadata for create_all below.
-    from models import Application, Node, NodeInvite, NodeCommand, AuditLog, StatsHistory, User, SystemConfig, Role, Permission, role_permissions  # noqa: F401
+    from core.models import Application, Node, NodeInvite, NodeCommand, AuditLog, StatsHistory, User, SystemConfig, Role, Permission, role_permissions  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         # Migrate existing DBs: add columns introduced after initial schema.
@@ -329,7 +329,7 @@ async def init_db():
             role_obj = res.scalar_one_or_none()
             if role_obj is not None:
                 # Unassign users from this role before deleting
-                from models import User as _User
+                from core.models import User as _User
                 await session.execute(
                     _User.__table__.update()
                     .where(_User.__table__.c.role_id == role_obj.id)

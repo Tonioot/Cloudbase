@@ -13,8 +13,8 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from env_crypto import decrypt_text, encrypt_text
-from models import SystemConfig
+from core.env_crypto import decrypt_text, encrypt_text
+from core.models import SystemConfig
 
 log = logging.getLogger("cloudbase.backups")
 

@@ -17,11 +17,11 @@ import httpx
 import websockets
 import psutil
 
-import config as _cfg
+from core import config as _cfg
+from core import paths
 
 # Configuration
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-STATE_PATH = os.path.join(_BASE_DIR, "agent_state.json")
+STATE_PATH = paths.AGENT_STATE_FILE
 AGENT_LOG_FILE = os.path.expanduser("~/.cloudbase/logs/node-agent.log")
 _LOCAL_PORT = _cfg.get_server_port()
 _LOCAL_API_BASE = f"http://127.0.0.1:{_LOCAL_PORT}"
@@ -427,7 +427,7 @@ def _parse_docker_created(value: str) -> Optional[float]:
 
 
 def _list_replica_containers() -> list[tuple[str, Optional[float]]]:
-    import docker_manager as dm
+    from containers import manager as dm
     client = dm._get_client()
     out = []
     for c in client.containers.list(all=True, filters={"name": "cloudbase-app-"}):
@@ -436,7 +436,7 @@ def _list_replica_containers() -> list[tuple[str, Optional[float]]]:
 
 
 def _remove_container(name: str) -> None:
-    import docker_manager as dm
+    from containers import manager as dm
     dm._get_client().containers.get(name).remove(force=True)
 
 
@@ -550,7 +550,7 @@ async def cmd_get_stats(client, state, main_id, payload, headers):
 
 async def cmd_docker_cleanup(client, state, main_id, payload, headers):
     """Remove superseded images and trim the build cache on this node."""
-    import docker_manager as dm
+    from containers import manager as dm
     return await asyncio.to_thread(dm.cleanup_docker, bool(payload.get("aggressive")))
 
 
@@ -602,7 +602,7 @@ def _local_app_dir(app_name: str) -> str:
     # Keep source extraction path aligned with backend deploy path derivation.
     # This avoids case-mismatch failures like "inside" vs "Inside".
     try:
-        import process_manager as pm
+        from containers import processes as pm
         return pm.get_app_dir(app_name)
     except Exception:
         safe = app_name.lower().replace(" ", "-")
@@ -682,8 +682,8 @@ async def _download_and_extract_source(client: httpx.AsyncClient, state, main_id
 async def _build_image_local(local_id: int, app_name: str, app_dir: str, payload: dict) -> str:
     """Build Docker image natively using dm.build_image (handles Dockerfile generation).
     Returns image name."""
-    import docker_manager as dm  # import here to avoid circular at module level on remote nodes
-    import process_manager as pm
+    from containers import manager as dm  # import here to avoid circular at module level on remote nodes
+    from containers import processes as pm
 
     app_type = (payload.get("app_type") or "").strip().lower()
     start_cmd = payload.get("start_command") or ""
@@ -730,8 +730,8 @@ async def _report_replica_substatus(client: httpx.AsyncClient, state, main_id: i
 async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id, payload, headers, replica_id: Optional[int] = None) -> int:
     """Ensure source + image are ready on this node. Only downloads/builds when needed.
     Returns main_id (used directly as the image app_id — no local DB needed)."""
-    import docker_manager as dm
-    import process_manager as pm
+    from containers import manager as dm
+    from containers import processes as pm
 
     app_name = payload.get("app_name") or payload.get("name") or ""
     if not app_name:
@@ -790,7 +790,7 @@ async def _wait_local_api(client, timeout: float = 90) -> None:
 async def cmd_cron_run(client, state, main_id, payload, headers):
     """Run one cron job on this node: make sure the image is current, run the
     container to completion and report exit code and output."""
-    import docker_manager as dm
+    from containers import manager as dm
     await _wait_local_api(client)
     local_id = await _ensure_replica_app_deployed(client, state, main_id, payload, headers)
     run_id = int(payload["run_id"])
@@ -812,7 +812,7 @@ async def cmd_start_replica(client, state, main_id, payload, headers):
 
     # If the container is already running (node briefly disconnected), just
     # reconnect the tunnel instead of doing a full stop/start cycle.
-    import docker_manager as dm
+    from containers import manager as dm
     if dm.is_replica_container_running(int(main_id), replica_id):
         _agent_log(f"[agent] replica={replica_id} container already running, reconnecting tunnel only")
         local_port = payload.get("external_port", 8000)
@@ -887,39 +887,39 @@ async def cmd_refresh_source(client, state, main_id, payload, _headers):
 # Thin wrappers: db_manager does the work, the primary keeps the state.
 
 async def cmd_db_ensure(_client, _state, _main_id, payload, _headers):
-    import db_manager
+    from dbs import manager as db_manager
     return await asyncio.to_thread(db_manager.ensure_running, payload["spec"])
 
 
 async def cmd_db_recreate(_client, _state, _main_id, payload, _headers):
-    import db_manager
+    from dbs import manager as db_manager
     return await asyncio.to_thread(db_manager.recreate, payload["spec"])
 
 
 async def cmd_db_restart(_client, _state, _main_id, payload, _headers):
-    import db_manager
+    from dbs import manager as db_manager
     return await asyncio.to_thread(db_manager.restart, payload["spec"])
 
 
 async def cmd_db_stop(_client, _state, _main_id, payload, _headers):
-    import db_manager
+    from dbs import manager as db_manager
     return await asyncio.to_thread(db_manager.stop, int(payload["database_id"]))
 
 
 async def cmd_db_remove(_client, _state, _main_id, payload, _headers):
-    import db_manager
+    from dbs import manager as db_manager
     return await asyncio.to_thread(
         db_manager.remove, int(payload["database_id"]), bool(payload.get("keep_volume", True))
     )
 
 
 async def cmd_db_states(_client, _state, _main_id, payload, _headers):
-    import db_manager
+    from dbs import manager as db_manager
     return {"states": await asyncio.to_thread(db_manager.states, payload.get("database_ids") or [])}
 
 
 async def cmd_db_stats(_client, _state, _main_id, payload, _headers):
-    import db_manager
+    from dbs import manager as db_manager
     return await asyncio.to_thread(db_manager.stats, int(payload["database_id"]), payload.get("data_dir"))
 
 
@@ -928,7 +928,7 @@ _BACKUP_TMP = os.path.expanduser("~/.cloudbase/backup-tmp")
 
 async def cmd_db_backup(client, state, _main_id, payload, _headers):
     """Dump a database on this node and stream the file to the primary."""
-    import db_manager
+    from dbs import manager as db_manager
     spec, backup_id = payload["spec"], int(payload["backup_id"])
     os.makedirs(_BACKUP_TMP, exist_ok=True)
     path = os.path.join(_BACKUP_TMP, f"backup-{backup_id}")
@@ -953,7 +953,7 @@ async def cmd_db_backup(client, state, _main_id, payload, _headers):
 
 async def cmd_db_restore(client, state, _main_id, payload, _headers):
     """Fetch a backup from the primary and load it into a database on this node."""
-    import db_manager
+    from dbs import manager as db_manager
     spec, backup_id = payload["spec"], int(payload["backup_id"])
     os.makedirs(_BACKUP_TMP, exist_ok=True)
     path = os.path.join(_BACKUP_TMP, f"restore-{backup_id}")
@@ -974,27 +974,27 @@ async def cmd_db_restore(client, state, _main_id, payload, _headers):
 
 
 async def cmd_db_rotate_password(_client, _state, _main_id, payload, _headers):
-    import db_manager
+    from dbs import manager as db_manager
     return await asyncio.to_thread(db_manager.rotate_password, payload["spec"], payload["new_password"])
 
 
 async def cmd_db_stats_many(_client, _state, _main_id, payload, _headers):
-    import db_manager
+    from dbs import manager as db_manager
     return {"stats": await asyncio.to_thread(db_manager.stats_many, payload.get("items") or [])}
 
 
 async def cmd_db_check_updates(_client, _state, _main_id, payload, _headers):
-    import db_manager
+    from dbs import manager as db_manager
     return {"updates": await asyncio.to_thread(db_manager.check_updates, payload.get("items") or [])}
 
 
 async def cmd_db_update(_client, _state, _main_id, payload, _headers):
-    import db_manager
+    from dbs import manager as db_manager
     return await asyncio.to_thread(db_manager.update, payload["spec"])
 
 
 async def cmd_db_logs(_client, _state, _main_id, payload, _headers):
-    import db_manager
+    from dbs import manager as db_manager
     lines = await asyncio.to_thread(db_manager.logs, int(payload["database_id"]), int(payload.get("lines", 300)))
     return {"lines": lines}
 
@@ -1010,7 +1010,7 @@ def _primary_ws_base(state: AgentState) -> str:
 
 async def _open_db_proxy_ws(state: AgentState, database_id: int):
     """Upstream for a local database proxy: one binary WebSocket to the primary."""
-    import db_proxy
+    from dbs import proxy as db_proxy
     ws = await websockets.connect(
         f"{_primary_ws_base(state)}/api/nodes/ws/db-proxy/{database_id}",
         additional_headers={"x-node-token": state.auth_token},
@@ -1021,8 +1021,8 @@ async def _open_db_proxy_ws(state: AgentState, database_id: int):
 
 async def _db_dial(state: AgentState, msg: dict) -> None:
     """The primary asks for a connection to a database container on this node."""
-    import db_manager
-    import db_proxy
+    from dbs import manager as db_manager
+    from dbs import proxy as db_proxy
     database_id, token = int(msg["database_id"]), msg["token"]
     ws = await websockets.connect(
         f"{_primary_ws_base(state)}/api/nodes/ws/db-dial/{token}",
@@ -1043,7 +1043,7 @@ async def _db_dial(state: AgentState, msg: dict) -> None:
 async def _report_db_progress(ws) -> None:
     """Tell the primary what a database is doing before its container exists (an
     image pull can take minutes and blocks the command loop meanwhile)."""
-    import db_manager
+    from dbs import manager as db_manager
     last = None
     while True:
         await asyncio.sleep(2)
@@ -1054,7 +1054,7 @@ async def _report_db_progress(ws) -> None:
 
 
 async def _db_control_loop(state: AgentState) -> None:
-    import db_proxy
+    from dbs import proxy as db_proxy
     db_proxy.configure(asyncio.get_running_loop(), lambda db_id: _open_db_proxy_ws(state, db_id), state.node_id)
     url = f"{_primary_ws_base(state)}/api/nodes/ws/db-control"
     while True:

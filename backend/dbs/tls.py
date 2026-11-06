@@ -13,7 +13,7 @@ import ssl
 import threading
 from typing import Optional
 
-from database import DATA_DIR
+from core.database import DATA_DIR
 
 log = logging.getLogger("cloudbase.db-tls")
 

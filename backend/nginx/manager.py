@@ -3,6 +3,8 @@ import os
 import subprocess
 import hashlib
 
+from core import paths
+
 log = logging.getLogger("cloudbase.nginx")
 
 NGINX_SITES_DIR = "/etc/nginx/sites-available"
@@ -114,7 +116,7 @@ def generate_maintenance_html(
 def _cloudbase_logo_data_uri() -> str | None:
   """The Cloudbase logo as a small inline data URI (the full-size PNG is ~780 KB)."""
   import base64
-  path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "cloudbase-mark.png")
+  path = paths.LOGO_FILE
   try:
     with open(path, "rb") as f:
       return "data:image/png;base64," + base64.b64encode(f.read()).decode("ascii")
@@ -451,7 +453,7 @@ def generate_config(
 
     # Auto-subdomain: if base_domain is configured, include {slug}.{base_domain}
     # as the primary domain (when no custom domain is set) or as an extra server_name.
-    import system_config as _scfg
+    from core import system_config as _scfg
     _using_auto_sub = False
     _base = _scfg.get_base_domain_cached()
     if _base and (app_name or "").strip().lower() != "cloudbase":
@@ -474,7 +476,7 @@ def generate_config(
         else:
             # No wildcard certificate: use the app's own automatic certificate
             # for its subdomain once Cloudbase has requested it
-            import certificates as _certs
+            from nginx import certificates as _certs
             if _certs.capability()[0] and _certs.exists(domain):
                 ssl_cert, ssl_key = _certs.paths(domain)
 

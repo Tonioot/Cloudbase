@@ -1,6 +1,6 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, Float, Table, UniqueConstraint
-from database import Base
+from core.database import Base
 
 
 # Many-to-many: roles <-> permissions

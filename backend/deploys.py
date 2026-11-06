@@ -18,10 +18,10 @@ from typing import Callable, Optional
 from fastapi import HTTPException
 from sqlalchemy import select
 
-import notify
-import process_manager as pm
-from database import AsyncSessionLocal
-from models import Application, Deployment
+from notify import engine as notify
+from containers import processes as pm
+from core.database import AsyncSessionLocal
+from core.models import Application, Deployment
 
 log = logging.getLogger("cloudbase.deploys")
 
@@ -152,7 +152,7 @@ async def run_deploy(
 async def _rebuild(app: Application, db, source_revision, push, *, restart: bool, actor: str) -> dict:
     """Build the image; with `restart`, restart the app's running instances."""
     from routers import applications as apps
-    import docker_manager as dm
+    from containers import manager as dm
 
     push("[Docker] Building image…")
     await asyncio.to_thread(

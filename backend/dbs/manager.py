@@ -20,8 +20,8 @@ import threading
 import time
 from typing import Optional
 
-import db_engines
-import docker_manager as dm
+from dbs import engines as db_engines
+from containers import manager as dm
 
 log = logging.getLogger("cloudbase.databases")
 

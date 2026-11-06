@@ -9,10 +9,10 @@ import psutil
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
-import auth
-import process_manager as pm
-from database import AsyncSessionLocal
-from models import Application, ApplicationReplica, Node
+from core import auth
+from containers import processes as pm
+from core.database import AsyncSessionLocal
+from core.models import Application, ApplicationReplica, Node
 from routers.nodes import (
     ensure_local_node, queue_node_command, wait_for_node_command,
     subscribe_node_stream, unsubscribe_node_stream,

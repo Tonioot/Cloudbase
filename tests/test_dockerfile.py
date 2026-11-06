@@ -1,4 +1,4 @@
-import docker_manager as dm
+from containers import manager as dm
 
 
 def _gen(app_type="nodejs", **kw):

@@ -4,7 +4,7 @@ from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import AuditLog
+from core.models import AuditLog
 
 log = logging.getLogger("cloudbase.audit")
 

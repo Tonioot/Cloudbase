@@ -12,10 +12,10 @@ from pydantic import BaseModel
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import auth
-from audit import log_audit
-from database import get_db
-from models import Role, Permission, User, role_permissions
+from core import auth
+from core.audit import log_audit
+from core.database import get_db
+from core.models import Role, Permission, User, role_permissions
 
 router = APIRouter(prefix="/api/roles", tags=["roles"])
 

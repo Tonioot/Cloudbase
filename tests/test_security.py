@@ -6,8 +6,8 @@ import jwt
 import pytest
 from fastapi import HTTPException
 
-import auth
-import env_crypto
+from core import auth
+from core import env_crypto
 
 
 # ── env var encryption ────────────────────────────────────────────────────────

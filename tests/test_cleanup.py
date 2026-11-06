@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-import docker_manager as dm
+from containers import manager as dm
 
 GB = 1024 ** 3
 

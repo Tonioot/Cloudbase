@@ -5,8 +5,8 @@ from typing import Dict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import SystemConfig
-import config as _cfg
+from core.models import SystemConfig
+from core import config as _cfg
 
 _BASE_DOMAIN_KEY = "base_domain"
 _BASE_SSL_CERT_KEY = "base_ssl_cert"

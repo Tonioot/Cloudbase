@@ -23,17 +23,20 @@ TESTS = Path(__file__).resolve().parent
 UPDATE = bool(os.environ.get("UPDATE_SNAPSHOTS"))
 
 
-def _backend_modules() -> list[str]:
-    mods = []
+def _backend_modules() -> dict[str, Path]:
+    """dotted module name -> file ("pkg" -> pkg/__init__.py)."""
+    mods = {}
     for path in sorted(BACKEND.rglob("*.py")):
         rel = path.relative_to(BACKEND)
         if rel.parts[0] in ("venv", "__pycache__") or "venv" in rel.parts:
             continue
-        mods.append(".".join(rel.with_suffix("").parts))
+        parts = rel.with_suffix("").parts
+        mods[".".join(parts[:-1] if parts[-1] == "__init__" else parts)] = path
     return mods
 
 
-MODULES = _backend_modules()
+MODULE_FILES = _backend_modules()
+MODULES = list(MODULE_FILES)
 
 
 # ── imports ───────────────────────────────────────────────────────────────────
@@ -104,7 +107,7 @@ def test_no_route_is_shadowed_by_an_earlier_one(routes):
 
 # ── layering ──────────────────────────────────────────────────────────────────
 def _local_imports(path: Path, module_names: set[str]):
-    """Yield (imported module, is_inside_function) for imports of backend modules."""
+    """Yield (imported backend modules, is_inside_function), once per import statement."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     toplevel = {id(n) for n in tree.body}
     for node in ast.walk(tree):
@@ -113,23 +116,26 @@ def _local_imports(path: Path, module_names: set[str]):
             targets = [a.name for a in node.names]
         elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
             targets = [node.module] + [f"{node.module}.{a.name}" for a in node.names]
-        for t in targets:
-            if t in module_names:
-                yield t, id(node) not in toplevel
+        found = {t for t in targets if t in module_names}
+        if found:
+            yield found, id(node) not in toplevel
 
 
 def _layering() -> dict:
     names = set(MODULES)
     upward, lazy = [], {}
     for mod in MODULES:
-        path = BACKEND / (mod.replace(".", "/") + ".py")
-        for target, inside_function in _local_imports(path, names):
-            if inside_function and target != mod:
+        for targets, inside_function in _local_imports(MODULE_FILES[mod], names):
+            targets = targets - {mod}
+            if not targets:
+                continue
+            if inside_function:
                 lazy[mod] = lazy.get(mod, 0) + 1
             # Logic must not depend on HTTP routers, and routers must not depend on each
             # other: shared logic belongs in a service. Only main may wire routers together.
-            if target.startswith("routers.") and mod != "main" and target != mod:
-                upward.append(f"{mod} -> {target}")
+            for target in targets:
+                if target.startswith("routers.") and mod != "main":
+                    upward.append(f"{mod} -> {target}")
     return {"upward_imports": sorted(set(upward)), "function_level_imports": dict(sorted(lazy.items()))}
 
 

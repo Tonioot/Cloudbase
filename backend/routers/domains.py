@@ -17,9 +17,9 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-import auth as _auth
-import certificates as certs
-import nginx_manager as nm
+from core import auth as _auth
+from nginx import certificates as certs
+from nginx import manager as nm
 
 log = logging.getLogger("cloudbase.domains")
 router = APIRouter(prefix="/api/domains", tags=["domains"])
@@ -291,7 +291,7 @@ async def request_certificate(req: CertificateRequest, _user: dict = Depends(_au
     email = (req.email or "").strip()
     if email:
         try:
-            import config as _cfg
+            from core import config as _cfg
             _cfg.save_config_sections({"acme": {"email": email}})
         except Exception as e:
             log.warning("Could not remember ACME email: %s", e)

@@ -18,7 +18,7 @@ from typing import Optional
 
 import httpx
 
-import notify_email
+from notify import mailer as notify_email
 
 _TIMEOUT = httpx.Timeout(15.0, connect=10.0)
 _USER_AGENT = "Cloudbase-Notifications"

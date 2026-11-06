@@ -20,7 +20,7 @@ import ipaddress
 import logging
 from typing import Awaitable, Callable, Optional
 
-import config as _cfg
+from core import config as _cfg
 
 log = logging.getLogger("cloudbase.db-proxy")
 # Upgrading a PostgreSQL connection to TLS (start_tls) makes asyncio log a harmless
@@ -186,8 +186,8 @@ def gateway_ip() -> str:
     global _gateway_ip
     if _gateway_ip:
         return _gateway_ip
-    import db_manager
-    import docker_manager as dm
+    from dbs import manager as db_manager
+    from containers import manager as dm
     dm.ensure_network(db_manager.NETWORK)
     net = dm._get_client().networks.get(db_manager.NETWORK)
     _gateway_ip = net.attrs["IPAM"]["Config"][0]["Gateway"]
@@ -242,8 +242,8 @@ async def _ensure(database_id: int) -> None:
 
 
 def _container_here(database_id: int) -> bool:
-    import db_manager
-    import docker_manager as dm
+    from dbs import manager as db_manager
+    from containers import manager as dm
     try:
         return db_manager._get_container(dm._get_client(), database_id) is not None
     except Exception:
@@ -435,7 +435,7 @@ async def reconcile_public(specs: list[dict]) -> None:
             try:
                 ctx = None
                 if mode in ("tls", "postgres"):
-                    import db_tls
+                    from dbs import tls as db_tls
                     ctx = await asyncio.to_thread(db_tls.server_context, tuple(spec.get("hosts") or ()))
                 port = public_port(db_id)
                 server = await asyncio.start_server(

@@ -15,7 +15,7 @@ import os
 import re
 import threading
 
-from system_logs import LOG_DIR
+from core.system_logs import LOG_DIR
 
 APP_LOG_DIR = os.path.join(LOG_DIR, "apps")
 

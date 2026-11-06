@@ -7,10 +7,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import auth as _auth
-import cron
-from database import get_db
-from models import Application, CronRun
+from core import auth as _auth
+from cron import scheduler as cron
+from core.database import get_db
+from core.models import Application, CronRun
 
 router = APIRouter(prefix="/api/apps", tags=["cron"])
 

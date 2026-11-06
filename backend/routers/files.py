@@ -5,10 +5,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_db
-from models import Application
-import process_manager as pm
-import auth as _auth
+from core.database import get_db
+from core.models import Application
+from containers import processes as pm
+from core import auth as _auth
 
 log = logging.getLogger("cloudbase.files")
 

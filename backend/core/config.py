@@ -2,7 +2,9 @@
 import os
 import yaml
 
-_REPO_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config.yaml")
+from core import paths as _paths
+
+_REPO_CONFIG_PATH = _paths.REPO_CONFIG_FILE
 _USER_CONFIG_PATH = os.path.expanduser("~/.cloudbase/config.yaml")
 
 # User config takes precedence over the repo default; if it doesn't exist yet

@@ -4,9 +4,9 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import auth
-from database import get_db
-from models import AuditLog
+from core import auth
+from core.database import get_db
+from core.models import AuditLog
 
 router = APIRouter(prefix="/api/audit-log", tags=["audit"])
 

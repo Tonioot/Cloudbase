@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-import cronexpr as cx
+from cron import expr as cx
 
 
 def _next(expr, after, tz=None):

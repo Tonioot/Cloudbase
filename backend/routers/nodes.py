@@ -13,12 +13,12 @@ from sqlalchemy import and_, delete, func, select, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_db, AsyncSessionLocal
-from models import Node, NodeCommand, NodeInvite
-from audit import log_audit
-import auth as _auth
-import config as _cfg
-import system_config as _syscfg
+from core.database import get_db, AsyncSessionLocal
+from core.models import Node, NodeCommand, NodeInvite
+from core.audit import log_audit
+from core import auth as _auth
+from core import config as _cfg
+from core import system_config as _syscfg
 
 log = logging.getLogger("cloudbase.nodes")
 
@@ -180,7 +180,7 @@ async def _apply_command_result(
         payload = {}
 
     if cmd.app_id:
-        from models import Application
+        from core.models import Application
 
         app_result = await db.execute(select(Application).where(Application.id == cmd.app_id))
         app = app_result.scalar_one_or_none()
@@ -207,7 +207,7 @@ async def _apply_command_result(
                 # Update the first ApplicationReplica status if it was created pre-deploy
                 first_replica_id = payload.get("first_replica_id")
                 if first_replica_id:
-                    from models import ApplicationReplica
+                    from core.models import ApplicationReplica
                     frep_result = await db.execute(
                         select(ApplicationReplica).where(ApplicationReplica.id == int(first_replica_id))
                     )
@@ -304,7 +304,7 @@ async def _apply_command_result(
                     if error_message:
                         app.last_error = error_message
             elif cmd.command_type in ("start_replica", "stop_replica"):
-                from models import ApplicationReplica
+                from core.models import ApplicationReplica
                 replica_id = payload.get("replica_id")
                 if replica_id:
                     rep_result = await db.execute(
@@ -336,7 +336,7 @@ async def _apply_command_result(
     # autoflush on the already-committed session triggering a lock error.
     new_app_status = None
     if cmd.app_id:
-        from models import Application
+        from core.models import Application
         async with AsyncSessionLocal() as fresh_db:
             app_result2 = await fresh_db.execute(select(Application).where(Application.id == cmd.app_id))
             app2 = app_result2.scalar_one_or_none()
@@ -867,7 +867,7 @@ async def get_node_replicas(
     if not x_node_token:
         raise HTTPException(401, "Missing node token")
     node = await get_node_by_token_or_401(x_node_token, db)
-    from models import ApplicationReplica
+    from core.models import ApplicationReplica
     result = await db.execute(
         select(ApplicationReplica.id, ApplicationReplica.app_id).where(
             ApplicationReplica.node_id == node.id,
@@ -961,7 +961,7 @@ async def agent_ws(websocket: WebSocket):
                 # Only mark offline when this websocket is still the active one.
                 if _node_ws_connections.get(node_id) is None:
                     async with AsyncSessionLocal() as db:
-                        from models import ApplicationReplica
+                        from core.models import ApplicationReplica
                         result = await db.execute(select(Node).where(Node.id == node_id))
                         offline_node = result.scalar_one_or_none()
                         if offline_node and offline_node.status != "offline":
@@ -1039,7 +1039,7 @@ async def agent_ws(websocket: WebSocket):
                         new_status = (incoming or {}).get("status")
                         if app_id and new_status:
                             async with AsyncSessionLocal() as db:
-                                from models import Application
+                                from core.models import Application
                                 res = await db.execute(select(Application).where(Application.id == int(app_id)))
                                 target_app = res.scalar_one_or_none()
                                 if target_app and target_app.node_id == node_id:
@@ -1110,7 +1110,7 @@ async def agent_ws(websocket: WebSocket):
                         if offline_node.offline_since is None:
                             offline_node.offline_since = _utcnow()
                         offline_node.connection_type = None
-                        from models import ApplicationReplica
+                        from core.models import ApplicationReplica
                         rep_res = await db.execute(
                             select(ApplicationReplica).where(
                                 and_(
@@ -1180,7 +1180,7 @@ async def delete_node(node_id: int, db: AsyncSession = Depends(get_db), _user: d
     node = await get_node_or_404(node_id, db)
     if node.is_local:
         raise HTTPException(400, "Local node cannot be deleted")
-    from models import Application, ApplicationReplica
+    from core.models import Application, ApplicationReplica
     app_count_result = await db.execute(
         select(func.count()).where(Application.node_id == node_id)
     )
@@ -1189,7 +1189,7 @@ async def delete_node(node_id: int, db: AsyncSession = Depends(get_db), _user: d
         select(func.count()).where(ApplicationReplica.node_id == node_id)
     )
     replica_count = replica_count_result.scalar() or 0
-    from models import Database
+    from core.models import Database
     database_count_result = await db.execute(
         select(func.count()).where(Database.node_id == node_id)
     )
@@ -1266,10 +1266,10 @@ async def get_node_command_status(node_id: int, command_id: int, db: AsyncSessio
 
 async def recover_node_replicas(node_id: int) -> None:
     """Queue start_replica for every replica marked node_offline on this node."""
-    from models import Application, ApplicationReplica
-    from env_crypto import decrypt_env
+    from core.models import Application, ApplicationReplica
+    from core.env_crypto import decrypt_env
     from routers.applications import _remote_replica_command_payload
-    import process_manager as pm
+    from containers import processes as pm
 
     async with AsyncSessionLocal() as db:
         rep_result = await db.execute(
@@ -1386,7 +1386,7 @@ async def recover_stranded_replicas(db: AsyncSession) -> None:
     websocket (e.g. after being marked stale during a long build), which left
     its replicas stuck in node_offline. This sweep catches every such case.
     """
-    from models import ApplicationReplica
+    from core.models import ApplicationReplica
     result = await db.execute(
         select(ApplicationReplica.node_id)
         .join(Node, Node.id == ApplicationReplica.node_id)
@@ -1406,7 +1406,7 @@ async def recover_stranded_replicas(db: AsyncSession) -> None:
 
 
 async def mark_stale_nodes_offline(db: AsyncSession) -> None:
-    from models import ApplicationReplica
+    from core.models import ApplicationReplica
     result = await db.execute(select(Node).where(and_(Node.enabled == True, Node.is_local == False)))
     nodes = result.scalars().all()
     now = _utcnow()
@@ -1447,7 +1447,7 @@ async def run_node_docker_cleanup(node: Node, aggressive: bool = False) -> dict:
     """Clean up Docker on one node: in-process for the local node, through the
     agent for a remote one. Returns the cleanup summary dict."""
     if node.is_local:
-        import docker_manager as _dm
+        from containers import manager as _dm
         return await asyncio.to_thread(_dm.cleanup_docker, aggressive)
     if node.id not in _node_ws_connections:
         return {"skipped": "Node agent is not connected"}
@@ -1572,8 +1572,8 @@ async def _regen_nginx_for_app(app_id: int) -> None:
     Uses the shared applications writer so transition guards (start/restart pages)
     are applied consistently across all nginx write paths.
     """
-    import system_config as _syscfg
-    from models import Application
+    from core import system_config as _syscfg
+    from core.models import Application
     from routers.applications import _write_app_nginx_config
 
     async with AsyncSessionLocal() as db:
@@ -1602,7 +1602,7 @@ async def replica_tunnel_ws(replica_id: int, websocket: WebSocket):
     public IP, eliminating the need for open inbound firewall ports.
     """
     import tunnel_server
-    from models import ApplicationReplica
+    from core.models import ApplicationReplica
 
     # Authenticate: accept token from header OR query param (websocket libraries
     # cannot always set custom headers — query param is the fallback).
@@ -1708,7 +1708,7 @@ async def get_node_agent_logs(node_id: int, limit: int = 200, db: AsyncSession =
     node = await get_node_or_404(node_id, db)
     if node.is_local:
         # The primary runs no agent loop; its activity is in the server log.
-        import system_logs
+        from core import system_logs
         try:
             lines = await asyncio.to_thread(system_logs._read_backwards, system_logs.SERVER_LOG, 2 * 1024 * 1024)
             return {"lines": lines[-limit:], "source": "local"}

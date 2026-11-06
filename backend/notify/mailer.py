@@ -20,7 +20,9 @@ from email.message import EmailMessage
 from email.utils import formatdate, make_msgid, parseaddr
 from typing import Optional
 
-_LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "cloudbase-mark.png")
+from core import paths
+
+_LOGO_PATH = paths.LOGO_FILE
 _LOGO_CID = "cloudbase-logo@cloudbase"
 
 _SEVERITY = {"critical": "Critical", "warning": "Warning", "info": "Info", "resolved": "Resolved"}

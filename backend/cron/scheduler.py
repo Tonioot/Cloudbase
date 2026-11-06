@@ -18,13 +18,13 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import delete, select
 
-import cronexpr
-import docker_manager as dm
-import notify
-import process_manager as pm
-from database import AsyncSessionLocal
-from env_crypto import decrypt_env
-from models import Application, CronRun, Node
+from cron import expr as cronexpr
+from containers import manager as dm
+from notify import engine as notify
+from containers import processes as pm
+from core.database import AsyncSessionLocal
+from core.env_crypto import decrypt_env
+from core.models import Application, CronRun, Node
 
 log = logging.getLogger("cloudbase.cron")
 
@@ -109,7 +109,7 @@ async def _set_app_status(app_id: int) -> None:
 
 async def set_enabled(app_id: int, enabled: bool, actor: str) -> dict:
     """Pause or resume the schedule. A resumed job starts at the next slot."""
-    from audit import log_audit
+    from core.audit import log_audit
     async with AsyncSessionLocal() as db:
         app = await db.get(Application, app_id)
         if app is None or not app.cron_schedule:
@@ -127,7 +127,7 @@ async def set_enabled(app_id: int, enabled: bool, actor: str) -> dict:
 async def update_settings(app_id: int, actor: str, *, schedule: Optional[str] = None, tz_name: Optional[str] = None,
                           timeout_seconds: Optional[int] = None, node_id: Optional[int] = None,
                           clear_node: bool = False) -> dict:
-    from audit import log_audit
+    from core.audit import log_audit
     async with AsyncSessionLocal() as db:
         app = await db.get(Application, app_id)
         if app is None or not app.cron_schedule:

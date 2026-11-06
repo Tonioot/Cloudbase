@@ -4,20 +4,20 @@ import logging
 import secrets
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException, Query
 
-import auth
-from database import AsyncSessionLocal, get_db
-from models import Application, ApplicationReplica, Node
+from core import auth
+from core.database import AsyncSessionLocal, get_db
+from core.models import Application, ApplicationReplica, Node
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-import process_manager as pm
-import docker_manager as dm
+from containers import processes as pm
+from containers import manager as dm
 from routers.nodes import (
     ensure_local_node, queue_node_command, wait_for_node_command,
     subscribe_node_stream, unsubscribe_node_stream,
     _node_ws_connections,
 )
 
-import system_logs
+from core import system_logs
 
 log = logging.getLogger("cloudbase.logs")
 router = APIRouter(tags=["logs"])

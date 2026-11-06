@@ -28,7 +28,7 @@ import logging
 import secrets
 from typing import Optional
 
-import config as _cfg
+from core import config as _cfg
 
 log = logging.getLogger("cloudbase.tunnel")
 

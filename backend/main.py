@@ -19,8 +19,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from database import AsyncSessionLocal, init_db, get_db
-from models import Application, User, Role, Permission, role_permissions
+from core.database import AsyncSessionLocal, init_db, get_db
+from core.models import Application, User, Role, Permission, role_permissions
 from routers import applications, files, logs, stats, nodes, audit as audit_router
 from routers import roles as roles_router
 from routers import databases as databases_router
@@ -28,25 +28,26 @@ from routers import database_backups as database_backups_router
 from routers import domains as domains_router
 from routers import notifications as notifications_router
 from routers import cron as cron_router
-import cron as _cron
-import notify
-from env_crypto import decrypt_env
-from audit import log_audit
-import auth
-import nginx_manager as nm
-import process_manager as pm
-import docker_manager as dm
-import token_vault
+from cron import scheduler as _cron
+from notify import engine as notify
+from core.env_crypto import decrypt_env
+from core.audit import log_audit
+from core import auth
+from core import paths
+from nginx import manager as nm
+from containers import processes as pm
+from containers import manager as dm
+from core import token_vault
 import node_agent
-import config as _cfg
-import system_config as _syscfg
+from core import config as _cfg
+from core import system_config as _syscfg
 
-import system_logs
+from core import system_logs
 
 # Must run after the imports above: it replaces any root handlers an imported
 # module installed (node_agent used to, which sent everything to node-agent.log).
 system_logs.setup_logging()
-import applog
+from core import applog
 applog.install()
 
 log = logging.getLogger("cloudbase.main")
@@ -55,7 +56,7 @@ PORT = _cfg.get_server_port()
 # A node is managed from its primary's panel and serves no panel of its own.
 # Becoming or leaving a node restarts the service, so checking once is enough.
 IS_NODE = node_agent.is_node()
-FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
+FRONTEND_DIR = paths.FRONTEND_DIR
 _COOKIE_NAME = "pdm_token"
 _COOKIE_OPTS = dict(httponly=True, samesite="strict", path="/")
 
@@ -134,7 +135,7 @@ async def _stats_collector():
     while True:
         try:
             # Short read — session closed before any Docker/thread work begins.
-            from models import Node as _Node, ApplicationReplica as _AppReplica
+            from core.models import Node as _Node, ApplicationReplica as _AppReplica
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
                     select(Application).where(Application.status == "running")
@@ -252,7 +253,7 @@ async def _remote_replica_stats_poller():
     while True:
         try:
             from routers.nodes import queue_node_command, wait_for_node_command, _node_ws_connections
-            from models import ApplicationReplica as _AR, Application as _App, Node as _Node
+            from core.models import ApplicationReplica as _AR, Application as _App, Node as _Node
 
             async with AsyncSessionLocal() as db:
                 local_node_result = await db.execute(select(_Node).where(_Node.is_local == True))
@@ -272,7 +273,7 @@ async def _remote_replica_stats_poller():
 
             # Poll local replica stats in-process (no command queue needed)
             if local_replicas:
-                import docker_manager as _dm
+                from containers import manager as _dm
                 import time as _time
 
                 async def _poll_local_replica(r):
@@ -397,7 +398,7 @@ _HISTORY_MAX_POINTS = 240   # longer ranges are averaged down to this many point
 async def _overview_sampler():
     import datetime as _dt
     from sqlalchemy import delete as _delete
-    from models import ApplicationReplica as _AR, Node as _Node, OverviewHistory, NodeMetricsHistory
+    from core.models import ApplicationReplica as _AR, Node as _Node, OverviewHistory, NodeMetricsHistory
     await asyncio.sleep(5)
     rounds = 0
     while True:
@@ -488,7 +489,7 @@ async def _stats_history_writer():
     via the stats WebSocket relay in routers/stats.py, so we just write whatever has accumulated.
     """
     import datetime as _dt
-    from models import StatsHistory
+    from core.models import StatsHistory
     from sqlalchemy import delete as _delete
     await asyncio.sleep(30)
     _cleanup_counter = 0
@@ -546,7 +547,7 @@ async def _autoscaler():
     the app's live log and the audit log (actor "autoscaler").
     """
     import datetime as _dt
-    from models import StatsHistory, ApplicationReplica, Node
+    from core.models import StatsHistory, ApplicationReplica, Node
     from routers.applications import (
         _assign_external_port, _start_instance_local, _wait_new_instance_healthy,
         _write_app_nginx_config, _has_public_nginx_domain, ensure_local_node,
@@ -875,7 +876,7 @@ async def _node_command_cleanup():
     Keeps the table small so scans for 'queued' commands stay fast.
     """
     import datetime as _dt
-    from models import NodeCommand as _NC
+    from core.models import NodeCommand as _NC
     from sqlalchemy import delete as _del
     await asyncio.sleep(60)
     while True:
@@ -903,8 +904,8 @@ async def _orphan_replica_cleanup():
     longer have a corresponding ApplicationReplica row. Prevents replicas from
     piling up on the host (which starves memory and destabilises container DNS).
     """
-    import docker_manager as _dm
-    from models import ApplicationReplica, Node as _Node
+    from containers import manager as _dm
+    from core.models import ApplicationReplica, Node as _Node
 
     await asyncio.sleep(120)
     while True:
@@ -952,8 +953,8 @@ async def _docker_cleanup_loop():
     Every node is cleaned about once a day, and sooner when its disk gets
     full: at 80% at most hourly, at 90% with the aggressive settings.
     """
-    import docker_manager as _dm
-    from models import Node as _Node
+    from containers import manager as _dm
+    from core.models import Node as _Node
     from routers.nodes import run_node_docker_cleanup
     await asyncio.sleep(600)
     last_run: dict[int, float] = {}
@@ -992,7 +993,7 @@ async def _crash_monitor():
     while True:
         try:
             async with AsyncSessionLocal() as db:
-                from models import Node as _Node, ApplicationReplica
+                from core.models import Node as _Node, ApplicationReplica
                 local_node_result = await db.execute(select(_Node).where(_Node.is_local == True))
                 local_node_obj = local_node_result.scalar_one_or_none()
 
@@ -1141,7 +1142,7 @@ async def _startup_recovery() -> None:
     """Bring local instances, nginx configs and the panel config in line with the DB."""
     # Recover running instances and auto-start
     async with AsyncSessionLocal() as db:
-        from models import ApplicationReplica, Node as _Node
+        from core.models import ApplicationReplica, Node as _Node
         await nodes.ensure_local_node(db)
 
         # Recover replica container statuses
@@ -1554,7 +1555,7 @@ class _AuthMiddleware(BaseHTTPMiddleware):
             node_token = request.headers.get("X-Node-Token", "")
             if node_token and _NODE_AGENT_PATHS.fullmatch(path):
                 from sqlalchemy import select as _select, and_ as _and
-                from models import Node as _Node
+                from core.models import Node as _Node
                 async with AsyncSessionLocal() as _db:
                     _res = await _db.execute(
                         _select(_Node).where(_and(_Node.auth_token == node_token, _Node.enabled == True))
@@ -1583,7 +1584,7 @@ async def node_metrics_history(node_id: int, hours: float = 1,
                                db: AsyncSession = Depends(get_db)):
     """cpu / memory / disk samples for one node over the last `hours` (oldest first)."""
     import datetime as _dt
-    from models import NodeMetricsHistory as _NMH
+    from core.models import NodeMetricsHistory as _NMH
     hours = max(0.25, min(hours, 24 * _HISTORY_RETENTION_DAYS))
     since = _dt.datetime.utcnow() - _dt.timedelta(hours=hours)
     res = await db.execute(
@@ -1601,7 +1602,7 @@ async def overview_history(hours: float = 1,
                            db: AsyncSession = Depends(get_db)):
     """Cluster samples for the dashboard sparklines over the last `hours` (oldest first)."""
     import datetime as _dt
-    from models import OverviewHistory as _OH
+    from core.models import OverviewHistory as _OH
     hours = max(0.25, min(hours, 24 * _HISTORY_RETENTION_DAYS))
     since = _dt.datetime.utcnow() - _dt.timedelta(hours=hours)
     res = await db.execute(select(_OH).where(_OH.timestamp >= since).order_by(_OH.timestamp.asc()))
@@ -1616,7 +1617,7 @@ async def overview_history(hours: float = 1,
 
 def _read_version() -> str:
     try:
-        with open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "VERSION")) as f:
+        with open(paths.VERSION_FILE) as f:
             return f.read().strip() or "dev"
     except OSError:
         return "dev"
@@ -2021,7 +2022,7 @@ async def set_panel_domain(req: PanelDomainRequest, _: dict = Depends(auth.requi
         raise HTTPException(500, f"Failed to apply nginx config: {msg}")
     nm.write_default_catch_all(cert, key)
     _load_panel_https_domain()
-    import certificates as _certs
+    from nginx import certificates as _certs
     await _certs.forget_pending([domain])
     return {"ok": True, "domain": domain, "https": bool(cert and key)}
 
@@ -2299,7 +2300,7 @@ if os.path.isdir(FRONTEND_DIR):
     @app.get("/assets/cloudbase-mark.png", include_in_schema=False)
     async def logo_mark():
         # Small public logo: chat apps (Slack, Teams, Discord, ntfy) show it next to notifications
-        return FileResponse(os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "cloudbase-mark.png"),
+        return FileResponse(paths.LOGO_FILE,
                             media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
     @app.get("/cloudbase.png", include_in_schema=False)
