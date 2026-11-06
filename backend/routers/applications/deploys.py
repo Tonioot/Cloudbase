@@ -27,7 +27,7 @@ from apps.state import _deploys_in_progress
 from apps.validation import _check_git_ref
 from routers.applications.schemas import GitDeployRequest, PullRequest
 from routers.applications.sse import _DEPLOY_STREAM_DONE, _SSE_HEADERS, _SSE_PING, _queue_get_or_heartbeat, _sse_line
-import deploys
+from apps import deployments as apps_deployments
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
@@ -442,7 +442,7 @@ async def deploy_stream(
 
     async def _run() -> None:
         try:
-            result_holder["result"] = await deploys.run_deploy(
+            result_holder["result"] = await apps_deployments.run_deploy(
                 app_id, commit=target_commit, strategy=strategy,
                 trigger="rollback" if payload.trigger == "rollback" else "manual", actor=actor,
             )

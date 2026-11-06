@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-import deploys as _deploys
+from workers import autodeploy as workers_autodeploy
 from agent import loop as agent_loop
 from containers import processes as pm
 from core import auth
@@ -63,7 +63,7 @@ async def _start_panel_tasks() -> list[asyncio.Task]:
         asyncio.create_task(_orphan_replica_cleanup()),
         asyncio.create_task(_docker_cleanup_loop()),
         asyncio.create_task(_overview_sampler()),
-        asyncio.create_task(_deploys.auto_deploy_loop()),
+        asyncio.create_task(workers_autodeploy.auto_deploy_loop()),
         asyncio.create_task(dbs_workers.database_monitor()),
         asyncio.create_task(dbs_backup_scheduler.backup_scheduler()),
         asyncio.create_task(dbs_workers.database_stats_sampler()),

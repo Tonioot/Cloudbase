@@ -5,7 +5,7 @@ from core.database import AsyncSessionLocal
 from nodes.commands import _utcnow
 from nodes.recovery import _regen_nginx_for_app
 from nodes.registry import get_node_by_token_or_401
-import tunnel_server
+from nodes import tunnel as tunnel_server
 from core.models import ApplicationReplica
 
 log = logging.getLogger("cloudbase.nodes")
