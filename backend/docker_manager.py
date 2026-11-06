@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import os
@@ -249,8 +248,7 @@ WORKDIR /app
 FROM golang:1.22-alpine AS builder
 WORKDIR /app
 {go_copy_mod}COPY . .
-RUN go build -o app .
-
+{go_build}
 FROM alpine:latest
 WORKDIR /app
 COPY --from=builder /app/app .
@@ -360,6 +358,42 @@ def _npm_install_cmd(has_file) -> str:
 
 _ARG_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+# ── BuildKit ──────────────────────────────────────────────────────────────────
+# BuildKit skips the intermediate container the classic builder starts for every
+# instruction (each ARG/ENV/WORKDIR cost a container + layer commit), builds
+# independent stages in parallel and supports persistent cache mounts, so package
+# downloads survive across builds. It needs the docker CLI with the buildx plugin.
+# Set CLOUDBASE_BUILDKIT=0 to force the classic builder.
+
+_buildkit_available: Optional[bool] = None
+
+
+def buildkit_available() -> bool:
+    global _buildkit_available
+    if _buildkit_available is not None:
+        return _buildkit_available
+    result = False
+    if os.environ.get("CLOUDBASE_BUILDKIT", "1").strip().lower() not in ("0", "false", "no", "off"):
+        try:
+            result = subprocess.run(
+                ["docker", "buildx", "version"],
+                capture_output=True, timeout=15,
+            ).returncode == 0
+        except Exception:
+            result = False
+    _buildkit_available = result
+    log.info("[docker] BuildKit %s", "enabled" if result else "unavailable, using the classic builder")
+    return result
+
+
+_BUILD_SECRET_ID = "buildenv"
+
+
+def _run(cmd: str, cache_dirs=()) -> str:
+    """`RUN cmd`, with persistent cache mounts when BuildKit is available."""
+    mounts = "".join(f"--mount=type=cache,target={d} " for d in cache_dirs) if buildkit_available() else ""
+    return f"RUN {mounts}{cmd}\n"
+
 
 def _build_step(build_command: str, build_env_keys) -> str:
     """Dockerfile lines that run the app's build once, at image build time.
@@ -371,9 +405,22 @@ def _build_step(build_command: str, build_env_keys) -> str:
     cmd = (build_command or "").strip()
     if not cmd:
         return ""
-    keys = sorted(k for k in (build_env_keys or ()) if _ARG_NAME_RE.match(k))
-    arg_lines = "".join(f"ARG {k}\n" for k in keys)
-    return f"{arg_lines}RUN {cmd}\n"
+    keys = [k for k in (build_env_keys or ()) if _ARG_NAME_RE.match(k)]
+    # Next.js keeps its incremental compile cache in .next/cache
+    cache = ("/app/.next/cache",) if "next" in cmd.lower() else ()
+    if not keys or not buildkit_available():
+        # Without BuildKit there is no leak-free way to hand env vars to the
+        # build (ARG values end up in the image history), so none are passed.
+        return _run(cmd, cache)
+    # The env vars arrive as a BuildKit secret file: never stored in a layer,
+    # the image history or the process list. Secrets are not part of the cache
+    # key, so CB_ENV_HASH (a hash, not the values) re-runs the step on change.
+    mounts = "".join(f"--mount=type=cache,target={d} " for d in cache)
+    return (
+        "ARG CB_ENV_HASH\n"
+        f"RUN --mount=type=secret,id={_BUILD_SECRET_ID} {mounts}"
+        f". /run/secrets/{_BUILD_SECRET_ID} && ( {cmd} )\n"
+    )
 
 
 def _generate_static_dockerfile(app_dir: str, publish_dir: str, build_command: str = "", build_env_keys=()) -> str:
@@ -396,7 +443,7 @@ def _generate_static_dockerfile(app_dir: str, publish_dir: str, build_command: s
         return bool(app_dir) and os.path.exists(os.path.join(app_dir, name))
 
     install = (
-        f"COPY package*.json ./\nRUN {_npm_install_cmd(_has_file)}\n"
+        "COPY package*.json ./\n" + _run(_npm_install_cmd(_has_file), ("/root/.npm",))
         if _has_file("package.json") else ""
     )
     return (
@@ -441,11 +488,15 @@ def generate_dockerfile(
     extras: dict[str, str] = {
         "build_step": _build_step(build_command, build_env_keys),
         "nodejs_copy_pkg": (
-            f"COPY package*.json ./\nRUN {npm_install}\n"
+            "COPY package*.json ./\n" + _run(npm_install, ("/root/.npm",))
             if _has_file("package.json") else ""
         ),
         "python_copy_req": (
-            "COPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\n"
+            "COPY requirements.txt .\n" + (
+                _run("pip install -r requirements.txt", ("/root/.cache/pip",))
+                if buildkit_available()
+                else _run("pip install --no-cache-dir -r requirements.txt")
+            )
             if _has_file("requirements.txt") else ""
         ),
         "ruby_copy_gemfile": (
@@ -453,8 +504,9 @@ def generate_dockerfile(
             if _has_file("Gemfile") else ""
         ),
         "go_copy_mod": (
-            f"{go_mod_line}\nRUN go mod download\n" if go_mod_line else ""
+            f"{go_mod_line}\n" + _run("go mod download", ("/go/pkg/mod",)) if go_mod_line else ""
         ),
+        "go_build": _run("go build -o app .", ("/go/pkg/mod", "/root/.cache/go-build")),
     }
 
     return GENERATED_MARKER + template.format(expose=expose, cmd_json=_cmd_to_json(start_command), **extras)
@@ -471,6 +523,9 @@ __pycache__
 *.pyc
 .venv
 venv
+coverage
+*.log
+.DS_Store
 """
 
 
@@ -580,6 +635,108 @@ def _declared_build_args(dockerfile_path: str) -> set[str]:
     return names
 
 
+# Process variables a build arg must never overwrite: the docker CLI reads them.
+_PROTECTED_ENV = {
+    "PATH", "HOME", "USERPROFILE", "APPDATA", "TEMP", "TMP", "SYSTEMROOT",
+    "LD_PRELOAD", "LD_LIBRARY_PATH", "XDG_RUNTIME_DIR",
+}
+
+
+def _env_hash(build_env: dict) -> str:
+    """Stable fingerprint of the build env. A hash is all that reaches the image."""
+    import hashlib
+    blob = json.dumps(sorted(build_env.items()), ensure_ascii=False).encode()
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
+def _write_secret_file(build_env: dict) -> str:
+    """Env vars as `export K='v'` lines in a 0600 temp file (BuildKit secret source)."""
+    import shlex
+    import tempfile
+    fd, path = tempfile.mkstemp(prefix="cb-buildenv-")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        for k, v in build_env.items():
+            f.write(f"export {k}={shlex.quote(v)}\n")
+    return path
+
+
+def _build_with_cli(
+    app_id: int, app_dir: str, img: str, push_line_fn,
+    buildargs=None, labels=None, secret_env=None,
+) -> None:
+    """Build through `docker build` so BuildKit does the work; stream its plain log.
+
+    Secret values never appear on the command line: env vars go in as a BuildKit
+    secret file and ARGs of a repository's own Dockerfile are read from the
+    process environment (`--build-arg NAME` without a value).
+    """
+    cmd = ["docker", "build", "--progress=plain", "-t", img]
+    env = {**os.environ, "DOCKER_BUILDKIT": "1"}
+    for k, v in (buildargs or {}).items():
+        if k == "CB_ENV_HASH":
+            cmd += ["--build-arg", f"{k}={v}"]   # a hash, not sensitive
+        elif k in _PROTECTED_ENV or k.startswith("DOCKER_"):
+            log.warning("[docker] Skipping build arg %s: name is reserved", k)
+        else:
+            cmd += ["--build-arg", k]
+            env[k] = v
+    for k, v in (labels or {}).items():
+        cmd += ["--label", f"{k}={v}"]
+
+    secret_path = None
+    try:
+        if secret_env:
+            secret_path = _write_secret_file(secret_env)
+            cmd += ["--secret", f"id={_BUILD_SECRET_ID},src={secret_path}"]
+        cmd.append(app_dir)
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", bufsize=1,
+            env=env,
+        )
+        tail: deque = deque(maxlen=15)
+        for raw in proc.stdout:
+            line = raw.rstrip()
+            if line:
+                tail.append(line)
+                push_line_fn(app_id, f"[Docker build] {line}")
+        if proc.wait() != 0:
+            raise RuntimeError(f"docker build failed (exit {proc.returncode}): " + " | ".join(list(tail)[-5:]))
+    finally:
+        if secret_path:
+            try:
+                os.remove(secret_path)
+            except OSError:
+                pass
+
+
+def _run_build(
+    app_id: int, app_dir: str, img: str, push_line_fn,
+    buildargs=None, labels=None, secret_env=None,
+) -> None:
+    if buildkit_available():
+        try:
+            return _build_with_cli(app_id, app_dir, img, push_line_fn, buildargs, labels, secret_env)
+        except FileNotFoundError:
+            pass  # docker CLI vanished: fall back to the classic builder below
+    client = _get_client()
+    # Use the low-level API here: it streams build output incrementally and
+    # avoids the docker-py 7.x high-level decode issues around dict chunks.
+    log_stream = client.api.build(
+        path=app_dir,
+        tag=img,
+        rm=True,
+        forcerm=True,
+        decode=False,
+        buildargs=buildargs or None,
+        labels=labels or None,
+    )
+    for event in _iter_build_events(log_stream):
+        _emit_build_event(app_id, event, push_line_fn)
+
+
 def build_image(
     app_id: int,
     app_name: str,
@@ -595,7 +752,8 @@ def build_image(
     """Build Docker image, streaming build output via push_line_fn. Returns image tag.
 
     build_command runs once inside the image build (e.g. `npm run build`);
-    build_env is passed as build args so the build can read app env vars.
+    build_env reaches the build as a BuildKit secret (not as build args, which
+    would be readable in the image history).
     source_revision is stored as the `cloudbase.source_revision` label, which
     node agents compare to decide whether an image is still current.
     """
@@ -620,21 +778,26 @@ def build_image(
         declared = _declared_build_args(os.path.join(app_dir, "Dockerfile"))
         buildargs = {k: v for k, v in build_env.items() if k in declared}
 
+        # Generated Dockerfiles read the env from a BuildKit secret instead of
+        # ARGs, so the values stay out of the image history and layers.
+        use_secret = bool(build_env) and buildkit_available()
+        if "CB_ENV_HASH" in declared:
+            buildargs["CB_ENV_HASH"] = _env_hash(build_env)
+        if build_env and not use_secret and not buildargs:
+            push_line_fn(
+                app_id,
+                "[Docker] Build env vars are not passed to the build: BuildKit "
+                "(docker buildx) is required to do that without leaking them.",
+            )
+
+        _cleanup_before_build(app_id, push_line_fn)
         push_line_fn(app_id, f"[Docker] Building image {img} …")
-        client = _get_client()
-        # Use the low-level API here: it streams build output incrementally and
-        # avoids the docker-py 7.x high-level decode issues around dict chunks.
-        log_stream = client.api.build(
-            path=app_dir,
-            tag=img,
-            rm=True,
-            forcerm=True,
-            decode=False,
-            buildargs=buildargs or None,
+        _run_build(
+            app_id, app_dir, img, push_line_fn,
+            buildargs=buildargs,
             labels={"cloudbase.source_revision": source_revision} if source_revision else None,
+            secret_env=build_env if use_secret else None,
         )
-        for event in _iter_build_events(log_stream):
-            _emit_build_event(app_id, event, push_line_fn)
     except RuntimeError:
         raise
     except Exception as e:
@@ -780,6 +943,99 @@ def stop_container(app_id: int, push_line_fn=None) -> bool:
         return False
 
 
+# ── Disk cleanup ──────────────────────────────────────────────────────────────
+# Every rebuild retags `:latest`, so the previous image is left behind untagged
+# ("dangling"), and BuildKit keeps a build cache that only grows. Neither is
+# needed to run or restart an app: apps start from their tagged image, which is
+# never touched here. Volumes (database data) are never touched either.
+
+_cleanup_lock = threading.Lock()
+BUILD_CACHE_KEEP_BYTES = 5 * 1024 ** 3          # routine: cache above this is evicted, oldest first
+BUILD_CACHE_KEEP_BYTES_LOW_DISK = 1 * 1024 ** 3  # disk (almost) full
+CLEANUP_PRE_BUILD_DISK_PERCENT = 85.0            # clean first when a build starts on a fuller disk
+
+
+def disk_percent() -> Optional[float]:
+    try:
+        import psutil
+        return float(psutil.disk_usage("/").percent)
+    except Exception:
+        return None
+
+
+def _fmt_bytes(n: int) -> str:
+    size = float(n or 0)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024 or unit == "GB":
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} GB"
+
+
+def cleanup_docker(aggressive: bool = False, own_app_id: Optional[int] = None) -> dict:
+    """Remove superseded images and trim the build cache. Returns a summary.
+
+    Routine: untagged images older than a day, build cache above 5 GB.
+    aggressive (disk nearly full): all untagged images, build cache above 1 GB.
+    Skipped while another app is building, so a running build never loses layers.
+    """
+    if not _cleanup_lock.acquire(blocking=False):
+        return {"skipped": "A cleanup is already running"}
+    try:
+        with _build_locks_guard:
+            busy = [a for a, lk in _build_locks.items() if lk.locked() and a != own_app_id]
+        if busy:
+            return {"skipped": "A build is in progress"}
+
+        client = _get_client()
+        disk_before = disk_percent()
+        result = {"images_removed": 0, "images_bytes": 0, "cache_bytes": 0, "errors": []}
+
+        try:
+            filters = {"dangling": True}
+            if not aggressive:
+                filters["until"] = "24h"
+            pruned = client.images.prune(filters=filters)
+            result["images_removed"] = len(pruned.get("ImagesDeleted") or [])
+            result["images_bytes"] = int(pruned.get("SpaceReclaimed") or 0)
+        except Exception as e:
+            result["errors"].append(f"images: {e}")
+
+        try:
+            keep = BUILD_CACHE_KEEP_BYTES_LOW_DISK if aggressive else BUILD_CACHE_KEEP_BYTES
+            try:
+                pruned = client.api.prune_builds(keep_storage=keep)
+            except TypeError:  # older docker-py without keep_storage
+                pruned = client.api.prune_builds()
+            result["cache_bytes"] = int(pruned.get("SpaceReclaimed") or 0)
+        except Exception as e:
+            result["errors"].append(f"build cache: {e}")
+
+        result["disk_percent_before"] = disk_before
+        result["disk_percent_after"] = disk_percent()
+        result["summary"] = (
+            f"Removed {result['images_removed']} old image layer(s) "
+            f"({_fmt_bytes(result['images_bytes'])}) and {_fmt_bytes(result['cache_bytes'])} of build cache"
+        )
+        log.info("[docker] Cleanup%s: %s", " (low disk)" if aggressive else "", result["summary"])
+        return result
+    finally:
+        _cleanup_lock.release()
+
+
+def _cleanup_before_build(app_id: int, push_line_fn) -> None:
+    """Free space first when the disk is nearly full, so the build doesn't fail on it."""
+    try:
+        pct = disk_percent()
+        if pct is None or pct < CLEANUP_PRE_BUILD_DISK_PERCENT:
+            return
+        push_line_fn(app_id, f"[Docker] Disk is {pct:.0f}% full, cleaning up old images and build cache first…")
+        res = cleanup_docker(aggressive=True, own_app_id=app_id)
+        push_line_fn(app_id, f"[Docker] {res.get('summary') or res.get('skipped') or 'Cleanup done'}.")
+    except Exception as e:
+        log.warning("[docker] Pre-build cleanup failed: %s", e)
+
+
 def remove_image(app_id: int, app_name: str) -> None:
     client = _get_client()
     img = image_name(app_id, app_name)
@@ -800,15 +1056,6 @@ def is_container_running(app_id: int) -> bool:
         return c.status == "running"
     except Exception:
         return False
-
-
-def get_container_id(app_id: int) -> Optional[str]:
-    try:
-        client = _get_client()
-        c = client.containers.get(container_name(app_id))
-        return c.id
-    except Exception:
-        return None
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
@@ -955,130 +1202,6 @@ def get_recent_container_logs_by_name(container_name_str: str, lines: int = 300)
         return []
 
 
-# ── Blue-green / zero-downtime helpers ───────────────────────────────────────
-
-def slot_image_name(app_id: int, app_name: str, slot: str) -> str:
-    safe = re.sub(r"[^a-z0-9_-]", "-", app_name.lower())
-    return f"cloudbase/{safe}-{app_id}:{slot}"
-
-
-def slot_container_name(app_id: int, slot: str) -> str:
-    return f"cloudbase-app-{app_id}-{slot}"
-
-
-def build_image_for_slot(
-    app_id: int,
-    app_name: str,
-    app_dir: str,
-    push_line_fn,
-    app_type: str,
-    start_command: str,
-    port: int,
-    slot: str,
-) -> str:
-    """Build image tagged with the given slot name. Returns image tag."""
-    build_lock = _get_build_lock(app_id)
-    if not build_lock.acquire(blocking=False):
-        raise RuntimeError("Docker build already in progress for this app")
-    img = slot_image_name(app_id, app_name, slot)
-    try:
-        ensure_dockerfile(app_dir, app_type, start_command, port)
-        push_line_fn(app_id, f"[ZD] Building image {img} for slot {slot}…")
-        client = _get_client()
-        log_stream = client.api.build(path=app_dir, tag=img, rm=True, forcerm=True, decode=False)
-        for event in _iter_build_events(log_stream):
-            _emit_build_event(app_id, event, push_line_fn)
-    except RuntimeError:
-        raise
-    except Exception as e:
-        raise RuntimeError(str(e)) from e
-    finally:
-        build_lock.release()
-    push_line_fn(app_id, f"[ZD] Image built: {img}")
-    return img
-
-
-def run_container_for_slot(
-    app_id: int,
-    app_name: str,
-    slot: str,
-    img: str,
-    internal_port: int,
-    external_port: int,
-    env_vars: dict,
-    docker_options: dict | None,
-    push_line_fn,
-) -> str:
-    """Start a slot container on a temporary port. Returns container ID."""
-    client = _get_client()
-    cname = slot_container_name(app_id, slot)
-    docker_options = docker_options or {}
-    try:
-        old = client.containers.get(cname)
-        old.remove(force=True)
-    except Exception:
-        pass
-    run_kwargs = {
-        "detach": True,
-        "name": cname,
-        "ports": {f"{internal_port}/tcp": _host_port(external_port, docker_options)},
-        # setuid binaries (sudo, su) inside the image cannot raise privileges
-        "security_opt": ["no-new-privileges:true"],
-        "environment": env_vars,
-        "restart_policy": {"Name": "no"},
-        "labels": {
-            "cloudbase.app_id": str(app_id),
-            "cloudbase.app_name": app_name,
-            "cloudbase.slot": slot,
-        },
-    }
-    cpu_limit = docker_options.get("cpu_limit")
-    if cpu_limit:
-        run_kwargs["nano_cpus"] = int(float(cpu_limit) * 1_000_000_000)
-    memory_limit_mb = docker_options.get("memory_limit_mb")
-    if memory_limit_mb:
-        run_kwargs["mem_limit"] = int(memory_limit_mb) * 1024 * 1024
-    if docker_options.get("read_only_root"):
-        run_kwargs["read_only"] = True
-    if docker_options.get("tmpfs_enabled"):
-        tmpfs_opts = ["rw", "nosuid", "nodev", "noexec"]
-        if docker_options.get("tmpfs_size_mb"):
-            tmpfs_opts.append(f"size={int(docker_options['tmpfs_size_mb'])}m")
-        run_kwargs["tmpfs"] = {"/tmp": ",".join(tmpfs_opts)}
-    _apply_linked_databases(run_kwargs, docker_options)
-    _assert_image_local(client, img)
-    container = client.containers.run(img, **run_kwargs)
-    push_line_fn(app_id, f"[ZD] Slot container started: {container.short_id} on :{external_port}")
-    return container.id
-
-
-def stop_slot_container(app_id: int, slot: str) -> None:
-    client = _get_client()
-    cname = slot_container_name(app_id, slot)
-    try:
-        c = client.containers.get(cname)
-        c.stop(timeout=10)
-        c.remove()
-    except Exception:
-        pass
-
-
-# ── Pull (rebuild on git pull) ────────────────────────────────────────────────
-
-def rebuild_image(
-    app_id: int,
-    app_name: str,
-    app_dir: str,
-    push_line_fn,
-    app_type: str = "unknown",
-    start_command: str = "",
-    port: int = 8000,
-) -> str:
-    """Remove old image and build fresh. Returns new image tag."""
-    remove_image(app_id, app_name)
-    return build_image(app_id, app_name, app_dir, push_line_fn, app_type, start_command, port)
-
-
 # ── Replica helpers ───────────────────────────────────────────────────────────
 
 def replica_container_name(app_id: int, replica_id: int) -> str:
@@ -1178,7 +1301,7 @@ def run_replica_container(
                 _time.sleep(2)
             elif "already in use by container" in err:
                 # Previous force-remove hasn't completed yet — wait and retry
-                push_line_fn(app_id, f"[Replica] Container name still releasing, retrying in 2 s…")
+                push_line_fn(app_id, "[Replica] Container name still releasing, retrying in 2 s…")
                 try:
                     client.containers.get(cname).remove(force=True)
                 except Exception:

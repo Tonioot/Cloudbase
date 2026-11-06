@@ -42,6 +42,7 @@ export async function initNodePage() {
     document.getElementById('btn-toggle-enable').onclick = toggleEnable;
     document.getElementById('btn-delete').onclick = deleteNode;
     document.getElementById('btn-refresh-logs').onclick = loadLogs;
+    document.getElementById('btn-docker-cleanup').onclick = cleanupDocker;
     setInterval(loadLogs, 12000);
     setInterval(loadHistory, 15000);
 
@@ -427,6 +428,23 @@ async function loadLogs() {
         content.textContent = `Error: ${e.message}`;
         hasLoadedLogs = false;
         lastLogsText = '';
+    }
+}
+
+async function cleanupDocker() {
+    const btn = document.getElementById('btn-docker-cleanup');
+    btn.disabled = true;
+    btn.innerHTML = `${spinner} Cleaning…`;
+    try {
+        const r = await api.cleanupNodeDocker(NODE_ID);
+        if (r.skipped) toast(r.skipped, 'error');
+        else if (r.errors && r.errors.length && !r.summary) toast(r.errors[0], 'error');
+        else toast(r.summary || 'Cleanup done');
+    } catch (e) {
+        toast(e.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Clean up Docker';
     }
 }
 

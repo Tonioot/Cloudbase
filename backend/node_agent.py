@@ -10,7 +10,7 @@ import platform
 import subprocess
 import logging
 import logging.handlers
-from typing import Optional, Any, Tuple, Dict, Callable
+from typing import Optional, Any, Dict, Callable
 from dataclasses import dataclass
 
 import httpx
@@ -548,6 +548,12 @@ async def cmd_get_stats(client, state, main_id, payload, headers):
     return resp.json()
 
 
+async def cmd_docker_cleanup(client, state, main_id, payload, headers):
+    """Remove superseded images and trim the build cache on this node."""
+    import docker_manager as dm
+    return await asyncio.to_thread(dm.cleanup_docker, bool(payload.get("aggressive")))
+
+
 async def cmd_get_replica_stats(client, state, main_id, payload, headers):
     replica_id = payload.get("replica_id")
     if replica_id is None:
@@ -678,7 +684,6 @@ async def _build_image_local(local_id: int, app_name: str, app_dir: str, payload
     Returns image name."""
     import docker_manager as dm  # import here to avoid circular at module level on remote nodes
     import process_manager as pm
-    import re as _re
 
     app_type = (payload.get("app_type") or "").strip().lower()
     start_cmd = payload.get("start_command") or ""
@@ -1094,6 +1099,7 @@ COMMAND_HANDLERS: Dict[str, Callable] = {
     "get_logs_tail": cmd_get_logs_tail,
     "get_replica_logs": cmd_get_replica_logs,
     "get_stats": cmd_get_stats,
+    "docker_cleanup": cmd_docker_cleanup,
     "get_replica_stats": cmd_get_replica_stats,
     "get_agent_logs": cmd_get_agent_logs,
     "delete_app": cmd_delete_app,

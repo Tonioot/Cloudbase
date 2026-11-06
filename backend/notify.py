@@ -514,7 +514,7 @@ async def _watch_once() -> None:
         if disk is not None and (disk >= disk_high or (key in open_ and disk >= disk_high - _DISK_HYSTERESIS)):
             problems[key] = ("node.disk_high", f"Disk on {node.name} is {disk:.0f}% full",
                              "Builds, logs and backups stop working when the disk is full. "
-                             "Clean up old Docker images (docker system prune) or add space.", None, f"/node?id={node.id}")
+                             "Cloudbase cleans up old images and build cache itself; use \"Clean up Docker\" on the node page to do it now, or add space.", None, f"/node?id={node.id}")
         elif key in open_ and disk is not None:
             resolutions[key] = (f"Disk on {node.name} is back to {disk:.0f}%", "")
 

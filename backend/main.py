@@ -36,7 +36,6 @@ import auth
 import nginx_manager as nm
 import process_manager as pm
 import docker_manager as dm
-import db_links
 import token_vault
 import node_agent
 import config as _cfg
@@ -946,6 +945,47 @@ async def _orphan_replica_cleanup():
         await asyncio.sleep(1800)
 
 
+# ── Docker disk cleanup ───────────────────────────────────────────────────────
+async def _docker_cleanup_loop():
+    """Keep disks from filling up with old images and build cache.
+
+    Every node is cleaned about once a day, and sooner when its disk gets
+    full: at 80% at most hourly, at 90% with the aggressive settings.
+    """
+    import docker_manager as _dm
+    from models import Node as _Node
+    from routers.nodes import run_node_docker_cleanup
+    await asyncio.sleep(600)
+    last_run: dict[int, float] = {}
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                nodes = (await db.execute(select(_Node).where(_Node.enabled == True))).scalars().all()
+            now = _time.time()
+            for node in nodes:
+                if node.is_local:
+                    if not await asyncio.to_thread(_dm.is_docker_available):
+                        continue
+                    disk = await asyncio.to_thread(_dm.disk_percent)
+                else:
+                    if node.status == "offline":
+                        continue
+                    disk = node.node_disk_percent
+                since = now - last_run.get(node.id, 0)
+                high = disk is not None and disk >= 80
+                if since < (3600 if high else 86400):
+                    continue
+                last_run[node.id] = now
+                res = await run_node_docker_cleanup(node, aggressive=disk is not None and disk >= 90)
+                log.info("[docker-cleanup] %s: %s", node.name,
+                         res.get("summary") or res.get("skipped") or res.get("errors"))
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            log.warning("[docker-cleanup] error: %s", e)
+        await asyncio.sleep(900)
+
+
 # ── Crash monitor ─────────────────────────────────────────────────────────────
 async def _crash_monitor():
     await asyncio.sleep(5)
@@ -955,7 +995,6 @@ async def _crash_monitor():
                 from models import Node as _Node, ApplicationReplica
                 local_node_result = await db.execute(select(_Node).where(_Node.is_local == True))
                 local_node_obj = local_node_result.scalar_one_or_none()
-                local_node_id = local_node_obj.id if local_node_obj else None
 
                 # Monitor local replica containers
                 rep_result = await db.execute(
@@ -1103,7 +1142,7 @@ async def _startup_recovery() -> None:
     # Recover running instances and auto-start
     async with AsyncSessionLocal() as db:
         from models import ApplicationReplica, Node as _Node
-        local_node = await nodes.ensure_local_node(db)
+        await nodes.ensure_local_node(db)
 
         # Recover replica container statuses
         rep_result = await db.execute(select(ApplicationReplica))
@@ -1279,6 +1318,7 @@ async def lifespan(app: FastAPI):
             asyncio.create_task(_node_command_cleanup()),
             asyncio.create_task(_autoscaler()),
             asyncio.create_task(_orphan_replica_cleanup()),
+            asyncio.create_task(_docker_cleanup_loop()),
             asyncio.create_task(_overview_sampler()),
             asyncio.create_task(_deploys.auto_deploy_loop()),
             asyncio.create_task(databases_router.database_monitor()),

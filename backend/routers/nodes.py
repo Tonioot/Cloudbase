@@ -1443,6 +1443,43 @@ async def mark_stale_nodes_offline(db: AsyncSession) -> None:
 
 # --- New endpoints ---
 
+async def run_node_docker_cleanup(node: Node, aggressive: bool = False) -> dict:
+    """Clean up Docker on one node: in-process for the local node, through the
+    agent for a remote one. Returns the cleanup summary dict."""
+    if node.is_local:
+        import docker_manager as _dm
+        return await asyncio.to_thread(_dm.cleanup_docker, aggressive)
+    if node.id not in _node_ws_connections:
+        return {"skipped": "Node agent is not connected"}
+    async with AsyncSessionLocal() as db:
+        cmd = await queue_node_command(
+            db, node_id=node.id, command_type="docker_cleanup",
+            payload={"aggressive": aggressive}, allow_existing_inflight=True,
+        )
+        cmd_id = cmd.id
+    async with AsyncSessionLocal() as wait_db:
+        done = await wait_for_node_command(wait_db, cmd_id, timeout_seconds=300)
+    if done.status != "done":
+        return {"errors": [done.error_message or "Cleanup failed"]}
+    return json.loads(done.result) if done.result else {}
+
+
+@router.post("/{node_id}/docker-cleanup")
+async def docker_cleanup(
+    node_id: int,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("nodes.configure")),
+    actor: str = Depends(_auth.get_current_actor),
+):
+    """Free disk space now: remove superseded images and trim the build cache."""
+    node = await get_node_or_404(node_id, db)
+    res = await run_node_docker_cleanup(node, aggressive=True)
+    await log_audit(db, "node.docker_cleanup", actor=actor, detail={"name": node.name, "node_id": node_id,
+                                                                    "summary": res.get("summary") or res.get("skipped")})
+    await db.commit()
+    return res
+
+
 @router.post("/{node_id}/ping")
 async def ping_node(node_id: int, _user: dict = Depends(_auth.require_permission("nodes.view")), db: AsyncSession = Depends(get_db)):
     node = await get_node_or_404(node_id, db)
