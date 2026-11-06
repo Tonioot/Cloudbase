@@ -1,0 +1,36 @@
+{
+  "upward_imports": [
+    "cron -> routers.applications",
+    "cron -> routers.nodes",
+    "deploys -> routers.applications",
+    "routers.applications -> routers.nodes",
+    "routers.database_backups -> routers.databases",
+    "routers.database_backups -> routers.nodes",
+    "routers.databases -> routers.database_backups",
+    "routers.databases -> routers.nodes",
+    "routers.domains -> routers.nodes",
+    "routers.logs -> routers.nodes",
+    "routers.nodes -> routers.applications",
+    "routers.stats -> routers.applications",
+    "routers.stats -> routers.nodes"
+  ],
+  "function_level_imports": {
+    "auth": 7,
+    "certificates": 1,
+    "cron": 6,
+    "database": 3,
+    "db_links": 1,
+    "db_proxy": 6,
+    "deploys": 5,
+    "docker_manager": 1,
+    "main": 34,
+    "nginx_manager": 2,
+    "node_agent": 29,
+    "notify": 1,
+    "routers.applications": 5,
+    "routers.databases": 3,
+    "routers.domains": 2,
+    "routers.nodes": 24,
+    "routers.stats": 1
+  }
+}
