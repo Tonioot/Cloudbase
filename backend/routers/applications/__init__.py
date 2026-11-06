@@ -3,10 +3,16 @@
 from fastapi import APIRouter
 
 from routers.applications import crud
+from routers.applications import create
+from routers.applications import update
+from routers.applications import delete
+from routers.applications import transfer
 from routers.applications import repo
 from routers.applications import certs
 from routers.applications import lifecycle
 from routers.applications import replicas
+from routers.applications import instances
+from routers.applications import scale
 from routers.applications import deploys
 from routers.applications import stats_logs
 from routers.applications import maintenance
@@ -14,10 +20,16 @@ from routers.applications import nginx
 
 router = APIRouter()
 router.include_router(crud.router)
+router.include_router(create.router)
+router.include_router(update.router)
+router.include_router(delete.router)
+router.include_router(transfer.router)
 router.include_router(repo.router)
 router.include_router(certs.router)
 router.include_router(lifecycle.router)
 router.include_router(replicas.router)
+router.include_router(instances.router)
+router.include_router(scale.router)
 router.include_router(deploys.router)
 router.include_router(stats_logs.router)
 router.include_router(maintenance.router)

@@ -17,7 +17,9 @@ from nodes.registry import ensure_local_node
 from nodes.commands import queue_node_command
 from core.audit import log_audit
 from core import auth as _auth
-from apps.deploy import _do_rolling_deploy, _do_zero_downtime_deploy, _single_deploy
+from apps.rolling import _do_rolling_deploy
+from apps.bluegreen import _do_zero_downtime_deploy
+from apps.deploy_common import _single_deploy
 from apps.git import _build_clone_url, _current_branch, _decrypt_github_token, _deploy_app, _fetch_origin, _refresh_app_source_revision, _resolve_source_revision, _sync_app_source
 from apps.images import _image_build_kwargs, _image_port, _node_build_payload
 from apps.serializers import _deployment_dict, _get_or_404

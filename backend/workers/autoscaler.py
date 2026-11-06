@@ -12,7 +12,7 @@ from containers import processes as pm
 from core import applog
 from apps.validation import _assign_external_port
 from apps.runtime import _remote_replica_command_payload, _start_instance_local
-from apps.deploy import _wait_new_instance_healthy
+from apps.deploy_common import _wait_new_instance_healthy
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
 from nodes.registry import ensure_local_node
 from apps.state import DEPLOY_HEALTH_TIMEOUT_SECONDS, _deploys_in_progress, _scaling_in_progress

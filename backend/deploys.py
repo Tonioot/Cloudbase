@@ -23,7 +23,9 @@ from containers import processes as pm
 from core.database import AsyncSessionLocal
 from core.models import Application, Deployment
 from apps import state as apps_state
-from apps import deploy as apps_deploy
+from apps import deploy_common as apps_deploy_common
+from apps import rolling as apps_rolling
+from apps import bluegreen as apps_bluegreen
 from apps import git as apps_git
 from core.audit import log_audit as apps_log_audit
 from apps import nginx_sync as apps_nginx_sync
@@ -90,7 +92,7 @@ async def run_deploy(
         deadline = asyncio.get_running_loop().time() + 900
         while app_id in apps_state._scaling_in_progress and asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(2)
-        with apps_deploy._single_deploy(app_id):
+        with apps_deploy_common._single_deploy(app_id):
             async with AsyncSessionLocal() as db:
                 app = await db.get(Application, app_id)
                 if not app:
@@ -124,12 +126,12 @@ async def run_deploy(
 
                 if strategy == "rolling":
                     push("[Deploy] Starting rolling deploy…")
-                    res = await apps_deploy._do_rolling_deploy(app_id, db, actor)
+                    res = await apps_rolling._do_rolling_deploy(app_id, db, actor)
                     message = f"Rolled out {commit_info}"
                 elif strategy == "blue_green":
                     push("[Deploy] Starting blue/green deploy…")
                     local_node = await apps_ensure_local_node(db)
-                    res = await apps_deploy._do_zero_downtime_deploy(app_id, db, local_node, actor)
+                    res = await apps_bluegreen._do_zero_downtime_deploy(app_id, db, local_node, actor)
                     message = f"Switched to {commit_info}"
                 else:
                     res = await _rebuild(app, db, source_revision, push, restart=(strategy == "restart"), actor=actor)
