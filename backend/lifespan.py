@@ -16,8 +16,8 @@ from core.runtime import IS_NODE
 from cron import scheduler as _cron
 from nginx.panel import _load_panel_https_domain
 from notify import engine as notify
-from routers import database_backups as database_backups_router
-from routers import databases as databases_router
+from dbs import backup_scheduler as dbs_backup_scheduler
+from dbs import workers as dbs_workers
 from workers.autoscaler import _autoscaler
 from workers.cleanup import _docker_cleanup_loop, _node_command_cleanup, _orphan_replica_cleanup
 from workers.crash import _crash_monitor
@@ -63,10 +63,10 @@ async def _start_panel_tasks() -> list[asyncio.Task]:
         asyncio.create_task(_docker_cleanup_loop()),
         asyncio.create_task(_overview_sampler()),
         asyncio.create_task(_deploys.auto_deploy_loop()),
-        asyncio.create_task(databases_router.database_monitor()),
-        asyncio.create_task(database_backups_router.backup_scheduler()),
-        asyncio.create_task(databases_router.database_stats_sampler()),
-        asyncio.create_task(databases_router.database_update_checker()),
+        asyncio.create_task(dbs_workers.database_monitor()),
+        asyncio.create_task(dbs_backup_scheduler.backup_scheduler()),
+        asyncio.create_task(dbs_workers.database_stats_sampler()),
+        asyncio.create_task(dbs_workers.database_update_checker()),
         asyncio.create_task(notify.dispatcher()),
         asyncio.create_task(notify.watcher()),
         asyncio.create_task(_cron.scheduler()),

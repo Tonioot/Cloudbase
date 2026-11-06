@@ -1,0 +1,144 @@
+import asyncio
+import json
+import logging
+from datetime import datetime
+from typing import Optional
+from fastapi import HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from dbs import manager as db_manager
+from core.database import AsyncSessionLocal
+from core.models import DatabaseLink, Database, Application, Node, ApplicationReplica
+from nodes.commands import queue_node_command, wait_for_node_command
+from dbs.provision import _spec
+from dbs.state import COMMAND_TIMEOUT_SECONDS, PROVISION_TIMEOUT_SECONDS, _busy
+
+log = logging.getLogger("cloudbase.databases")
+
+
+async def _get_or_404(database_id: int, db: AsyncSession) -> Database:
+    database = await db.get(Database, database_id)
+    if database is None:
+        raise HTTPException(404, "Database not found")
+    return database
+
+
+async def _node_for(database: Database, db: AsyncSession) -> Node:
+    node = await db.get(Node, database.node_id)
+    if node is None:
+        raise HTTPException(409, "The node of this database no longer exists")
+    return node
+
+
+def _node_reachable(node: Node) -> bool:
+    return node.is_local or (node.enabled and node.status == "online")
+
+
+async def _run_on_node(node: Node, local_fn, command_type: str, payload: dict,
+                       timeout: float = COMMAND_TIMEOUT_SECONDS) -> dict:
+    """Run a db_manager call on the database's node and return its result."""
+    if node.is_local:
+        return await asyncio.to_thread(local_fn)
+    if not _node_reachable(node):
+        raise RuntimeError(f"Node '{node.name}' is offline")
+    async with AsyncSessionLocal() as db:
+        cmd = await queue_node_command(db, node_id=node.id, command_type=command_type, payload=payload)
+        done = await wait_for_node_command(db, cmd.id, timeout_seconds=timeout)
+    if done.status != "done":
+        raise RuntimeError(done.error_message or f"{command_type} failed on node '{node.name}'")
+    return json.loads(done.result or "{}")
+
+
+def _state_to_status(state: str) -> tuple[str, Optional[str]]:
+    if state == "restarting":
+        return "error", "The database container keeps restarting. Check the logs."
+    return {"running": "running", "starting": "starting", "unhealthy": "unhealthy"}.get(state, "stopped"), None
+
+
+async def _set_status(database_id: int, status: str, error: Optional[str] = None, **fields) -> None:
+    async with AsyncSessionLocal() as db:
+        database = await db.get(Database, database_id)
+        if database is None:
+            return
+        database.status = status
+        database.last_error = error
+        for key, value in fields.items():
+            setattr(database, key, value)
+        if status == "running" and database.initialized_at is None:
+            database.initialized_at = datetime.utcnow()
+        await db.commit()
+
+
+def _spawn(database_id: int, coro_fn) -> None:
+    """Run an operation in the background, one at a time per database."""
+    _busy.add(database_id)
+
+    async def runner():
+        try:
+            await coro_fn()
+        except Exception as e:
+            log.warning("[db] operation on database %s failed: %s", database_id, e)
+            await _set_status(database_id, "error", str(e))
+        finally:
+            _busy.discard(database_id)
+
+    asyncio.create_task(runner())
+
+
+async def _start_operation(database_id: int, op: str) -> None:
+    """op: ensure | recreate | restart"""
+    async with AsyncSessionLocal() as db:
+        database = await db.get(Database, database_id)
+        if database is None:
+            return
+        node = await _node_for(database, db)
+        spec = _spec(database)
+    fn = {"ensure": db_manager.ensure_running, "recreate": db_manager.recreate, "restart": db_manager.restart}[op]
+    timeout = COMMAND_TIMEOUT_SECONDS if op == "restart" else PROVISION_TIMEOUT_SECONDS
+    result = await _run_on_node(node, lambda: fn(spec), f"db_{op}", {"spec": spec}, timeout=timeout)
+    status, error = _state_to_status(result.get("state", "running"))
+    await _set_status(database_id, status, error, container_id=result.get("container_id"))
+
+
+def _require_idle(database: Database) -> None:
+    if database.id in _busy:
+        raise HTTPException(409, "Another operation on this database is still running")
+
+
+async def _links_for(database_id: int, db: AsyncSession) -> list[dict]:
+    result = await db.execute(
+        select(DatabaseLink, Application)
+        .join(Application, Application.id == DatabaseLink.app_id)
+        .where(DatabaseLink.database_id == database_id)
+        .order_by(Application.name)
+    )
+    rows = result.all()
+    if not rows:
+        return []
+    app_ids = [app.id for _, app in rows]
+    rep_result = await db.execute(
+        select(ApplicationReplica.app_id, ApplicationReplica.node_id).where(ApplicationReplica.app_id.in_(app_ids))
+    )
+    nodes_by_app: dict[int, set] = {}
+    for app_id, node_id in rep_result.all():
+        nodes_by_app.setdefault(app_id, set()).add(node_id)
+    database = await db.get(Database, database_id)
+    links = []
+    for link, app in rows:
+        app_nodes = nodes_by_app.get(app.id) or ({app.node_id} if app.node_id else set())
+        links.append({
+            "id": link.id,
+            "app_id": app.id,
+            "app_name": app.name,
+            "env_var_name": link.env_var_name,
+            # Phase 1: only instances on the database's node can reach it.
+            "instances_elsewhere": any(n is not None and n != database.node_id for n in app_nodes),
+        })
+    return links
+
+
+def _allowlist(database: Database) -> list[str]:
+    try:
+        return json.loads(database.public_allowlist or "[]")
+    except ValueError:
+        return []

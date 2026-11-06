@@ -1,13 +1,10 @@
 {
   "upward_imports": [
-    "routers.database_backups -> routers.databases",
-    "routers.databases -> routers.database_backups",
     "workers.stats -> routers.stats"
   ],
   "function_level_imports": {
     "core.database": 2,
     "dbs.proxy": 4,
-    "nginx.manager": 1,
-    "routers.databases": 2
+    "nginx.manager": 1
   }
 }
