@@ -377,3 +377,22 @@ def test_the_file_is_gone_from_the_server_after_the_download(admin):
     assert admin.get(f"/api/transfer/export/{job}/download").status_code == 200
     time.sleep(0.2)                                       # the delete runs right after the response
     assert not os.path.exists(path)
+
+
+def test_the_job_reports_the_step_it_is_in(admin, fakes):
+    """The page shows the steps (settings, data, package, download), so the server has to say where it is."""
+    database_id = _make_database("txdb-stage")
+    try:
+        job = _start_export(admin, [], databases=[database_id], data=True, secrets=False, password="").json()["job_id"]
+        seen = set()
+        for _ in range(400):
+            status = admin.get(f"/api/transfer/export/{job}").json()
+            seen.add(status["stage"])
+            if status["state"] != "running":
+                break
+            time.sleep(0.01)
+        assert status["state"] == "done" and status["stage"] == "done"
+        assert seen <= {"collect", "dump", "pack", "done"}
+        admin.get(f"/api/transfer/export/{job}/download")                 # take it, so nothing is left on the server
+    finally:
+        _delete_database(database_id)

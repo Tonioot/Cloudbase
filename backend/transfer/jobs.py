@@ -25,6 +25,7 @@ class ExportJob:
     owner: str
     created: float
     state: str = "running"        # running | done | failed
+    stage: str = "collect"        # collect | dump | pack | done
     message: str = "Preparing…"
     path: str = ""                # the encrypted file, once done
     size: int = 0
@@ -32,7 +33,7 @@ class ExportJob:
     databases: int = 0
 
     def public(self) -> dict:
-        return {"state": self.state, "message": self.message, "size": self.size,
+        return {"state": self.state, "stage": self.stage, "message": self.message, "size": self.size,
                 "apps": self.apps, "databases": self.databases}
 
 

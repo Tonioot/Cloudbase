@@ -23,16 +23,17 @@ async def run_export(
     error: Optional[str] = None
     detail: dict = {}
     try:
-        job.message = "Collecting settings…"
+        job.stage, job.message = "collect", "Collecting settings…"
         async with AsyncSessionLocal() as db:
             content = await manifest.build_manifest(db, app_ids, include_secrets)
             content["databases"], ids = await databases.database_entries(db, database_ids)
         files = {}
         if include_data and content["databases"]:
+            job.stage = "dump"
             files = await databases.dump_into(content["databases"], ids, actor, lambda text: setattr(job, "message", text))
         job.apps, job.databases = len(content["apps"]), len(content["databases"])
 
-        job.message = "Packing…"
+        job.stage, job.message = "pack", "Packing…"
         await asyncio.to_thread(archive.write, job.path, content, files)
         os.chmod(job.path, 0o600)             # it may hold secrets and data in the clear: owner only
         job.size = os.path.getsize(job.path)
@@ -52,4 +53,4 @@ async def run_export(
         if error:
             job.path, job.state, job.message = "", "failed", error
         else:
-            job.state, job.message = "done", "Ready to download"
+            job.state, job.stage, job.message = "done", "done", "Ready to download"

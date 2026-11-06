@@ -6,7 +6,7 @@
 import { api, wsSystemLogs } from './api.js';
 import { createLogViewer, fillComponentSelect } from './logviewer.js';
 import { setCrumbs } from './shell.js';
-import { toast, confirm, timeAgo } from './utils.js';
+import { toast, confirm, timeAgo, spinner } from './utils.js';
 import { openPanelDomainWizard, openBaseDomainWizard } from './domain-wizard.js';
 
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -1255,7 +1255,7 @@ function renderTransfer(root) {
                <button class="btn btn-primary" id="exp-go">Download export</button>
              </div>
            </div>
-           <div class="tx-progress" id="exp-progress"></div>
+           <div class="tx-run" id="exp-run" style="display:none"></div>
          </div>
        </div>`)}
     ${group('Import', 'Set up apps and databases from an export file. Names that already exist are skipped.',
@@ -1342,15 +1342,30 @@ function renderTransfer(root) {
 
   // ── Export: start, follow, download ───────────────────────────────────────
   const expGo = document.getElementById('exp-go');
-  const progress = document.getElementById('exp-progress');
+  const run = document.getElementById('exp-run');
   const sleep = ms => new Promise(r => setTimeout(r, ms));
+  // The progress card: what is happening now, and the steps with the finished ones ticked off.
+  const STAGES = [['collect', 'Settings'], ['dump', 'Database data'], ['pack', 'Package'], ['done', 'Download']];
+  const renderRun = (status, includeData) => {
+    const stages = STAGES.filter(([key]) => includeData || key !== 'dump');
+    const at = Math.max(0, stages.findIndex(([key]) => key === status.stage));
+    const done = status.state === 'done', failed = status.state === 'failed';
+    show(run, true);
+    run.dataset.state = status.state;
+    run.innerHTML = `
+      <div class="tx-run-head">${done ? '<span class="tx-run-mark">✓</span>' : failed ? '<span class="tx-run-mark">✕</span>' : spinner}<span class="tx-run-title">${esc(status.message || '')}</span></div>
+      ${done || failed ? '' : '<div class="tx-track"><div class="tx-track-fill"></div></div>'}
+      <ol class="tx-steps">${stages.map(([key, label], i) => `<li class="${done || (!failed && i < at) ? 'is-done' : i === at && !failed ? 'is-active' : ''}">${label}</li>`).join('')}</ol>`;
+  };
 
   expGo.onclick = async () => {
     const appIds = ticked(appChecks()), dbIds = ticked(dbChecks());
     if (!appIds.length && !dbIds.length) return toast('Select at least one app or database', 'error');
     if (withSecrets() && !expPw.value) { expPw.focus(); return toast('Enter your account password', 'error'); }
     expGo.disabled = true;
-    progress.textContent = 'Starting…';
+    expGo.innerHTML = `${spinner} Exporting…`;
+    const wantsData = withData();
+    renderRun({ state: 'running', stage: 'collect', message: 'Starting…' }, wantsData);
     try {
       const { job_id } = await api.startExport({
         app_ids: appIds.length === appChecks().length ? null : appIds,    // null: every app
@@ -1363,7 +1378,7 @@ function renderTransfer(root) {
       for (;;) {                                  // a database dump can take minutes: follow the job
         await sleep(700);
         status = await api.exportStatus(job_id);
-        progress.textContent = status.message;
+        renderRun(status, wantsData);
         if (status.state !== 'running') break;
       }
       if (status.state === 'failed') throw new Error(status.message);
@@ -1375,13 +1390,14 @@ function renderTransfer(root) {
       a.click();
       URL.revokeObjectURL(a.href);
       expPw.value = '';
-      progress.textContent = `Downloaded: ${plural(status.apps, 'app')}, ${plural(status.databases, 'database')}.`;
+      renderRun({ state: 'done', stage: 'done', message: `Downloaded: ${plural(status.apps, 'app')}, ${plural(status.databases, 'database')}.` }, wantsData);
       toast('Export downloaded');
     } catch (e) {
-      progress.textContent = '';
+      renderRun({ state: 'failed', message: e.message }, wantsData);
       toast(e.message, 'error');
     } finally {
       expGo.disabled = false;
+      expGo.textContent = 'Download export';
     }
   };
 
@@ -1411,7 +1427,7 @@ function renderTransfer(root) {
   const row = (kind, name, text) => `<li data-kind="${kind}">${name ? `<b>${esc(name)}</b>` : ''}<span>${esc(text)}</span></li>`;
   impGo.onclick = async () => {
     impGo.disabled = true;
-    result.innerHTML = '<div class="tx-progress" style="margin:0">Importing… a large file takes a while to upload.</div>';
+    result.innerHTML = `<div class="tx-run" data-state="running"><div class="tx-run-head">${spinner}<span class="tx-run-title">Uploading and importing… a large file takes a while.</span></div><div class="tx-track"><div class="tx-track-fill"></div></div></div>`;
     try {
       const nodeVal = document.getElementById('imp-node').value;
       const res = await api.importTransfer(file, nodeVal ? parseInt(nodeVal, 10) : null);

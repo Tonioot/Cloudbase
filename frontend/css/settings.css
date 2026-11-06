@@ -267,7 +267,31 @@
 .tx-note { font-size: 12px; color: var(--muted); }
 .tx-pw { width: 220px; }
 .tx-bar .input { height: 34px; }
-.tx-progress { font-size: 12.5px; color: var(--muted); min-height: 18px; margin-top: -10px; }
+
+/* Progress card (export and import) */
+.tx-run {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex; flex-direction: column; gap: 12px;
+}
+.tx-run[data-state="failed"] { border-color: var(--red-border); background: var(--red-bg); }
+.tx-run-head { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text); min-width: 0; }
+.tx-run-title { overflow-wrap: anywhere; }
+.tx-run-mark { flex: none; width: 16px; text-align: center; font-weight: 600; color: var(--green); }
+.tx-run[data-state="failed"] .tx-run-mark, .tx-run[data-state="failed"] .tx-run-title { color: var(--red); }
+.tx-track { height: 3px; border-radius: 2px; background: var(--line); overflow: hidden; }
+.tx-track-fill { height: 100%; width: 35%; border-radius: 2px; background: var(--text-2); animation: tx-slide 1.3s ease-in-out infinite; }
+@keyframes tx-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(300%); } }
+.tx-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12px; color: var(--muted); }
+.tx-steps li { display: inline-flex; align-items: center; gap: 6px; }
+.tx-steps li::before { content: ""; width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--line-strong); }
+.tx-steps li.is-active { color: var(--text); }
+.tx-steps li.is-active::before { background: var(--text); border-color: var(--text); }
+.tx-steps li.is-done { color: var(--text-2); }
+.tx-steps li.is-done::before { content: "✓"; width: auto; height: auto; border: none; color: var(--green); font-size: 11px; }
+@media (prefers-reduced-motion: reduce) { .tx-track-fill { animation: none; width: 100%; opacity: .4; } }
 
 /* Import: the file */
 .tx-file {
