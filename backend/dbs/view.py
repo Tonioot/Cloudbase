@@ -1,6 +1,7 @@
 from typing import Optional
 from fastapi import Request
-from dbs import engines as db_engines, manager as db_manager, proxy as db_proxy
+from dbs import engines as db_engines, proxy as db_proxy
+from dbs import docker as dbs_docker
 from core.models import Node, Database
 from dbs.ops import _allowlist, _node_reachable
 from dbs.relay import _public_host
@@ -31,7 +32,7 @@ def _client_ip(request: Request) -> str:
 def _progress(database: Database, node: Optional[Node]) -> Optional[str]:
     """What the database is doing before its container exists (e.g. pulling the image)."""
     if node is not None and node.is_local:
-        return db_manager.progress(database.id)
+        return dbs_docker.progress(database.id)
     return _remote_progress.get(database.node_id, {}).get(str(database.id))
 
 
@@ -51,7 +52,7 @@ def _as_dict(database: Database, node: Optional[Node], link_count: int = 0) -> d
         "last_error": database.last_error,
         "cpu_limit": database.cpu_limit,
         "memory_limit_mb": database.memory_limit_mb,
-        "host": db_manager.container_name(database.id),
+        "host": dbs_docker.container_name(database.id),
         "port": engine.port if engine else None,
         "default_env_var": engine.env_var if engine else "DATABASE_URL",
         "initialized": database.initialized_at is not None,

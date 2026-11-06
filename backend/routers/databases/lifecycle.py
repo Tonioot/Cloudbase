@@ -4,7 +4,10 @@ from datetime import datetime
 from fastapi import HTTPException, APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from core import auth as _auth
-from dbs import links as db_links, manager as db_manager
+from dbs import links as db_links
+from dbs import backup_restore as dbs_backup_restore
+from dbs import lifecycle as dbs_lifecycle
+from dbs import updates as dbs_updates
 from core.audit import log_audit
 from core.database import AsyncSessionLocal, get_db
 from core.env_crypto import encrypt_text
@@ -79,7 +82,7 @@ async def stop_database(
     await db.commit()
 
     async def op():
-        await _run_on_node(node, lambda: db_manager.stop(database_id), "db_stop", {"database_id": database_id})
+        await _run_on_node(node, lambda: dbs_lifecycle.stop(database_id), "db_stop", {"database_id": database_id})
         await _set_status(database_id, "stopped")
 
     _spawn(database.id, op)
@@ -110,7 +113,7 @@ async def rotate_password(
     try:
         await _run_on_node(
             node,
-            lambda: db_manager.rotate_password(spec, new_password),
+            lambda: dbs_backup_restore.rotate_password(spec, new_password),
             "db_rotate_password",
             {"spec": spec, "new_password": new_password},
         )
@@ -125,7 +128,7 @@ async def rotate_password(
         _operation.pop(database_id, None)
 
     await db_links.refresh(db)
-    if database.engine in db_manager.ROTATE_RECREATES:
+    if database.engine in dbs_backup_restore.ROTATE_RECREATES:
         # The server command / environment carries the password: new container, same data.
         database.status = "starting"
         await db.commit()
@@ -176,7 +179,7 @@ async def update_database_engine(
         async with AsyncSessionLocal() as s:
             spec = _spec(await s.get(Database, database_id))
         try:
-            result = await _run_on_node(node, lambda: db_manager.update(spec), "db_update", {"spec": spec},
+            result = await _run_on_node(node, lambda: dbs_updates.update(spec), "db_update", {"spec": spec},
                                         timeout=PROVISION_TIMEOUT_SECONDS + 900)
         finally:
             _operation.pop(database_id, None)

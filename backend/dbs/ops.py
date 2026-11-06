@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from dbs import manager as db_manager
+from dbs import lifecycle as dbs_lifecycle
 from core.database import AsyncSessionLocal
 from core.models import DatabaseLink, Database, Application, Node, ApplicationReplica
 from nodes.commands import queue_node_command, wait_for_node_command
@@ -93,7 +93,7 @@ async def _start_operation(database_id: int, op: str) -> None:
             return
         node = await _node_for(database, db)
         spec = _spec(database)
-    fn = {"ensure": db_manager.ensure_running, "recreate": db_manager.recreate, "restart": db_manager.restart}[op]
+    fn = {"ensure": dbs_lifecycle.ensure_running, "recreate": dbs_lifecycle.recreate, "restart": dbs_lifecycle.restart}[op]
     timeout = COMMAND_TIMEOUT_SECONDS if op == "restart" else PROVISION_TIMEOUT_SECONDS
     result = await _run_on_node(node, lambda: fn(spec), f"db_{op}", {"spec": spec}, timeout=timeout)
     status, error = _state_to_status(result.get("state", "running"))

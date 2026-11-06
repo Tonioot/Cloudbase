@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dbs import engines as db_engines
-from dbs import manager as db_manager
+from dbs import docker as dbs_docker
 from dbs import proxy as db_proxy
 from core.env_crypto import decrypt_text
 from core.models import Database, DatabaseLink, Node
@@ -31,7 +31,7 @@ _app_links: dict[int, list[dict]] = {}
 def connection_url(database, credentials: dict) -> str:
     """The direct URL, as used by apps on the database's own node."""
     engine = db_engines.get_engine(database.engine)
-    return engine.url(credentials, db_manager.container_name(database.id), engine.port)
+    return engine.url(credentials, dbs_docker.container_name(database.id), engine.port)
 
 
 def decrypt_credentials(database) -> dict:
@@ -51,7 +51,7 @@ async def refresh(db: AsyncSession) -> None:
         try:
             engine = db_engines.get_engine(database.engine)
             creds = decrypt_credentials(database)
-            host = db_manager.container_name(database.id)
+            host = dbs_docker.container_name(database.id)
             links.setdefault(link.app_id, []).append({
                 "database_id": database.id,
                 "node_id": database.node_id,
@@ -71,4 +71,4 @@ def runtime_options(app_id: int) -> dict:
     links = _app_links.get(app_id)
     if not links:
         return {}
-    return {"network": db_manager.NETWORK, "linked_databases": [dict(l) for l in links]}
+    return {"network": dbs_docker.NETWORK, "linked_databases": [dict(l) for l in links]}

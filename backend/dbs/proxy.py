@@ -187,10 +187,10 @@ def gateway_ip() -> str:
     global _gateway_ip
     if _gateway_ip:
         return _gateway_ip
-    from dbs import manager as db_manager
+    from dbs import docker as dbs_docker
     from containers import client as containers_client
-    containers_client.ensure_network(db_manager.NETWORK)
-    net = containers_client._get_client().networks.get(db_manager.NETWORK)
+    containers_client.ensure_network(dbs_docker.NETWORK)
+    net = containers_client._get_client().networks.get(dbs_docker.NETWORK)
     _gateway_ip = net.attrs["IPAM"]["Config"][0]["Gateway"]
     return _gateway_ip
 
@@ -243,10 +243,10 @@ async def _ensure(database_id: int) -> None:
 
 
 def _container_here(database_id: int) -> bool:
-    from dbs import manager as db_manager
+    from dbs import docker as dbs_docker
     from containers import client as containers_client
     try:
-        return db_manager._get_container(containers_client._get_client(), database_id) is not None
+        return dbs_docker._get_container(containers_client._get_client(), database_id) is not None
     except Exception:
         return False
 

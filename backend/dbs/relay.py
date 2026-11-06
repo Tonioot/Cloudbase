@@ -4,7 +4,8 @@ import secrets
 from typing import Optional
 from fastapi import WebSocket, HTTPException
 from sqlalchemy import select
-from dbs import manager as db_manager, proxy as db_proxy
+from dbs import proxy as db_proxy
+from dbs import lifecycle as dbs_lifecycle
 from core.database import AsyncSessionLocal
 from core.models import Node, DatabaseLink, Database, Application, ApplicationReplica
 from nodes.registry import get_node_by_token_or_401
@@ -112,7 +113,7 @@ async def open_db_stream(database_id: int) -> db_proxy.Stream:
         raise RuntimeError(f"Database {database_id} not found")
 
     if node.is_local:
-        host, port = await asyncio.to_thread(db_manager.container_address, database_id)
+        host, port = await asyncio.to_thread(dbs_lifecycle.container_address, database_id)
         reader, writer = await asyncio.open_connection(host, port)
         return db_proxy.TcpStream(reader, writer)
 

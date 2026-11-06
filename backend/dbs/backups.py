@@ -6,7 +6,8 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from dbs import engines as db_engines, manager as db_manager, offsite as db_offsite, state as dbs_state, ops as dbs_ops, provision as dbs_provision
+from dbs import engines as db_engines, offsite as db_offsite, state as dbs_state, ops as dbs_ops, provision as dbs_provision
+from dbs import backup_restore as dbs_backup_restore
 from notify import engine as notify
 from core.audit import log_audit
 from core.database import DATA_DIR, AsyncSessionLocal
@@ -207,14 +208,14 @@ async def run_backup(database_id: int, trigger: str, actor: Optional[str] = None
         if node is None:
             raise RuntimeError("The node of this database no longer exists")
         if node.is_local:
-            info = await asyncio.to_thread(db_manager.backup_to_file, spec, path)
+            info = await asyncio.to_thread(dbs_backup_restore.backup_to_file, spec, path)
         else:
             # The agent dumps on its node and streams the file to the upload endpoint below.
             await dbs_ops._run_on_node(node, None, "db_backup", {"spec": spec, "backup_id": backup_id},
                                    timeout=BACKUP_TIMEOUT_SECONDS)
             if not os.path.exists(path):
                 raise RuntimeError("The node reported success, but the backup file never arrived")
-            info = {"size_bytes": os.path.getsize(path), "sha256": await asyncio.to_thread(db_manager._sha256, path)}
+            info = {"size_bytes": os.path.getsize(path), "sha256": await asyncio.to_thread(dbs_backup_restore._sha256, path)}
     except Exception as e:
         async with AsyncSessionLocal() as db:
             backup = await db.get(DatabaseBackup, backup_id)
@@ -307,7 +308,7 @@ async def _restore(database_id: int, backup_id: int, safety_backup: bool, actor:
         if not await _ensure_local(backup):
             raise RuntimeError("The backup file is gone and no off-site copy could be fetched")
         if node.is_local:
-            await asyncio.to_thread(db_manager.restore_from_file, spec, path, source)
+            await asyncio.to_thread(dbs_backup_restore.restore_from_file, spec, path, source)
         else:
             await dbs_ops._run_on_node(node, None, "db_restore",
                                    {"spec": spec, "backup_id": backup_id, "source_db_name": source},

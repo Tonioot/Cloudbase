@@ -6,7 +6,8 @@ from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core import auth as _auth
-from dbs import engines as db_engines, manager as db_manager, offsite as db_offsite, state as dbs_state, ops as dbs_ops
+from dbs import engines as db_engines, offsite as db_offsite, state as dbs_state, ops as dbs_ops
+from dbs import backup_restore as dbs_backup_restore
 from core.audit import log_audit
 from core.database import get_db
 from core.models import DatabaseBackup, Node
@@ -111,7 +112,7 @@ async def upload_backup(
                 out.write(chunk)
         os.chmod(path, 0o600)
         backup.size_bytes = os.path.getsize(path)
-        backup.sha256 = await asyncio.to_thread(db_manager._sha256, path)
+        backup.sha256 = await asyncio.to_thread(dbs_backup_restore._sha256, path)
         backup.status, backup.finished_at = "success", datetime.utcnow()
     except Exception as e:
         backup.status, backup.error = "failed", str(e)[:2000]

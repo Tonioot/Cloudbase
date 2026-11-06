@@ -3,7 +3,10 @@ import logging
 import time
 from datetime import timedelta, datetime
 from sqlalchemy import select
-from dbs import engines as db_engines, links as db_links, manager as db_manager, proxy as db_proxy
+from dbs import engines as db_engines, links as db_links, proxy as db_proxy
+from dbs import lifecycle as dbs_lifecycle
+from dbs import updates as dbs_updates
+from dbs import docker as dbs_docker
 from core.database import AsyncSessionLocal
 from core.models import DatabaseStatsHistory, Database, Node
 from dbs.ops import _node_reachable, _run_on_node, _set_status, _spawn, _start_operation, _state_to_status
@@ -19,7 +22,7 @@ log = logging.getLogger("cloudbase.databases")
 async def _fetch_states(node: Node, ids: list[int]) -> dict[str, dict]:
     result = await _run_on_node(
         node,
-        lambda: {"states": db_manager.states(ids)},
+        lambda: {"states": dbs_lifecycle.states(ids)},
         "db_states",
         {"database_ids": ids},
         timeout=30,
@@ -67,7 +70,7 @@ async def _monitor_tick() -> None:
                 continue
 
             if state == "missing" and d.initialized_at is not None and not info.get("volume", True):
-                message = (f"Data volume {db_manager.volume_name(d.id)} is missing on node '{node.name}'. "
+                message = (f"Data volume {dbs_docker.volume_name(d.id)} is missing on node '{node.name}'. "
                            "Cloudbase will not create an empty database in its place.")
                 if d.status != "error" or d.last_error != message:
                     await _set_status(d.id, "error", message)
@@ -134,7 +137,7 @@ async def _stats_tick(with_disk: bool) -> None:
         if node is None or not _node_reachable(node):
             continue
         try:
-            result = await _run_on_node(node, lambda items=items: {"stats": db_manager.stats_many(items)},
+            result = await _run_on_node(node, lambda items=items: {"stats": dbs_lifecycle.stats_many(items)},
                                         "db_stats_many", {"items": items}, timeout=60)
         except Exception as e:
             log.debug("[db-stats] node %s: %s", node.name, e)
@@ -178,7 +181,7 @@ UPDATE_CHECK_INTERVAL_SECONDS = 12 * 3600
 
 async def _check_updates_on(node: Node, databases: list) -> None:
     items = [{"database_id": d.id, "ref": db_engines.get_engine(d.engine).image_ref(d.version)} for d in databases]
-    result = await _run_on_node(node, lambda: {"updates": db_manager.check_updates(items)},
+    result = await _run_on_node(node, lambda: {"updates": dbs_updates.check_updates(items)},
                                 "db_check_updates", {"items": items}, timeout=120)
     now = datetime.utcnow().isoformat()
     for db_id, info in (result.get("updates") or {}).items():

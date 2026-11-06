@@ -1,7 +1,9 @@
 import json
 import asyncio
 import websockets
-from dbs import manager as db_manager, proxy as db_proxy
+from dbs import proxy as db_proxy
+from dbs import lifecycle as dbs_lifecycle
+from dbs import docker as dbs_docker
 from agent.log import _agent_log
 from agent.state import AgentState
 from agent.urls import _primary_ws_base
@@ -26,7 +28,7 @@ async def _db_dial(state: AgentState, msg: dict) -> None:
     )
     upstream = db_proxy.ClientWebSocketStream(ws)
     try:
-        host, port = await asyncio.to_thread(db_manager.container_address, database_id)
+        host, port = await asyncio.to_thread(dbs_lifecycle.container_address, database_id)
         reader, writer = await asyncio.open_connection(host, port)
     except Exception as e:
         _agent_log(f"[db-dial] database {database_id}: {e}")
@@ -41,7 +43,7 @@ async def _report_db_progress(ws) -> None:
     last = None
     while True:
         await asyncio.sleep(2)
-        current = {str(k): v for k, v in db_manager.all_progress().items()}
+        current = {str(k): v for k, v in dbs_docker.all_progress().items()}
         if current != last:
             await ws.send(json.dumps({"type": "progress", "progress": current}))
             last = current

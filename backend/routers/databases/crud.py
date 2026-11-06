@@ -8,7 +8,9 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from core import auth as _auth
-from dbs import engines as db_engines, links as db_links, manager as db_manager, proxy as db_proxy, tls as db_tls
+from dbs import engines as db_engines, links as db_links, proxy as db_proxy, tls as db_tls
+from dbs import docker as dbs_docker
+from dbs import lifecycle as dbs_lifecycle
 from core.audit import log_audit
 from core.database import get_db
 from core.env_crypto import encrypt_text
@@ -201,7 +203,7 @@ async def delete_database(
         try:
             await _run_on_node(
                 node,
-                lambda: db_manager.remove(database_id, keep_volume=keep_data),
+                lambda: dbs_lifecycle.remove(database_id, keep_volume=keep_data),
                 "db_remove",
                 {"database_id": database_id, "keep_volume": keep_data},
             )
@@ -245,7 +247,7 @@ async def get_credentials(
         "user": creds["user"],
         "password": creds["password"],
         "database": creds["db_name"],
-        "host": db_manager.container_name(database.id),
+        "host": dbs_docker.container_name(database.id),
         "port": db_engines.get_engine(database.engine).port,
         "url": db_links.connection_url(database, creds),
     }
@@ -331,7 +333,7 @@ async def get_logs(
     try:
         result = await _run_on_node(
             node,
-            lambda: {"lines": db_manager.logs(database_id, lines)},
+            lambda: {"lines": dbs_lifecycle.logs(database_id, lines)},
             "db_logs",
             {"database_id": database_id, "lines": lines},
             timeout=20,
@@ -353,7 +355,7 @@ async def get_stats(
     try:
         return await _run_on_node(
             node,
-            lambda: db_manager.stats(database_id, data_dir),
+            lambda: dbs_lifecycle.stats(database_id, data_dir),
             "db_stats",
             {"database_id": database_id, "data_dir": data_dir},
             timeout=20,
