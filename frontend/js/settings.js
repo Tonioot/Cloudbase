@@ -1203,14 +1203,26 @@ function openChannelDialog(state, ch, reload) {
 
 function renderTransfer(root) {
   const plainHttp = location.protocol !== 'https:';
+  const can = p => isRoot() || currentPerms().has(p);
   // Secrets are write-only everywhere else, so taking them out needs its own permission.
-  const canSecrets = isRoot() || currentPerms().has('secrets.export');
+  const canSecrets = can('secrets.export');
+  const canData = can('databases.backup');
   root.innerHTML = `
-    ${group('Export', 'Downloads one encrypted file with the selected apps: repository, commands, domains, Docker limits and the number of instances, and optionally their environment variables and Git tokens.',
+    ${group('Export', 'Downloads one encrypted file with the selected apps and databases: repository, commands, domains, Docker limits and the number of instances, the settings of each database and the apps it is linked to. Optionally also the environment variables, Git tokens and the data of the databases.',
       `<div class="settings-list-head">
-         <label class="check-inline"><input type="checkbox" id="exp-all" checked /> Select all</label>
+         <label class="check-inline"><input type="checkbox" id="exp-all" checked /> Select all apps</label>
        </div>
        <div id="exp-list" class="check-list"></div>
+       <div id="exp-db-section" style="display:none">
+         <div class="settings-list-head"><span class="field-label">Databases</span></div>
+         <div id="exp-db-list" class="check-list"></div>
+         <div class="field">
+           <label class="check-inline"><input type="checkbox" id="exp-data" ${canData ? '' : 'disabled'} /> Include the data of the selected databases</label>
+           <div class="field-hint">${canData
+             ? 'Each database is dumped when you start the export (this also adds a backup to its list), so the file can be as large as the databases. The databases must be running.'
+             : 'Taking the data out needs the “Database backups” permission. Without it the file has the settings of each database but not its data.'}</div>
+         </div>
+       </div>
        <div class="field">
          <label class="check-inline"><input type="checkbox" id="exp-secrets" ${canSecrets ? '' : 'disabled'} /> Include environment variables and Git tokens</label>
          <div class="field-hint">${canSecrets
@@ -1232,8 +1244,9 @@ function renderTransfer(root) {
          <div class="field-hint">Asked again because the file will contain secrets.</div>
        </div>
        ${plainHttp ? '<div class="field-hint" data-tone="error">This page is not using https. On a private network that works, but the passphrase and the file travel unencrypted: use https when you can.</div>' : ''}
-       <div class="field"><button class="btn btn-primary btn-sm" id="exp-go">Download export</button></div>`)}
-    ${group('Import', 'Creates the apps from an export file with their environment variables, Git tokens and instances, then builds and starts the ones that were running. Apps whose name already exists are skipped.',
+       <div class="field"><button class="btn btn-primary btn-sm" id="exp-go">Download export</button></div>
+       <div id="exp-progress" class="field-hint"></div>`)}
+    ${group('Import', 'Creates the apps and databases from an export file with their environment variables, Git tokens, instances and links, builds and starts the apps that were running, and restores the data of the databases in the background. Names that already exist are skipped.',
       `<div class="field">
          <label class="field-label">Export file</label>
          <div class="cert-upload-row">
@@ -1247,17 +1260,19 @@ function renderTransfer(root) {
          <input class="input" id="imp-pass" type="password" autocomplete="off" />
        </div>
        <div class="field">
-         <label class="field-label" for="imp-node">Place instances on</label>
+         <label class="field-label" for="imp-node">Place instances and databases on</label>
          <select class="input" id="imp-node"><option value="">This server (primary)</option></select>
-         <div class="field-hint">Every imported app gets its instances on this one node. You can scale to other nodes afterwards.</div>
+         <div class="field-hint">Everything imported goes to this one node. You can scale apps to other nodes afterwards.</div>
        </div>
        <div class="field"><button class="btn btn-primary btn-sm" id="imp-go" disabled>Import</button></div>
        <div id="imp-result"></div>`)}
   `;
 
-  // Export
+  // Export: apps and databases to choose from
   const expList = document.getElementById('exp-list');
   const expAll = document.getElementById('exp-all');
+  const dbSection = document.getElementById('exp-db-section');
+  const dbList = document.getElementById('exp-db-list');
   api.listApps().then(apps => {
     if (!apps.length) { expList.innerHTML = '<div class="settings-note">No apps to export.</div>'; return; }
     expList.innerHTML = apps.map(a => `
@@ -1270,34 +1285,66 @@ function renderTransfer(root) {
     checks.forEach(c => c.onchange = () => { expAll.checked = checks.every(x => x.checked); });
   }).catch(e => { expList.innerHTML = notice(esc(e.message)); });
   expAll.onchange = () => expList.querySelectorAll('.exp-check').forEach(c => { c.checked = expAll.checked; });
+  api.listDatabases().then(dbs => {
+    if (!dbs.length) return;
+    dbSection.style.display = '';
+    dbList.innerHTML = dbs.map(d => `
+      <label class="check-row">
+        <input type="checkbox" class="exp-db-check" value="${d.id}" checked />
+        <span class="check-row-name">${esc(d.name)}</span>
+        <span class="check-row-meta">${esc(d.engine)} ${esc(d.version || '')} · ${esc(d.status || '')}</span>
+      </label>`).join('');
+  }).catch(() => {});
 
   const expSecrets = document.getElementById('exp-secrets');
   const expPwField = document.getElementById('exp-pw-field');
   expSecrets.onchange = () => { expPwField.style.display = expSecrets.checked ? '' : 'none'; };
   const expGo = document.getElementById('exp-go');
+  const progress = document.getElementById('exp-progress');
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
   expGo.onclick = async () => {
-    const checks = [...expList.querySelectorAll('.exp-check')];
-    const ids = checks.filter(c => c.checked).map(c => parseInt(c.value, 10));
+    const appChecks = [...expList.querySelectorAll('.exp-check')];
+    const appIds = appChecks.filter(c => c.checked).map(c => parseInt(c.value, 10));
+    const dbIds = [...dbList.querySelectorAll('.exp-db-check')].filter(c => c.checked).map(c => parseInt(c.value, 10));
     const pass = document.getElementById('exp-pass').value;
-    if (checks.length && !ids.length) return toast('Select at least one app', 'error');
+    if (!appIds.length && !dbIds.length) return toast('Select at least one app or database', 'error');
     if (pass.length < 12) return toast('Use a passphrase of at least 12 characters', 'error');
     if (pass !== document.getElementById('exp-pass2').value) return toast('The two passphrases are not the same', 'error');
     const withSecrets = expSecrets.checked && canSecrets;
     const pw = document.getElementById('exp-pw').value;
     if (withSecrets && !pw) return toast('Enter your account password', 'error');
     expGo.disabled = true;
+    progress.textContent = 'Starting…';
     try {
-      const res = await api.exportTransfer(ids.length === checks.length ? null : ids, pass, pw, withSecrets);
+      const { job_id } = await api.startExport({
+        app_ids: appIds.length === appChecks.length ? null : appIds,    // null: every app
+        database_ids: dbIds,
+        include_data: !!dbIds.length && document.getElementById('exp-data').checked && canData,
+        include_secrets: withSecrets,
+        passphrase: pass,
+        password: pw,
+      });
+      let status;
+      for (;;) {                                  // a database dump can take minutes: follow the job
+        await sleep(700);
+        status = await api.exportStatus(job_id);
+        progress.textContent = status.message;
+        if (status.state !== 'running') break;
+      }
+      if (status.state === 'failed') throw new Error(status.message);
+      const file = await api.downloadExport(job_id);
       const a = Object.assign(document.createElement('a'), {
-        href: URL.createObjectURL(res.blob),
-        download: res.filename || `cloudbase-export-${new Date().toISOString().slice(0, 10)}.cloudbase`,
+        href: URL.createObjectURL(file.blob),
+        download: file.filename || `cloudbase-export-${new Date().toISOString().slice(0, 10)}.cloudbase`,
       });
       a.click();
       URL.revokeObjectURL(a.href);
       ['exp-pass', 'exp-pass2', 'exp-pw'].forEach(id => { document.getElementById(id).value = ''; });
-      const n = ids.length || checks.length;
-      toast(`Exported ${n} app${n === 1 ? '' : 's'}`);
+      progress.textContent = `Downloaded: ${status.apps} app${status.apps === 1 ? '' : 's'}, ${status.databases} database${status.databases === 1 ? '' : 's'}.`;
+      toast('Export downloaded');
     } catch (e) {
+      progress.textContent = '';
       toast(e.message, 'error');
     } finally {
       expGo.disabled = false;
@@ -1326,20 +1373,27 @@ function renderTransfer(root) {
   }).catch(() => {});
 
   const li = (text, tone) => `<li${tone ? ` data-tone="${tone}"` : ''}>${esc(text)}</li>`;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   impGo.onclick = async () => {
     impGo.disabled = true;
-    result.innerHTML = '<div class="field-hint">Importing…</div>';
+    result.innerHTML = '<div class="field-hint">Importing… a large file takes a while to upload.</div>';
     try {
       const nodeVal = document.getElementById('imp-node').value;
       const res = await api.importTransfer(file, impPass.value, nodeVal ? parseInt(nodeVal, 10) : null);
       impPass.value = '';
-      const done = res.imported.map(a => li(`${a.name} — ${a.instances} instance${a.instances === 1 ? '' : 's'}${a.will_start ? ', will start' : ''}`));
-      const skipped = res.skipped.map(s => li(`${s.name} — skipped: ${s.reason}`, 'error'));
-      const warns = res.warnings.map(w => li(w));
+      const items = [
+        ...res.imported.map(a => li(`App ${a.name} — ${plural(a.instances, 'instance')}${a.will_start ? ', will start' : ''}`)),
+        ...res.databases.map(d => li(`Database ${d.name} (${d.engine} ${d.version}) — ${d.links ? `linked to ${plural(d.links, 'app')}` : 'not linked'}${d.restoring ? ', restoring its data in the background' : ''}`)),
+        ...res.skipped.map(s => li(`App ${s.name} — skipped: ${s.reason}`, 'error')),
+        ...res.skipped_databases.map(s => li(`Database ${s.name} — skipped: ${s.reason}`, 'error')),
+        ...res.warnings.map(w => li(w)),
+      ];
+      const done = res.imported.length + res.databases.length;
+      const skipped = res.skipped.length + res.skipped_databases.length;
       result.innerHTML = `
-        <div class="field-hint">${res.imported.length} imported, ${res.skipped.length} skipped.${res.imported.length ? ' Building and starting runs in the background: follow it from the overview.' : ''}</div>
-        <ul class="settings-note">${done.join('')}${skipped.join('')}${warns.join('')}</ul>`;
-      if (res.imported.length) toast('Apps imported');
+        <div class="field-hint">${done} imported, ${skipped} skipped.${done ? ' Building, starting and restoring run in the background: follow it from the overview.' : ''}</div>
+        <ul class="settings-note">${items.join('')}</ul>`;
+      if (done) toast('Import started');
     } catch (e) {
       result.innerHTML = `<div class="field-hint" data-tone="error">Import failed: ${esc(e.message)}</div>`;
     } finally {

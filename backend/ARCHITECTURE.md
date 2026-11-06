@@ -26,7 +26,7 @@ agent/                      the node agent (runs on remote servers, talks to the
 | `containers/` | Docker on one host: `client`, `naming`, `buildkit`, `dockerfiles`, `build`, `cleanup`, `apps`, `replicas`, `jobs`, `stats_logs`, `processes` |
 | `nginx/` | `paths`, `pages` (HTML), `config` (nginx config text), `files` (writers), `certbot` (read-only lookups), `certificates` (issuing), `panel` |
 | `dbs/` | managed databases: `docker`, `lifecycle`, `backup_restore`, `updates`, `ops`, `provision`, `view`, `relay`, `proxy`, `workers`, `backups`, `backup_scheduler`, … |
-| `transfer/` | export and import of apps with their secrets: `crypto` (passphrase encryption), `manifest` (what an export contains), `importer` |
+| `transfer/` | export and import of apps and databases as one encrypted file: `crypto` (passphrase encryption, framed, streams from disk), `archive` (tar with manifest and dumps), `manifest`/`databases` (what goes in), `jobs`/`exporter` (export runs in the background), `importer`/`db_import` (what comes out) |
 | `notify/` | `events`, `settings`, `config`, `emit`, `dispatch`, `watch`, `channels`, `mailer` |
 | `routers/` | one package per area (`applications/`, `nodes/`, `databases/`, `database_backups/`), each with a module per concern; the package `__init__` composes them in order |
 

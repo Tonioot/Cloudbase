@@ -148,10 +148,9 @@ export const api = {
   deploy:   (payload)  => request('POST',   '/apps', payload),
   updateApp:(id, data) => request('PUT',    `/apps/${id}`, data),
   deleteApp:(id)       => request('DELETE', `/apps/${id}`),
-  exportTransfer: (appIds, passphrase, password, includeSecrets) => transferRequest('/transfer/export', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ app_ids: appIds, passphrase, password, include_secrets: !!includeSecrets }),
-  }),
+  startExport:    (body) => request('POST', '/transfer/export', body),
+  exportStatus:   (jobId) => request('GET', `/transfer/export/${jobId}`),
+  downloadExport: (jobId) => transferRequest(`/transfer/export/${jobId}/download`, { method: 'GET' }),
   importTransfer: (file, passphrase, targetNodeId) => {
     const form = new FormData();
     form.append('file', file);

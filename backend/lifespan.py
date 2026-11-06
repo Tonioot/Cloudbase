@@ -15,6 +15,7 @@ from core.database import AsyncSessionLocal, init_db
 from core.runtime import IS_NODE
 from cron import scheduler as _cron
 from nginx.panel import _load_panel_https_domain
+from transfer import jobs
 from notify import dispatch as notify_dispatch
 from notify import watch as notify_watch
 from dbs import backup_scheduler as dbs_backup_scheduler
@@ -84,6 +85,7 @@ async def lifespan(app: FastAPI):
         _ensure_first_run_password()
 
     await init_db()
+    jobs.sweep()      # export files left behind by a crash or restart
     pm.set_main_loop(asyncio.get_event_loop())
 
     # Keep DB-backed global system settings in memory (with one-time config.yaml bootstrap).

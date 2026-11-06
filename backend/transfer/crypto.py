@@ -25,6 +25,7 @@ SALT_LEN = 16
 BASE_NONCE_LEN = 8
 HEADER_LEN = len(MAGIC) + SALT_LEN + 3 + BASE_NONCE_LEN
 FRAME_SIZE = 1024 * 1024
+MAX_SEALED_FRAME = 1024 * 1024 + 16        # a frame never exceeds FRAME_SIZE plus the GCM tag
 
 # scrypt cost: ~32 MB of memory and ~0.1 s. A file may carry its own parameters (so the cost
 # can be raised later), but never beyond these bounds: a crafted header must not be able to
@@ -104,7 +105,7 @@ def decrypt_bytes(blob: bytes, passphrase: str) -> bytes:
                 raise TransferCryptoError(BAD_FILE)      # ran out of data before a last frame
             (size,) = struct.unpack(">I", blob[pos:pos + 4])
             end = pos + 4 + size
-            if end > len(blob) or size < 16:
+            if end > len(blob) or size < 16 or size > MAX_SEALED_FRAME:
                 raise TransferCryptoError(BAD_FILE)
             last = end == len(blob)
             out.append(aead.decrypt(_nonce(base, index), blob[pos + 4:end], header + (b"\x01" if last else b"\x00")))
@@ -113,3 +114,50 @@ def decrypt_bytes(blob: bytes, passphrase: str) -> bytes:
             pos, index = end, index + 1
     except InvalidTag:
         raise TransferCryptoError(BAD_FILE) from None
+
+
+# ── files: the same format, streamed from and to disk (database dumps are large) ──
+def encrypt_file(src_path: str, dst_path: str, passphrase: str) -> None:
+    with open(src_path, "rb") as src, open(dst_path, "wb") as dst:
+        for piece in encrypt_chunks(iter(lambda: src.read(FRAME_SIZE), b""), passphrase):
+            dst.write(piece)
+
+
+def decrypt_file(src_path: str, dst_path: str, passphrase: str) -> None:
+    """Decrypt frame by frame so memory stays at about one frame whatever the file size.
+    On any error the partial output is removed."""
+    total = os.path.getsize(src_path)
+    try:
+        with open(src_path, "rb") as src, open(dst_path, "wb") as dst:
+            header = src.read(HEADER_LEN)
+            if len(header) < HEADER_LEN or header[:4] != MAGIC:
+                raise TransferCryptoError("This is not a Cloudbase export file")
+            salt = header[4:4 + SALT_LEN]
+            n_log2, r, p = header[4 + SALT_LEN], header[5 + SALT_LEN], header[6 + SALT_LEN]
+            base = header[7 + SALT_LEN:]
+            if not (10 <= n_log2 <= MAX_N_LOG2 and 1 <= r <= MAX_R and 1 <= p <= MAX_P):
+                raise TransferCryptoError("This is not a Cloudbase export file")
+            aead = AESGCM(_derive(passphrase or "", salt, n_log2, r, p))
+
+            pos, index = HEADER_LEN, 0
+            while True:
+                raw = src.read(4)
+                if len(raw) < 4:
+                    raise TransferCryptoError(BAD_FILE)          # ran out of data before a last frame
+                (size,) = struct.unpack(">I", raw)
+                end = pos + 4 + size
+                if end > total or size < 16 or size > MAX_SEALED_FRAME:
+                    raise TransferCryptoError(BAD_FILE)
+                last = end == total
+                try:
+                    dst.write(aead.decrypt(_nonce(base, index), src.read(size), header + (b"\x01" if last else b"\x00")))
+                except InvalidTag:
+                    raise TransferCryptoError(BAD_FILE) from None
+                if last:
+                    return
+                pos, index = end, index + 1
+    except BaseException:
+        if os.path.exists(dst_path):
+            os.remove(dst_path)
+        raise
+

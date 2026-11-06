@@ -80,7 +80,8 @@ def _opt(entry: dict, key: str, kind=None):
         return None
 
 
-async def import_apps(db: AsyncSession, entries: list[dict], target_node_id: Optional[int], actor: str) -> ImportResult:
+async def import_apps(db: AsyncSession, entries: list[dict], target_node_id: Optional[int], actor: str, perms=None) -> ImportResult:
+    """perms: the importing user's permissions, or None for the root account (which may do everything)."""
     local_node = await ensure_local_node(db)
     target = local_node
     if target_node_id is not None:
@@ -95,6 +96,8 @@ async def import_apps(db: AsyncSession, entries: list[dict], target_node_id: Opt
     for entry in entries:
         name = str(entry.get("name") or "").strip()
         try:
+            if perms is not None and "apps.deploy" not in perms:
+                raise HTTPException(403, "you need the 'apps.deploy' permission to import apps")
             result.imported.append(await _import_one(db, entry, target_id, target_is_local, actor, result.warnings))
         except HTTPException as exc:
             await db.rollback()

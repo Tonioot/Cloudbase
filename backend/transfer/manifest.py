@@ -63,7 +63,7 @@ def app_entry(app: Application, replicas: list[ApplicationReplica], include_secr
 
 async def build_manifest(db: AsyncSession, app_ids: Optional[list[int]] = None, include_secrets: bool = False) -> dict:
     query = select(Application).order_by(Application.name)
-    if app_ids:
+    if app_ids is not None:               # None: every app. A list, even an empty one: exactly those
         query = query.where(Application.id.in_(app_ids))
     apps = (await db.execute(query)).scalars().all()
 
@@ -92,6 +92,14 @@ def check_manifest(manifest) -> list[dict]:
     if not isinstance(apps, list) or not all(isinstance(a, dict) for a in apps):
         raise ValueError("The export file is missing its list of apps")
     return apps
+
+
+def databases_of(manifest: dict) -> list[dict]:
+    """The database entries of an export (older files have none)."""
+    entries = manifest.get("databases") or []
+    if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
+        raise ValueError("The export file has a damaged list of databases")
+    return entries
 
 
 async def count_apps(db: AsyncSession) -> int:

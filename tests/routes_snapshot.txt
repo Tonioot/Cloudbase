@@ -82,6 +82,8 @@ GET     /api/system/log-sources
 GET     /api/system/logs
 GET     /api/system/nginx-config
 GET     /api/system/settings
+GET     /api/transfer/export/{job_id}
+GET     /api/transfer/export/{job_id}/download
 GET     /api/users
 GET     /app
 GET     /app.html

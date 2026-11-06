@@ -1,11 +1,11 @@
 import asyncio
 import json
 import logging
+from dbs.create import create_database_now
 from datetime import timedelta, datetime, timezone
 from typing import Optional
 from fastapi import Request, Query, Response, HTTPException, APIRouter, Depends
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from core import auth as _auth
 from dbs import engines as db_engines, links as db_links, proxy as db_proxy, tls as db_tls
@@ -13,10 +13,9 @@ from dbs import docker as dbs_docker
 from dbs import lifecycle as dbs_lifecycle
 from core.audit import log_audit
 from core.database import get_db
-from core.env_crypto import encrypt_text
 from core.models import DatabaseStatsHistory, DatabaseLink, Database, Node
 from dbs.ops import _get_or_404, _links_for, _node_for, _node_reachable, _require_idle, _run_on_node, _spawn, _start_operation
-from dbs.provision import NAME_RE, _data_dir, _new_credentials, _next_database_id, _validate_limits
+from dbs.provision import _data_dir, _validate_limits
 from dbs.relay import _public_host, push_proxies
 from dbs.state import _busy, _operation
 from dbs.view import _as_dict, _client_ip, _safe_public_port
@@ -73,55 +72,9 @@ async def create_database(
     _user: dict = Depends(_auth.require_permission("databases.create")),
     actor: str = Depends(_auth.get_current_actor),
 ):
-    name = (req.name or "").strip().lower()
-    if not NAME_RE.match(name):
-        raise HTTPException(400, "Name must be 3–32 characters: lowercase letters, digits and dashes, starting with a letter")
-    if name in db_engines.RESERVED_NAMES:
-        raise HTTPException(400, f"'{name}' is reserved, pick another name")
-    try:
-        engine = db_engines.get_engine(req.engine)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    version = req.version or engine.versions[0]
-    if version not in engine.versions:
-        raise HTTPException(400, f"{engine.label} {version} is not offered. Choose one of: {', '.join(engine.versions)}")
-    _validate_limits(engine.key, req.cpu_limit, req.memory_limit_mb)
-
-    if req.node_id is not None:
-        node = await db.get(Node, req.node_id)
-        if node is None:
-            raise HTTPException(404, "Node not found")
-    else:
-        node = (await db.execute(select(Node).where(Node.is_local == True))).scalar_one_or_none()
-        if node is None:
-            raise HTTPException(409, "No primary node registered yet")
-    if not _node_reachable(node):
-        raise HTTPException(409, f"Node '{node.name}' is offline or disabled")
-
-    database = Database(
-        id=await _next_database_id(db),
-        name=name,
-        engine=engine.key,
-        version=version,
-        node_id=node.id,
-        status="creating",
-        desired_state="running",
-        credentials=encrypt_text(json.dumps(_new_credentials(name, engine.key))),
-        cpu_limit=req.cpu_limit,
-        memory_limit_mb=req.memory_limit_mb,
-    )
-    db.add(database)
-    try:
-        await db.flush()
-    except IntegrityError:
-        await db.rollback()
-        raise HTTPException(409, f"A database named '{name}' already exists")
-    await log_audit(db, "database.create", actor=actor, detail={
-        "database_id": database.id, "name": name, "engine": engine.key, "version": version, "node": node.name,
-    })
-    await db.commit()
-
-    _spawn(database.id, lambda: _start_operation(database.id, "ensure"))
+    database, node = await create_database_now(
+        db, name_in=req.name, engine_in=req.engine, version_in=req.version, node_id=req.node_id,
+        cpu_limit=req.cpu_limit, memory_limit_mb=req.memory_limit_mb, actor=actor)
     return _as_dict(database, node)
 
 
