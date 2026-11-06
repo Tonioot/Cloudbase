@@ -1,0 +1,15 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["backend"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 140
+target-version = "py311"
+extend-exclude = ["backend/venv", "venv", ".dev", "scripts/__pycache__"]
+
+[tool.ruff.lint]
+# What CI enforces: syntax errors and pyflakes (unused imports, undefined names,
+# unused variables, ...). `ruff check --select BLE001,S110` lists the swallowed
+# exceptions that still need a log line; they are not enforced yet.
+select = ["E9", "F"]
