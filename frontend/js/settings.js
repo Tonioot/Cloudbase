@@ -703,7 +703,7 @@ async function openUserDialog(user = null) {
   };
 }
 
-const PERM_GROUP_LABELS = { apps: 'Apps', nodes: 'Nodes', system: 'System', users: 'Users', roles: 'Roles', audit: 'Audit log', tokens: 'Git tokens' };
+const PERM_GROUP_LABELS = { apps: 'Apps', nodes: 'Nodes', system: 'System', users: 'Users', roles: 'Roles', audit: 'Audit log', tokens: 'Git tokens', secrets: 'Secrets' };
 
 async function openRoleDialog(role = null, perms = null) {
   if (!perms) { try { perms = await api.listPermissions(); } catch (e) { toast(e.message, 'error'); return; } }
@@ -1203,25 +1203,33 @@ function openChannelDialog(state, ch, reload) {
 
 function renderTransfer(root) {
   const plainHttp = location.protocol !== 'https:';
+  // Secrets are write-only everywhere else, so taking them out needs its own permission.
+  const canSecrets = isRoot() || currentPerms().has('secrets.export');
   root.innerHTML = `
-    ${group('Export', 'Downloads one encrypted file with the selected apps: repository, commands, domains, Docker limits, the number of instances, environment variables and Git tokens.',
+    ${group('Export', 'Downloads one encrypted file with the selected apps: repository, commands, domains, Docker limits and the number of instances, and optionally their environment variables and Git tokens.',
       `<div class="settings-list-head">
          <label class="check-inline"><input type="checkbox" id="exp-all" checked /> Select all</label>
        </div>
        <div id="exp-list" class="check-list"></div>
        <div class="field">
+         <label class="check-inline"><input type="checkbox" id="exp-secrets" ${canSecrets ? '' : 'disabled'} /> Include environment variables and Git tokens</label>
+         <div class="field-hint">${canSecrets
+           ? 'Off: the file has the settings and the names of the variables, not their values. On: the values are in the file, readable by anyone who has the file and the passphrase.'
+           : 'Taking secrets out needs the “Secrets → export” permission, which only the root account can give. The file will have the settings and the names of the variables, not their values.'}</div>
+       </div>
+       <div class="field">
          <label class="field-label" for="exp-pass">Passphrase for the file</label>
          <input class="input" id="exp-pass" type="password" autocomplete="new-password" placeholder="At least 12 characters" />
-         <div class="field-hint">The file contains every secret of these apps. Without this passphrase it cannot be opened, and it cannot be recovered if you lose it.</div>
+         <div class="field-hint">Without this passphrase the file cannot be opened, and it cannot be recovered if you lose it.</div>
        </div>
        <div class="field">
          <label class="field-label" for="exp-pass2">Repeat passphrase</label>
          <input class="input" id="exp-pass2" type="password" autocomplete="new-password" />
        </div>
-       <div class="field">
+       <div class="field" id="exp-pw-field" style="display:none">
          <label class="field-label" for="exp-pw">Your account password</label>
          <input class="input" id="exp-pw" type="password" autocomplete="current-password" />
-         <div class="field-hint">Asked again because the file contains your secrets.</div>
+         <div class="field-hint">Asked again because the file will contain secrets.</div>
        </div>
        ${plainHttp ? '<div class="field-hint" data-tone="error">This page is not using https. On a private network that works, but the passphrase and the file travel unencrypted: use https when you can.</div>' : ''}
        <div class="field"><button class="btn btn-primary btn-sm" id="exp-go">Download export</button></div>`)}
@@ -1263,6 +1271,9 @@ function renderTransfer(root) {
   }).catch(e => { expList.innerHTML = notice(esc(e.message)); });
   expAll.onchange = () => expList.querySelectorAll('.exp-check').forEach(c => { c.checked = expAll.checked; });
 
+  const expSecrets = document.getElementById('exp-secrets');
+  const expPwField = document.getElementById('exp-pw-field');
+  expSecrets.onchange = () => { expPwField.style.display = expSecrets.checked ? '' : 'none'; };
   const expGo = document.getElementById('exp-go');
   expGo.onclick = async () => {
     const checks = [...expList.querySelectorAll('.exp-check')];
@@ -1271,11 +1282,12 @@ function renderTransfer(root) {
     if (checks.length && !ids.length) return toast('Select at least one app', 'error');
     if (pass.length < 12) return toast('Use a passphrase of at least 12 characters', 'error');
     if (pass !== document.getElementById('exp-pass2').value) return toast('The two passphrases are not the same', 'error');
+    const withSecrets = expSecrets.checked && canSecrets;
     const pw = document.getElementById('exp-pw').value;
-    if (!pw) return toast('Enter your account password', 'error');
+    if (withSecrets && !pw) return toast('Enter your account password', 'error');
     expGo.disabled = true;
     try {
-      const res = await api.exportTransfer(ids.length === checks.length ? null : ids, pass, pw);
+      const res = await api.exportTransfer(ids.length === checks.length ? null : ids, pass, pw, withSecrets);
       const a = Object.assign(document.createElement('a'), {
         href: URL.createObjectURL(res.blob),
         download: res.filename || `cloudbase-export-${new Date().toISOString().slice(0, 10)}.cloudbase`,

@@ -26,7 +26,6 @@ _PERMISSION_WRITE_MAP = (
     ("/api/nodes",     "nodes.configure"),
     ("/api/databases", "databases.manage"),
     ("/api/system",    "system.manage"),
-    ("/api/transfer",  "system.manage"),
     ("/api/users",     "users.manage"),
     ("/api/roles",     "roles.manage"),
     ("/api/audit-log", "audit.view"),
@@ -39,7 +38,6 @@ _PERMISSION_READ_MAP = (
     ("/api/nodes",     "nodes.view"),
     ("/api/databases", "databases.view"),
     ("/api/system",    "system.manage"),
-    ("/api/transfer",  "system.manage"),
     ("/api/users",     "users.manage"),
     ("/api/roles",     "roles.manage"),
     ("/api/audit-log", "audit.view"),
@@ -67,6 +65,8 @@ _PERMISSION_PREFIX_OVERRIDES: tuple[tuple[str, str, str | None], ...] = (
     # Apps write/delete: each endpoint has its own granular Depends() check.
     # Middleware only requires apps.view as a backstop so it never over-blocks.
     ("POST",   "/api/apps",                  "apps.view"),
+    # Export/import: each endpoint checks apps.configure / apps.deploy, and secrets.export for secrets
+    ("POST",   "/api/transfer",              "apps.view"),
     ("PUT",    "/api/apps/",                 "apps.view"),
     ("DELETE", "/api/apps/",                 "apps.view"),
     ("PATCH",  "/api/apps/",                 "apps.view"),

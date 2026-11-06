@@ -285,6 +285,7 @@ async def init_db():
         ("users.manage",      "Create, edit and delete users"),
         ("roles.manage",      "Create, edit and delete roles"),
         ("tokens.manage",     "Manage Git tokens (access tokens for private repositories)"),
+        ("secrets.export",    "Download environment variables and Git tokens in clear text (app export). Not part of the Administrator role: grant it on purpose"),
     ]
 
     # Rename stale permission names that may already exist in the database
@@ -356,7 +357,10 @@ async def init_db():
         # so they cannot drift from the source of truth.
         from sqlalchemy import delete as _delete
         viewer_perms = ["apps.view", "nodes.view", "databases.view", "audit.view", "notifications.view"]
-        admin_perms  = [p for p, _ in ALL_PERMISSIONS]
+        # Permissions that reveal secrets are never part of a built-in role. Only the root account
+        # (which bypasses roles) has them, and a custom role gets them when someone chooses to.
+        OPT_IN_PERMISSIONS = {"secrets.export"}
+        admin_perms  = [p for p, _ in ALL_PERMISSIONS if p not in OPT_IN_PERMISSIONS]
 
         for role_name, role_desc, perms in [
             ("Viewer",        "Read-only access to all resources", viewer_perms),

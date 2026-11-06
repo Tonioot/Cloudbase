@@ -135,6 +135,10 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
     is_cron = bool(cron_schedule)
     no_web = (bool(entry.get("no_web")) or is_cron) and not is_static
     env = _clean_env(entry.get("env_vars"), name, warnings)
+    if entry.get("env_names") and not env:
+        warnings.append(f"{name}: this export has no secrets. Set these environment variables yourself: {', '.join(map(str, entry['env_names']))}")
+    if entry.get("has_git_token") and not entry.get("git_token"):
+        warnings.append(f"{name}: add its Git token in the app's settings")
 
     # Optional settings: only passed when the file has them, so a missing one keeps its default.
     optional = {k: v for k, v in {

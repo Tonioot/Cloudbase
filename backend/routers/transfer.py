@@ -27,7 +27,8 @@ MAX_IMPORT_BYTES = 64 * 1024 * 1024
 class ExportRequest(BaseModel):
     app_ids: Optional[list[int]] = None   # None or empty: every app
     passphrase: str
-    password: str                         # the account password again: this file holds every secret
+    include_secrets: bool = False         # environment variables and Git tokens; needs secrets.export
+    password: str = ""                    # the account password again; required when secrets are included
 
 
 def _client_ip(request: Request) -> str:
@@ -61,20 +62,25 @@ async def _confirm_password(db: AsyncSession, username: str, password: str, requ
 async def export_bundle(
     req: ExportRequest,
     request: Request,
-    user: dict = Depends(_auth.require_permission("system.manage")),
+    user: dict = Depends(_auth.require_permission("apps.configure")),
     actor: str = Depends(_auth.get_current_actor),
     db: AsyncSession = Depends(get_db),
 ):
     _require_private_transport(request)
-    await _confirm_password(db, user["username"], req.password, request)
+    if req.include_secrets:
+        # Secrets are write-only everywhere else in Cloudbase (the API never returns them), so reading
+        # them back out through an export needs its own permission, not just the right to edit apps.
+        if user.get("permissions") is not None and "secrets.export" not in user["permissions"]:
+            raise HTTPException(403, "Permission 'secrets.export' required to export environment variables and Git tokens")
+        await _confirm_password(db, user["username"], req.password, request)
     try:
         crypto.check_passphrase(req.passphrase)
     except crypto.TransferCryptoError as exc:
         raise HTTPException(400, str(exc))
 
-    content = await manifest.build_manifest(db, req.app_ids)
+    content = await manifest.build_manifest(db, req.app_ids, req.include_secrets)
     blob = await asyncio.to_thread(crypto.encrypt_bytes, json.dumps(content).encode("utf-8"), req.passphrase)
-    await log_audit(db, "transfer.export", actor=actor, detail={"apps": len(content["apps"])})   # never the content
+    await log_audit(db, "transfer.export", actor=actor, detail={"apps": len(content["apps"]), "secrets": req.include_secrets})   # never the content
     await db.commit()
     return Response(
         content=blob,
@@ -94,7 +100,7 @@ async def import_bundle(
     file: UploadFile = File(...),
     passphrase: str = Form(...),
     target_node_id: Optional[int] = Form(None),
-    _user: dict = Depends(_auth.require_permission("system.manage")),
+    _user: dict = Depends(_auth.require_permission("apps.deploy")),
     actor: str = Depends(_auth.get_current_actor),
     db: AsyncSession = Depends(get_db),
 ):

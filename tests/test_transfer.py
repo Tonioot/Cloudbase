@@ -76,8 +76,9 @@ def _load_app(name: str):
     return _run(go())
 
 
-def _export(client, app_ids=None, passphrase=PASSPHRASE, password=PASSWORD):
-    return client.post("/api/transfer/export", json={"app_ids": app_ids, "passphrase": passphrase, "password": password})
+def _export(client, app_ids=None, passphrase=PASSPHRASE, password=PASSWORD, secrets=True):
+    return client.post("/api/transfer/export", json={
+        "app_ids": app_ids, "passphrase": passphrase, "password": password, "include_secrets": secrets})
 
 
 def _import(client, blob: bytes, passphrase=PASSPHRASE, **form):
@@ -277,3 +278,105 @@ def test_import_into_an_unknown_node(admin):
 
 def test_the_old_unencrypted_endpoints_are_gone(admin):
     assert admin.post("/api/apps/export", json={}).status_code in (404, 405, 422)
+
+
+# ── who may take secrets out ──────────────────────────────────────────────────
+# Secrets are write-only everywhere else in Cloudbase, so the export must not become a side door.
+_counter = iter(range(1000))
+
+
+def _login_with_permissions(admin, permissions: list[str]):
+    """A new user, in a new role holding exactly these permissions, logged in on its own client."""
+    from fastapi.testclient import TestClient
+    n = next(_counter)
+    ids = {p["name"]: p["id"] for p in admin.get("/api/roles/permissions").json()}
+    role = admin.post("/api/roles", json={"name": f"tx-role-{n}", "description": "test",
+                                          "permission_ids": [ids[p] for p in permissions]})
+    assert role.status_code == 200, role.text
+    admin.post("/api/users", json={"username": f"tx-user-{n}", "password": "a-test-password", "role_id": role.json()["id"]})
+    auth._login_attempts.clear()
+    client = TestClient(admin.app, base_url="http://localhost")
+    assert client.post("/api/auth/login", json={"username": f"tx-user-{n}", "password": "a-test-password"}).status_code == 200
+    return client
+
+
+def test_an_export_without_secrets_has_the_names_but_never_the_values(admin):
+    from transfer import crypto
+    app_id = _make_app("tx-nosecrets", port=9190)
+    try:
+        r = _export(admin, [app_id], secrets=False, password="")          # no password needed without secrets
+        assert r.status_code == 200
+        text = crypto.decrypt_bytes(r.content, PASSPHRASE).decode()
+        assert SECRET_ENV not in text and SECRET_TOKEN not in text
+        entry = json.loads(text)["apps"][0]
+        assert json.loads(text)["secrets_included"] is False
+        assert entry["env_vars"] == {} and entry["env_names"] == ["NODE_ENV", "SECRET_KEY"]
+        assert entry["git_token"] is None and entry["has_git_token"] is True
+    finally:
+        _delete_app(app_id)
+
+
+def test_a_role_without_secrets_export_cannot_take_secrets_even_with_system_manage(admin):
+    app_id = _make_app("tx-denied", port=9200)
+    try:
+        user = _login_with_permissions(admin, ["apps.view", "apps.configure", "system.manage"])
+        r = _export(user, [app_id], secrets=True)
+        assert r.status_code == 403 and "secrets.export" in r.json()["detail"]
+        assert _export(user, [app_id], secrets=False, password="").status_code == 200      # settings only is fine
+    finally:
+        _delete_app(app_id)
+
+
+def test_the_administrator_role_does_not_include_secrets_export(admin):
+    roles = {r["name"]: r["id"] for r in admin.get("/api/roles").json()}
+    admin.post("/api/users", json={"username": "tx-administrator", "password": "a-test-password", "role_id": roles["Administrator"]})
+    from fastapi.testclient import TestClient
+    auth._login_attempts.clear()
+    user = TestClient(admin.app, base_url="http://localhost")
+    assert user.post("/api/auth/login", json={"username": "tx-administrator", "password": "a-test-password"}).status_code == 200
+    perms = user.get("/api/auth/check").json()["permissions"]
+    assert "apps.configure" in perms and "system.manage" in perms          # a full administrator ...
+    assert "secrets.export" not in perms                                   # ... still has to be given this on purpose
+    assert _export(user, secrets=True).status_code == 403
+    # the permission exists and the root account can hand it out
+    assert any(p["name"] == "secrets.export" for p in admin.get("/api/roles/permissions").json())
+
+
+def test_a_role_that_was_given_secrets_export_can_take_secrets_with_its_own_password(admin):
+    app_id = _make_app("tx-allowed", port=9210)
+    try:
+        user = _login_with_permissions(admin, ["apps.view", "apps.configure", "secrets.export"])
+        assert _export(user, [app_id], secrets=True, password=PASSWORD).status_code == 403     # root's password is not theirs
+        auth._login_attempts.clear()
+        assert _export(user, [app_id], secrets=True, password="a-test-password").status_code == 200
+    finally:
+        _delete_app(app_id)
+
+
+def test_nobody_can_create_a_role_with_secrets_export_except_root(admin):
+    user = _login_with_permissions(admin, ["apps.view", "roles.manage"])
+    ids = {p["name"]: p["id"] for p in admin.get("/api/roles/permissions").json()}
+    r = user.post("/api/roles", json={"name": "tx-sneaky", "permission_ids": [ids["secrets.export"]]})
+    assert r.status_code in (401, 403)
+
+
+def test_importing_a_file_without_secrets_says_what_to_fill_in(admin, deploys):
+    app_id = _make_app("tx-fillin", port=9220, instances=1)
+    blob = _export(admin, [app_id], secrets=False, password="").content
+    _delete_app(app_id)
+    body = _import(admin, blob).json()
+    app, _ = _load_app("tx-fillin")
+    try:
+        warnings = " ".join(body["warnings"])
+        assert "NODE_ENV, SECRET_KEY" in warnings and "Git token" in warnings
+        from core.env_crypto import decrypt_env
+        assert decrypt_env(app.env_vars) == {} and app.github_token is None
+    finally:
+        _delete_app(app.id)
+
+
+def test_importing_needs_the_right_to_deploy_apps(admin):
+    user = _login_with_permissions(admin, ["apps.view"])
+    from transfer import crypto, manifest
+    blob = crypto.encrypt_bytes(json.dumps({"format": manifest.FORMAT, "version": 1, "apps": []}).encode(), PASSPHRASE)
+    assert _import(user, blob).status_code == 403

@@ -39,21 +39,29 @@ def _json(value: Optional[str], default):
         return default
 
 
-def app_entry(app: Application, replicas: list[ApplicationReplica]) -> dict:
+def app_entry(app: Application, replicas: list[ApplicationReplica], include_secrets: bool) -> dict:
     entry = {"name": app.name}
     for field in PLAIN_FIELDS:
         entry[field] = getattr(app, field)
     for field in JSON_FIELDS:
         entry[field] = _json(getattr(app, field), JSON_DEFAULTS[field])
-    entry["env_vars"] = decrypt_env(app.env_vars or "")
-    entry["git_token"] = (decrypt_text(app.github_token, fallback_plaintext=True) or None) if app.github_token else None
+    env = decrypt_env(app.env_vars or "")
+    if include_secrets:
+        entry["env_vars"] = env
+        entry["git_token"] = (decrypt_text(app.github_token, fallback_plaintext=True) or None) if app.github_token else None
+    else:
+        # Names only, so the import can tell you what to fill in. Never the values.
+        entry["env_vars"] = {}
+        entry["env_names"] = sorted(env)
+        entry["git_token"] = None
+        entry["has_git_token"] = bool(app.github_token)
     entry["instances"] = len(replicas)
     # Should the import start it? Yes when it was running (cron jobs: when enabled, which is a field above).
     entry["run"] = any(r.status in ("running", "starting") for r in replicas)
     return entry
 
 
-async def build_manifest(db: AsyncSession, app_ids: Optional[list[int]] = None) -> dict:
+async def build_manifest(db: AsyncSession, app_ids: Optional[list[int]] = None, include_secrets: bool = False) -> dict:
     query = select(Application).order_by(Application.name)
     if app_ids:
         query = query.where(Application.id.in_(app_ids))
@@ -69,7 +77,8 @@ async def build_manifest(db: AsyncSession, app_ids: Optional[list[int]] = None) 
         "format": FORMAT,
         "version": VERSION,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "apps": [app_entry(a, replicas_by_app[a.id]) for a in apps],
+        "secrets_included": include_secrets,
+        "apps": [app_entry(a, replicas_by_app[a.id], include_secrets) for a in apps],
     }
 
 
