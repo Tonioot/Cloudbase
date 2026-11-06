@@ -2,6 +2,8 @@
 testpaths = ["tests"]
 pythonpath = ["backend"]
 addopts = "-q"
+# datetime.utcnow() is used throughout the backend; that cleanup is separate from the tests
+filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.ruff]
 line-length = 140

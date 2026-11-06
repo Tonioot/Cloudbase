@@ -121,6 +121,10 @@ def _local_imports(path: Path, module_names: set[str]):
             yield found, id(node) not in toplevel
 
 
+# modules whose job is to wire routers together
+WIRING = {"main", "lifespan"}
+
+
 def _area(module: str) -> str:
     """routers.applications.crud -> routers.applications; anything else is its own area."""
     parts = module.split(".")
@@ -138,9 +142,9 @@ def _layering() -> dict:
             if inside_function:
                 lazy[mod] = lazy.get(mod, 0) + 1
             # Logic must not depend on HTTP routers, and routers must not depend on each
-            # other: shared logic belongs in a service. Only main may wire routers together.
+            # other: shared logic belongs in a service. Only the wiring modules (main, lifespan) may import routers.
             for target in targets:
-                if target.startswith("routers.") and mod != "main" and _area(target) != _area(mod):
+                if target.startswith("routers.") and mod not in WIRING and _area(target) != _area(mod):
                     upward.append(f"{mod} -> {_area(target)}")
     return {"upward_imports": sorted(set(upward)), "function_level_imports": dict(sorted(lazy.items()))}
 

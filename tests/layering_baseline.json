@@ -1,7 +1,8 @@
 {
   "upward_imports": [
     "routers.database_backups -> routers.databases",
-    "routers.databases -> routers.database_backups"
+    "routers.databases -> routers.database_backups",
+    "workers.stats -> routers.stats"
   ],
   "function_level_imports": {
     "core.database": 2,
