@@ -1887,7 +1887,7 @@ function _enableSettingsForEditor() {
 
 const VP_PAGES = ['downtime', 'update', 'restart', 'starting'];
 
-// Defaults the server uses for empty fields (nginx_manager.PAGE_DEFAULTS)
+// Defaults the server uses for empty fields (nginx/pages.py PAGE_DEFAULTS)
 const MAINT_PAGE_DEFAULTS = {
   downtime: { title: "Down for Maintenance", message: "We'll be back shortly.", color: '#e5484d' },
   update: { title: "Updating…", message: "We’re deploying a new version. Check back soon.", color: '#f5a524' },
