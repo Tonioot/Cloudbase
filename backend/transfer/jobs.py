@@ -2,8 +2,9 @@
 
 An export with database dumps can take minutes, longer than a browser request or a proxy will wait,
 so it runs in the background: the page starts it, polls its progress and then downloads the file.
-The finished file is encrypted, lives in a private folder, is only handed to the user who started
-it, is deleted after the first download and is swept away after an hour at the latest.
+The finished file lives in a private folder (owner-only), is only handed to the user who started it,
+is deleted after the first download and is swept away after an hour at the latest. It is not
+encrypted: with secrets or data in it, it must be treated like a password file.
 """
 import logging
 import os
@@ -76,9 +77,8 @@ def remove(job: ExportJob) -> None:
 
 
 def delete_files(job: ExportJob) -> None:
-    for path in (job.path, job.path + ".tar"):
-        try:
-            if path and os.path.exists(path):
-                os.remove(path)
-        except OSError:
-            log.warning("[transfer] could not delete %s", path)
+    try:
+        if job.path and os.path.exists(job.path):
+            os.remove(job.path)
+    except OSError:
+        log.warning("[transfer] could not delete %s", job.path)

@@ -6,7 +6,7 @@ from typing import Optional
 
 from core.audit import log_audit
 from core.database import AsyncSessionLocal
-from transfer import archive, crypto, databases, jobs, manifest
+from transfer import archive, databases, jobs, manifest
 
 log = logging.getLogger("cloudbase.transfer")
 
@@ -18,10 +18,8 @@ async def run_export(
     database_ids: Optional[list[int]],
     include_secrets: bool,
     include_data: bool,
-    passphrase: str,
     actor: str,
 ) -> None:
-    tar_path = job.path + ".tar"
     error: Optional[str] = None
     detail: dict = {}
     try:
@@ -35,11 +33,8 @@ async def run_export(
         job.apps, job.databases = len(content["apps"]), len(content["databases"])
 
         job.message = "Packing…"
-        await asyncio.to_thread(archive.write, tar_path, content, files)
-        os.chmod(tar_path, 0o600)             # it holds everything in the clear until it is encrypted
-        job.message = "Encrypting…"
-        await asyncio.to_thread(crypto.encrypt_file, tar_path, job.path, passphrase)
-        os.chmod(job.path, 0o600)
+        await asyncio.to_thread(archive.write, job.path, content, files)
+        os.chmod(job.path, 0o600)             # it may hold secrets and data in the clear: owner only
         job.size = os.path.getsize(job.path)
         detail = {"apps": job.apps, "databases": job.databases, "secrets": include_secrets, "data": bool(files)}
     except Exception as exc:
@@ -47,9 +42,6 @@ async def run_export(
         log.warning("[transfer] export failed: %s", error)
         jobs.delete_files(job)                # the job itself stays, so the page can show why it failed
         detail = {"failed": True, "error": error}
-    finally:
-        if os.path.exists(tar_path):
-            os.remove(tar_path)               # the unencrypted archive must never stay behind
 
     try:
         async with AsyncSessionLocal() as db:

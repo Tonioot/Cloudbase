@@ -1,4 +1,4 @@
-"""The plain content of an export file (it is encrypted as a whole, see crypto.py).
+"""The content of an export file.
 
 A tar archive with `manifest.json` and one `data/<n>.dump` member per database dump. It is never
 extracted to disk by name: members are read by their exact, fixed name, so a hand-made archive

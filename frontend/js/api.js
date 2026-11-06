@@ -151,10 +151,9 @@ export const api = {
   startExport:    (body) => request('POST', '/transfer/export', body),
   exportStatus:   (jobId) => request('GET', `/transfer/export/${jobId}`),
   downloadExport: (jobId) => transferRequest(`/transfer/export/${jobId}/download`, { method: 'GET' }),
-  importTransfer: (file, passphrase, targetNodeId) => {
+  importTransfer: (file, targetNodeId) => {
     const form = new FormData();
     form.append('file', file);
-    form.append('passphrase', passphrase);
     if (targetNodeId) form.append('target_node_id', String(targetNodeId));
     return transferRequest('/transfer/import', { method: 'POST', body: form });
   },

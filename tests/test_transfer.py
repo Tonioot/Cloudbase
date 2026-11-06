@@ -10,7 +10,6 @@ import pytest
 from core import auth
 from conftest import PASSWORD
 
-PASSPHRASE = "a long enough passphrase"
 SECRET_ENV = "s3cr3t-env-value-9f2c"
 SECRET_TOKEN = "ghp_exampleTokenValue0123456789"
 
@@ -79,9 +78,9 @@ def _load_app(name: str):
     return _run(go())
 
 
-def _start_export(client, app_ids=None, passphrase=PASSPHRASE, password=PASSWORD, secrets=True, databases=None, data=False):
+def _start_export(client, app_ids=None, password=PASSWORD, secrets=True, databases=None, data=False):
     return client.post("/api/transfer/export", json={
-        "app_ids": app_ids, "database_ids": databases, "include_data": data, "passphrase": passphrase,
+        "app_ids": app_ids, "database_ids": databases, "include_data": data,
         "password": password, "include_secrets": secrets})
 
 
@@ -101,23 +100,22 @@ def _export(client, *args, **kwargs):
 
 
 def _blob(content: dict, files=None) -> bytes:
-    """An export file made by hand (archive inside, encrypted)."""
+    """An export file made by hand."""
     import tempfile
-    from transfer import archive, crypto
+    from transfer import archive
     with tempfile.TemporaryDirectory() as tmp:
-        tar, enc = os.path.join(tmp, "a.tar"), os.path.join(tmp, "a.enc")
-        archive.write(tar, content, files)
-        crypto.encrypt_file(tar, enc, PASSPHRASE)
-        return open(enc, "rb").read()
+        path = os.path.join(tmp, "a.cloudbase")
+        archive.write(path, content, files)
+        return open(path, "rb").read()
 
 
 def _manifest_in(blob: bytes) -> dict:
-    from transfer import archive, crypto
-    return archive.manifest_of_bytes(crypto.decrypt_bytes(blob, PASSPHRASE))
+    from transfer import archive
+    return archive.manifest_of_bytes(blob)
 
 
-def _import(client, blob: bytes, passphrase=PASSPHRASE, **form):
-    return client.post("/api/transfer/import", files={"file": ("x.cloudbase", blob)}, data={"passphrase": passphrase, **form})
+def _import(client, blob: bytes, **form):
+    return client.post("/api/transfer/import", files={"file": ("x.cloudbase", blob)}, data=form)
 
 
 @pytest.fixture
@@ -138,19 +136,22 @@ def deploys(monkeypatch):
 
 
 # ── export ───────────────────────────────────────────────────────────────────
-def test_export_is_encrypted_and_needs_the_password(admin):
+def test_secrets_are_only_in_the_file_when_asked_for_and_need_the_password(admin):
     app_id = _make_app("tx-secrets", port=9100)
     try:
-        r = _export(admin, [app_id])
+        r = _export(admin, [app_id])                                    # secrets requested (and allowed: root)
         assert r.status_code == 200
         assert r.headers["content-type"] == "application/octet-stream"
         assert r.headers["cache-control"] == "no-store"
         assert r.headers["content-disposition"].endswith('.cloudbase"')
-        for plain in (SECRET_ENV.encode(), SECRET_TOKEN.encode(), b"tx-secrets", b"github.com"):
-            assert plain not in r.content, plain
+        entry = _manifest_in(r.content)["apps"][0]
+        assert entry["env_vars"]["SECRET_KEY"] == SECRET_ENV and entry["git_token"] == SECRET_TOKEN
 
-        assert _export(admin, [app_id], password="not my password").status_code == 403
-        assert _export(admin, [app_id], passphrase="short").status_code == 400
+        plain = _export(admin, [app_id], secrets=False, password="")    # not asked for: nothing leaks
+        assert SECRET_ENV.encode() not in plain.content and SECRET_TOKEN.encode() not in plain.content
+
+        assert _export(admin, [app_id], password="not my password").status_code == 403    # wrong password
+        assert _export(admin, [app_id], password="").status_code == 403                    # secrets need it
     finally:
         _delete_app(app_id)
 
@@ -171,7 +172,7 @@ def test_export_is_blocked_over_plain_http_from_a_public_address(admin, monkeypa
     r = _export(admin)
     assert r.status_code == 403 and "https" in r.json()["detail"]
     r = admin.post("/api/transfer/export", headers={"x-forwarded-proto": "https"},
-                   json={"passphrase": PASSPHRASE, "password": PASSWORD})
+                   json={"password": PASSWORD, "include_secrets": True})
     assert r.status_code == 200
 
 
@@ -181,7 +182,7 @@ def test_the_audit_log_records_the_export_without_secrets(admin):
         assert _export(admin, [app_id]).status_code == 200
         log = admin.get("/api/audit-log").text
         assert "transfer.export" in log
-        assert SECRET_ENV not in log and SECRET_TOKEN not in log and PASSPHRASE not in log
+        assert SECRET_ENV not in log and SECRET_TOKEN not in log
     finally:
         _delete_app(app_id)
 
@@ -283,16 +284,6 @@ def test_a_cron_job_is_imported_without_instances(admin, deploys):
 
 
 # ── import errors ─────────────────────────────────────────────────────────────
-def test_import_with_the_wrong_passphrase(admin):
-    app_id = _make_app("tx-wrongpass", port=9180)
-    try:
-        blob = _export(admin, [app_id]).content
-        r = _import(admin, blob, passphrase="another long passphrase")
-        assert r.status_code == 400 and "Wrong passphrase" in r.json()["detail"]
-    finally:
-        _delete_app(app_id)
-
-
 def test_import_of_something_that_is_not_an_export(admin):
     assert _import(admin, b"just some text, not an export").status_code == 400
     assert _import(admin, b"").status_code == 400
@@ -425,3 +416,26 @@ def test_importing_needs_the_right_to_deploy_apps(admin):
         body = _import(user, blob).json()          # allowed to look, not to create: skipped with the reason
     assert body["imported"] == [] and "apps.deploy" in body["skipped"][0]["reason"]
     assert _load_app("tx-not-allowed")[0] is None
+
+
+# ── the file ──────────────────────────────────────────────────────────────────
+def test_the_file_is_a_plain_archive_the_user_is_responsible_for(admin, deploys):
+    """No passphrase: the file is the user's to guard. It is not encrypted, so what is in it is exactly
+    what was asked for, and an import needs nothing but the file."""
+    from transfer import archive
+    app_id = _make_app("tx-plain", instances=1, port=9230)
+    r = _export(admin, [app_id], secrets=False, password="")
+    assert r.status_code == 200 and archive.manifest_of_bytes(r.content)["apps"][0]["name"] == "tx-plain"
+
+    _delete_app(app_id)
+    body = _import(admin, r.content).json()
+    app, _ = _load_app("tx-plain")
+    try:
+        assert [i["name"] for i in body["imported"]] == ["tx-plain"] and app is not None
+    finally:
+        _delete_app(app.id)
+
+
+def test_a_file_that_is_not_an_archive_is_refused(admin):
+    r = _import(admin, b"just some text that is not an export")
+    assert r.status_code == 400 and r.json()["detail"]

@@ -1,4 +1,4 @@
-"""Export and import of apps and databases as one passphrase-encrypted file.
+"""Export and import of apps and databases as one file.
 
 Exporting is a background job (a database dump can take minutes): start it, poll it, download it.
 Who may do what follows the permissions the rest of Cloudbase already has:
@@ -28,7 +28,7 @@ from core import auth as _auth
 from core.audit import log_audit
 from core.database import get_db
 from core.models import User
-from transfer import archive, crypto, db_import, exporter, importer, jobs, manifest
+from transfer import archive, db_import, exporter, importer, jobs, manifest
 
 router = APIRouter(prefix="/api/transfer", tags=["transfer"])
 
@@ -42,7 +42,6 @@ class ExportRequest(BaseModel):
     database_ids: Optional[list[int]] = None   # None or empty: no databases
     include_data: bool = False                 # dumps of the selected databases; needs databases.backup
     include_secrets: bool = False              # environment variables and Git tokens; needs secrets.export
-    passphrase: str
     password: str = ""                         # the account password again; required when secrets are included
 
 
@@ -54,7 +53,7 @@ def _client_ip(request: Request) -> str:
 
 
 def _require_private_transport(request: Request) -> None:
-    """The passphrase and the file travel over this connection. Over plain HTTP that is only
+    """The file (which may hold secrets) travels over this connection. Over plain HTTP that is only
     acceptable on a private network; from a public address it is refused."""
     if request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https":
         return
@@ -99,15 +98,10 @@ async def start_export(
         # them back out through an export needs its own permission, not just the right to edit apps.
         _need(user, "secrets.export", "export environment variables and Git tokens")
         await _confirm_password(db, user["username"], req.password, request)
-    try:
-        crypto.check_passphrase(req.passphrase)
-    except crypto.TransferCryptoError as exc:
-        raise HTTPException(400, str(exc))
-
     job = jobs.create(user["username"])
     asyncio.create_task(exporter.run_export(
         job, app_ids=req.app_ids, database_ids=req.database_ids, include_data=req.include_data,
-        include_secrets=req.include_secrets, passphrase=req.passphrase, actor=actor))
+        include_secrets=req.include_secrets, actor=actor))
     return {"job_id": job.id}
 
 
@@ -148,30 +142,26 @@ async def import_bundle(
     background_tasks: BackgroundTasks,
     request: Request,
     file: UploadFile = File(...),
-    passphrase: str = Form(...),
     target_node_id: Optional[int] = Form(None),
     user: dict = Depends(_auth.require_permission("apps.view")),
     actor: str = Depends(_auth.get_current_actor),
     db: AsyncSession = Depends(get_db),
 ):
     _require_private_transport(request)
-    _auth._check_rate_limit(_client_ip(request))    # a passphrase can be guessed here
     perms = user.get("permissions")
 
     jobs._ensure_dir()
     work = tempfile.mkdtemp(prefix="import-", dir=jobs.EXPORT_DIR)
     tar = None
     try:
-        upload, plain = os.path.join(work, "upload"), os.path.join(work, "plain.tar")
+        upload = os.path.join(work, "upload")
         await _receive(file, upload)
         try:
-            await asyncio.to_thread(crypto.decrypt_file, upload, plain, passphrase)
-            os.remove(upload)
-            tar = archive.open_archive(plain)
+            tar = archive.open_archive(upload)
             content = archive.read_manifest(tar)
             entries = manifest.check_manifest(content)
             database_entries = manifest.databases_of(content)
-        except (crypto.TransferCryptoError, archive.ArchiveError, ValueError) as exc:
+        except (archive.ArchiveError, ValueError) as exc:
             raise HTTPException(400, str(exc))
 
         apps = await importer.import_apps(db, entries, target_node_id, actor, perms)
@@ -185,7 +175,7 @@ async def import_bundle(
     finally:
         if tar is not None:
             tar.close()
-        shutil.rmtree(work, ignore_errors=True)           # the decrypted archive must not stay behind
+        shutil.rmtree(work, ignore_errors=True)           # the uploaded file may hold secrets: do not keep it
 
     if apps.imported:
         background_tasks.add_task(importer.deploy_imported, apps.imported, apps.target_is_local, actor)

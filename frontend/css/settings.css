@@ -221,3 +221,75 @@
   .nc-matrix .nc-event { white-space: normal; min-width: 170px; }
   .nc-event-sub { display: block; margin: 2px 0 0 17px; }
 }
+
+/* ─── Export / import page ──────────────────────────────────────────────── */
+.tx { display: flex; flex-direction: column; gap: 22px; }
+
+.tx-sec-hd { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.tx-sec-title { font-size: 13px; font-weight: 500; color: var(--text); }
+.tx-sec-count { font-size: 12px; color: var(--muted); }
+.tx-sec-hd .tx-all { margin-left: auto; }
+.tx .check-list { margin-top: 0; max-height: 260px; }
+.tx-empty { padding: 14px; font-size: 13px; color: var(--muted); border: 1px dashed var(--line-strong); border-radius: var(--radius); }
+
+/* "Also include": two options side by side */
+.tx-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.tx-option {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color .12s, background .12s;
+}
+.tx-option:hover:not(.is-disabled) { border-color: var(--line-strong); background: color-mix(in srgb, var(--hover) 55%, transparent); }
+.tx-option:has(input:checked) { border-color: var(--line-strong); background: color-mix(in srgb, var(--hover) 80%, transparent); }
+.tx-option input { margin-top: 2px; accent-color: var(--text); width: 14px; height: 14px; flex: none; }
+.tx-option-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tx-option-title { font-size: 13px; color: var(--text); }
+.tx-option-sub { font-size: 12px; color: var(--muted); line-height: 1.45; }
+.tx-option.is-disabled { cursor: not-allowed; opacity: .6; }
+.tx-lock { margin-left: auto; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; white-space: nowrap; align-self: flex-start; }
+
+/* The bar with the summary on the left and the action on the right */
+.tx-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--hover) 40%, transparent);
+}
+.tx-bar-info { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 240px; }
+.tx-bar-info .tx-inline { display: flex; align-items: center; gap: 10px; }
+.tx-bar-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.tx-summary { font-size: 13px; color: var(--text); }
+.tx-warn { font-size: 12px; color: var(--red); line-height: 1.45; }
+.tx-note { font-size: 12px; color: var(--muted); }
+.tx-pw { width: 220px; }
+.tx-bar .input { height: 34px; }
+.tx-progress { font-size: 12.5px; color: var(--muted); min-height: 18px; margin-top: -10px; }
+
+/* Import: the file */
+.tx-file {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  transition: background .12s, border-color .12s;
+}
+.tx-file.is-over { background: color-mix(in srgb, var(--hover) 80%, transparent); border-color: var(--text-2); }
+.tx-file-name { flex: 1; font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tx-file-name.has-value { color: var(--text); }
+
+/* Import: the result */
+.tx-result-sum { font-size: 13px; color: var(--text); margin-bottom: 8px; }
+.tx-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius); }
+.tx-list li { display: flex; gap: 10px; align-items: baseline; padding: 9px 14px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.tx-list li:last-child { border-bottom: none; }
+.tx-list li::before { flex: none; width: 14px; text-align: center; font-weight: 600; }
+.tx-list li[data-kind="ok"]::before { content: "✓"; color: var(--green); }
+.tx-list li[data-kind="skip"]::before { content: "✕"; color: var(--red); }
+.tx-list li[data-kind="warn"]::before { content: "!"; color: var(--yellow); }
+.tx-list b { font-weight: 500; color: var(--text); }
+.tx-list span { color: var(--muted); }
+.tx-list li[data-kind="skip"] span { color: var(--red); }

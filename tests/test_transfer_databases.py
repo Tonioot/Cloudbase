@@ -8,7 +8,7 @@ import time
 import pytest
 
 from core import auth
-from test_transfer import (PASSPHRASE, _as_user, _blob, _delete_app, _export, _import, _load_app, _make_app,
+from test_transfer import (_as_user, _blob, _delete_app, _export, _import, _load_app, _make_app,
                            _manifest_in, _start_export)
 
 FAKE_DUMP = b"PGDMP\x00fake dump of the tx database " + os.urandom(2000)
@@ -134,8 +134,7 @@ def deploys(monkeypatch):
 def _tar_of(blob: bytes):
     import io
     import tarfile
-    from transfer import crypto
-    return tarfile.open(fileobj=io.BytesIO(crypto.decrypt_bytes(blob, PASSPHRASE)), mode="r:")
+    return tarfile.open(fileobj=io.BytesIO(blob), mode="r:")
 
 
 # ── export ────────────────────────────────────────────────────────────────────
@@ -167,7 +166,6 @@ def test_export_with_data_puts_the_dump_in_the_file(admin, fakes):
             entry = json.loads(tar.extractfile("manifest.json").read())["databases"][0]
             assert entry["data"]["file"] == "data/0.dump" and entry["data"]["source_db_name"] == "tx_source_db"
             assert tar.extractfile("data/0.dump").read() == FAKE_DUMP
-        assert FAKE_DUMP[:20] not in r.content                         # encrypted
         assert fakes["dumps"] == ["txdb-data"]
     finally:
         _delete_database(database_id)
@@ -367,7 +365,15 @@ def test_old_export_files_are_swept_away(tmp_path, monkeypatch):
     assert not old.exists() and fresh.exists()
 
 
-def test_no_unencrypted_archive_is_left_behind(admin):
+def test_the_file_is_gone_from_the_server_after_the_download(admin):
     from transfer import jobs
-    _export(admin, [], secrets=False, password="")
-    assert not [f for f in os.listdir(jobs.EXPORT_DIR) if f.endswith(".tar")]
+    job = _start_export(admin, [], secrets=False, password="").json()["job_id"]
+    for _ in range(200):
+        if admin.get(f"/api/transfer/export/{job}").json()["state"] != "running":
+            break
+        time.sleep(0.05)
+    path = jobs._jobs[job].path
+    assert os.path.exists(path)
+    assert admin.get(f"/api/transfer/export/{job}/download").status_code == 200
+    time.sleep(0.2)                                       # the delete runs right after the response
+    assert not os.path.exists(path)

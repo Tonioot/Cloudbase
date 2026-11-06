@@ -1207,123 +1207,157 @@ function renderTransfer(root) {
   // Secrets are write-only everywhere else, so taking them out needs its own permission.
   const canSecrets = can('secrets.export');
   const canData = can('databases.backup');
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const show = (el, on) => { el.style.display = on ? '' : 'none'; };
+
+  const option = (id, title, sub, allowed, lockText) => `
+    <label class="tx-option${allowed ? '' : ' is-disabled'}" id="${id}-wrap" title="${allowed ? '' : esc(lockText)}">
+      <input type="checkbox" id="${id}" ${allowed ? '' : 'disabled'} />
+      <span class="tx-option-body"><span class="tx-option-title">${title}</span><span class="tx-option-sub">${sub}</span></span>
+      ${allowed ? '' : '<span class="tx-lock">needs permission</span>'}
+    </label>`;
+
   root.innerHTML = `
-    ${group('Export', 'Downloads one encrypted file with the selected apps and databases: repository, commands, domains, Docker limits and the number of instances, the settings of each database and the apps it is linked to. Optionally also the environment variables, Git tokens and the data of the databases.',
-      `<div class="settings-list-head">
-         <label class="check-inline"><input type="checkbox" id="exp-all" checked /> Select all apps</label>
-       </div>
-       <div id="exp-list" class="check-list"></div>
-       <div id="exp-db-section" style="display:none">
-         <div class="settings-list-head"><span class="field-label">Databases</span></div>
-         <div id="exp-db-list" class="check-list"></div>
-         <div class="field">
-           <label class="check-inline"><input type="checkbox" id="exp-data" ${canData ? '' : 'disabled'} /> Include the data of the selected databases</label>
-           <div class="field-hint">${canData
-             ? 'Each database is dumped when you start the export (this also adds a backup to its list), so the file can be as large as the databases. The databases must be running.'
-             : 'Taking the data out needs the “Database backups” permission. Without it the file has the settings of each database but not its data.'}</div>
+    ${group('Export', 'Download one file with your apps and databases, to set them up again somewhere else.',
+      `<div class="tx">
+         <section>
+           <div class="tx-sec-hd">
+             <span class="tx-sec-title">Apps</span><span class="tx-sec-count" id="exp-app-count"></span>
+             <label class="check-inline tx-all"><input type="checkbox" id="exp-all" checked /> All</label>
+           </div>
+           <div id="exp-list" class="check-list"></div>
+         </section>
+         <section id="exp-db-section" style="display:none">
+           <div class="tx-sec-hd">
+             <span class="tx-sec-title">Databases</span><span class="tx-sec-count" id="exp-db-count"></span>
+             <label class="check-inline tx-all"><input type="checkbox" id="exp-db-all" checked /> All</label>
+           </div>
+           <div id="exp-db-list" class="check-list"></div>
+         </section>
+         <section>
+           <div class="tx-sec-hd"><span class="tx-sec-title">Also include</span></div>
+           <div class="tx-options">
+             ${option('exp-secrets', 'Environment variables &amp; Git tokens', 'The values, as plain text. Without this you get the settings and the names of the variables.',
+               canSecrets, 'Only the root account can give the “Secrets → export” permission.')}
+             <span id="exp-data-slot">${option('exp-data', 'Database data', 'A dump of each selected database, which must be running. The file can get as large as the databases.',
+               canData, 'You need the “Database backups” permission.')}</span>
+           </div>
+         </section>
+         <div>
+           <div class="tx-bar">
+             <div class="tx-bar-info">
+               <div class="tx-summary" id="exp-summary"></div>
+               <div class="tx-warn" id="exp-warn" style="display:none">Contains secrets or data in plain text. Don’t send it around: move it straight to where you import it, then delete it.</div>
+               ${plainHttp ? '<div class="tx-note">This page is not on https: on a private network that works, but the file travels unencrypted.</div>' : ''}
+             </div>
+             <div class="tx-bar-actions">
+               <input class="input tx-pw" id="exp-pw" type="password" placeholder="Your account password" autocomplete="current-password" style="display:none" />
+               <button class="btn btn-primary" id="exp-go">Download export</button>
+             </div>
+           </div>
+           <div class="tx-progress" id="exp-progress"></div>
          </div>
-       </div>
-       <div class="field">
-         <label class="check-inline"><input type="checkbox" id="exp-secrets" ${canSecrets ? '' : 'disabled'} /> Include environment variables and Git tokens</label>
-         <div class="field-hint">${canSecrets
-           ? 'Off: the file has the settings and the names of the variables, not their values. On: the values are in the file, readable by anyone who has the file and the passphrase.'
-           : 'Taking secrets out needs the “Secrets → export” permission, which only the root account can give. The file will have the settings and the names of the variables, not their values.'}</div>
-       </div>
-       <div class="field">
-         <label class="field-label" for="exp-pass">Passphrase for the file</label>
-         <input class="input" id="exp-pass" type="password" autocomplete="new-password" placeholder="At least 12 characters" />
-         <div class="field-hint">Without this passphrase the file cannot be opened, and it cannot be recovered if you lose it.</div>
-       </div>
-       <div class="field">
-         <label class="field-label" for="exp-pass2">Repeat passphrase</label>
-         <input class="input" id="exp-pass2" type="password" autocomplete="new-password" />
-       </div>
-       <div class="field" id="exp-pw-field" style="display:none">
-         <label class="field-label" for="exp-pw">Your account password</label>
-         <input class="input" id="exp-pw" type="password" autocomplete="current-password" />
-         <div class="field-hint">Asked again because the file will contain secrets.</div>
-       </div>
-       ${plainHttp ? '<div class="field-hint" data-tone="error">This page is not using https. On a private network that works, but the passphrase and the file travel unencrypted: use https when you can.</div>' : ''}
-       <div class="field"><button class="btn btn-primary btn-sm" id="exp-go">Download export</button></div>
-       <div id="exp-progress" class="field-hint"></div>`)}
-    ${group('Import', 'Creates the apps and databases from an export file with their environment variables, Git tokens, instances and links, builds and starts the apps that were running, and restores the data of the databases in the background. Names that already exist are skipped.',
-      `<div class="field">
-         <label class="field-label">Export file</label>
-         <div class="cert-upload-row">
-           <span class="cert-filename" id="imp-name">No file selected</span>
+       </div>`)}
+    ${group('Import', 'Set up apps and databases from an export file. Names that already exist are skipped.',
+      `<div class="tx">
+         <div class="tx-file" id="imp-drop">
+           <span class="tx-file-name" id="imp-name">Drop an export file here, or choose one</span>
            <button type="button" class="btn btn-sm" id="imp-browse">Choose file</button>
            <input type="file" id="imp-file" accept=".cloudbase,application/octet-stream" hidden>
          </div>
-       </div>
-       <div class="field">
-         <label class="field-label" for="imp-pass">Passphrase</label>
-         <input class="input" id="imp-pass" type="password" autocomplete="off" />
-       </div>
-       <div class="field">
-         <label class="field-label" for="imp-node">Place instances and databases on</label>
-         <select class="input" id="imp-node"><option value="">This server (primary)</option></select>
-         <div class="field-hint">Everything imported goes to this one node. You can scale apps to other nodes afterwards.</div>
-       </div>
-       <div class="field"><button class="btn btn-primary btn-sm" id="imp-go" disabled>Import</button></div>
-       <div id="imp-result"></div>`)}
+         <div class="tx-bar">
+           <div class="tx-bar-info">
+             <div class="tx-inline">
+               <label class="field-label" for="imp-node" style="margin:0">Place on</label>
+               <select class="input" id="imp-node"><option value="">This server (primary)</option></select>
+             </div>
+             <div class="tx-note">Instances and databases all go to this node; scale to others afterwards.</div>
+           </div>
+           <div class="tx-bar-actions"><button class="btn btn-primary" id="imp-go" disabled>Import</button></div>
+         </div>
+         <div id="imp-result"></div>
+       </div>`)}
   `;
 
-  // Export: apps and databases to choose from
+  // ── Export: what to export ────────────────────────────────────────────────
   const expList = document.getElementById('exp-list');
-  const expAll = document.getElementById('exp-all');
   const dbSection = document.getElementById('exp-db-section');
   const dbList = document.getElementById('exp-db-list');
+  const expAll = document.getElementById('exp-all');
+  const dbAll = document.getElementById('exp-db-all');
+  const expSecrets = document.getElementById('exp-secrets');
+  const expData = document.getElementById('exp-data');
+  const expPw = document.getElementById('exp-pw');
+  const summary = document.getElementById('exp-summary');
+  const appChecks = () => [...expList.querySelectorAll('.exp-check')];
+  const dbChecks = () => [...dbList.querySelectorAll('.exp-db-check')];
+  const ticked = list => list.filter(c => c.checked).map(c => parseInt(c.value, 10));
+  const withSecrets = () => expSecrets.checked && canSecrets;
+  const withData = () => expData.checked && canData && ticked(dbChecks()).length > 0;
+
+  const sync = () => {
+    const apps = ticked(appChecks()).length, dbs = ticked(dbChecks()).length;
+    document.getElementById('exp-app-count').textContent = appChecks().length ? `${apps} of ${appChecks().length}` : '';
+    document.getElementById('exp-db-count').textContent = dbChecks().length ? `${dbs} of ${dbChecks().length}` : '';
+    const parts = [];
+    if (apps) parts.push(plural(apps, 'app'));
+    if (dbs) parts.push(plural(dbs, 'database'));
+    if (withSecrets()) parts.push('with secrets');
+    if (withData()) parts.push('with data');
+    summary.textContent = parts.length ? parts.join(' · ') : 'Nothing selected';
+    show(document.getElementById('exp-warn'), withSecrets() || withData());
+    show(expPw, withSecrets());
+    // the data option only makes sense when a database is selected
+    document.getElementById('exp-data-wrap').style.opacity = dbs || !canData ? '' : '.6';
+  };
+
   api.listApps().then(apps => {
-    if (!apps.length) { expList.innerHTML = '<div class="settings-note">No apps to export.</div>'; return; }
+    if (!apps.length) { expList.outerHTML = '<div class="tx-empty" id="exp-list">No apps to export.</div>'; sync(); return; }
     expList.innerHTML = apps.map(a => `
       <label class="check-row">
         <input type="checkbox" class="exp-check" value="${a.id}" checked />
         <span class="check-row-name">${esc(a.name)}</span>
-        <span class="check-row-meta">${(a.replicas || []).length} instance${(a.replicas || []).length === 1 ? '' : 's'}</span>
+        <span class="check-row-meta">${plural((a.replicas || []).length, 'instance')}</span>
       </label>`).join('');
-    const checks = [...expList.querySelectorAll('.exp-check')];
-    checks.forEach(c => c.onchange = () => { expAll.checked = checks.every(x => x.checked); });
+    appChecks().forEach(c => c.onchange = () => { expAll.checked = appChecks().every(x => x.checked); sync(); });
+    sync();
   }).catch(e => { expList.innerHTML = notice(esc(e.message)); });
-  expAll.onchange = () => expList.querySelectorAll('.exp-check').forEach(c => { c.checked = expAll.checked; });
   api.listDatabases().then(dbs => {
     if (!dbs.length) return;
-    dbSection.style.display = '';
+    show(dbSection, true);
     dbList.innerHTML = dbs.map(d => `
       <label class="check-row">
         <input type="checkbox" class="exp-db-check" value="${d.id}" checked />
         <span class="check-row-name">${esc(d.name)}</span>
         <span class="check-row-meta">${esc(d.engine)} ${esc(d.version || '')} · ${esc(d.status || '')}</span>
       </label>`).join('');
+    dbChecks().forEach(c => c.onchange = () => { dbAll.checked = dbChecks().every(x => x.checked); sync(); });
+    sync();
   }).catch(() => {});
+  expAll.onchange = () => { appChecks().forEach(c => { c.checked = expAll.checked; }); sync(); };
+  dbAll.onchange = () => { dbChecks().forEach(c => { c.checked = dbAll.checked; }); sync(); };
+  expSecrets.onchange = sync;
+  expData.onchange = sync;
+  sync();
 
-  const expSecrets = document.getElementById('exp-secrets');
-  const expPwField = document.getElementById('exp-pw-field');
-  expSecrets.onchange = () => { expPwField.style.display = expSecrets.checked ? '' : 'none'; };
+  // ── Export: start, follow, download ───────────────────────────────────────
   const expGo = document.getElementById('exp-go');
   const progress = document.getElementById('exp-progress');
   const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   expGo.onclick = async () => {
-    const appChecks = [...expList.querySelectorAll('.exp-check')];
-    const appIds = appChecks.filter(c => c.checked).map(c => parseInt(c.value, 10));
-    const dbIds = [...dbList.querySelectorAll('.exp-db-check')].filter(c => c.checked).map(c => parseInt(c.value, 10));
-    const pass = document.getElementById('exp-pass').value;
+    const appIds = ticked(appChecks()), dbIds = ticked(dbChecks());
     if (!appIds.length && !dbIds.length) return toast('Select at least one app or database', 'error');
-    if (pass.length < 12) return toast('Use a passphrase of at least 12 characters', 'error');
-    if (pass !== document.getElementById('exp-pass2').value) return toast('The two passphrases are not the same', 'error');
-    const withSecrets = expSecrets.checked && canSecrets;
-    const pw = document.getElementById('exp-pw').value;
-    if (withSecrets && !pw) return toast('Enter your account password', 'error');
+    if (withSecrets() && !expPw.value) { expPw.focus(); return toast('Enter your account password', 'error'); }
     expGo.disabled = true;
     progress.textContent = 'Starting…';
     try {
       const { job_id } = await api.startExport({
-        app_ids: appIds.length === appChecks.length ? null : appIds,    // null: every app
+        app_ids: appIds.length === appChecks().length ? null : appIds,    // null: every app
         database_ids: dbIds,
-        include_data: !!dbIds.length && document.getElementById('exp-data').checked && canData,
-        include_secrets: withSecrets,
-        passphrase: pass,
-        password: pw,
+        include_data: withData(),
+        include_secrets: withSecrets(),
+        password: expPw.value,
       });
       let status;
       for (;;) {                                  // a database dump can take minutes: follow the job
@@ -1340,8 +1374,8 @@ function renderTransfer(root) {
       });
       a.click();
       URL.revokeObjectURL(a.href);
-      ['exp-pass', 'exp-pass2', 'exp-pw'].forEach(id => { document.getElementById(id).value = ''; });
-      progress.textContent = `Downloaded: ${status.apps} app${status.apps === 1 ? '' : 's'}, ${status.databases} database${status.databases === 1 ? '' : 's'}.`;
+      expPw.value = '';
+      progress.textContent = `Downloaded: ${plural(status.apps, 'app')}, ${plural(status.databases, 'database')}.`;
       toast('Export downloaded');
     } catch (e) {
       progress.textContent = '';
@@ -1351,53 +1385,53 @@ function renderTransfer(root) {
     }
   };
 
-  // Import
+  // ── Import ────────────────────────────────────────────────────────────────
   let file = null;
+  const drop = document.getElementById('imp-drop');
   const fileInput = document.getElementById('imp-file');
   const impGo = document.getElementById('imp-go');
-  const impPass = document.getElementById('imp-pass');
   const result = document.getElementById('imp-result');
-  const ready = () => { impGo.disabled = !(file && impPass.value); };
-  document.getElementById('imp-browse').onclick = () => fileInput.click();
-  fileInput.onchange = () => {
-    file = fileInput.files[0] || null;
+  const choose = f => {
+    file = f || null;
     const name = document.getElementById('imp-name');
-    name.textContent = file ? file.name : 'No file selected';
+    name.textContent = file ? `${file.name} (${(file.size / 1048576).toFixed(file.size > 1048576 ? 1 : 2)} MB)` : 'Drop an export file here, or choose one';
     name.classList.toggle('has-value', !!file);
-    ready();
+    impGo.disabled = !file;
   };
-  impPass.oninput = ready;
+  document.getElementById('imp-browse').onclick = () => fileInput.click();
+  fileInput.onchange = () => choose(fileInput.files[0]);
+  ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('is-over'); }));
+  ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('is-over'); }));
+  drop.addEventListener('drop', e => choose(e.dataTransfer.files[0]));
   api.listNodes().then(nodes => {
     const sel = document.getElementById('imp-node');
     nodes.filter(n => !n.is_local).forEach(n => sel.insertAdjacentHTML('beforeend', `<option value="${n.id}">${esc(n.name)}</option>`));
   }).catch(() => {});
 
-  const li = (text, tone) => `<li${tone ? ` data-tone="${tone}"` : ''}>${esc(text)}</li>`;
-  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const row = (kind, name, text) => `<li data-kind="${kind}">${name ? `<b>${esc(name)}</b>` : ''}<span>${esc(text)}</span></li>`;
   impGo.onclick = async () => {
     impGo.disabled = true;
-    result.innerHTML = '<div class="field-hint">Importing… a large file takes a while to upload.</div>';
+    result.innerHTML = '<div class="tx-progress" style="margin:0">Importing… a large file takes a while to upload.</div>';
     try {
       const nodeVal = document.getElementById('imp-node').value;
-      const res = await api.importTransfer(file, impPass.value, nodeVal ? parseInt(nodeVal, 10) : null);
-      impPass.value = '';
+      const res = await api.importTransfer(file, nodeVal ? parseInt(nodeVal, 10) : null);
       const items = [
-        ...res.imported.map(a => li(`App ${a.name} — ${plural(a.instances, 'instance')}${a.will_start ? ', will start' : ''}`)),
-        ...res.databases.map(d => li(`Database ${d.name} (${d.engine} ${d.version}) — ${d.links ? `linked to ${plural(d.links, 'app')}` : 'not linked'}${d.restoring ? ', restoring its data in the background' : ''}`)),
-        ...res.skipped.map(s => li(`App ${s.name} — skipped: ${s.reason}`, 'error')),
-        ...res.skipped_databases.map(s => li(`Database ${s.name} — skipped: ${s.reason}`, 'error')),
-        ...res.warnings.map(w => li(w)),
+        ...res.imported.map(a => row('ok', a.name, `app · ${plural(a.instances, 'instance')}${a.will_start ? ' · will start' : ''}`)),
+        ...res.databases.map(d => row('ok', d.name, `database · ${d.engine} ${d.version}${d.links ? ` · linked to ${plural(d.links, 'app')}` : ''}${d.restoring ? ' · restoring its data' : ''}`)),
+        ...res.skipped.map(s => row('skip', s.name, `app skipped: ${s.reason}`)),
+        ...res.skipped_databases.map(s => row('skip', s.name, `database skipped: ${s.reason}`)),
+        ...res.warnings.map(w => row('warn', '', w)),
       ];
       const done = res.imported.length + res.databases.length;
       const skipped = res.skipped.length + res.skipped_databases.length;
       result.innerHTML = `
-        <div class="field-hint">${done} imported, ${skipped} skipped.${done ? ' Building, starting and restoring run in the background: follow it from the overview.' : ''}</div>
-        <ul class="settings-note">${items.join('')}</ul>`;
+        <div class="tx-result-sum">${done} imported${skipped ? `, ${skipped} skipped` : ''}.${done ? ' Building, starting and restoring continue in the background.' : ''} If the file held secrets, delete it now.</div>
+        <ul class="tx-list">${items.join('')}</ul>`;
       if (done) toast('Import started');
     } catch (e) {
-      result.innerHTML = `<div class="field-hint" data-tone="error">Import failed: ${esc(e.message)}</div>`;
+      result.innerHTML = `<div class="tx-warn">Import failed: ${esc(e.message)}</div>`;
     } finally {
-      ready();
+      impGo.disabled = !file;
     }
   };
 }

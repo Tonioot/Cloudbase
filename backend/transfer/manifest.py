@@ -1,9 +1,10 @@
-"""The content of an export file: a plain dict, written as JSON and then encrypted (crypto.py).
+"""The manifest of an export file: a plain dict, written as JSON into the archive (archive.py).
 
 Everything that is specific to one installation is left out or translated:
 ids, ports, the node an app runs on, file paths on this server and the encryption key.
-Secrets (environment variables, the Git token) are written in clear text *inside* the encrypted
-file, because the key that protects them here does not exist on the other server.
+Secrets (environment variables, the Git token) are written in clear text, because the key that
+protects them here does not exist on the other server. That is why they are only included on
+request, with the secrets.export permission, and why the file must be treated like a password.
 """
 import json
 from datetime import datetime, timezone
