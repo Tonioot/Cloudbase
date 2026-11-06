@@ -22,6 +22,7 @@ from typing import Awaitable, Callable, Optional
 
 from core import config as _cfg
 from dbs import tls as db_tls
+from agent import state as agent_state
 
 log = logging.getLogger("cloudbase.db-proxy")
 # Upgrading a PostgreSQL connection to TLS (start_tls) makes asyncio log a harmless
@@ -168,8 +169,7 @@ def local_node_id() -> Optional[int]:
     if _local_node_id is not None:
         return _local_node_id
     try:
-        import node_agent
-        state = node_agent._load_state()
+        state = agent_state._load_state()
         return state.node_id if state else None
     except Exception:
         return None

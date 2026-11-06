@@ -22,7 +22,7 @@ def test_agent_state_stays_next_to_the_entry_point():
 def test_modules_use_the_shared_paths():
     from core import config
     from notify import mailer
-    import node_agent
+    from agent import state as agent_state
     assert config._REPO_CONFIG_PATH == paths.REPO_CONFIG_FILE
     assert mailer._LOGO_PATH == paths.LOGO_FILE
-    assert node_agent.STATE_PATH == paths.AGENT_STATE_FILE
+    assert agent_state.STATE_PATH == paths.AGENT_STATE_FILE

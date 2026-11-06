@@ -6,7 +6,7 @@
   ],
   "function_level_imports": {
     "core.database": 2,
-    "dbs.proxy": 5,
+    "dbs.proxy": 4,
     "nginx.manager": 1,
     "routers.databases": 2
   }

@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 import deploys as _deploys
-import node_agent
+from agent import loop as agent_loop
 from containers import processes as pm
 from core import auth
 from core import system_config as _syscfg
@@ -99,7 +99,7 @@ async def lifespan(app: FastAPI):
     tasks: list[asyncio.Task] = []
     if IS_NODE:
         log.info("INIT: running as a node, starting the node agent only")
-        tasks.append(asyncio.create_task(node_agent.start_agent()))
+        tasks.append(asyncio.create_task(agent_loop.start_agent()))
     else:
         tasks += await _start_panel_tasks()
 

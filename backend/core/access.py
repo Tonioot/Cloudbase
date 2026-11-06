@@ -5,7 +5,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from core.database import AsyncSessionLocal
 from core import auth, system_config as _syscfg
 from nginx import manager as nm
-import node_agent
+from agent import state as agent_state
 from core.models import Node as _Node
 from core.runtime import IS_NODE, _COOKIE_NAME
 
@@ -166,7 +166,7 @@ class _AuthMiddleware(BaseHTTPMiddleware):
                 return await call_next(request)
             if path.startswith("/api/") or path.startswith("/ws/"):
                 return JSONResponse({"detail": "This server is a Cloudbase node; use the primary's panel"}, status_code=403)
-            state = node_agent._load_state()
+            state = agent_state._load_state()
             page = nm.generate_cloudbase_node_html(state and state.main_url, state and state.node_name)
             return HTMLResponse(page, status_code=403)
 
