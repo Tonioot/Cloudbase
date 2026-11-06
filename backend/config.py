@@ -189,8 +189,6 @@ def validate() -> None:
         )
 
     # Overlap check
-    inst_set = range(inst_min, inst_max + 1)
-    tun_set  = range(tun_min,  tun_max  + 1)
     if inst_min <= tun_max and tun_min <= inst_max:
         log.warning(
             "CONFIG WARNING: instance port range %d–%d overlaps with tunnel port range %d–%d. "

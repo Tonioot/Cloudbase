@@ -1,4 +1,4 @@
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 import os
 
@@ -39,7 +39,8 @@ async def get_db():
 async def init_db():
     import datetime as _dt
     from env_crypto import decrypt_text, encrypt_text
-    from models import Application, Node, NodeInvite, NodeCommand, AuditLog, StatsHistory, User, SystemConfig, Role, Permission, role_permissions
+    # Importing every model registers its table with Base.metadata for create_all below.
+    from models import Application, Node, NodeInvite, NodeCommand, AuditLog, StatsHistory, User, SystemConfig, Role, Permission, role_permissions  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         # Migrate existing DBs: add columns introduced after initial schema.

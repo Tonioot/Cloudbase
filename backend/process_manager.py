@@ -147,46 +147,6 @@ def detect_app_type_from_command(cmd: str) -> str:
     return "unknown"
 
 
-def start_docker_app(
-    app_id: int,
-    app_name: str,
-    app_dir: str,
-    internal_port: int,
-    external_port: int,
-    env_vars: dict,
-    app_type: str,
-    start_command: str,
-    docker_options: dict | None = None,
-    build: bool = True,
-) -> str:
-    """Build (if needed) and start a Docker container. Returns container ID."""
-    log_buffers[app_id] = deque(maxlen=5000)
-    _stats_history.pop(app_id, None)
-
-    def _push(aid, line):
-        log_buffers.setdefault(aid, deque(maxlen=5000)).append(str(line))
-        _push_line(aid, line)
-
-    try:
-        if build:
-            img = dm.build_image(app_id, app_name, app_dir, _push, app_type, start_command, internal_port)
-        else:
-            img = dm.image_name(app_id, app_name)
-
-        container_id = dm.run_container(
-            app_id, app_name, img, internal_port, external_port, env_vars or {}, docker_options, _push
-        )
-    except Exception as e:
-        message = str(e) or "Unknown Docker error"
-        _push(app_id, f"[Docker] Start failed: {message}")
-        raise RuntimeError(message) from e
-
-    if _main_loop is not None and not _main_loop.is_closed():
-        dm.attach_container_log_tailer(app_id, log_buffers, _push_container_line, _main_loop)
-
-    return container_id
-
-
 def stop_docker_app(app_id: int) -> bool:
     """Stop and remove a Docker container."""
     def _push(aid, line):

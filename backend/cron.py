@@ -12,7 +12,7 @@ comes up while the previous run is still going is skipped and reported.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
 from fastapi import HTTPException

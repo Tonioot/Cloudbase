@@ -16,7 +16,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import bcrypt as _bcrypt
-from fastapi import Cookie, Depends, HTTPException, Request, status
+from fastapi import Cookie, HTTPException, status
 import jwt
 from jwt import PyJWTError as JWTError
 import config as _cfg
@@ -160,7 +160,7 @@ async def session_user(token: Optional[str]) -> Optional[dict]:
 async def get_user_permissions(username: str) -> set[str]:
     """Return the set of permission names for a user, loaded live from the DB."""
     from database import AsyncSessionLocal
-    from models import User, Role, Permission, role_permissions
+    from models import User, Permission, role_permissions
     from sqlalchemy import select
     try:
         async with AsyncSessionLocal() as db:
@@ -262,23 +262,6 @@ async def _get_db_user(username: str):
             return result.scalar_one_or_none()
     except Exception:
         return None
-
-
-async def require_admin(pdm_token: Optional[str] = Cookie(default=None)) -> dict:
-    """Require the user to have the built-in superadmin account OR the 'roles.manage'/'users.manage' scope.
-    For backwards compatibility this still checks for full admin (all permissions)."""
-    user = await session_user(pdm_token)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    db_user = user.pop("db_user")
-    # Superadmin always passes
-    if db_user.username == "admin":
-        return {**user, "role": db_user.role, "role_id": db_user.role_id, "permissions": None}
-    perms = await get_user_permissions(db_user.username)
-    # "admin" role means all permissions granted — check by seeing if system.manage is present
-    if "system.manage" not in perms:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-    return {**user, "role": db_user.role, "role_id": db_user.role_id, "permissions": perms}
 
 
 async def require_superadmin(pdm_token: Optional[str] = Cookie(default=None)) -> dict:

@@ -176,12 +176,6 @@ def encrypt_file(src: str, dst: str, key: str) -> None:
             chunk, counter = following, counter + 1
 
 
-def encrypted_key_id(path: str) -> Optional[str]:
-    with open(path, "rb") as f:
-        head = f.read(len(MAGIC) + 8)
-    return head[len(MAGIC):].decode() if head.startswith(MAGIC) else None
-
-
 def decrypt_file(src: str, dst: str, keys: dict[str, str]) -> None:
     """keys: key id → key. Raises when no key fits or the file was altered/truncated.
     `dst` only appears when everything decrypted correctly."""

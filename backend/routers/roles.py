@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import auth
 from audit import log_audit
-from database import get_db, AsyncSessionLocal
+from database import get_db
 from models import Role, Permission, User, role_permissions
 
 router = APIRouter(prefix="/api/roles", tags=["roles"])

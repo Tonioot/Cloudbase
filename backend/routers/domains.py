@@ -8,23 +8,18 @@
 import asyncio
 import ipaddress
 import logging
-import os
 import re
 import secrets
 import socket
 import time
-import urllib.error
-import urllib.request
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 import auth as _auth
 import certificates as certs
 import nginx_manager as nm
-from database import get_db
 
 log = logging.getLogger("cloudbase.domains")
 router = APIRouter(prefix="/api/domains", tags=["domains"])

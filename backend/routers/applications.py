@@ -278,10 +278,6 @@ def _has_public_nginx_domain(app: Application) -> bool:
     return bool((app.nginx_enabled and app.domain) or _syscfg.get_base_domain_cached())
 
 
-def _nginx_proxy_port(app: Application) -> Optional[int]:
-    return app.external_port or app.port
-
-
 def _validate_docker_runtime_settings(
     cpu_limit: Optional[float],
     memory_limit_mb: Optional[int],
@@ -319,21 +315,6 @@ async def _load_app_replicas(app_id: int, db: AsyncSession) -> list[ApplicationR
         select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
     )
     return result.scalars().all()
-
-
-async def _preferred_replica_node(
-    app: Application,
-    db: AsyncSession,
-    local_node: Node,
-) -> Node:
-    if app.node_id:
-        node_result = await db.execute(
-            select(Node).where(Node.id == app.node_id)
-        )
-        node = node_result.scalar_one_or_none()
-        if node:
-            return node
-    return local_node
 
 
 def _resolve_replica_node(
@@ -2220,7 +2201,7 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict
     await _best_effort_stop_legacy_app_container(app_id)
 
     env_vars = decrypt_env(app.env_vars or "")
-    source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
+    await asyncio.to_thread(_refresh_app_source_revision, app)  # also updates app.source_revision
     node_map = await _load_node_map(db)
     for replica in replicas:
         if replica.status in ("running", "starting", "restarting"):
@@ -3880,7 +3861,7 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
                 _q("[Docker] Image rebuilt. Start the app to apply changes.")
 
             result_holder["result"] = {
-                "message": f"Updated and rebuilt Docker image from {target_commit or branch}",
+                "message": f"Updated and rebuilt Docker image from {target_commit or _current_branch(app_dir)}",
                 "commit": commit_info,
                 "source_revision": source_revision,
                 "output": (
@@ -4312,8 +4293,6 @@ async def save_maintenance_pages(
 async def toggle_maintenance_mode(app_id: int, _user: dict = Depends(_auth.require_permission("apps.configure")), db: AsyncSession = Depends(get_db)):
     local_node = await ensure_local_node(db)
     app = await _get_or_404(app_id, db)
-    previous_maintenance_mode = bool(app.maintenance_mode)
-    previous_update_mode = bool(app.update_mode)
     
     if not _has_public_nginx_domain(app):
         raise HTTPException(400, "Configure a custom app domain or base domain to use maintenance mode")
@@ -4343,8 +4322,6 @@ async def toggle_maintenance_mode(app_id: int, _user: dict = Depends(_auth.requi
 async def toggle_update_mode(app_id: int, _user: dict = Depends(_auth.require_permission("apps.configure")), db: AsyncSession = Depends(get_db)):
     local_node = await ensure_local_node(db)
     app = await _get_or_404(app_id, db)
-    previous_maintenance_mode = bool(app.maintenance_mode)
-    previous_update_mode = bool(app.update_mode)
 
     if not _has_public_nginx_domain(app):
         raise HTTPException(400, "Configure a custom app domain or base domain to use update mode")
