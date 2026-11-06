@@ -51,6 +51,15 @@ async def _claim_pending_commands(db: AsyncSession, node_id: int, limit: int = 1
     return items
 
 
+# Called with the replica id when a node reports an instance started (nodes/promote.py registers here;
+# commands.py cannot import it, since promote builds on commands).
+_replica_started_hooks: list = []
+
+
+def on_replica_started(hook) -> None:
+    _replica_started_hooks.append(hook)
+
+
 async def _apply_command_result(
     db: AsyncSession,
     *,
@@ -68,6 +77,7 @@ async def _apply_command_result(
     if status not in ("done", "failed"):
         raise HTTPException(400, "Status must be 'done' or 'failed'")
 
+    started_replica_id = None
     cmd.status = status
     cmd.result = json.dumps(result_payload or {}) if result_payload is not None else None
     cmd.completed_at = _utcnow()
@@ -210,8 +220,9 @@ async def _apply_command_result(
                         if cmd.command_type == "start_replica":
                             if status == "done":
                                 # Container is up on the remote node; stay in "starting"
-                                # until the reverse tunnel connects (which sets "running").
+                                # until the primary can reach it (nodes/promote.py sets "running").
                                 replica.status = "starting"
+                                started_replica_id = replica.id
                                 # Keep the known id when the agent reused a container without reporting one
                                 replica.container_id = (result_payload or {}).get("container_id") or replica.container_id
                                 replica.last_error = None
@@ -226,6 +237,9 @@ async def _apply_command_result(
 
     await _commit_with_sqlite_lock_retry(db, context=f"apply_command_result cmd_id={command_id}")
     _get_command_event(command_id).set()
+    if started_replica_id is not None:
+        for hook in _replica_started_hooks:
+            hook(started_replica_id)
 
     # Broadcast completion event to browser subscribers — use a fresh session to avoid
     # autoflush on the already-committed session triggering a lock error.

@@ -109,8 +109,8 @@ async def deploy_app(
     await db.refresh(app)
 
     if not target_node.is_local and not is_cron:
-        # Nginx runs on the primary and reaches remote instances through
-        # tunnels, so a custom domain is routed here too. The config itself is
+        # Nginx runs on the primary and reaches remote instances over the
+        # node network, so a custom domain is routed here too. The config itself is
         # written once instances start (that path requires this flag).
         if app.domain and not app.no_web:
             app.nginx_enabled = True

@@ -17,6 +17,10 @@ class RegisterNodeRequest(BaseModel):
     heartbeat_interval: int = Field(default=15, ge=5, le=300)
 
 
+class WireguardEnrollRequest(BaseModel):
+    public_key: str = Field(min_length=44, max_length=44)
+
+
 class CommandResultRequest(BaseModel):
     status: str
     result: Optional[dict] = None

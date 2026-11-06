@@ -18,6 +18,7 @@ from apps.runtime import _get_app_node, _docker_runtime_options, _remote_replica
 from apps.serializers import _get_or_404
 from apps.validation import _assign_external_port
 from apps.deploy_common import _wait_new_instance_healthy
+from mesh import routing
 
 log = logging.getLogger("cloudbase.apps")
 
@@ -147,38 +148,19 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
         if tnode.is_local:
             async with AsyncSessionLocal() as _poll_db:
                 r = await _poll_db.get(ApplicationReplica, new_rid)
-                check_port = r.external_port if r else None
-            label = f"local port {check_port}"
+                check_backend = f"127.0.0.1:{r.external_port}" if r else None
+            label = f"local backend {check_backend}"
         else:
-            # Poll until the agent establishes the reverse tunnel (max 120 s)
-            pm._push_line(app_id, f"[ZD] Waiting for tunnel from '{tnode.name}' instance {new_rid} (max 120s)…")
-            deadline = asyncio.get_running_loop().time() + 120
-            tunnel_port = None
-            while asyncio.get_running_loop().time() < deadline:
-                await asyncio.sleep(3)
-                async with AsyncSessionLocal() as _poll_db:
-                    r = await _poll_db.execute(
-                        select(ApplicationReplica).where(ApplicationReplica.id == new_rid)
-                    )
-                    fresh = r.scalar_one_or_none()
-                if fresh is None:
-                    break
-                if fresh.status == "error":
-                    await _zd_rollback(app_id, local_node.id, new_entries, db)
-                    raise HTTPException(500, f"Instance {new_rid} on '{tnode.name}' failed: {fresh.last_error}")
-                if fresh.tunnel_port:
-                    tunnel_port = fresh.tunnel_port
-                    break
-
-            if not tunnel_port:
+            pm._push_line(app_id, f"[ZD] Waiting for instance {new_rid} on '{tnode.name}' to be reachable (max 120s)…")
+            try:
+                check_backend = await routing.wait_reachable(new_rid, 120)
+            except routing.Unreachable as exc:
                 await _zd_rollback(app_id, local_node.id, new_entries, db)
-                raise HTTPException(502, f"Tunnel for instance {new_rid} on '{tnode.name}' did not connect within 120s — rolled back")
-
-            check_port = tunnel_port
-            label = f"tunnel port {check_port} (node '{tnode.name}')"
+                raise HTTPException(502, f"Instance {new_rid} on '{tnode.name}': {exc} — rolled back")
+            label = f"{check_backend} (node '{tnode.name}')"
 
         pm._push_line(app_id, f"[ZD] Health checking instance {new_rid} on {label}…")
-        healthy, reason = await _wait_new_instance_healthy(app_id, new_rid, check_port, is_local=tnode.is_local)
+        healthy, reason = await _wait_new_instance_healthy(app_id, new_rid, check_backend, is_local=tnode.is_local)
 
         if not healthy:
             pm._push_line(app_id, f"[ZD] Instance {new_rid} failed health check ({reason}) — rolling back.")
@@ -198,12 +180,9 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
             if r:
                 r.status = "running"
                 await _upd_db.commit()
-                if tnode.is_local:
-                    if r.external_port:
-                        new_backends.append(f"127.0.0.1:{r.external_port}")
-                else:
-                    if r.tunnel_port:
-                        new_backends.append(f"127.0.0.1:{r.tunnel_port}")
+                backend = routing.backend_for(r, tnode)
+                if backend:
+                    new_backends.append(backend)
         new_ids.add(new_rid)
 
     app.status = "running"

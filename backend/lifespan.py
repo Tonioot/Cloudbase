@@ -25,6 +25,7 @@ from workers.cleanup import _docker_cleanup_loop, _node_command_cleanup, _orphan
 from workers.crash import _crash_monitor
 from workers.demo import _dev_demo_logs
 from workers.health import _node_health_monitor
+from workers.mesh import _mesh_monitor
 from workers.recovery import _startup_recovery
 from workers.stats import _overview_sampler, _remote_replica_stats_poller, _stats_collector, _stats_history_writer
 
@@ -57,6 +58,7 @@ async def _start_panel_tasks() -> list[asyncio.Task]:
         asyncio.create_task(_crash_monitor()),
         asyncio.create_task(_stats_collector()),
         asyncio.create_task(_node_health_monitor()),
+        asyncio.create_task(_mesh_monitor()),
         asyncio.create_task(_stats_history_writer()),
         asyncio.create_task(_remote_replica_stats_poller()),
         asyncio.create_task(_node_command_cleanup()),

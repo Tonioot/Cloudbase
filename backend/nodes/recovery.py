@@ -23,6 +23,11 @@ async def recover_node_replicas(node_id: int) -> None:
     """Queue start_replica for every replica marked node_offline on this node."""
 
     async with AsyncSessionLocal() as db:
+        # An instance is only useful when the primary can reach it: wait for the node network.
+        # (recover_stranded_replicas tries again as soon as the link is up.)
+        node = await db.get(Node, node_id)
+        if node is None or node.wg_state != "up":
+            return
         rep_result = await db.execute(
             select(ApplicationReplica).where(
                 and_(ApplicationReplica.node_id == node_id, ApplicationReplica.status == "node_offline")
@@ -76,9 +81,9 @@ async def recover_node_replicas(node_id: int) -> None:
                 continue
 
             # Always recover: node_offline only comes from a replica that was
-            # running/starting when the node or its tunnel dropped, so running is
+            # running/starting when the node or the node network dropped, so running is
             # the desired state. (auto_start is about Cloudbase boot, not outages.)
-            # If the container survived, the agent just reattaches the tunnel.
+            # If the container survived, the agent just keeps it.
 
             try:
                 env_vars = decrypt_env(app.env_vars or "")
@@ -98,7 +103,6 @@ async def recover_node_replicas(node_id: int) -> None:
                 continue
 
             replica.status = "starting"
-            replica.tunnel_port = None
             replica.last_error = None
             await db.commit()
 
@@ -145,6 +149,7 @@ async def recover_stranded_replicas(db: AsyncSession) -> None:
                 Node.status == "online",
                 Node.enabled == True,
                 Node.is_local == False,
+                Node.wg_state == "up",
             )
         )
         .distinct()
@@ -184,7 +189,6 @@ async def mark_stale_nodes_offline(db: AsyncSession) -> None:
             for replica in rep_result.scalars().all():
                 replica.status = "node_offline"
                 replica.substatus = None
-                replica.tunnel_port = None
     if changed:
         await db.commit()
 
@@ -211,12 +215,8 @@ async def run_node_docker_cleanup(node: Node, aggressive: bool = False) -> dict:
     return json.loads(done.result) if done.result else {}
 
 
-# ── Reverse tunnel WebSocket ──────────────────────────────────────────────────
-# The remote node agent connects here to expose a replica container without
-# opening any inbound firewall ports on the remote node.
-
 async def _regen_nginx_for_app(app_id: int) -> None:
-    """Rebuild nginx config for an app after a tunnel state change.
+    """Rebuild nginx config for an app after an instance went live or dropped out.
 
     Uses the shared applications writer so transition guards (start/restart pages)
     are applied consistently across all nginx write paths.
@@ -237,4 +237,4 @@ async def _regen_nginx_for_app(app_id: int) -> None:
         try:
             await _write_app_nginx_config(app, db, local_node)
         except Exception as e:
-            log.warning("[tunnel] nginx reload failed for app=%d: %s", app_id, e)
+            log.warning("[nginx] reload failed for app=%d: %s", app_id, e)

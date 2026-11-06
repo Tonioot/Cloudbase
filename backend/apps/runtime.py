@@ -45,9 +45,9 @@ def _docker_runtime_options(app: Application) -> dict:
         "tmpfs_enabled": bool(app.docker_tmpfs_enabled),
         "tmpfs_size_mb": app.docker_tmpfs_size_mb,
         "restart_policy": app.restart_policy or "no",
-        # Reached through nginx (or the node tunnel), both on localhost: then the
-        # host port must not be open to the internet as well. Without a domain
-        # the host port is the only way in, so it stays public.
+        # Reached through nginx on localhost: then the host port must not be open to the
+        # internet as well. Without a domain the host port is the only way in, so it stays
+        # public. (On another node the agent binds it to its node-network address instead.)
         "bind_host": "127.0.0.1" if _has_public_nginx_domain(app) else None,
         # Workers have no web server: nothing to reach, so no port on the host
         "publish_port": not app.no_web,
@@ -349,7 +349,6 @@ async def _stop_replica_runtime(
         await asyncio.to_thread(pm.stop_docker_replica, app.id, replica.id)
         replica.status = "stopped"
         replica.container_id = None
-        replica.tunnel_port = None
         replica.last_error = None
         return
 
@@ -367,7 +366,6 @@ async def _stop_replica_runtime(
 
     replica.status = "stopped"
     replica.container_id = None
-    replica.tunnel_port = None
     replica.last_error = None
 
 

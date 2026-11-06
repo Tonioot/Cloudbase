@@ -204,14 +204,12 @@ async def init_db():
         result = await conn.exec_driver_sql("PRAGMA table_info(application_replicas)")
         existing_replica_cols = {row[1] for row in result.fetchall()}
         for col, definition in [
-            ("tunnel_port",              "INTEGER"),
             ("docker_cpu_limit",         "FLOAT"),
             ("docker_memory_limit_mb",   "INTEGER"),
             ("docker_read_only_root",    "BOOLEAN NOT NULL DEFAULT 0"),
             ("docker_tmpfs_enabled",     "BOOLEAN NOT NULL DEFAULT 0"),
             ("docker_tmpfs_size_mb",     "INTEGER"),
             ("substatus",               "VARCHAR(40)"),
-            ("route",                   "VARCHAR(10)"),
         ]:
             if col in existing_replica_cols:
                 continue

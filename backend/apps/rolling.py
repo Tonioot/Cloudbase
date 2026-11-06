@@ -20,6 +20,7 @@ from apps.serializers import _get_or_404
 from apps.validation import _assign_external_port
 from apps.bluegreen import _do_zero_downtime_deploy, _zd_rollback
 from apps.deploy_common import _wait_new_instance_healthy
+from mesh import routing
 
 log = logging.getLogger("cloudbase.apps")
 
@@ -129,12 +130,9 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
         tnode = node_map.get(replica.node_id) if replica.node_id else local_node
         if tnode is None:
             continue
-        if tnode.is_local:
-            if replica.external_port:
-                current_backends.append(f"127.0.0.1:{replica.external_port}")
-        else:
-            if replica.tunnel_port:
-                current_backends.append(f"127.0.0.1:{replica.tunnel_port}")
+        backend = routing.backend_for(replica, tnode)
+        if backend:
+            current_backends.append(backend)
 
     completed_new_ids: set[int] = set()
 
@@ -171,7 +169,7 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
 
             # Health check new instance
             pm._push_line(app_id, f"[Rolling] Health checking new instance {new_replica.id} on port {new_ext_port}…")
-            healthy, reason = await _wait_new_instance_healthy(app_id, new_replica.id, new_ext_port, is_local=True)
+            healthy, reason = await _wait_new_instance_healthy(app_id, new_replica.id, f"127.0.0.1:{new_ext_port}", is_local=True)
 
             if not healthy:
                 pm._push_line(app_id, f"[Rolling] New instance {new_replica.id} failed health check ({reason}) — aborting roll.")
@@ -200,31 +198,16 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
             )
             await db.commit()
 
-            # Wait for tunnel
-            pm._push_line(app_id, f"[Rolling] Waiting for tunnel from '{tnode.name}' instance {new_replica.id} (max 120s)…")
-            deadline = asyncio.get_running_loop().time() + 120
-            tunnel_port = None
-            while asyncio.get_running_loop().time() < deadline:
-                await asyncio.sleep(3)
-                async with AsyncSessionLocal() as _poll_db:
-                    fresh_r = await _poll_db.get(ApplicationReplica, new_replica.id)
-                if fresh_r is None:
-                    break
-                if fresh_r.status == "error":
-                    pm._push_line(app_id, f"[Rolling] Remote instance {new_replica.id} failed — aborting roll.")
-                    await _zd_rollback(app_id, local_node.id, [(tnode, new_replica.id)], db)
-                    raise HTTPException(500, f"Rolling deploy aborted: remote instance {new_replica.id} failed")
-                if fresh_r.tunnel_port:
-                    tunnel_port = fresh_r.tunnel_port
-                    break
-
-            if not tunnel_port:
-                pm._push_line(app_id, f"[Rolling] Tunnel for instance {new_replica.id} did not connect — aborting roll.")
+            pm._push_line(app_id, f"[Rolling] Waiting for instance {new_replica.id} on '{tnode.name}' to be reachable (max 120s)…")
+            try:
+                remote_backend = await routing.wait_reachable(new_replica.id, 120)
+            except routing.Unreachable as exc:
+                pm._push_line(app_id, f"[Rolling] Remote instance {new_replica.id}: {exc} — aborting roll.")
                 await _zd_rollback(app_id, local_node.id, [(tnode, new_replica.id)], db)
-                raise HTTPException(502, f"Rolling deploy aborted: tunnel for instance {new_replica.id} did not connect within 120s")
+                raise HTTPException(502, f"Rolling deploy aborted: instance {new_replica.id} on '{tnode.name}': {exc}")
 
-            pm._push_line(app_id, f"[Rolling] Health checking remote instance {new_replica.id} on tunnel port {tunnel_port}…")
-            healthy, reason = await _wait_new_instance_healthy(app_id, new_replica.id, tunnel_port, is_local=False)
+            pm._push_line(app_id, f"[Rolling] Health checking remote instance {new_replica.id} on {remote_backend}…")
+            healthy, reason = await _wait_new_instance_healthy(app_id, new_replica.id, remote_backend, is_local=False)
 
             if not healthy:
                 pm._push_line(app_id, f"[Rolling] Remote instance {new_replica.id} failed health check ({reason}) — aborting roll.")
@@ -237,8 +220,8 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
                     r.status = "running"
                     await _upd.commit()
 
-            new_backend = f"127.0.0.1:{tunnel_port}"
-            old_backend = f"127.0.0.1:{old_replica.tunnel_port}" if old_replica.tunnel_port else None
+            new_backend = remote_backend
+            old_backend = routing.backend_for(old_replica, tnode)
 
         # Swap nginx: add new, remove old
         if old_backend and old_backend in current_backends:

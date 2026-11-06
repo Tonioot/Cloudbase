@@ -253,6 +253,9 @@ def _as_node_dict(node: Node) -> dict:
         "last_error": node.last_error,
         "connection_type": node.connection_type,
         "agent_version": node.agent_version,
+        "wg_ip": node.wg_ip,
+        "wg_state": node.wg_state,
+        "wg_handshake_at": node.wg_handshake_at.isoformat() + "Z" if node.wg_handshake_at else None,
         "node_metrics": _local_metrics() if node.is_local else (
             {
                 "cpu_percent": node.node_cpu_percent,

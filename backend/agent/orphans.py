@@ -5,7 +5,6 @@ import httpx
 from containers import client as containers_client
 from agent.log import _agent_log
 from agent.state import AgentState
-from agent.tunnels import _stop_tunnel_task
 
 # ─── Orphan cleanup ───────────────────────────────────────────────────────────
 
@@ -80,7 +79,6 @@ async def _cleanup_orphaned_replica_containers(client: httpx.AsyncClient, state:
             # Only remove after two consecutive checks agree it is orphaned.
             if replica_id in _orphan_suspects:
                 _agent_log(f"[cleanup] Removing orphan replica container '{cname}' (replica_id={replica_id} is stopped or no longer exists on the primary)")
-                await _stop_tunnel_task(replica_id)
                 try:
                     await asyncio.to_thread(_remove_container, cname)
                 except Exception as e:

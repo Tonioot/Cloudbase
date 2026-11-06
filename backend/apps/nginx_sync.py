@@ -17,6 +17,7 @@ from nginx import certbot as nginx_certbot
 from nginx import config as nginx_config
 from nginx import files as nginx_files
 from nginx import pages as nginx_pages
+from mesh import routing
 from nodes.registry import ensure_local_node
 from core import system_config as _syscfg
 from apps.state import RESTART_READY_MIN_HEALTHY_RATIO, RESTART_READY_POLL_SECONDS, RESTART_READY_TIMEOUT_SECONDS, TRANSITION_HOLD_MAX_SECONDS, _clear_active_transition_mode, _get_active_transition_mode
@@ -152,11 +153,11 @@ async def _wait_for_app_backends_ready(
         checked = 0
         for backend in backends:
             try:
-                port = int(str(backend).rsplit(":", 1)[1])
-            except (IndexError, TypeError, ValueError):
+                host, port = routing.split(str(backend))
+            except ValueError:
                 continue
             checked += 1
-            if await asyncio.to_thread(_local_http_service_ready, port):
+            if await asyncio.to_thread(_http_service_ready, host, port):
                 ready += 1
 
         # Require a healthy quorum for two consecutive polls so restart pages
@@ -361,15 +362,15 @@ def _local_port_accepts_connections(port: int) -> bool:
         return False
 
 
-def _local_http_service_ready(port: int) -> bool:
-    """Return True when localhost:port accepts TCP and returns a non-5xx HTTP status."""
-    if not _local_port_accepts_connections(port):
+def _http_service_ready(host: str, port: int) -> bool:
+    """Return True when host:port accepts TCP and returns a non-5xx HTTP status."""
+    if host == "127.0.0.1" and not _local_port_accepts_connections(port):
         return False
 
     try:
         import http.client
 
-        conn = http.client.HTTPConnection("127.0.0.1", int(port), timeout=0.8)
+        conn = http.client.HTTPConnection(host, int(port), timeout=0.8)
         conn.request("GET", "/")
         res = conn.getresponse()
         status = int(res.status or 0)
@@ -383,7 +384,7 @@ async def _get_nginx_backends(app: Application, db: AsyncSession, local_node: "N
     """Return nginx backend addresses for an app as a list of 'host:port' strings.
 
     Local replicas use 127.0.0.1:{external_port}.
-    Remote replicas use 127.0.0.1:{tunnel_port} (reverse WebSocket tunnel on main node).
+    Remote replicas use {node wg_ip}:{external_port} (over the node network).
     Replicas that are running but have no address yet are omitted.
     Returns an empty list when no running replicas exist.
     """
@@ -397,13 +398,7 @@ async def _get_nginx_backends(app: Application, db: AsyncSession, local_node: "N
     )
     backends: list[str] = []
     for replica, r_node in result.all():
-        is_remote = r_node is not None and not r_node.is_local
-        if is_remote:
-            # Remote replica: traffic reaches it via the reverse tunnel on the main node
-            if replica.tunnel_port:
-                backends.append(f"127.0.0.1:{replica.tunnel_port}")
-        else:
-            # Local replica (node_id is None, or node is local): direct port on this machine
-            if replica.external_port:
-                backends.append(f"127.0.0.1:{replica.external_port}")
+        backend = routing.backend_for(replica, r_node)
+        if backend:
+            backends.append(backend)
     return backends

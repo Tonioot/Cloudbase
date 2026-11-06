@@ -60,6 +60,7 @@ GET     /api/nodes
 GET     /api/nodes/agent/commands
 GET     /api/nodes/agent/databases/{database_id}/backups/{backup_id}/download
 GET     /api/nodes/agent/my-replicas
+GET     /api/nodes/mesh
 GET     /api/nodes/{node_id}/agent-logs
 GET     /api/nodes/{node_id}/commands
 GET     /api/nodes/{node_id}/commands/{command_id}
@@ -158,6 +159,7 @@ POST    /api/domains/check
 POST    /api/nodes/agent/commands/{command_id}/result
 POST    /api/nodes/agent/databases/{database_id}/backups/{backup_id}/upload
 POST    /api/nodes/agent/register
+POST    /api/nodes/agent/wireguard
 POST    /api/nodes/invites
 POST    /api/nodes/{node_id}/disable
 POST    /api/nodes/{node_id}/docker-cleanup
@@ -196,7 +198,6 @@ WS    /api/nodes/ws/agent
 WS    /api/nodes/ws/db-control
 WS    /api/nodes/ws/db-dial/{token}
 WS    /api/nodes/ws/db-proxy/{database_id}
-WS    /api/nodes/ws/tunnel/{replica_id}
 WS    /api/nodes/{node_id}/commands/live
 WS    /api/nodes/{node_id}/events
 WS    /api/nodes/{node_id}/stats

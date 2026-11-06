@@ -50,7 +50,7 @@ _DEFAULTS = {
     },
     # Private network between the primary and its nodes (WireGuard, see mesh/)
     "wireguard": {
-        "enabled": False,
+        "enabled": True,
         "endpoint": "",          # public host name or IP of the primary that nodes connect to
         "port": 51820,
         "subnet": "10.77.0.0/16",

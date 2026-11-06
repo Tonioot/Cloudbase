@@ -6,6 +6,7 @@ import httpx
 import websockets
 from agent.db_control import _db_control_loop
 from agent.dispatch import _BACKGROUND_COMMANDS, _active_streams, _execute_command, _execute_in_background
+from agent import mesh as agent_mesh
 from agent.log import _agent_log
 from agent.orphans import _cleanup_orphaned_replica_containers
 from agent.registration import _build_capabilities, _collect_node_metrics, _collect_system_info, _register, _report_result
@@ -131,8 +132,12 @@ async def start_agent(main_url=None, invite_code=None, node_name=None, public_ho
     db_control = asyncio.create_task(_db_control_loop(state))
     try:
         async with httpx.AsyncClient() as client:
-            await _drain_stale_commands(client, state)
-            await _run_websocket_loop(client, state)
+            join = asyncio.create_task(agent_mesh.join_forever(client, state))
+            try:
+                await _drain_stale_commands(client, state)
+                await _run_websocket_loop(client, state)
+            finally:
+                join.cancel()
     finally:
         db_control.cancel()
 

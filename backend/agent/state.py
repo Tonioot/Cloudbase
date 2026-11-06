@@ -16,6 +16,7 @@ class AgentState:
     node_id: int
     node_name: str
     heartbeat_interval: int = 15
+    wg_ip: str = ""            # this node's address on the node network, once enrolled
 
 
 def _load_agent_token() -> Optional[str]:

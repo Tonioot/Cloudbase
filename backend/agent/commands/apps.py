@@ -4,7 +4,6 @@ import subprocess
 from containers import client as containers_client, naming as containers_naming, replicas as containers_replicas, cleanup as containers_cleanup, jobs as containers_jobs
 from agent.log import AGENT_LOG_FILE, _agent_log
 from agent.source import _build_image_local, _download_and_extract_source, _ensure_replica_app_deployed, _report_replica_substatus, _wait_local_api
-from agent.tunnels import _start_tunnel_task, _stop_tunnel_task
 from agent.urls import _LOCAL_API_BASE
 
 # ─── Command Handlers ─────────────────────────────────────────────────────────
@@ -127,16 +126,19 @@ async def cmd_cron_run(client, state, main_id, payload, headers):
 
 async def cmd_start_replica(client, state, main_id, payload, headers):
     # Ensure the app source exists locally on this node. The replica container
-    # itself still uses the main app id for naming, logs, and tunnel identity.
+    # itself still uses the main app id for naming and logs.
     app_name = payload.get("app_name") or ""
     replica_id = payload["replica_id"]
 
-    # If the container is already running (node briefly disconnected), just
-    # reconnect the tunnel instead of doing a full stop/start cycle.
+    # The instance is only reachable over the node network: its port is published on this node's
+    # node-network address, never on the public one.
+    if not state.wg_ip:
+        raise RuntimeError("This node is not on the node network yet (WireGuard). Run: cloudbase wireguard")
+
+    # If the container is already running (node briefly disconnected), keep it
+    # instead of doing a full stop/start cycle.
     if containers_replicas.is_replica_container_running(int(main_id), replica_id):
-        _agent_log(f"[agent] replica={replica_id} container already running, reconnecting tunnel only")
-        local_port = payload.get("external_port", 8000)
-        _start_tunnel_task(state, replica_id, local_port)
+        _agent_log(f"[agent] replica={replica_id} container already running, keeping it")
         try:
             container_id = containers_client._get_client().containers.get(containers_naming.replica_container_name(int(main_id), replica_id)).id
         except Exception:
@@ -155,7 +157,7 @@ async def cmd_start_replica(client, state, main_id, payload, headers):
         "internal_port": payload.get("internal_port", 8000),
         "external_port": payload["external_port"],
         "env_vars": payload.get("env_vars") or {},
-        "docker_options": payload.get("docker_options"),
+        "docker_options": {**(payload.get("docker_options") or {}), "bind_host": state.wg_ip},
     }
     resp = await client.post(
         f"{_LOCAL_API_BASE}/api/apps/{main_id}/replicas/run-remote",
@@ -165,21 +167,11 @@ async def cmd_start_replica(client, state, main_id, payload, headers):
     result = resp.json()
 
     await _report_replica_substatus(client, state, int(main_id), replica_id, "waiting")
-
-    # Start the reverse tunnel so the main node can reach the replica without
-    # opening any inbound firewall ports on this node.
-    local_port  = payload["external_port"]  # port the container listens on locally
-    _start_tunnel_task(state, replica_id, local_port)
-
     return result
 
 
 async def cmd_stop_replica(client, state, main_id, payload, headers):
     replica_id = payload["replica_id"]
-
-    # Tear down the tunnel first so the main node drops the backend before the
-    # container stops (prevents nginx from briefly routing to a dead port).
-    await _stop_tunnel_task(replica_id)
 
     # Use main_id directly — no local DB lookup needed for stop.
     resp = await client.delete(

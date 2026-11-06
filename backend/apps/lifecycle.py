@@ -66,7 +66,6 @@ async def restart_app_now(app_id: int, db: AsyncSession, actor: str):
                 await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
             replica.status = "stopped"
             replica.container_id = None
-            replica.tunnel_port = None
             await _start_replica_runtime(app, replica, replica_node, env_vars, db)
             continue
 

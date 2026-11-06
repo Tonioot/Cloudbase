@@ -189,7 +189,7 @@ async def delete_instance(
                 pass
     else:
         # Always queue a stop, whatever the status says: a "stopped" replica can
-        # still have a running container (e.g. after a lost tunnel). The agent's
+        # still have a running container (e.g. after a lost connection). The agent's
         # stop is a no-op when no container exists. Queued even when the node is
         # offline — it is dispatched as soon as the node reconnects.
         await queue_node_command(

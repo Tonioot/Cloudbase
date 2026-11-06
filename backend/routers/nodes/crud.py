@@ -10,6 +10,7 @@ from core.database import AsyncSessionLocal, get_db
 from core.models import Node, NodeInvite, NodeCommand
 from core.audit import log_audit
 from core import auth as _auth
+from mesh import hub
 from nodes.commands import _utcnow, queue_node_command, wait_for_node_command
 from nodes.recovery import run_node_docker_cleanup
 from nodes.registry import _as_node_dict, ensure_local_node, get_node_or_404
@@ -125,6 +126,7 @@ async def delete_node(node_id: int, db: AsyncSession = Depends(get_db), _user: d
     await db.delete(node)
     await log_audit(db, "node.delete", actor=actor, detail={"name": node_name, "node_id": node_id})
     await db.commit()
+    await hub.sync_peers()
     return {"ok": True}
 
 

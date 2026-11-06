@@ -25,15 +25,6 @@ def _local_ws_url(path: str) -> str:
     return f"ws://127.0.0.1:{_LOCAL_PORT}{path}"
 
 
-def _tunnel_ws_url(main_url: str, replica_id: int) -> str:
-    url = _normalize_url(main_url)
-    if url.startswith("https"):
-        base = url.replace("https://", "wss://")
-    else:
-        base = url.replace("http://", "ws://")
-    return f"{base}/api/nodes/ws/tunnel/{replica_id}"
-
-
 # ─── Database connections across nodes ───────────────────────────────────────
 # A separate control WebSocket, so database connections are never held up by a
 # long command (e.g. an image pull) in the main command loop.

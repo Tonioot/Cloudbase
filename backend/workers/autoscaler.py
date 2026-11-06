@@ -13,6 +13,7 @@ from core import applog
 from apps.validation import _assign_external_port
 from apps.runtime import _remote_replica_command_payload, _start_instance_local
 from apps.deploy_common import _wait_new_instance_healthy
+from mesh import routing
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
 from nodes.registry import ensure_local_node
 from apps.state import DEPLOY_HEALTH_TIMEOUT_SECONDS, _deploys_in_progress, _scaling_in_progress
@@ -89,7 +90,7 @@ async def _autoscaler():
         nodes = list(res.scalars().all())
         if not any(n.id == local_node.id for n in nodes):
             nodes.append(local_node)
-        # Least-loaded node wins; on a tie prefer the local node (no tunnel hop).
+        # Least-loaded node wins; on a tie prefer the local node (no network hop).
         return min(nodes, key=lambda n: (_node_load(n), not n.is_local))
 
     async def _remove_failed_replica(app_id: int, replica_id: int, node: Node) -> None:
@@ -144,27 +145,16 @@ async def _autoscaler():
         try:
             if node.is_local:
                 cid = await _start_instance_local(app, replica, env_vars, app_id)
-                check_port = replica.external_port
+                check_backend = f"127.0.0.1:{replica.external_port}"
             else:
-                # The agent may need to clone + build first; the tunnel comes up
-                # once the container runs (and puts the replica in nginx).
-                deadline = asyncio.get_running_loop().time() + DEPLOY_HEALTH_TIMEOUT_SECONDS
-                check_port = None
-                while asyncio.get_running_loop().time() < deadline:
-                    await asyncio.sleep(3)
-                    async with AsyncSessionLocal() as s:
-                        fresh = await s.get(ApplicationReplica, replica.id)
-                    if fresh is None:
-                        raise RuntimeError("instance was removed")
-                    if fresh.status == "error":
-                        raise RuntimeError(f"node reported an error: {fresh.last_error or 'unknown'}")
-                    if fresh.tunnel_port:
-                        check_port = fresh.tunnel_port
-                        break
-                if not check_port:
-                    raise RuntimeError(f"tunnel from '{node.name}' did not connect within {DEPLOY_HEALTH_TIMEOUT_SECONDS}s")
+                # The agent may need to clone + build first; once the container runs the
+                # primary can connect to it over the node network (and puts it in nginx).
+                try:
+                    check_backend = await routing.wait_reachable(replica.id, DEPLOY_HEALTH_TIMEOUT_SECONDS)
+                except routing.Unreachable as exc:
+                    raise RuntimeError(str(exc))
             if not app.no_web:
-                healthy, reason = await _wait_new_instance_healthy(app_id, replica.id, check_port, is_local=node.is_local)
+                healthy, reason = await _wait_new_instance_healthy(app_id, replica.id, check_backend, is_local=node.is_local)
                 if not healthy:
                     raise RuntimeError(f"health check failed: {reason}")
         except Exception as e:
@@ -226,7 +216,7 @@ async def _autoscaler():
 
         async with AsyncSessionLocal() as s:
             victim = await s.get(ApplicationReplica, victim_id)
-            # A remote tunnel closing after an intentional stop marks it "stopped".
+            # The agent reports "stopped" when an intentional stop completes.
             if victim and victim.status == "stopped":
                 stopped = True
             if stopped:

@@ -9,12 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal, get_db
 from core.models import Node, NodeInvite
 from core.audit import log_audit
+from mesh import hub
 from core import config as _cfg, system_config as _syscfg
 from nodes.commands import _apply_command_result, _claim_pending_commands, _commit_with_sqlite_lock_retry, _dispatch_queued_commands_ws, _utcnow
 from nodes.recovery import _recover_node_replicas_once
 from nodes.registry import _as_node_dict, get_node_by_token_or_401
 from nodes.state import _get_node_event, _node_event_subscribers, _node_ws_connections, _pending_pings, _push_node_event, push_node_stream_data
-from routers.nodes.schemas import CommandResultRequest, RegisterNodeRequest
+from routers.nodes.schemas import CommandResultRequest, RegisterNodeRequest, WireguardEnrollRequest
 from core.models import ApplicationReplica
 from core.models import Application
 
@@ -81,6 +82,19 @@ async def register_node(req: RegisterNodeRequest, db: AsyncSession = Depends(get
         "node": _as_node_dict(node),
         "auth_token": auth_token,
     }
+
+
+@router.post("/agent/wireguard")
+async def enroll_wireguard(
+    req: WireguardEnrollRequest,
+    x_node_token: Optional[str] = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """A node sends its WireGuard public key and gets what it needs to join the node network."""
+    if not x_node_token:
+        raise HTTPException(401, "Missing node token")
+    node = await get_node_by_token_or_401(x_node_token, db)
+    return await hub.enroll(db, node, req.public_key)
 
 
 @router.get("/agent/commands")
@@ -227,7 +241,6 @@ async def agent_ws(websocket: WebSocket):
                             for _r in rep_res.scalars().all():
                                 _r.status = "node_offline"
                                 _r.substatus = None
-                                _r.tunnel_port = None
                             await _commit_with_sqlite_lock_retry(
                                 db,
                                 context=f"agent_ws/offline-mark node_id={node_id}",
@@ -366,7 +379,6 @@ async def agent_ws(websocket: WebSocket):
                         for _r in rep_res.scalars().all():
                             _r.status = "node_offline"
                             _r.substatus = None
-                            _r.tunnel_port = None
                         await db.commit()
                         log.info("Node id=%d marked offline after WS disconnect", node_id)
                 _push_node_event(node_id, {"type": "node_offline", "node_id": node_id})

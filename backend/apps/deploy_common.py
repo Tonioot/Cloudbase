@@ -4,7 +4,8 @@ from fastapi import HTTPException
 from core.database import AsyncSessionLocal
 from core.models import ApplicationReplica
 from containers import processes as pm, replicas as containers_replicas
-from apps.nginx_sync import _local_http_service_ready
+from apps.nginx_sync import _http_service_ready
+from mesh import routing
 from apps.state import DEPLOY_HEALTH_PROGRESS_SECONDS, _deploys_in_progress, _scaling_in_progress, DEPLOY_HEALTH_TIMEOUT_SECONDS
 
 @contextlib.contextmanager
@@ -25,18 +26,19 @@ def _single_deploy(app_id: int):
         _deploys_in_progress.discard(app_id)
 
 
-async def _wait_new_instance_healthy(app_id: int, replica_id: int, port: int, is_local: bool) -> tuple[bool, str]:
+async def _wait_new_instance_healthy(app_id: int, replica_id: int, backend: str, is_local: bool) -> tuple[bool, str]:
     """Poll a freshly started deploy instance until it serves HTTP.
 
     Returns (healthy, reason). Gives up early when the container has exited
     (local) or the node reported the replica as failed (remote).
     """
+    host, port = routing.split(backend)
     loop = asyncio.get_running_loop()
     started = loop.time()
     deadline = started + DEPLOY_HEALTH_TIMEOUT_SECONDS
     next_progress = started + DEPLOY_HEALTH_PROGRESS_SECONDS
     while loop.time() < deadline:
-        if await asyncio.to_thread(_local_http_service_ready, port):
+        if await asyncio.to_thread(_http_service_ready, host, port):
             return True, ""
         if is_local:
             if not await asyncio.to_thread(containers_replicas.is_replica_container_running, app_id, replica_id):
