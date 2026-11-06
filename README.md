@@ -94,10 +94,10 @@ The primary clones the repository to `~/.cloudbase/apps/<name>` and builds a Doc
 
 ```
 Visitor ─► NGINX on the primary ─► instance on the primary (127.0.0.1:10000–19999)
-                               └─► tunnel port (127.0.0.1:20000–29999) ─► agent on a node ─► instance
+                               └─► node network (WireGuard, 10.77.0.x:10000–19999) ─► instance on a node
 ```
 
-All public traffic enters through NGINX on the primary, which spreads requests over every healthy instance. The agent on a remote node keeps an outbound WebSocket to the primary and opens a tunnel per instance, so remote nodes need no open inbound ports, public IP or VPN.
+All public traffic enters through NGINX on the primary, which spreads requests over every healthy instance. Every node joins a private WireGuard network with the primary at the centre (UDP port `51820` on the primary; the node connects outwards, so it needs no open ports or public IP). Instances on a node only listen on the node's private address, and the primary reaches them directly through the kernel's WireGuard — there is nothing extra to run per instance.
 
 ### Node outages
 
@@ -195,7 +195,7 @@ cloudbase node-status
 | `~/.cloudbase/logs/`        | `server.log` (Cloudbase), `apps/<id>.log` (per app), the node agent's log |
 | `~/.cloudbase/`             | Also the database and credentials — include it in server backups |
 
-Cloudbase listens on port `7823`. Instances use host ports `10000–19999`, tunnels use `20000–29999` (local only). All are configurable under **Settings → System**.
+Cloudbase listens on port `7823`. Instances use host ports `10000–19999`. The node network uses `10.77.0.0/16` and UDP `51820` (`wireguard:` in `config.yaml`). The ports are configurable under **Settings → System**; `cloudbase wireguard` sets up or repairs the node network.
 
 ---
 

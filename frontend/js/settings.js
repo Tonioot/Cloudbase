@@ -200,7 +200,6 @@ function renderDomain(root) {
 const SYS_FIELDS = [
   ['auth', 'token_expire_seconds', 'sys-token-expire'],
   ['ports', 'instance_min', 'sys-inst-min'], ['ports', 'instance_max', 'sys-inst-max'],
-  ['ports', 'tunnel_min', 'sys-tun-min'], ['ports', 'tunnel_max', 'sys-tun-max'],
   ['limits', 'max_apps', 'sys-max-apps'], ['limits', 'max_instances', 'sys-max-inst'],
   ['limits', 'max_nodes', 'sys-max-nodes'],
   ['limits', 'max_restarts_per_window', 'sys-max-restarts'], ['limits', 'restart_window_seconds', 'sys-restart-window'],
@@ -226,12 +225,13 @@ function renderSystem(root) {
         ${numField('sys-inst-max', 'To', '', 'min="1024" max="65000"')}
       </div>
       <div class="field-hint">Takes effect after a Cloudbase restart. Keep the range free of other services.</div>`)}
-    ${group('Tunnel ports', 'Local ports on the primary where traffic for instances on other nodes arrives through their tunnel.',
-      `<div class="form-pair">
-        ${numField('sys-tun-min', 'From', '', 'min="1024" max="65000"')}
-        ${numField('sys-tun-max', 'To', '', 'min="1024" max="65000"')}
-      </div>
-      <div class="field-hint">Only bound on <code>127.0.0.1</code>, so they don't need to be open in your firewall. Takes effect after a restart.</div>`)}
+    ${group('Node network', 'Instances on other nodes are reached through a private WireGuard network between the primary and each node. Nothing else is exposed.',
+      `<div id="wg-status" class="field-hint">Checking…</div>
+      <div class="field">
+        <label class="field-label" for="sys-wg-endpoint">Address of this primary</label>
+        <input class="input" id="sys-wg-endpoint" type="text" placeholder="same address the nodes use for the panel" />
+        <div class="field-hint">Host name or IP that nodes use to reach this primary on UDP port <code id="wg-port">51820</code>. Leave empty to use the address they already connect to the panel with. Applies to nodes the next time they start.</div>
+      </div>`)}
     ${group('Limits', 'Upper bounds that protect the server from runaway scaling.',
       `<div class="form-pair">
         ${numField('sys-max-apps', 'Max apps', '', 'min="1"')}
@@ -247,11 +247,21 @@ function renderSystem(root) {
 
   api.getSystemSettings().then(data => {
     for (const [sec, key, id] of SYS_FIELDS) document.getElementById(id).value = data[sec]?.[key] ?? '';
+    document.getElementById('sys-wg-endpoint').value = data.wireguard?.endpoint ?? '';
   }).catch(e => setStatus(e.message, 'error'));
+
+  api.getMesh().then(m => {
+    document.getElementById('wg-port').textContent = m.port;
+    const el = document.getElementById('wg-status');
+    el.innerHTML = !m.enabled ? 'The node network is turned off (<code>wireguard.enabled</code> in config.yaml).'
+      : m.up ? `Running on <code>${esc(m.subnet)}</code>, UDP port <code>${esc(m.port)}</code>.`
+      : m.error ? `Not running: ${esc(m.error)} — run <code>cloudbase wireguard</code> on this server.`
+      : 'Starts when the first node joins.';
+  }).catch(() => {});
 
   const save = document.getElementById('system-save');
   save.onclick = async () => {
-    const body = { auth: {}, ports: {}, limits: {} };
+    const body = { auth: {}, ports: {}, limits: {}, wireguard: { endpoint: document.getElementById('sys-wg-endpoint').value.trim() } };
     for (const [sec, key, id] of SYS_FIELDS) body[sec][key] = parseInt(document.getElementById(id).value, 10);
     save.disabled = true;
     setStatus('Saving…');

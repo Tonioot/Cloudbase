@@ -567,6 +567,15 @@ step_web() {
   systemctl enable --now nginx
 }
 
+step_wireguard() {
+  # The node network: instances on other nodes are reached through it (see backend/mesh/)
+  local args=("$RUN_USER")
+  [[ "$ROLE" == "primary" ]] && args+=(--hub)
+  if ! bash "$INSTALL_DIR/scripts/setup-wireguard.sh" "${args[@]}"; then
+    add_warning "The node network (WireGuard) could not be set up, so instances can't run on other nodes. Fix the error above, then run: cloudbase wireguard"
+  fi
+}
+
 step_code() {
   if [[ -d "$INSTALL_DIR/.git" ]]; then
     chown -R "$RUN_USER": "$INSTALL_DIR"
@@ -757,6 +766,7 @@ if [[ "$ROLE" == "primary" ]]; then
 else
   add_step "Registering with the primary" step_register
 fi
+add_step "Setting up the node network" step_wireguard
 add_step "Starting Cloudbase" step_service
 run_steps
 

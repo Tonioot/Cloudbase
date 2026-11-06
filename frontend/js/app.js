@@ -2352,19 +2352,17 @@ async function initInstances() {
         if (diffMs > 0) uptimeStr = fmtUptime(Math.floor(diffMs / 1000));
       }
 
-      // Connection info: local / tunnel with port / no tunnel
+      // Connection info: local, or over the node network
       let connHtml;
       if (inst.node_is_local) {
         connHtml = `<span style="font-size:12px;color:var(--text-muted)">local</span>`;
-      } else if (inst.tunnel_connected && inst.tunnel_port) {
+      } else if (inst.wg_state === 'up') {
         connHtml = `<span style="font-size:12px;color:var(--green);display:flex;align-items:center;gap:4px">
           <svg width="7" height="7" viewBox="0 0 7 7"><circle cx="3.5" cy="3.5" r="3.5" fill="currentColor"/></svg>
-          tunnel :${inst.tunnel_port}
+          node network
         </span>`;
-      } else if (inst.tunnel_connected) {
-        connHtml = `<span style="font-size:12px;color:var(--green)">tunnel</span>`;
       } else {
-        connHtml = `<span style="font-size:12px;color:var(--red)">no tunnel</span>`;
+        connHtml = `<span style="font-size:12px;color:var(--red)">${inst.wg_state === 'down' ? 'node network down' : 'not on node network'}</span>`;
       }
 
       // Startup progress steps

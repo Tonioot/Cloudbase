@@ -17,6 +17,7 @@ from nginx import config as nginx_config
 from nodes.registry import ensure_local_node as _eln
 from apps.nginx_sync import _write_app_nginx_config as _wanc
 from core.runtime import PORT
+from mesh import addressing
 from nginx.panel import _load_panel_https_domain, _refresh_all_app_nginx
 
 log = logging.getLogger("cloudbase.main")
@@ -187,9 +188,8 @@ async def get_system_settings(_: dict = Depends(auth.require_permission("system.
         "ports": {
             "instance_min": _cfg.get_port("instance_min"),
             "instance_max": _cfg.get_port("instance_max"),
-            "tunnel_min":   _cfg.get_port("tunnel_min"),
-            "tunnel_max":   _cfg.get_port("tunnel_max"),
         },
+        "wireguard": {"endpoint": _cfg.get_wireguard().get("endpoint") or ""},
         "limits": {
             "max_apps":                _cfg.get_limit("max_apps"),
             "max_instances":           _cfg.get_limit("max_instances"),
@@ -217,6 +217,7 @@ async def save_system_settings(
     auth_cfg = body.get("auth",   {})
     ports    = body.get("ports",  {})
     limits   = body.get("limits", {})
+    wireguard = body.get("wireguard", {})
     sections = {}
     if auth_cfg:
         sections["auth"] = {
@@ -226,8 +227,6 @@ async def save_system_settings(
         sections["ports"] = {
             "instance_min": _int(ports.get("instance_min"), 1024, 65000, _cfg.get_port("instance_min")),
             "instance_max": _int(ports.get("instance_max"), 1024, 65000, _cfg.get_port("instance_max")),
-            "tunnel_min":   _int(ports.get("tunnel_min"),   1024, 65000, _cfg.get_port("tunnel_min")),
-            "tunnel_max":   _int(ports.get("tunnel_max"),   1024, 65000, _cfg.get_port("tunnel_max")),
         }
     if limits:
         sections["limits"] = {
@@ -237,6 +236,11 @@ async def save_system_settings(
             "max_restarts_per_window": _int(limits.get("max_restarts_per_window"), 1, 1000,   _cfg.get_limit("max_restarts_per_window")),
             "restart_window_seconds":  _int(limits.get("restart_window_seconds"),  10, 86400, _cfg.get_limit("restart_window_seconds")),
         }
+    if wireguard:
+        endpoint = str(wireguard.get("endpoint") or "").strip()
+        if endpoint and not (addressing.is_valid_endpoint(endpoint if ":" in endpoint else endpoint + ":51820")):
+            raise HTTPException(400, "The node network address must be a host name or IP address, optionally with a port")
+        sections["wireguard"] = {"endpoint": endpoint}
     if sections:
         _cfg.save_config_sections(sections)
     return {"ok": True}

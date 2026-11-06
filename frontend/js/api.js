@@ -58,6 +58,7 @@ export const api = {
   listApps: ()         => request('GET',    '/apps'),
   getOverviewHistory: () => request('GET',  '/overview/history'),
   listNodes:()         => request('GET',    '/nodes'),
+  getMesh:  ()         => request('GET',    '/nodes/mesh'),
   createNodeInvite:(payload) => request('POST', '/nodes/invites', payload),
   listNodeCommands:(nodeId) => request('GET', `/nodes/${nodeId}/commands`),
   getNodeCommandStatus:(nodeId, cmdId) => request('GET', `/nodes/${nodeId}/commands/${cmdId}`),

@@ -31,8 +31,6 @@ _DEFAULTS = {
     "ports": {
         "instance_min": 8000,
         "instance_max": 17999,
-        "tunnel_min": 18000,
-        "tunnel_max": 27999,
         # Database proxies for app instances on another node than the database
         # (port = db_proxy_min + database id). Bound to the cloudbase Docker network only.
         "db_proxy_min": 30000,
@@ -171,13 +169,10 @@ def validate() -> None:
 
     inst_min = get_port("instance_min")
     inst_max = get_port("instance_max")
-    tun_min  = get_port("tunnel_min")
-    tun_max  = get_port("tunnel_max")
     max_inst = get_limit("max_instances")
     max_apps = get_limit("max_apps")
 
     inst_range = inst_max - inst_min + 1
-    tun_range  = tun_max  - tun_min  + 1
 
     if inst_range < max_inst:
         log.warning(
@@ -194,27 +189,10 @@ def validate() -> None:
             inst_min, inst_max, inst_range, max_apps,
         )
 
-    if tun_range < max_inst:
-        log.warning(
-            "CONFIG WARNING: tunnel port range %d–%d has only %d ports, "
-            "but limits.max_instances is %d. "
-            "Increase tunnel_max or reduce max_instances in config.yaml.",
-            tun_min, tun_max, tun_range, max_inst,
-        )
-
-    # Overlap check
-    if inst_min <= tun_max and tun_min <= inst_max:
-        log.warning(
-            "CONFIG WARNING: instance port range %d–%d overlaps with tunnel port range %d–%d. "
-            "This will cause port conflicts. Adjust the ranges in config.yaml so they do not overlap.",
-            inst_min, inst_max, tun_min, tun_max,
-        )
-
     server_port = get_server_port()
-    if inst_min <= server_port <= inst_max or tun_min <= server_port <= tun_max:
+    if inst_min <= server_port <= inst_max:
         log.warning(
-            "CONFIG WARNING: server port %d falls inside a port range "
-            "(instance %d–%d, tunnel %d–%d). "
+            "CONFIG WARNING: server port %d falls inside the instance port range %d–%d. "
             "Change server.port in config.yaml to avoid conflicts.",
-            server_port, inst_min, inst_max, tun_min, tun_max,
+            server_port, inst_min, inst_max,
         )

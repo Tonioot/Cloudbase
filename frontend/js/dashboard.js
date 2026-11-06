@@ -241,7 +241,7 @@ function nodeRowHTML(n) {
   const md = n.metadata || {};
   const metaParts = [
     md.arch,
-    n.is_local ? 'local' : (n.websocket_connected ? 'tunnel' : n.status),
+    n.is_local ? 'local' : (n.wg_state === 'up' ? 'node network' : (n.wg_state === 'down' ? 'network down' : n.status)),
     md.ip || md.public_ip || n.public_host,
     _nodePing.get(n.id),
     n.agent_version ? `agent ${n.agent_version}` : null,

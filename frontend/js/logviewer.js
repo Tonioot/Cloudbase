@@ -15,7 +15,7 @@ const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').re
 const COMPONENT_COLORS = {
   deploys: 'var(--accent)', build: 'var(--purple)', instances: 'var(--green)',
   autoscaler: 'var(--orange)', nginx: 'var(--yellow)', apps: 'var(--accent)',
-  audit: 'var(--text-2)', agent: 'var(--green)', tunnel: 'var(--purple)',
+  audit: 'var(--text-2)', agent: 'var(--green)', mesh: 'var(--purple)',
 };
 const PALETTE = ['var(--accent)', 'var(--purple)', 'var(--green)', 'var(--orange)', 'var(--yellow)'];
 

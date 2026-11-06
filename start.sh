@@ -88,6 +88,7 @@ Recovery:
   backup [file]                Back up Cloudbase's database, keys and settings
   restore <file> [--yes]       Restore a backup made with 'cloudbase backup'
   nginx permissions [user]     Let Cloudbase manage nginx and HTTPS certificates
+  wireguard [user]             Set up (or repair) the node network between the primary and its nodes
 
 Nodes:
   connect                      Make this server a node of a primary
@@ -341,6 +342,15 @@ nginx_permissions() {
     info "Configuring Cloudbase nginx permissions for user '$target_user'"
     bash "$INSTALL_DIR/scripts/setup-nginx-permissions.sh" "$target_user"
     success "Cloudbase nginx permissions configured"
+}
+
+wireguard_setup() {
+    local target_user="${1:-$(service_run_user)}"
+    local args=("$target_user")
+    is_node || args+=(--hub)
+    info "Setting up the node network (WireGuard) for user '$target_user'"
+    bash "$INSTALL_DIR/scripts/setup-wireguard.sh" "${args[@]}"
+    success "Node network ready"
 }
 
 handle_nginx_command() {
@@ -691,6 +701,18 @@ cmd_doctor() {
         bad "Docker isn't reachable for user $(id -un)" "sudo usermod -aG docker $(id -un), then log in again"
     fi
 
+    # Node network: instances on other nodes are reached through it
+    if [[ -x /usr/local/lib/cloudbase/wireguard ]] && command -v wg >/dev/null 2>&1; then
+        ok "Node network (WireGuard) is installed"
+        if sudo -n /usr/local/lib/cloudbase/wireguard status >/dev/null 2>&1; then
+            : # may be down until the first node joins
+        else
+            bad "Cloudbase may not manage the node network" "cloudbase wireguard"
+        fi
+    else
+        bad "Node network (WireGuard) is not set up — instances can't run on other nodes" "cloudbase wireguard"
+    fi
+
     if ! is_node; then
         # nginx + HTTPS
         # nginx lives in /usr/sbin, which isn't on a normal user's PATH
@@ -915,6 +937,9 @@ case "$COMMAND" in
         ;;
     nginx)
         handle_nginx_command "$@"
+        ;;
+    wireguard|wg)
+        wireguard_setup "$@"
         ;;
     cert|certs)
         handle_cert_command "$@"

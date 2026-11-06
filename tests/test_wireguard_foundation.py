@@ -151,3 +151,27 @@ def test_the_client_reports_failures(fake_helper, monkeypatch):
     monkeypatch.setenv("CLOUDBASE_WG_HELPER", "/definitely/not/here")
     with pytest.raises(helper.HelperError, match="not installed"):
         helper.status()
+
+
+# ── installation ──────────────────────────────────────────────────────────────
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_the_setup_script_installs_the_helper_the_client_expects():
+    setup = (ROOT / "scripts" / "setup-wireguard.sh").read_text(encoding="utf-8")
+    assert f'HELPER="{helper.HELPER}"' in setup
+    assert "NOPASSWD: ${HELPER} *" in setup and "Before=docker.service" in setup and "cloudbase-wireguard" in setup
+
+
+def test_install_and_start_know_about_the_node_network():
+    install = (ROOT / "install.sh").read_text(encoding="utf-8")
+    start = (ROOT / "start.sh").read_text(encoding="utf-8")
+    assert "setup-wireguard.sh" in install and "step_wireguard" in install
+    assert "setup-wireguard.sh" in start and "wireguard|wg)" in start
+
+
+def test_no_trace_of_the_reverse_tunnels_is_left():
+    for gone in ("routers/nodes/tunnel.py", "nodes/tunnel.py", "agent/tunnels.py"):
+        assert not (ROOT / "backend" / gone).exists(), gone
+    from core import models
+    assert not hasattr(models.ApplicationReplica, "tunnel_port")

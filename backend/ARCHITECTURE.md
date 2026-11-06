@@ -22,7 +22,8 @@ agent/                      the node agent (runs on remote servers, talks to the
 |---|---|
 | `core/` | `config`, `database` + `models`, `auth` (+ `access`: permission map and middleware), `env_crypto`, `token_vault`, `system_config`, `applog`/`system_logs`, `paths` (every file location), `runtime` (port, `IS_NODE`), `history` |
 | `apps/` | application logic: `git`, `images`, `validation`, `nginx_sync`, `runtime` (starting/stopping replicas), `replica_stats`, `deployments` (run a deploy), `deploy_common`/`rolling`/`bluegreen`, `lifecycle`, `serializers`, `state` |
-| `nodes/` | `state` (live connections), `commands` (the command queue), `registry` (local node, lookups), `recovery`, `tunnel` (reverse tunnels to replicas) |
+| `nodes/` | `state` (live connections), `commands` (the command queue), `registry` (local node, lookups), `recovery`, `promote` (an instance goes live once reachable; takes instances out when the link breaks) |
+| `mesh/` | the node network (WireGuard, hub and spoke with the primary as hub): `addressing`, `helper` (client for the root helper `scripts/cloudbase-wireguard`, via sudo), `hub` (interface, peers, enrolment, handshake health), `routing` (`backend_for`, `wait_reachable`) |
 | `containers/` | Docker on one host: `client`, `naming`, `buildkit`, `dockerfiles`, `build`, `cleanup`, `apps`, `replicas`, `jobs`, `stats_logs`, `processes` |
 | `nginx/` | `paths`, `pages` (HTML), `config` (nginx config text), `files` (writers), `certbot` (read-only lookups), `certificates` (issuing), `panel` |
 | `dbs/` | managed databases: `docker`, `lifecycle`, `backup_restore`, `updates`, `ops`, `provision`, `view`, `relay`, `proxy`, `workers`, `backups`, `backup_scheduler`, … |

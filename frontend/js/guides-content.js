@@ -13,7 +13,7 @@ export const GUIDES = [
   group: 'Getting started',
   title: 'How Cloudbase works',
   summary: 'The primary, nodes, apps and instances — and how a request reaches your code.',
-  keywords: 'architecture overview concepts primary node instance tunnel',
+  keywords: 'architecture overview concepts primary node instance wireguard node network',
   lead: 'Cloudbase turns a Git repository into running containers on one or more of your own servers, and puts nginx in front of them. This page explains the four building blocks you’ll see everywhere in the panel.',
   body: `
 <h2>The four building blocks</h2>
@@ -37,18 +37,17 @@ export const GUIDES = [
 </div>
 <div class="flow">
   <span class="flow-box">nginx on the primary</span><span class="flow-arrow">→</span>
-  <span class="flow-box">Tunnel port<small>127.0.0.1:20000</small></span><span class="flow-arrow">→</span>
-  <span class="flow-box">Agent on a node<small>outbound WebSocket</small></span><span class="flow-arrow">→</span>
-  <span class="flow-box">Instance on that node</span>
+  <span class="flow-box">Node network<small>WireGuard, 10.77.0.x</small></span><span class="flow-arrow">→</span>
+  <span class="flow-box">Instance on a node<small>10.77.0.2:10001</small></span>
 </div>
-<p>All public traffic enters through nginx on the primary. nginx spreads requests over every healthy instance of the app. Instances on the primary are reached directly on their host port; instances on other nodes are reached through a <strong>tunnel</strong> the node’s agent opens to the primary. Because the agent connects outwards, remote nodes don’t need any open inbound ports.</p>
+<p>All public traffic enters through nginx on the primary. nginx spreads requests over every healthy instance of the app. Instances on the primary are reached directly on their host port; instances on other nodes are reached over the <strong>node network</strong>, a private WireGuard connection between the primary and each node. An instance on a node only listens on that private address, never on the node’s public one.</p>
 <p>An app with a domain (its own or an automatic subdomain) only listens on localhost, so it can’t be reached around nginx and HTTPS on <code>http://&lt;server-ip&gt;:&lt;port&gt;</code>. An app without a domain keeps its port open, since that is the only way to reach it. A change applies the next time the instances start.</p>
 
 <h2>What runs where</h2>
 <ul>
   <li><strong>Cloudbase itself</strong> listens on port <code>7823</code>. With a panel domain configured, nginx serves it on 80/443.</li>
   <li><strong>Instances</strong> get a host port from the instance range (default <code>10000–19999</code>).</li>
-  <li><strong>Tunnels</strong> use local ports on the primary from the tunnel range (default <code>20000–29999</code>), bound only to <code>127.0.0.1</code>.</li>
+  <li><strong>The node network</strong> is a private <code>10.77.0.0/16</code> network (WireGuard, UDP port <code>51820</code> on the primary). The primary is <code>10.77.0.1</code>, every node gets its own address.</li>
   <li><strong>Data</strong> — database, config, certificates, app sources — lives in <code>~/.cloudbase/</code> of the user Cloudbase runs as.</li>
 </ul>
 
@@ -288,7 +287,7 @@ SESSION_SECRET=change-me</pre>
 
 <h2>Health checks</h2>
 <p>A new instance counts as healthy when an HTTP <code>GET /</code> on its port returns any status below 500 — a redirect or 404 is fine, a crash or 502 isn’t. Cloudbase waits up to 10 minutes and logs progress while waiting, so slow-starting apps (large Next.js builds, JVM apps) aren’t cut off.</p>
-<p>Instances on remote nodes are checked through their tunnel, after the tunnel has connected.</p>
+<p>Instances on remote nodes are checked over the node network, once the primary can reach them.</p>
 
 <h2>When a deploy fails</h2>
 <p>If a new instance doesn’t become healthy, the deploy stops and is rolled back: new instances are removed and the old ones keep serving. Nothing is switched in nginx until the new code proves it works. Read the reason in the deploy log, fix it, and deploy again.</p>
@@ -324,16 +323,16 @@ SESSION_SECRET=change-me</pre>
   body: `
 <h2>Adding and removing instances</h2>
 <p>On the app’s <strong>Instances</strong> tab, click <strong>Add instance</strong> and pick the node it should run on. The new instance gets a free host port from the instance range and is added to nginx as soon as it runs. <strong>Remove</strong> stops the container and takes it out of the load balancer.</p>
-<p>The instance list shows per instance: status, node, host port, tunnel port (remote nodes), CPU and memory, uptime and the container ID. The container ID matches what <code>docker ps</code> shows on that server.</p>
+<p>The instance list shows per instance: status, node, host port, whether a remote node is on the node network, CPU and memory, uptime and the container ID. The container ID matches what <code>docker ps</code> shows on that server.</p>
 
 <h2>Statuses</h2>
 <table>
   <tr><th>Status</th><th>Meaning</th></tr>
-  <tr><td><code>starting</code></td><td>Building, creating the container, or waiting for its tunnel.</td></tr>
+  <tr><td><code>starting</code></td><td>Building, creating the container, or waiting until the primary can reach it.</td></tr>
   <tr><td><code>running</code></td><td>Container is up and receiving traffic.</td></tr>
   <tr><td><code>stopped</code></td><td>Stopped on purpose, or exited with restart policy “no”.</td></tr>
   <tr><td><code>error</code></td><td>Failed to start, or crashed too often. The reason is shown with the instance.</td></tr>
-  <tr><td><code>node offline</code></td><td>The node or its tunnel is unreachable. Recovered automatically when it’s back.</td></tr>
+  <tr><td><code>node offline</code></td><td>The node or the node network to it is unreachable. Recovered automatically when it’s back.</td></tr>
 </table>
 
 <h2>Restart policy</h2>
@@ -991,9 +990,9 @@ systemctl list-timers | grep certbot</pre>
   slug: 'nodes',
   group: 'Nodes',
   title: 'Adding nodes',
-  summary: 'Connect more servers, how tunnels work, and turning a node into a primary.',
-  keywords: 'node add connect invite agent tunnel remote server disconnect primary convert',
-  lead: 'A node is an extra server that runs instances for the primary. Nodes are controlled by a small agent and don’t need any inbound ports.',
+  summary: 'Connect more servers, how the node network works, and turning a node into a primary.',
+  keywords: 'node add connect invite agent wireguard node network remote server disconnect primary convert',
+  lead: 'A node is an extra server that runs instances for the primary. Nodes are controlled by a small agent and connect to the primary over a private WireGuard network — they need no inbound ports.',
   body: `
 <h2>Connecting a node</h2>
 <ol class="guide-steps">
@@ -1009,7 +1008,8 @@ systemctl list-timers | grep certbot</pre>
 
 <h2>How the connection works</h2>
 <p>The agent keeps an outbound WebSocket open to the primary. Over it, the primary sends commands (start, stop, build, fetch logs or stats) and the agent reports heartbeats with CPU, memory and disk usage.</p>
-<p>For each instance on the node, the agent opens a separate <strong>tunnel</strong> to the primary. On the primary the tunnel becomes a local port (from the tunnel range, <code>127.0.0.1</code> only) that nginx adds to the app’s load balancer. Remote instances therefore need no open ports, no public IP and no VPN.</p>
+<p>Besides that, every node joins the <strong>node network</strong>: a private WireGuard network with the primary at the centre. The node connects outwards to the primary (UDP port <code>51820</code>, which must be reachable on the primary), so the node itself needs no open ports and no public IP. The primary reaches each instance directly at the node’s private address, for example <code>10.77.0.2:10001</code>, and nginx puts it in the app’s load balancer. WireGuard runs in the kernel, so this adds almost no overhead and one connection carries all instances of a node.</p>
+<p>The node network is set up by the installer (<code>cloudbase wireguard</code> repairs or repeats it). It needs the <code>wireguard-tools</code> package and a kernel with WireGuard, which every current distribution has. Under <em>Settings → System settings → Node network</em> you can set the address nodes use to reach the primary if it differs from the panel address.</p>
 
 <h2>Running instances on a node</h2>
 <p>Add an instance to an app and pick the node. The first time, the node downloads the app’s source from the primary and builds the image itself; later deploys only rebuild what changed. Deploys and restarts work exactly as on the primary.</p>
@@ -1031,23 +1031,23 @@ systemctl list-timers | grep certbot</pre>
   slug: 'node-outages',
   group: 'Nodes',
   title: 'Node outages & recovery',
-  summary: 'What happens when a node or tunnel drops, and how instances come back by themselves.',
-  keywords: 'offline node_offline recovery reconnect tunnel orphan cleanup restart',
+  summary: 'What happens when a node or the node network drops, and how instances come back by themselves.',
+  keywords: 'offline node_offline recovery reconnect wireguard node network orphan cleanup restart',
   lead: 'Nodes go offline: reboots, network blips, updates. Cloudbase is built to keep serving from the remaining instances and to restore the rest without your help.',
   body: `
 <h2>When a node goes offline</h2>
-<p>The primary marks a node offline when its WebSocket closes or its heartbeats stop. Its running instances become <code>node offline</code>, their tunnels close and nginx stops sending them traffic. Instances on other nodes keep serving.</p>
+<p>The primary marks a node offline when its WebSocket closes or its heartbeats stop. Its running instances become <code>node offline</code>, and nginx stops sending them traffic. Instances on other nodes keep serving.</p>
 
 <h2>When it comes back</h2>
 <p>As soon as the agent is connected again, the primary sends a start command for every <code>node offline</code> instance on it:</p>
 <ul>
-  <li>If the container survived (only the connection dropped), the agent just reconnects the tunnel. The container isn’t restarted.</li>
+  <li>If the container survived (only the connection dropped), the agent keeps it. The container isn’t restarted.</li>
   <li>If the container is gone (the server rebooted), it’s started again from the image on the node — rebuilt first if needed.</li>
 </ul>
 <p>The instance goes through <code>starting</code> back to <code>running</code> and rejoins the load balancer. The app’s log shows <em>Node came back online — recovering instance …</em>.</p>
 
-<h2>When only a tunnel drops</h2>
-<p>A tunnel can drop while the node stays connected, for example when the agent restarts. The instance is then also marked <code>node offline</code> and recovered the same way, so a running container is never mistaken for a stopped one.</p>
+<h2>When only the node network drops</h2>
+<p>The node network can break while the agent stays connected, for example when the node loses its route to UDP port <code>51820</code>. The primary notices when the WireGuard handshake stops (after about three minutes), takes the node’s instances out of nginx and marks them <code>node offline</code>. When the network is back they are recovered the same way, so a running container is never mistaken for a stopped one.</p>
 
 <h2>Orphaned containers</h2>
 <p>Every few minutes the agent compares the instance containers on its server with what the primary expects. A container the primary doesn’t know (anymore) — for example of an instance you deleted while the node was offline — is removed. To prevent mistakes during restarts, a container is only removed when it’s older than two minutes and two checks in a row agree. Stop commands queued while a node was offline are still carried out when it reconnects.</p>
@@ -1195,7 +1195,7 @@ cloudbase restore ~/cloudbase-backup.tar.gz</pre>
   <tr><th>Setting</th><th>Default</th><th>Notes</th></tr>
   <tr><td>Session length</td><td><code>3600</code> s</td><td>How long a sign-in stays valid.</td></tr>
   <tr><td>Instance ports</td><td><code>10000–19999</code></td><td>Host ports for instances. Needs at least as many ports as the instance limit. Restart required.</td></tr>
-  <tr><td>Tunnel ports</td><td><code>20000–29999</code></td><td>Local ports on the primary for remote instances. Restart required.</td></tr>
+  <tr><td>Node network</td><td><code>10.77.0.0/16</code>, UDP <code>51820</code></td><td>Private WireGuard network between the primary and its nodes (<code>wireguard:</code> in config.yaml; the address nodes use is set in the panel).</td></tr>
   <tr><td>Max apps</td><td><code>1000</code></td><td></td></tr>
   <tr><td>Max instances</td><td><code>10000</code></td><td>Across all apps and nodes.</td></tr>
   <tr><td>Max nodes</td><td><code>100</code></td><td>Including the primary.</td></tr>
@@ -1203,7 +1203,7 @@ cloudbase restore ~/cloudbase-backup.tar.gz</pre>
 </table>
 
 <h2>Firewall</h2>
-<p>Only these ports need to be open to the internet on the primary: <code>80</code> and <code>443</code> for nginx. At home, forward <code>80</code> and <code>443</code> on your router to the primary. Port <code>7823</code> can be closed once the panel has a domain. Instance and tunnel ports don’t need to be public — nginx reaches them locally. Remote nodes need no inbound ports at all.</p>
+<p>Only these ports need to be open to the internet on the primary: <code>80</code> and <code>443</code> for nginx, and UDP <code>51820</code> if you have nodes. At home, forward them on your router to the primary. Port <code>7823</code> can be closed once the panel has a domain. Instance ports don’t need to be public — nginx reaches them locally or over the node network. Remote nodes need no inbound ports at all.</p>
 
 <h2>The config file</h2>
 <pre>~/.cloudbase/config.yaml</pre>
