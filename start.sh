@@ -490,9 +490,9 @@ cmd_password() {
     CB_NEW_PASS="$new_pass" CB_USER="$username" "$VENV_PATH/bin/python3" - <<'PYEOF'
 import asyncio, os, sys
 sys.path.insert(0, '.')
-import auth
-from database import AsyncSessionLocal
-from models import User
+from core import auth
+from core.database import AsyncSessionLocal
+from core.models import User
 from sqlalchemy import select
 
 async def main():
@@ -801,7 +801,7 @@ run_runtime() {
         "$VENV_PATH/bin/python3" - <<PYEOF
 import sys
 sys.path.insert(0, '.')
-import auth
+from core import auth
 auth.save_hashed_password(auth.hash_password("$pass"))
 PYEOF
 

@@ -645,7 +645,7 @@ step_admin() {
   local pass
   pass="$(python3 -c "import secrets, string; a = string.ascii_letters + string.digits; print(''.join(secrets.choice(a) for _ in range(20)))")"
   cd "$INSTALL_DIR/backend"
-  as_user env CB_PASS="$pass" venv/bin/python -c "import os, auth; auth.save_hashed_password(auth.hash_password(os.environ['CB_PASS']))"
+  as_user env CB_PASS="$pass" venv/bin/python -c "import os; from core import auth; auth.save_hashed_password(auth.hash_password(os.environ['CB_PASS']))"
   printf '%s' "$pass" | as_user tee "$DATA_DIR/.first-run-password" > /dev/null
   printf '%s' "$pass" > "$STATE_DIR/password"
 }
