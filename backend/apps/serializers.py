@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.models import Application, Deployment, Node, ApplicationReplica
-from nginx import certificates as certs
+from nginx import certbot as nginx_certbot
 from cron import scheduler as _cron
 from core.env_crypto import decrypt_env
 from core import system_config as _syscfg
@@ -41,7 +41,7 @@ def _app_to_dict(
                 _slug = _re.sub(r"[^a-z0-9]+", "-", (app.name or "").lower()).strip("-")
                 if _slug:
                     _auto = f"{_slug}.{_base}"
-                    _secure = bool(_syscfg.get_base_ssl_cert_cached()) or (certs.capability()[0] and certs.exists(_auto))
+                    _secure = bool(_syscfg.get_base_ssl_cert_cached()) or (nginx_certbot.capability()[0] and nginx_certbot.exists(_auto))
                     _app_url = f"{'https' if _secure else 'http'}://{_auto}"
     return {
         "id": app.id,

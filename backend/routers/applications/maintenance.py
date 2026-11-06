@@ -3,7 +3,8 @@ import logging
 from fastapi import HTTPException, Depends, APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
-from nginx import manager as nm
+from nginx import pages as nginx_pages
+from nginx import files as nginx_files
 from nodes.registry import ensure_local_node
 from core import auth as _auth
 from apps.nginx_sync import _ensure_maintenance_files, _get_nginx_mode, _has_public_nginx_domain, _write_app_nginx_config
@@ -45,11 +46,11 @@ async def save_maintenance_pages(
     app.update_page   = json.dumps(req.update_page.model_dump())
     app.restart_page  = json.dumps(req.restart_page.model_dump())
     app.starting_page = json.dumps(req.starting_page.model_dump())
-    downtime_html = nm.render_app_page("downtime", req.downtime_page.model_dump())
-    update_html = nm.render_app_page("update", req.update_page.model_dump())
-    restart_html = nm.render_app_page("restart", req.restart_page.model_dump())
-    starting_html = nm.render_app_page("starting", req.starting_page.model_dump())
-    ok, msg = nm.write_maintenance_files(app_id, downtime_html, update_html, restart_html, starting_html)
+    downtime_html = nginx_pages.render_app_page("downtime", req.downtime_page.model_dump())
+    update_html = nginx_pages.render_app_page("update", req.update_page.model_dump())
+    restart_html = nginx_pages.render_app_page("restart", req.restart_page.model_dump())
+    starting_html = nginx_pages.render_app_page("starting", req.starting_page.model_dump())
+    ok, msg = nginx_files.write_maintenance_files(app_id, downtime_html, update_html, restart_html, starting_html)
     if not ok:
         await db.commit()
         return {"ok": False, "message": msg}
@@ -138,7 +139,7 @@ async def render_maintenance_page(
     if req.page_type not in ("downtime", "update", "restart", "starting"):
         raise HTTPException(400, "page_type must be 'downtime', 'update', 'restart', or 'starting'")
     await _get_or_404(app_id, db)
-    return HTMLResponse(content=nm.render_app_page(req.page_type, req.page.model_dump(), preview=True))
+    return HTMLResponse(content=nginx_pages.render_app_page(req.page_type, req.page.model_dump(), preview=True))
 
 
 @router.get("/{app_id}/maintenance-pages/preview/{page_type}")
@@ -166,11 +167,11 @@ async def preview_maintenance_page(
     cfg = json.loads(raw or "{}")
 
     if page_type == "downtime":
-        html = nm.render_app_page("downtime", cfg, preview=True)
+        html = nginx_pages.render_app_page("downtime", cfg, preview=True)
     elif page_type == "restart":
-        html = nm.render_app_page("restart", cfg, preview=True)
+        html = nginx_pages.render_app_page("restart", cfg, preview=True)
     elif page_type == "starting":
-        html = nm.render_app_page("starting", cfg, preview=True)
+        html = nginx_pages.render_app_page("starting", cfg, preview=True)
     else:
-        html = nm.render_app_page("update", cfg, preview=True)
+        html = nginx_pages.render_app_page("update", cfg, preview=True)
     return HTMLResponse(content=html)

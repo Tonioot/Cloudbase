@@ -9,7 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db, AsyncSessionLocal
 from core.models import Application
 from core import auth, token_vault, config as _cfg, system_config as _syscfg
-from nginx import manager as nm, certificates as _certs
+from nginx import certificates as nginx_certificates
+from nginx import paths as nginx_paths
+from nginx import pages as nginx_pages
+from nginx import files as nginx_files
+from nginx import config as nginx_config
 from nodes.registry import ensure_local_node as _eln
 from apps.nginx_sync import _write_app_nginx_config as _wanc
 from core.runtime import PORT
@@ -33,7 +37,7 @@ class CloudbaseNginxRequest(BaseModel):
 
 @router.get("/api/system/nginx-config")
 async def get_cloudbase_nginx(db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_permission("system.manage"))):
-    config_path = os.path.join(nm.NGINX_SITES_DIR, "cloudbase")
+    config_path = os.path.join(nginx_paths.NGINX_SITES_DIR, "cloudbase")
     exists = os.path.exists(config_path)
     content = None
     if exists:
@@ -58,17 +62,17 @@ async def apply_cloudbase_nginx(
 ):
     import re as _re2
     # --- Cloudbase panel nginx ---
-    unavailable_html = nm.generate_cloudbase_unavailable_html(req.domain)
-    page_ok, page_msg = nm.write_cloudbase_unavailable_page(unavailable_html)
+    unavailable_html = nginx_pages.generate_cloudbase_unavailable_html(req.domain)
+    page_ok, page_msg = nginx_files.write_cloudbase_unavailable_page(unavailable_html)
     if not page_ok:
         raise HTTPException(status_code=500, detail=f"Failed to write Cloudbase unavailable page: {page_msg}")
 
-    unknown_host_html = nm.generate_cloudbase_unknown_host_html(req.domain)
-    host_ok, host_msg = nm.write_cloudbase_unknown_host_page(unknown_host_html)
+    unknown_host_html = nginx_pages.generate_cloudbase_unknown_host_html(req.domain)
+    host_ok, host_msg = nginx_files.write_cloudbase_unknown_host_page(unknown_host_html)
     if not host_ok:
         raise HTTPException(status_code=500, detail=f"Failed to write Cloudbase unknown-host page: {host_msg}")
 
-    config = nm.generate_config(
+    config = nginx_config.generate_config(
         "cloudbase",
         req.domain,
         PORT,
@@ -76,11 +80,11 @@ async def apply_cloudbase_nginx(
         req.ssl_key_path,
         strict_hostnames=True,
     )
-    ok, msg = nm.write_nginx_config("cloudbase", config)
+    ok, msg = nginx_files.write_nginx_config("cloudbase", config)
     if not ok:
         raise HTTPException(status_code=500, detail=f"Failed to apply nginx config: {msg}")
 
-    catchall_ok, catchall_msg = nm.write_default_catch_all(req.ssl_cert_path, req.ssl_key_path)
+    catchall_ok, catchall_msg = nginx_files.write_default_catch_all(req.ssl_cert_path, req.ssl_key_path)
     if not catchall_ok:
         raise HTTPException(status_code=500, detail=f"Cloudbase config applied, but failed to enforce nginx default catch-all: {catchall_msg}")
 
@@ -134,25 +138,25 @@ class PanelDomainRequest(BaseModel):
 @router.post("/api/system/panel-domain")
 async def set_panel_domain(req: PanelDomainRequest, _: dict = Depends(auth.require_permission("system.manage"))):
     """Set the panel's domain (and certificate) without touching the base domain."""
-    domain = nm._normalize_domain(req.domain)
+    domain = nginx_paths._normalize_domain(req.domain)
     if not domain:
         raise HTTPException(400, "Enter a domain")
-    cert = nm._sanitize_ssl_path(req.ssl_cert_path)
-    key = nm._sanitize_ssl_path(req.ssl_key_path)
+    cert = nginx_paths._sanitize_ssl_path(req.ssl_cert_path)
+    key = nginx_paths._sanitize_ssl_path(req.ssl_key_path)
     for writer, html in (
-        (nm.write_cloudbase_unavailable_page, nm.generate_cloudbase_unavailable_html(domain)),
-        (nm.write_cloudbase_unknown_host_page, nm.generate_cloudbase_unknown_host_html(domain)),
+        (nginx_files.write_cloudbase_unavailable_page, nginx_pages.generate_cloudbase_unavailable_html(domain)),
+        (nginx_files.write_cloudbase_unknown_host_page, nginx_pages.generate_cloudbase_unknown_host_html(domain)),
     ):
         ok, msg = writer(html)
         if not ok:
             raise HTTPException(500, f"Failed to write status page: {msg}")
-    config = nm.generate_config("cloudbase", domain, PORT, cert, key, strict_hostnames=True)
-    ok, msg = nm.write_nginx_config("cloudbase", config)
+    config = nginx_config.generate_config("cloudbase", domain, PORT, cert, key, strict_hostnames=True)
+    ok, msg = nginx_files.write_nginx_config("cloudbase", config)
     if not ok:
         raise HTTPException(500, f"Failed to apply nginx config: {msg}")
-    nm.write_default_catch_all(cert, key)
+    nginx_files.write_default_catch_all(cert, key)
     _load_panel_https_domain()
-    await _certs.forget_pending([domain])
+    await nginx_certificates.forget_pending([domain])
     return {"ok": True, "domain": domain, "https": bool(cert and key)}
 
 
@@ -240,7 +244,7 @@ async def save_system_settings(
 
 @router.post("/api/system/nginx-default-catchall")
 async def apply_nginx_default_catchall(_: dict = Depends(auth.require_permission("system.manage"))):
-    ok, msg = nm.write_default_catch_all()
+    ok, msg = nginx_files.write_default_catch_all()
     return {"ok": ok, "message": msg}
 
 

@@ -11,7 +11,8 @@ from containers import processes as pm
 from containers import naming as containers_naming
 from containers import replicas as containers_replicas
 from containers import build as containers_build
-from nginx import manager as nm
+from nginx import config as nginx_config
+from nginx import files as nginx_files
 from nodes.registry import ensure_local_node
 from nodes.commands import queue_node_command, wait_for_node_command
 from core.env_crypto import decrypt_env
@@ -133,14 +134,14 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
         ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
 
     def _write_nginx_backends(backends: list[str]) -> None:
-        cfg = nm.generate_config(
+        cfg = nginx_config.generate_config(
             app.name, app.domain if has_custom else None, backends,
             ssl_cert, ssl_key,
             app_id=app_id, mode="normal",
             extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
             redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
         )
-        ok, msg = nm.write_nginx_config(app.name, cfg)
+        ok, msg = nginx_files.write_nginx_config(app.name, cfg)
         if not ok:
             log.warning("[Rolling] nginx write failed: %s", msg)
 
@@ -498,14 +499,14 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
     ssl_cert = ssl_key = None
     if has_custom:
         ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
-    cfg = nm.generate_config(
+    cfg = nginx_config.generate_config(
         app.name, app.domain if has_custom else None, new_backends,
         ssl_cert, ssl_key,
         app_id=app_id, mode="normal",
         extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
         redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
     )
-    ok, msg = nm.write_nginx_config(app.name, cfg)
+    ok, msg = nginx_files.write_nginx_config(app.name, cfg)
     if not ok:
         pm._push_line(app_id, f"[ZD] Warning: nginx config update failed: {msg}")
     else:

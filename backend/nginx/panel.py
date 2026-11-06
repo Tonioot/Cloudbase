@@ -4,7 +4,9 @@ import os
 from sqlalchemy import select
 from core.database import AsyncSessionLocal
 from core.models import Application
-from nginx import manager as nm
+from nginx import paths as nginx_paths
+from nginx import config as nginx_config
+from nginx import files as nginx_files
 from core import system_config as _syscfg
 from nodes.registry import ensure_local_node as _eln
 from apps.nginx_sync import _write_app_nginx_config as _wanc
@@ -17,7 +19,7 @@ log = logging.getLogger("cloudbase.main")
 def read_panel_nginx() -> dict:
     """Domain and certificate of the panel, read back from its nginx config."""
     import re as _re
-    path = os.path.join(nm.NGINX_SITES_DIR, "cloudbase")
+    path = os.path.join(nginx_paths.NGINX_SITES_DIR, "cloudbase")
     try:
         with open(path, encoding="utf-8") as f:
             content = f.read()
@@ -47,12 +49,12 @@ def _refresh_panel_nginx() -> None:
     if not panel.get("domain"):
         return
     cert, key = panel.get("ssl_cert_path"), panel.get("ssl_key_path")
-    config = nm.generate_config("cloudbase", panel["domain"], PORT, cert, key, strict_hostnames=True)
-    ok, msg = nm.write_nginx_config("cloudbase", config)
+    config = nginx_config.generate_config("cloudbase", panel["domain"], PORT, cert, key, strict_hostnames=True)
+    ok, msg = nginx_files.write_nginx_config("cloudbase", config)
     if not ok:
         log.warning("STARTUP panel nginx rewrite failed: %s", msg)
         return
-    nm.write_default_catch_all(cert, key)
+    nginx_files.write_default_catch_all(cert, key)
 
 
 async def _refresh_all_app_nginx() -> None:
@@ -67,7 +69,7 @@ async def _refresh_all_app_nginx() -> None:
                 if not (_a.nginx_enabled and _a.domain) and not _bdom:
                     if not _a.domain:
                         # Was only reachable through the base domain, which is gone
-                        await asyncio.to_thread(nm.remove_nginx_config, _a.name)
+                        await asyncio.to_thread(nginx_files.remove_nginx_config, _a.name)
                     continue
                 try:
                     await _wanc(_a, _db, _local)

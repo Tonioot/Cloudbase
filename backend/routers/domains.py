@@ -18,15 +18,16 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from core import auth as _auth
-from nginx import certificates as certs
-from nginx import manager as nm
+from nginx import certbot as nginx_certbot
+from nginx import certificates as nginx_certificates
+from nginx import files as nginx_files
 from nodes.registry import _detect_public_ip
 from core import config as _cfg
 
 log = logging.getLogger("cloudbase.domains")
 router = APIRouter(prefix="/api/domains", tags=["domains"])
 
-_DOMAIN_RE = certs.DOMAIN_RE
+_DOMAIN_RE = nginx_certbot.DOMAIN_RE
 
 # Cloudflare's published proxy ranges (cloudflare.com/ips-v4, ips-v6)
 _CLOUDFLARE_NETS = [ipaddress.ip_network(n) for n in (
@@ -50,7 +51,7 @@ _server_ip_cache: dict = {"ip": None, "at": 0.0}
 
 
 # Kept for callers that import it from here
-forget_pending = certs.forget_pending
+forget_pending = nginx_certificates.forget_pending
 
 
 def _clean_domain(value: str) -> str:
@@ -171,7 +172,7 @@ def _fetch_via(ip: str, domain: str, path: str, timeout: float = 6.0) -> tuple[i
 
 @router.get("/server")
 async def server_info(_user: dict = Depends(_auth.require_permission("apps.view"))):
-    ok, reason = certs.capability()
+    ok, reason = nginx_certbot.capability()
     public_ip = await _server_ip()
     local_ip = _local_ipv4()
     behind_nat = False
@@ -186,7 +187,7 @@ async def server_info(_user: dict = Depends(_auth.require_permission("apps.view"
         "behind_nat": behind_nat,
         "https_available": ok,
         "https_reason": reason,
-        "email": certs.acme_email(),
+        "email": nginx_certificates.acme_email(),
     }
 
 
@@ -230,11 +231,11 @@ async def check_domain(req: CheckRequest, _user: dict = Depends(_auth.require_pe
     elif server_ip and server_ip not in ips:
         result["detail"] = f"{domain} points to {', '.join(ips)}, not to this server ({server_ip})."
 
-    await certs.mark_pending([domain])
+    await nginx_certificates.mark_pending([domain])
 
     token = "cloudbase-check-" + secrets.token_hex(8)
     value = secrets.token_hex(16)
-    wrote, msg = nm.write_acme_probe(token, value)
+    wrote, msg = nginx_files.write_acme_probe(token, value)
     if not wrote:
         result["detail"] = result["detail"] or "Couldn’t run the reachability test on this server (run cloudbase nginx permissions)."
         return result
@@ -274,7 +275,7 @@ async def check_domain(req: CheckRequest, _user: dict = Depends(_auth.require_pe
                     "Check that nginx is running and port 80 is open."
                 )
     finally:
-        nm.remove_acme_probe(token)
+        nginx_files.remove_acme_probe(token)
     return result
 
 
@@ -296,8 +297,8 @@ async def request_certificate(req: CertificateRequest, _user: dict = Depends(_au
         except Exception as e:
             log.warning("Could not remember ACME email: %s", e)
     try:
-        cert, key = await certs.issue(domains, cert_name=req.cert_name, email=email or None)
-    except certs.CertificateError as e:
+        cert, key = await nginx_certificates.issue(domains, cert_name=req.cert_name, email=email or None)
+    except nginx_certificates.CertificateError as e:
         raise HTTPException(400, str(e))
     return {"ok": True, "domains": domains, "ssl_cert_path": cert, "ssl_key_path": key}
 
@@ -308,7 +309,7 @@ async def certificate_info(cert_name: str, _user: dict = Depends(_auth.require_p
     cert_name = cert_name.strip().lower()
     if not _DOMAIN_RE.match(cert_name):
         raise HTTPException(400, "Invalid certificate name")
-    data = await asyncio.to_thread(certs.info, cert_name)
+    data = await asyncio.to_thread(nginx_certbot.info, cert_name)
     if not data:
         return {"found": False}
     return {"found": True, **data}
@@ -320,4 +321,4 @@ async def delete_certificate(cert_name: str, _user: dict = Depends(_auth.require
     cert_name = cert_name.strip().lower()
     if not _DOMAIN_RE.match(cert_name):
         raise HTTPException(400, "Invalid certificate name")
-    return {"ok": await asyncio.to_thread(certs.delete, cert_name)}
+    return {"ok": await asyncio.to_thread(nginx_certbot.delete, cert_name)}

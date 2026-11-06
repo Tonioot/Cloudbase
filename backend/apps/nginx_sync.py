@@ -12,7 +12,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal
 from core.models import ApplicationReplica, Node, Application
 from containers import processes as pm
-from nginx import manager as nm, certificates as certs
+from nginx import certificates as nginx_certificates
+from nginx import certbot as nginx_certbot
+from nginx import config as nginx_config
+from nginx import files as nginx_files
+from nginx import pages as nginx_pages
 from nodes.registry import ensure_local_node
 from core import system_config as _syscfg
 from apps.state import RESTART_READY_MIN_HEALTHY_RATIO, RESTART_READY_POLL_SECONDS, RESTART_READY_TIMEOUT_SECONDS, TRANSITION_HOLD_MAX_SECONDS, _clear_active_transition_mode, _get_active_transition_mode
@@ -23,7 +27,7 @@ log = logging.getLogger("cloudbase.apps")
 def _best_effort_remove_app_nginx(app_name: str) -> None:
     """Remove app nginx config even when DB flags are stale, to avoid ghost routes."""
     try:
-        nm.remove_nginx_config(app_name)
+        nginx_files.remove_nginx_config(app_name)
     except Exception:
         pass
 
@@ -88,7 +92,7 @@ async def _write_app_nginx_config(
         has_custom,
         bool(_base),
     )
-    config = nm.generate_config(
+    config = nginx_config.generate_config(
         app.name,
         app.domain if has_custom else None,
         backends,
@@ -99,7 +103,7 @@ async def _write_app_nginx_config(
         extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
         redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
     )
-    ok, msg = nm.write_nginx_config(app.name, config)
+    ok, msg = nginx_files.write_nginx_config(app.name, config)
     if not ok:
         raise HTTPException(500, f"Nginx config failed: {msg}")
 
@@ -111,7 +115,7 @@ def _schedule_auto_certificate(app: Application) -> None:
     """Apps on the base domain get a certificate for their own subdomain.
     Once it's there, the nginx config is written again with HTTPS."""
     name = _auto_subdomain(app)
-    if not name or not certs.wants_auto_certificate(name):
+    if not name or not nginx_certificates.wants_auto_certificate(name):
         return
     app_id = app.id
 
@@ -121,7 +125,7 @@ def _schedule_auto_certificate(app: Application) -> None:
             if fresh:
                 await _write_app_nginx_config(fresh, _db, await ensure_local_node(_db))
 
-    asyncio.create_task(certs.ensure_auto_certificate(name, _rewrite))
+    asyncio.create_task(nginx_certificates.ensure_auto_certificate(name, _rewrite))
 
 
 async def _wait_for_app_backends_ready(
@@ -245,7 +249,7 @@ async def _restore_nginx_after_transition(
             len(backends),
             backends,
         )
-        config = nm.generate_config(
+        config = nginx_config.generate_config(
             app.name,
             app.domain if has_custom else None,
             backends,
@@ -256,7 +260,7 @@ async def _restore_nginx_after_transition(
             extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
             redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
         )
-        ok, msg = nm.write_nginx_config(app.name, config)
+        ok, msg = nginx_files.write_nginx_config(app.name, config)
 
     log.info(
         "[nginx-transition] app_id=%d label=%s ready=%s elapsed=%.1fs reason=%r nginx_ok=%s msg=%r",
@@ -282,9 +286,9 @@ def _best_effort_delete_app_certificate(app: Application) -> None:
     """Remove the app's Let's Encrypt certificates (its own domains and its
     automatic subdomain), so certbot stops renewing them — renewals would
     fail once the domains point elsewhere."""
-    names = {certs.name_from_path(app.ssl_cert_path), _auto_subdomain(app)}
+    names = {nginx_certbot.name_from_path(app.ssl_cert_path), _auto_subdomain(app)}
     for name in filter(None, names):
-        certs.delete(name)
+        nginx_certbot.delete(name)
 
 
 def _auto_subdomain(app: Application) -> Optional[str]:
@@ -297,10 +301,10 @@ def _auto_subdomain(app: Application) -> Optional[str]:
 def _resolve_ssl_paths(cert: str | None, key: str | None) -> tuple[str | None, str | None]:
     """Return cert/key paths only if both files actually exist on disk; otherwise None."""
     if cert and key:
-        name = certs.name_from_path(cert)
-        if name and certs.name_from_path(key) == name:
+        name = nginx_certbot.name_from_path(cert)
+        if name and nginx_certbot.name_from_path(key) == name:
             # /etc/letsencrypt is root-only; the helper checks it for us
-            if certs.exists(name):
+            if nginx_certbot.exists(name):
                 return cert, key
             log.warning("Let's Encrypt certificate %s not found, skipping SSL", name)
             return None, None
@@ -339,11 +343,11 @@ def _ensure_maintenance_files(app: Application, app_id: int) -> tuple[bool, str]
         _page_meta(starting_cfg),
     )
 
-    downtime_html = nm.render_app_page("downtime", downtime_cfg)
-    update_html = nm.render_app_page("update", update_cfg)
-    restart_html = nm.render_app_page("restart", restart_cfg)
-    starting_html = nm.render_app_page("starting", starting_cfg)
-    ok, msg = nm.write_maintenance_files(app_id, downtime_html, update_html, restart_html, starting_html)
+    downtime_html = nginx_pages.render_app_page("downtime", downtime_cfg)
+    update_html = nginx_pages.render_app_page("update", update_cfg)
+    restart_html = nginx_pages.render_app_page("restart", restart_cfg)
+    starting_html = nginx_pages.render_app_page("starting", starting_cfg)
+    ok, msg = nginx_files.write_maintenance_files(app_id, downtime_html, update_html, restart_html, starting_html)
     log.log(logging.DEBUG if ok else logging.WARNING, "[ensure-files] write result ok=%s msg=%r", ok, msg)
     return ok, msg
 

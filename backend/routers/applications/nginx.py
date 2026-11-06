@@ -2,7 +2,8 @@ import json
 from fastapi import Depends, APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
-from nginx import manager as nm
+from nginx import paths as nginx_paths
+from nginx import config as nginx_config
 from nodes.registry import ensure_local_node
 from core import auth as _auth
 from apps.nginx_sync import _get_nginx_backends, _get_nginx_mode, _has_public_nginx_domain, _write_app_nginx_config
@@ -30,10 +31,10 @@ async def nginx_debug(app_id: int, db: AsyncSession = Depends(get_db), _user: di
     import subprocess as sp
     app = await _get_or_404(app_id, db)
 
-    safe_name = nm._safe_name(app.name)
-    config_path   = f"{nm.NGINX_SITES_DIR}/{safe_name}"
-    enabled_path  = f"{nm.NGINX_ENABLED_DIR}/{safe_name}"
-    maint_dir     = f"{nm.MAINTENANCE_DIR}/{app_id}"
+    safe_name = nginx_paths._safe_name(app.name)
+    config_path   = f"{nginx_paths.NGINX_SITES_DIR}/{safe_name}"
+    enabled_path  = f"{nginx_paths.NGINX_ENABLED_DIR}/{safe_name}"
+    maint_dir     = f"{nginx_paths.MAINTENANCE_DIR}/{app_id}"
 
     def _read_file(path: str) -> str:
         r = sp.run(["sudo", "cat", path], capture_output=True, text=True)
@@ -77,13 +78,13 @@ async def nginx_debug(app_id: int, db: AsyncSession = Depends(get_db), _user: di
             "files": [
                 line for line in
                 sp.run(
-                    ["sudo", "grep", "-rl", app.domain or "", nm.NGINX_ENABLED_DIR],
+                    ["sudo", "grep", "-rl", app.domain or "", nginx_paths.NGINX_ENABLED_DIR],
                     capture_output=True, text=True,
                 ).stdout.strip().splitlines()
                 if line and not line.endswith("/" + safe_name)
             ] if app.domain else [],
         },
-        "generated_config": nm.generate_config(
+        "generated_config": nginx_config.generate_config(
             app.name, app.domain or "(no domain)", await _get_nginx_backends(app, db),
             app.ssl_cert_path, app.ssl_key_path,
             app_id=app_id, mode=_get_nginx_mode(app),

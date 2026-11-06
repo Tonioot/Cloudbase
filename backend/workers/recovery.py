@@ -7,7 +7,9 @@ from core.models import Application, Node as _Node, ApplicationReplica
 from nodes import registry as nodes_registry
 from apps import runtime as apps_runtime
 from core.env_crypto import decrypt_env
-from nginx import manager as nm
+from nginx import paths as nginx_paths
+from nginx import config as nginx_config
+from nginx import files as nginx_files
 from containers import processes as pm
 from containers import replicas as containers_replicas
 from containers import stats_logs as containers_stats_logs
@@ -31,7 +33,7 @@ def _restore_stuck_restart_configs(apps: list[Application]) -> None:
         if app.maintenance_mode or app.update_mode:
             continue
 
-        config_path = nm.get_config_path(app.name)
+        config_path = nginx_paths.get_config_path(app.name)
         try:
             if not os.path.exists(config_path):
                 continue
@@ -40,14 +42,14 @@ def _restore_stuck_restart_configs(apps: list[Application]) -> None:
         except Exception:
             continue
 
-        if not nm.config_uses_restart_page(current_config):
+        if not nginx_files.config_uses_restart_page(current_config):
             continue
 
         log.debug(
             f"STARTUP nginx recovery for app {app.id} ({app.name}): "
             "restart page config detected, restoring normal proxy"
         )
-        normal_cfg = nm.generate_config(
+        normal_cfg = nginx_config.generate_config(
             app.name,
             app.domain if has_custom else None,
             proxy_port,
@@ -56,7 +58,7 @@ def _restore_stuck_restart_configs(apps: list[Application]) -> None:
             app_id=app.id,
             mode="normal",
         )
-        ok, msg = nm.write_nginx_config(app.name, normal_cfg)
+        ok, msg = nginx_files.write_nginx_config(app.name, normal_cfg)
         log.debug(f"STARTUP nginx recovery result for app {app.id} ({app.name}): ok={ok} msg={msg!r}")
         if ok:
             pm._push_line(app.id, "Recovered a stale restart page after Cloudbase startup.")

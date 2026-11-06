@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.models import Application, ApplicationReplica
-from nginx import manager as nm
+from nginx import paths as nginx_paths
 from containers import apps as containers_apps
 
 async def _assign_external_port(requested: Optional[int], node_id: int, exclude_app_id: Optional[int], db: AsyncSession) -> int:
@@ -99,12 +99,12 @@ async def _check_new_app_name(name: Optional[str], db: AsyncSession) -> str:
     name = (name or "").strip()
     if not name or len(name) > 100:
         raise HTTPException(400, "App name must be 1–100 characters")
-    safe = nm._safe_name(name)
+    safe = nginx_paths._safe_name(name)
     if safe in _RESERVED_APP_NAMES:
         raise HTTPException(400, f"The name '{name}' is reserved by Cloudbase")
     # Two apps whose names map to the same file would overwrite each other's nginx config and folder
     for (other,) in (await db.execute(select(Application.name))).all():
-        if nm._safe_name(other) == safe:
+        if nginx_paths._safe_name(other) == safe:
             raise HTTPException(400, f"App '{other}' already uses this name")
     return name
 

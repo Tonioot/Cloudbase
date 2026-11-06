@@ -14,7 +14,9 @@ from core.models import StatsHistory, Application, ApplicationReplica, Node
 from containers import processes as pm
 from containers import cleanup as containers_cleanup
 from containers import dockerfiles as containers_dockerfiles
-from nginx import manager as nm, certificates as certs
+from nginx import certificates as nginx_certificates
+from nginx import config as nginx_config
+from nginx import files as nginx_files
 from cron import scheduler as _cron
 from nodes.registry import ensure_local_node
 from nodes.commands import queue_node_command, wait_for_node_command
@@ -256,7 +258,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         new_redirects = req.redirect_domains if req.redirect_domains is not None else json.loads(app.redirect_domains or "[]")
         all_domains = [new_primary] + (new_extra or []) + (new_redirects or [])
         await _check_domain_conflicts([d for d in all_domains if d], db, exclude_app_id=app.id)
-        await certs.forget_pending([d for d in all_domains if d])
+        await nginx_certificates.forget_pending([d for d in all_domains if d])
 
     if req.domain is not None:
         app.domain = req.domain
@@ -367,14 +369,14 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
             raise HTTPException(500, f"Maintenance files failed: {maint_msg}")
         ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
         backends = await _get_nginx_backends(app, db)
-        config = nm.generate_config(
+        config = nginx_config.generate_config(
             app.name, app.domain, backends,
             ssl_cert, ssl_key,
             app_id=app.id, mode=_get_nginx_mode(app),
             extra_domains=json.loads(app.extra_domains or "[]"),
             redirect_domains=json.loads(app.redirect_domains or "[]"),
         )
-        ok, msg = nm.write_nginx_config(app.name, config)
+        ok, msg = nginx_files.write_nginx_config(app.name, config)
         app.nginx_enabled = ok
         if not ok:
             raise HTTPException(500, f"Nginx config failed: {msg}")

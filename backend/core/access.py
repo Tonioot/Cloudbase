@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse, HTMLResponse, RedirectResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from core.database import AsyncSessionLocal
 from core import auth, system_config as _syscfg
-from nginx import manager as nm
+from nginx import pages as nginx_pages
 from agent import state as agent_state
 from core.models import Node as _Node
 from core.runtime import IS_NODE, _COOKIE_NAME
@@ -167,7 +167,7 @@ class _AuthMiddleware(BaseHTTPMiddleware):
             if path.startswith("/api/") or path.startswith("/ws/"):
                 return JSONResponse({"detail": "This server is a Cloudbase node; use the primary's panel"}, status_code=403)
             state = agent_state._load_state()
-            page = nm.generate_cloudbase_node_html(state and state.main_url, state and state.node_name)
+            page = nginx_pages.generate_cloudbase_node_html(state and state.main_url, state and state.node_name)
             return HTMLResponse(page, status_code=403)
 
         # With an HTTPS panel domain, other machines reach the panel only through

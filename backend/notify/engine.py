@@ -25,7 +25,7 @@ from core import system_config
 from core.database import AsyncSessionLocal
 from core.env_crypto import decrypt_text, encrypt_text
 from core.models import Application, ApplicationReplica, Database, Node, Notification, NotificationChannel, NotificationDelivery, SystemConfig
-from nginx import certificates
+from nginx import certbot as nginx_certbot
 
 log = logging.getLogger("cloudbase.notify")
 
@@ -467,10 +467,10 @@ async def _check_certificates() -> None:
                                  .where(Application.ssl_cert_path.is_not(None)))).all()
     found: dict[str, tuple[int, Optional[int]]] = {}
     for app_id, _app_name, cert_path in apps:
-        name = certificates.name_from_path(cert_path)
+        name = nginx_certbot.name_from_path(cert_path)
         if not name or name in found:
             continue
-        info = await asyncio.to_thread(certificates.info, name)
+        info = await asyncio.to_thread(nginx_certbot.info, name)
         if info:
             found[name] = (info["days_left"], app_id)
     _cert_days.clear()
