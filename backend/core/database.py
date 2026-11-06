@@ -114,6 +114,10 @@ async def init_db():
             ("node_cpu_percent",    "FLOAT"),
             ("node_memory_percent", "FLOAT"),
             ("node_disk_percent",   "FLOAT"),
+            ("wg_public_key",       "VARCHAR(60)"),
+            ("wg_ip",               "VARCHAR(20)"),
+            ("wg_state",            "VARCHAR(20)"),
+            ("wg_handshake_at",     "DATETIME"),
         ]:
             if col in existing_node_cols:
                 continue
@@ -207,6 +211,7 @@ async def init_db():
             ("docker_tmpfs_enabled",     "BOOLEAN NOT NULL DEFAULT 0"),
             ("docker_tmpfs_size_mb",     "INTEGER"),
             ("substatus",               "VARCHAR(40)"),
+            ("route",                   "VARCHAR(10)"),
         ]:
             if col in existing_replica_cols:
                 continue

@@ -131,6 +131,10 @@ class Node(Base):
     node_cpu_percent    = Column(Float, nullable=True)
     node_memory_percent = Column(Float, nullable=True)
     node_disk_percent   = Column(Float, nullable=True)
+    wg_public_key       = Column(String(60), nullable=True)   # WireGuard public key of this node
+    wg_ip               = Column(String(20), nullable=True)   # its address on the private network
+    wg_state            = Column(String(20), nullable=True)   # up | down | None (not enrolled)
+    wg_handshake_at     = Column(DateTime, nullable=True)     # last successful handshake seen by the primary
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -174,6 +178,7 @@ class ApplicationReplica(Base):
     node_id       = Column(Integer, ForeignKey("nodes.id"), nullable=True, index=True)
     external_port = Column(Integer, nullable=True)
     tunnel_port   = Column(Integer, nullable=True)   # localhost port on main node (reverse tunnel)
+    route         = Column(String(10), nullable=True)   # how the primary reaches this replica: wg | tunnel
     container_id  = Column(String(200), nullable=True)
     status        = Column(String(20), default="stopped")  # pending|starting|running|stopping|stopped|error
     substatus     = Column(String(40), nullable=True)       # building_image|creating_container|waiting — only set during starting

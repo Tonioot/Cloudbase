@@ -48,6 +48,13 @@ _DEFAULTS = {
         "max_restarts_per_window": 5,
         "restart_window_seconds": 60,
     },
+    # Private network between the primary and its nodes (WireGuard, see mesh/)
+    "wireguard": {
+        "enabled": False,
+        "endpoint": "",          # public host name or IP of the primary that nodes connect to
+        "port": 51820,
+        "subnet": "10.77.0.0/16",
+    },
 }
 
 
@@ -87,6 +94,11 @@ def get_limit(key: str) -> int:
 def get_port(key: str) -> int:
     """Return a port/range value from the config, e.g. get_port('instance_min')."""
     return int(_config.get("ports", {}).get(key, _DEFAULTS["ports"].get(key, 0)))
+
+
+def get_wireguard() -> dict:
+    """The WireGuard settings, with defaults filled in."""
+    return {**_DEFAULTS["wireguard"], **(_config.get("wireguard") or {})}
 
 
 def get_server_port() -> int:

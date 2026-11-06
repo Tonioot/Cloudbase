@@ -1,0 +1,350 @@
+#!/usr/bin/env python3
+"""Root-owned helper that manages Cloudbase's WireGuard interface.
+
+Installed as /usr/local/lib/cloudbase/wireguard and run by the Cloudbase user through sudo
+(see scripts/setup-wireguard.sh). It exists because configuring a network interface needs root,
+while Cloudbase itself does not run as root. So the rule here is: the caller is not trusted.
+
+  * the interface name, the directory and every program are fixed in this file, never taken
+    from an argument or the environment;
+  * every argument is validated before use; nothing goes through a shell;
+  * the private key is created here, kept in a root-only file and never printed;
+  * the configuration is rendered from validated values, so no argument can add a line to it.
+
+Commands (all print JSON or a public key on stdout; errors go to stderr with exit status 1):
+
+  keygen                                   make a key pair if there is none, print the public key
+  hub <address/prefix> <port>              be the hub: listen on <port>, own <address> (10.77.0.1/16)
+  node <address/32> <hub-key> <host:port> <allowed/cidr>
+                                           be a spoke: connect to the hub, own <address>
+  peers                                    hub only: JSON list [{"public_key", "ip"}] on stdin
+  status                                   the interface and its peers (handshakes, traffic)
+  boot                                     bring the interface up from the saved state (at boot)
+  down                                     take the interface down
+"""
+import ipaddress
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+IFACE = "cbwg0"
+CONF_DIR = "/etc/cloudbase-wg"
+KEEPALIVE = 25
+MAX_PEERS = 5000
+MAX_STDIN = 1024 * 1024
+BIN_DIRS = ("/usr/sbin", "/usr/bin", "/sbin", "/bin")
+
+KEY_RE = re.compile(r"^[A-Za-z0-9+/]{43}=\Z")
+HOST_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?\Z")
+
+
+class HelperError(Exception):
+    pass
+
+
+# ── validation ────────────────────────────────────────────────────────────────
+def check_key(value: str) -> str:
+    if not isinstance(value, str) or not KEY_RE.match(value):
+        raise HelperError("not a WireGuard key")
+    return value
+
+
+def check_port(value) -> int:
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        raise HelperError("port must be a number")
+    if not 1024 <= port <= 65535:
+        raise HelperError("port must be between 1024 and 65535")
+    return port
+
+
+def check_interface(value: str, max_prefix_len: int = 32, min_prefix_len: int = 8) -> str:
+    """An address with a prefix inside a private range, e.g. 10.77.0.1/16."""
+    try:
+        iface = ipaddress.ip_interface(value)
+    except ValueError:
+        raise HelperError("not an address")
+    if iface.version != 4 or not iface.network.is_private or iface.ip.is_loopback:
+        raise HelperError("the address must be a private IPv4 address")
+    if not min_prefix_len <= iface.network.prefixlen <= max_prefix_len:
+        raise HelperError("unsupported prefix length")
+    return str(iface)
+
+
+def check_network(value: str) -> str:
+    try:
+        net = ipaddress.ip_network(value, strict=False)
+    except ValueError:
+        raise HelperError("not a network")
+    if net.version != 4 or not net.is_private:
+        raise HelperError("the network must be private IPv4")
+    return str(net)
+
+
+def check_ip(value: str) -> str:
+    try:
+        ip = ipaddress.ip_address(value)
+    except ValueError:
+        raise HelperError("not an IP address")
+    if ip.version != 4 or not ip.is_private:
+        raise HelperError("the address must be a private IPv4 address")
+    return str(ip)
+
+
+def check_endpoint(value: str) -> str:
+    host, sep, port = str(value).rpartition(":")
+    if not sep:
+        raise HelperError("endpoint must be host:port")
+    check_port(port)
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+        return value
+    except ValueError:
+        pass
+    if not HOST_RE.match(host):
+        raise HelperError("not a host name")
+    return value
+
+
+# ── running programs ─────────────────────────────────────────────────────────
+def _program(name: str) -> str:
+    for directory in BIN_DIRS:
+        path = os.path.join(directory, name)
+        if os.access(path, os.X_OK):
+            return path
+    found = shutil.which(name, path=os.pathsep.join(BIN_DIRS))
+    if not found:
+        raise HelperError(f"{name} is not installed (install wireguard-tools)")
+    return found
+
+
+def run(args: list[str], stdin: str | None = None) -> str:
+    """Run a program without a shell and with a clean environment."""
+    proc = subprocess.run([_program(args[0]), *args[1:]], input=stdin, capture_output=True, text=True,
+                          timeout=30, env={"PATH": os.pathsep.join(BIN_DIRS), "LC_ALL": "C"})
+    if proc.returncode != 0:
+        raise HelperError(f"{args[0]} failed: {(proc.stderr or proc.stdout).strip()[:300]}")
+    return proc.stdout
+
+
+# ── state and configuration ─────────────────────────────────────────────────
+def _path(name: str) -> str:
+    return os.path.join(CONF_DIR, name)
+
+
+def _ensure_dir() -> None:
+    os.makedirs(CONF_DIR, mode=0o700, exist_ok=True)
+    os.chmod(CONF_DIR, 0o700)
+
+
+def _write(path: str, text: str) -> None:
+    _ensure_dir()
+    fd, tmp = tempfile.mkstemp(dir=CONF_DIR)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(text)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+
+
+def load_state() -> dict:
+    try:
+        with open(_path("state.json")) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+def save_state(state: dict) -> None:
+    _write(_path("state.json"), json.dumps(state))
+
+
+def private_key() -> str:
+    try:
+        with open(_path("private.key")) as f:
+            return check_key(f.read().strip())
+    except FileNotFoundError:
+        raise HelperError("no key yet: run keygen first")
+
+
+def public_key() -> str:
+    return run(["wg", "pubkey"], stdin=private_key() + "\n").strip()
+
+
+def keygen() -> str:
+    if not os.path.exists(_path("private.key")):
+        _write(_path("private.key"), run(["wg", "genkey"]).strip() + "\n")
+    return public_key()
+
+
+def render_conf(state: dict, key: str) -> str:
+    """The wg-quick file. Everything in it comes from values validated in this file."""
+    lines = ["[Interface]", f"PrivateKey = {check_key(key)}", f"Address = {check_interface(state['address'])}"]
+    if state.get("listen_port"):
+        lines.append(f"ListenPort = {check_port(state['listen_port'])}")
+    for peer in state.get("peers", []):
+        lines += ["", "[Peer]", f"PublicKey = {check_key(peer['public_key'])}",
+                  f"AllowedIPs = {', '.join(check_network(n) for n in peer['allowed_ips'])}"]
+        if peer.get("endpoint"):
+            lines.append(f"Endpoint = {check_endpoint(peer['endpoint'])}")
+        if peer.get("keepalive"):
+            lines.append(f"PersistentKeepalive = {int(peer['keepalive'])}")
+    return "\n".join(lines) + "\n"
+
+
+def interface_exists() -> bool:
+    try:
+        run(["ip", "link", "show", "dev", IFACE])
+        return True
+    except HelperError:
+        return False
+
+
+def apply(state: dict, previous: dict | None = None) -> None:
+    """Write the configuration and make the running interface match it."""
+    conf = _path(f"{IFACE}.conf")
+    _write(conf, render_conf(state, private_key()))
+    save_state(state)
+    previous = previous or {}
+    if interface_exists():
+        same_shape = (previous.get("address") == state["address"] and previous.get("listen_port") == state.get("listen_port"))
+        if same_shape:                       # peers changed only: update in place, no traffic is interrupted
+            stripped = run(["wg-quick", "strip", conf])
+            fd, tmp = tempfile.mkstemp(dir=CONF_DIR)
+            try:
+                with os.fdopen(fd, "w") as f:
+                    f.write(stripped)
+                run(["wg", "syncconf", IFACE, tmp])
+            finally:
+                os.remove(tmp)
+            return
+        run(["wg-quick", "down", conf])
+    run(["wg-quick", "up", conf])
+
+
+# ── commands ───────────────────────────────────────────────────────────────────
+def cmd_keygen(_args) -> str:
+    return keygen()
+
+
+def cmd_hub(args) -> str:
+    if len(args) != 2:
+        raise HelperError("usage: hub <address/prefix> <port>")
+    address, port = check_interface(args[0], max_prefix_len=30, min_prefix_len=8), check_port(args[1])
+    keygen()
+    previous = load_state()
+    peers = previous.get("peers", []) if previous.get("role") == "hub" else []
+    apply({"role": "hub", "address": address, "listen_port": port, "peers": peers}, previous)
+    return json.dumps({"public_key": public_key()})
+
+
+def cmd_node(args) -> str:
+    if len(args) != 4:
+        raise HelperError("usage: node <address/32> <hub-key> <host:port> <allowed/cidr>")
+    address = check_interface(args[0], max_prefix_len=32, min_prefix_len=32)
+    hub_key, endpoint, allowed = check_key(args[1]), check_endpoint(args[2]), check_network(args[3])
+    keygen()
+    previous = load_state()
+    apply({"role": "node", "address": address, "listen_port": None,
+           "peers": [{"public_key": hub_key, "allowed_ips": [allowed], "endpoint": endpoint, "keepalive": KEEPALIVE}]}, previous)
+    return json.dumps({"public_key": public_key()})
+
+
+def cmd_peers(_args, stdin_text: str | None = None) -> str:
+    state = load_state()
+    if state.get("role") != "hub":
+        raise HelperError("this machine is not the hub")
+    text = sys.stdin.read(MAX_STDIN + 1) if stdin_text is None else stdin_text
+    if len(text) > MAX_STDIN:
+        raise HelperError("input too large")
+    try:
+        wanted = json.loads(text)
+    except ValueError:
+        raise HelperError("input is not JSON")
+    if not isinstance(wanted, list) or len(wanted) > MAX_PEERS:
+        raise HelperError("expected a list of at most %d peers" % MAX_PEERS)
+    peers, seen_keys, seen_ips = [], set(), set()
+    own = ipaddress.ip_interface(state["address"])
+    for item in wanted:
+        if not isinstance(item, dict):
+            raise HelperError("each peer must be an object")
+        key, ip = check_key(item.get("public_key")), check_ip(item.get("ip"))
+        if ipaddress.ip_address(ip) not in own.network or ip == str(own.ip):
+            raise HelperError(f"{ip} is not a node address in {own.network}")
+        if key in seen_keys or ip in seen_ips:
+            raise HelperError("duplicate peer")
+        seen_keys.add(key)
+        seen_ips.add(ip)
+        peers.append({"public_key": key, "allowed_ips": [f"{ip}/32"]})
+    new_state = {**state, "peers": peers}
+    apply(new_state, state)
+    return json.dumps({"peers": len(peers)})
+
+
+def cmd_status(_args) -> str:
+    if not interface_exists():
+        return json.dumps({"up": False, "peers": []})
+    rows = [line.split("\t") for line in run(["wg", "show", IFACE, "dump"]).strip().splitlines()]
+    info = {"up": True, "public_key": None, "listen_port": None, "peers": []}
+    if rows:
+        head = rows[0]
+        info["public_key"] = head[1] if len(head) > 1 else None
+        info["listen_port"] = int(head[2]) if len(head) > 2 and head[2].isdigit() else None
+    for row in rows[1:]:
+        if len(row) < 8:
+            continue
+        info["peers"].append({
+            "public_key": row[0], "endpoint": None if row[2] == "(none)" else row[2], "allowed_ips": row[3],
+            "latest_handshake": int(row[4]) if row[4].isdigit() else 0,
+            "rx": int(row[5]) if row[5].isdigit() else 0, "tx": int(row[6]) if row[6].isdigit() else 0,
+        })
+    return json.dumps(info)
+
+
+def cmd_boot(_args) -> str:
+    state = load_state()
+    if not state or interface_exists():
+        return json.dumps({"up": interface_exists()})
+    run(["wg-quick", "up", _path(f"{IFACE}.conf")])
+    return json.dumps({"up": True})
+
+
+def cmd_down(_args) -> str:
+    if interface_exists():
+        run(["wg-quick", "down", _path(f"{IFACE}.conf")])
+    return json.dumps({"up": False})
+
+
+COMMANDS = {"keygen": cmd_keygen, "hub": cmd_hub, "node": cmd_node, "peers": cmd_peers,
+            "status": cmd_status, "boot": cmd_boot, "down": cmd_down}
+
+
+def main(argv: list[str]) -> int:
+    if os.geteuid() != 0 and not os.environ.get("CLOUDBASE_WG_ALLOW_NON_ROOT_FOR_TESTS_ONLY"):
+        print("must run as root (through sudo)", file=sys.stderr)
+        return 1
+    if not argv or argv[0] not in COMMANDS:
+        print("usage: cloudbase-wireguard {%s}" % "|".join(COMMANDS), file=sys.stderr)
+        return 1
+    try:
+        print(COMMANDS[argv[0]](argv[1:]))
+        return 0
+    except HelperError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except subprocess.TimeoutExpired:
+        print("error: a command took too long", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
