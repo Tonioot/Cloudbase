@@ -168,8 +168,11 @@ class Reconciler:
         if attempt and attempt["hash"] != wanted:
             attempt = self.attempts.pop(replica_id)          # a new spec: a fresh start
             attempt = None
+        # Only a start made by this agent can have "crashed right away": without one (after a restart of the agent or of
+        # the whole server) an exited container is simply started again
+        started = self.started_at.get(replica_id)
         crashed = (container is not None and up_to_date and container["status"] != "running"
-                   and time.monotonic() - self.started_at.get(replica_id, 0) < CRASH_WINDOW_SECONDS)
+                   and started is not None and time.monotonic() - started < CRASH_WINDOW_SECONDS)
         if crashed:
             self._failed(replica_id, wanted, f"the container exited right after starting (exit code {container['exit_code']}); see the logs")
             attempt = self.attempts[replica_id]

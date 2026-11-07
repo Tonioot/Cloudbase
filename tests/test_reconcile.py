@@ -372,3 +372,18 @@ def test_the_agent_does_not_call_the_local_api():
 def test_the_commands_that_desired_state_replaced_are_gone_from_the_agent(command):
     from agent.dispatch import COMMAND_HANDLERS
     assert command not in COMMAND_HANDLERS
+
+
+@pytest.mark.parametrize("uptime", [5.0, 60.0, 119.0, 100000.0])
+def test_an_exited_container_is_started_again_whatever_the_uptime_of_the_machine(monkeypatch, uptime):
+    """Right after a boot (a fresh CI runner, a node that just restarted) the clock is small: that must not make an
+    exited container look like a crash of a start this agent made, which it did not."""
+    import time
+    monkeypatch.setattr(time, "monotonic", lambda: uptime)
+    rec, _, docker = make(monkeypatch, [entry(1)], containers=[container(1, status="exited", exit_code=137)])
+
+    async def go():
+        await rec.pull()
+        await converge(rec)
+    _run(go())
+    assert docker.removed == [1] and len(docker.started) == 1 and state_of(rec, 1) == "running"
