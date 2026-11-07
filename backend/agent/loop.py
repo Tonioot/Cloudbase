@@ -7,7 +7,7 @@ import httpx
 import websockets
 from agent.db_control import _db_control_loop
 from agent.dispatch import _active_streams, _execute_command, _execute_in_background
-from agent import mesh as agent_mesh
+from agent import alive, mesh as agent_mesh
 from agent.log import _agent_log
 from agent.reconcile import Reconciler
 from agent.registration import _build_capabilities, _collect_node_metrics, _collect_system_info, _register, _report_result
@@ -50,6 +50,7 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState, reco
         try:
             async with websockets.connect(ws_url, max_size=2**22, ping_interval=20, ping_timeout=20) as ws:
                 attempt = 0
+                alive.set_connected(True)
                 _agent_log(f"[agent] WebSocket connected to {ws_url}")
                 # Serialise all ws.send() calls — concurrent sends corrupt the connection
                 _ws_lock = asyncio.Lock()
@@ -95,6 +96,7 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState, reco
                             if await _maybe_upgrade_to_https(client, state, data.get("panel_url")):
                                 break  # reconnect on the new address
                 finally:
+                    alive.set_connected(False)
                     hb_task.cancel()
                     try:
                         await hb_task

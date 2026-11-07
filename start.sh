@@ -194,6 +194,28 @@ port_owner_pid() {
     echo "$pid"
 }
 
+# A node has no web server and so no port to look at: its agent keeps this file fresh (backend/agent/alive.py)
+AGENT_ALIVE_FILE="$HOME/.cloudbase/agent.alive"
+
+node_agent_pid() {
+    [[ -f "$AGENT_ALIVE_FILE" ]] || return 0
+    python3 - "$AGENT_ALIVE_FILE" <<'PYEOF'
+import json, os, sys, time
+try:
+    alive = json.load(open(sys.argv[1]))
+    if time.time() - alive["at"] <= 30:
+        os.kill(int(alive["pid"]), 0)
+        print(alive["pid"])
+except Exception:
+    pass
+PYEOF
+}
+
+# The process that is Cloudbase on this server: the agent on a node, the web app on a primary
+running_pid() {
+    if is_node; then node_agent_pid; else port_owner_pid; fi
+}
+
 write_service_file() {
     require_systemctl
     local run_user="${SUDO_USER:-$(id -un)}"
@@ -220,16 +242,18 @@ EOF
 
 stop_foreground_instance() {
     local old_pid
-    old_pid="$(port_owner_pid)"
+    old_pid="$(running_pid)"
     if [[ -n "$old_pid" ]]; then
-        info "Stopping process on port $PORT (pid $old_pid)"
+        info "Stopping Cloudbase (pid $old_pid)"
         kill -9 "$old_pid" 2>/dev/null || sudo kill -9 "$old_pid" || true
-        success "Cloudbase API process stopped"
+        success "Cloudbase stopped"
+    elif is_node; then
+        warn "No Cloudbase node agent is running"
     else
         warn "No local Cloudbase process is listening on port $PORT"
     fi
 
-    # Also kill any lingering node_agent.py processes (started alongside the API in node mode)
+    # Also kill any lingering node_agent.py processes
     local agent_pids
     agent_pids="$(pgrep -f "node_agent\.py" 2>/dev/null || true)"
     if [[ -n "$agent_pids" ]]; then
@@ -386,7 +410,7 @@ cmd_version() {
 service_state() {
     if service_installed && command -v systemctl >/dev/null 2>&1; then
         systemctl is-active "$SERVICE_NAME" 2>/dev/null || true
-    elif [[ -n "$(port_owner_pid)" ]]; then
+    elif [[ -n "$(running_pid)" ]]; then
         echo "active"
     else
         echo "inactive"
@@ -397,7 +421,9 @@ cmd_status() {
     local state
     state="$(service_state)"
     printf '%b%s%b\n' "$BOLD" "$(cmd_version)" "$RESET"
-    if [[ "$state" == "active" ]]; then
+    if [[ "$state" == "active" ]] && is_node; then
+        printf '  Service   %brunning%b (node agent)\n' "$GREEN" "$RESET"
+    elif [[ "$state" == "active" ]]; then
         printf '  Service   %brunning%b on port %s\n' "$GREEN" "$RESET" "$PORT"
     else
         printf '  Service   %b%s%b — start it with: cloudbase start\n' "$RED" "$state" "$RESET"
@@ -686,7 +712,13 @@ cmd_doctor() {
     else
         bad "Service is not running" "cloudbase start, then cloudbase logs --errors"
     fi
-    if python3 -c "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:$PORT/api/health', timeout=5)" 2>/dev/null; then
+    if is_node; then
+        if [[ -n "$(node_agent_pid)" ]]; then
+            ok "Node agent is running"
+        else
+            bad "Node agent is not running" "cloudbase logs --errors"
+        fi
+    elif python3 -c "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:$PORT/api/health', timeout=5)" 2>/dev/null; then
         ok "API answers on port $PORT"
     else
         bad "API doesn't answer on port $PORT" "cloudbase logs --errors"
@@ -836,7 +868,7 @@ PYEOF
 
 
 run_node_runtime() {
-    info "Running as a node (agent inside the API, listening on 127.0.0.1 only)"
+    info "Running as a node (the agent on its own: no web server)"
 
     if ! command -v python3 >/dev/null 2>&1 || ! python3 -m venv --help >/dev/null 2>&1 || ! command -v lsof >/dev/null 2>&1; then
         warn "Missing runtime dependencies detected. Installing them now."
@@ -857,15 +889,17 @@ run_node_runtime() {
     "$VENV_PATH/bin/pip" install --upgrade pip
     "$VENV_PATH/bin/pip" install -r requirements.txt
 
+    # An older version of Cloudbase ran the agent inside its web app (on the port); a second agent must not start beside it
     local old_pid
-    old_pid="$(port_owner_pid)"
-    if [[ -n "$old_pid" ]]; then
-        warn "Cleaning up old process on port $PORT (pid $old_pid)"
-        kill -9 "$old_pid" 2>/dev/null || sudo kill -9 "$old_pid" || true
-    fi
+    for old_pid in "$(node_agent_pid)" "$(port_owner_pid)"; do
+        if [[ -n "$old_pid" ]]; then
+            warn "Cleaning up old Cloudbase process (pid $old_pid)"
+            kill -9 "$old_pid" 2>/dev/null || sudo kill -9 "$old_pid" || true
+        fi
+    done
 
-    success "Launching Cloudbase node on port $PORT"
-    exec "$VENV_PATH/bin/uvicorn" main:app --host 127.0.0.1 --port "$PORT" --timeout-graceful-shutdown 8
+    success "Launching the Cloudbase node agent"
+    exec "$VENV_PATH/bin/python" node_agent.py
 }
 
 case "$COMMAND" in start|run|help|-h|--help)
@@ -965,11 +999,10 @@ case "$COMMAND" in
             main_url=$(python3 -c "import json; d=json.load(open('$state_file')); print(d.get('main_url','?'))" 2>/dev/null)
             info "Registered as: $node_name (id=$node_id)"
             info "Primary:       $main_url"
-            # The agent runs inside the Cloudbase service, not as its own process
-            if [[ -n "$(port_owner_pid)" ]]; then
-                success "Cloudbase (with agent): running on port $PORT"
+            if [[ -n "$(node_agent_pid)" ]]; then
+                success "Node agent: running"
             else
-                warn "Cloudbase (with agent): not running — start it with 'cloudbase start'"
+                warn "Node agent: not running — start it with 'cloudbase start'"
             fi
             if [[ -f "$AGENT_LOG_FILE" ]]; then
                 last_conn=$(grep -E "WebSocket connected|websocket loop error" "$AGENT_LOG_FILE" | tail -n 1 || true)

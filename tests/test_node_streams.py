@@ -50,7 +50,7 @@ def test_system_stats_replay_the_history_and_then_keep_coming(monkeypatch):
 def test_container_stats_are_sent_with_a_timestamp(monkeypatch):
     async def aggregate(app_id):
         return {"status": "running", "app": app_id, "cpu_percent": 3.0}
-    monkeypatch.setattr(node_streams, "local_app_aggregate_stats", aggregate)
+    monkeypatch.setattr(node_streams.containers_stats_logs, "app_aggregate_stats", aggregate)
     monkeypatch.setattr(node_streams.asyncio, "sleep", _quick_sleep)
     frames = []
 

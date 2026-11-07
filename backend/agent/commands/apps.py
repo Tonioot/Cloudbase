@@ -2,7 +2,6 @@ import os
 import asyncio
 import subprocess
 import time
-from apps.replica_stats import local_app_aggregate_stats
 from containers import naming as containers_naming, cleanup as containers_cleanup, jobs as containers_jobs, stats_logs as containers_stats_logs
 from agent.log import AGENT_LOG_FILE, _agent_log
 from agent.source import ensure_image
@@ -37,7 +36,7 @@ async def cmd_get_logs_tail(_client, _state, main_id, payload):
 
 async def cmd_get_stats(_client, _state, main_id, _payload):
     """Aggregate stats across all replica containers for this app on this node."""
-    return await local_app_aggregate_stats(int(main_id))
+    return await containers_stats_logs.app_aggregate_stats(int(main_id))
 
 
 async def cmd_docker_cleanup(_client, _state, _main_id, payload):

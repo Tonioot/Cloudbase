@@ -7,7 +7,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from workers import autodeploy as workers_autodeploy
-from agent import loop as agent_loop
 from containers import processes as pm
 from core import auth
 from core import system_config as _syscfg
@@ -82,9 +81,14 @@ async def _start_panel_tasks() -> list[asyncio.Task]:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # A node has no panel to log in to.
-    if not IS_NODE:
-        _ensure_first_run_password()
+    # A node runs its agent as a process of its own (node_agent.py) and serves no panel. If this web app is
+    # started on one anyway, it serves nothing but the health check and starts none of the panel's loops.
+    if IS_NODE:
+        log.warning("INIT: this server is a node; its agent runs as 'python node_agent.py', not inside the web app")
+        yield
+        return
+
+    _ensure_first_run_password()
 
     await init_db()
     jobs.sweep()      # export files left behind by a crash or restart
@@ -95,15 +99,7 @@ async def lifespan(app: FastAPI):
         await _syscfg.bootstrap_from_config_if_needed(_db)
         await _syscfg.load_cache(_db)
 
-    # A node is driven by the primary through the agent; the panel loops would
-    # only work on its empty local DB, and the orphan cleanup would remove the
-    # instances the primary started here.
-    tasks: list[asyncio.Task] = []
-    if IS_NODE:
-        log.info("INIT: running as a node, starting the node agent only")
-        tasks.append(asyncio.create_task(agent_loop.start_agent()))
-    else:
-        tasks += await _start_panel_tasks()
+    tasks = await _start_panel_tasks()
 
     yield
     for task in tasks:

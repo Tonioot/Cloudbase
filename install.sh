@@ -719,11 +719,20 @@ EOF
   [[ "$port" =~ ^[0-9]+$ ]] || port=7823
   printf '%s' "$port" > "$STATE_DIR/port"
   for _ in $(seq 1 60); do
-    curl -fsS "http://127.0.0.1:$port/api/health" >/dev/null 2>&1 && return 0
+    if [[ "$ROLE" == "node" ]]; then
+      # A node has no web server: its agent keeps this file fresh while it runs
+      [[ -n "$(find "$DATA_DIR/agent.alive" -mmin -1 2>/dev/null)" ]] && return 0
+    else
+      curl -fsS "http://127.0.0.1:$port/api/health" >/dev/null 2>&1 && return 0
+    fi
     sleep 2
   done
   journalctl -u "$SERVICE_NAME" -n 30 --no-pager || true
-  echo "Cloudbase didn't answer on port $port within two minutes"
+  if [[ "$ROLE" == "node" ]]; then
+    echo "The Cloudbase node agent didn't start within two minutes"
+  else
+    echo "Cloudbase didn't answer on port $port within two minutes"
+  fi
   return 1
 }
 

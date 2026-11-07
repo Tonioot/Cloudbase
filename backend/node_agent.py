@@ -1,4 +1,7 @@
-"""Entry point of the node agent: `python node_agent.py --main-url ... --invite-code ...`.
+"""Entry point of the node agent.
+
+    python node_agent.py                                          run the agent (what the service does)
+    python node_agent.py --main-url ... --invite-code ... [--exit-after-registration]   register first
 
 Install.sh and start.sh call this file directly, so it stays at this path. The agent
 itself lives in the agent/ package.
@@ -8,6 +11,7 @@ import argparse
 import logging.handlers
 import httpx
 from agent.loop import start_agent
+from agent.runner import run
 
 async def main():
     parser = argparse.ArgumentParser()
@@ -19,6 +23,9 @@ async def main():
     parser.add_argument("--exit-after-registration", action="store_true")
     args = parser.parse_args()
     try:
+        if not args.exit_after_registration:
+            await run(args.main_url, args.invite_code, args.node_name, args.public_host, args.heartbeat_interval)
+            return
         await start_agent(
             args.main_url,
             args.invite_code,

@@ -1,4 +1,6 @@
+import asyncio
 import logging
+import re
 import threading
 import time
 from collections import deque
@@ -238,3 +240,48 @@ def get_container_stats_by_name(container_name_str: str) -> dict:
             pass
         log.warning("get_container_stats_by_name failed for %s", container_name_str, exc_info=True)
         return {}
+
+
+def aggregate_stats_frames(frames: list[dict]) -> dict:
+    if not frames:
+        return {"status": "stopped", "docker": True}
+
+    def _sum(key: str) -> float:
+        return round(sum((frame.get(key) or 0) for frame in frames), 2)
+
+    def _avg(key: str) -> float:
+        values = [frame.get(key) for frame in frames if frame.get(key) is not None]
+        return round(sum(values) / len(values), 2) if values else 0.0
+
+    def _max(key: str) -> Optional[float]:
+        values = [frame.get(key) for frame in frames if frame.get(key) is not None]
+        return max(values) if values else None
+
+    return {
+        "status": "running",
+        "docker": True,
+        "cpu_percent": _avg("cpu_percent"),
+        "memory_mb": _sum("memory_mb"),
+        "memory_vms_mb": _sum("memory_vms_mb"),
+        "net_rx_mb": _sum("net_rx_mb"),
+        "net_tx_mb": _sum("net_tx_mb"),
+        "disk_read_mb": _sum("disk_read_mb"),
+        "disk_write_mb": _sum("disk_write_mb"),
+        "uptime_seconds": _max("uptime_seconds"),
+    }
+
+
+async def app_aggregate_stats(app_id: int) -> dict:
+    """Stats of all replica containers of app_id on this host, added up. Needs no database."""
+    pattern = re.compile(rf"^cloudbase-app-{app_id}-replica-(\d+)$")
+    try:
+        containers = _get_client().containers.list(filters={"name": f"cloudbase-app-{app_id}-replica-"})
+    except Exception:
+        return {"status": "stopped", "docker": True}
+    frames = []
+    for c in containers:
+        if pattern.match(c.name) and c.status == "running":
+            frame = await asyncio.to_thread(get_container_stats_by_name, c.name)
+            if frame:
+                frames.append(frame)
+    return aggregate_stats_frames(frames)

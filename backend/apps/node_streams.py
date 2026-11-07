@@ -11,8 +11,7 @@ from typing import Awaitable, Callable
 
 import psutil
 
-from apps.replica_stats import local_app_aggregate_stats
-from containers import client as containers_client
+from containers import client as containers_client, stats_logs as containers_stats_logs
 
 _system_history: deque = deque(maxlen=60)
 
@@ -73,7 +72,7 @@ async def follow_container_logs(app_id: int, send: Callable[[str], Awaitable[Non
 async def stream_container_stats(app_id: int, send: Callable[[dict], Awaitable[None]]) -> None:
     """Every 2 s: stats of app_id's replica containers on this machine, added up."""
     while True:
-        frame = await local_app_aggregate_stats(app_id)
+        frame = await containers_stats_logs.app_aggregate_stats(app_id)
         frame["timestamp"] = int(time.time() * 1000)
         await send(frame)
         await asyncio.sleep(2)

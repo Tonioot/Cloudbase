@@ -79,4 +79,4 @@ What stays a command (`nodes/commands.py`, over the websocket, answered over HTT
 cleanup, database operations and cron runs. Every command runs beside the connection, so a slow one never holds
 up the others; a new agent process (new `session` in its hello) fails what the old one was doing.
 
-The agent calls functions, not its own server: there is no local API call and no local agent token.
+The agent calls functions, not its own server: there is no local API call and no local agent token. It is also a process of its own (`python node_agent.py`, see `agent/runner.py`): a node runs no web server, no database and none of the panel's code, and shows that it lives by keeping `~/.cloudbase/agent.alive` fresh (`agent/alive.py`), which `start.sh`, `cloudbase doctor` and the installer read.
