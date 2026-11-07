@@ -341,38 +341,33 @@ async function _toggleMode_legacy(type) {
 }
 
 let _activityTimer = null;
-let _activitySince = 0;
 
-/** The bar under the status: what is being done to the app right now, which step, and for how long. */
-function renderActivity() {
-  const el = document.getElementById('app-activity');
-  if (!el) return;
+/** "Health checking remote instance 12 on 10.77.0.2:9101… · 1:24": the step without its [Tag], and how long it takes. */
+function activityText() {
   const a = app.activity;
-  if (!a) {
-    el.hidden = true;
-    el.innerHTML = '';
+  const step = String(a.detail || '').replace(/^\[[^\]]+\]\s*/, '');
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - a.since));
+  const time = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  return step ? `${step} \u00b7 ${time}` : time;
+}
+
+/** What is going on shows in the status itself: the badge says what is being done, the text beside it which step. */
+function renderActivity() {
+  const meta = document.getElementById('app-meta');
+  if (!app.activity) {
     clearInterval(_activityTimer);
     _activityTimer = null;
-    return;
+    meta.title = '';
+    return false;
   }
-  _activitySince = a.since;
-  el.hidden = false;
-  el.innerHTML = `<span class="app-activity-spinner" aria-hidden="true"></span>
-    <span class="app-activity-label">${escHtml(a.label)}…</span>
-    <span class="app-activity-detail" title="${escHtml(a.detail || '')}">${escHtml(a.detail || '')}</span>
-    <span class="app-activity-time"></span>`;
-  const tick = () => {
-    const t = el.querySelector('.app-activity-time');
-    if (!t) return;
-    const s = Math.max(0, Math.floor(Date.now() / 1000 - _activitySince));
-    t.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-  };
-  tick();
-  if (!_activityTimer) _activityTimer = setInterval(tick, 1000);
+  meta.textContent = activityText();
+  meta.title = app.activity.detail || '';
+  if (!_activityTimer) _activityTimer = setInterval(() => { if (app.activity) meta.textContent = activityText(); }, 1000);
+  return true;
 }
 
 function updateHeaderStatus() {
-  renderActivity();
+  const busyWith = app.activity ? app.activity.kind : null;
   const badgeEl = document.getElementById('app-badge');
   // Traffic mode is shown next to the status — it is otherwise only visible in the ⋯ menu
   const modeChip = app.maintenance_mode
@@ -380,8 +375,8 @@ function updateHeaderStatus() {
     : app.update_mode
       ? ' <span class="pill" style="color:var(--yellow);border-color:var(--yellow-border)">Update mode</span>'
       : '';
-  badgeEl.innerHTML = badge(app.status) + modeChip;
-  document.getElementById('app-meta').textContent = formatPortSummary(app);
+  badgeEl.innerHTML = badge(busyWith || app.status) + modeChip;
+  if (!renderActivity()) document.getElementById('app-meta').textContent = formatPortSummary(app);
 
   const s = app.status;
   const busy = (s === 'deploying') || !!app.activity;       // no second click while something is being done

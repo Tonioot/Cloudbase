@@ -142,3 +142,30 @@ def test_a_deploy_takes_the_old_instance_out_of_running_before_it_stops_the_cont
                        ("apps/bluegreen.py", "stop_replica_container, app_id, old_r.id")):
         text = (backend / path).read_text(encoding="utf-8")
         assert text.index("_mark_stopping(") < text.index(stop), path
+
+
+# ── the panel shows it in the status itself ────────────────────────────────────────
+FRONTEND = __import__("pathlib").Path(__file__).resolve().parent.parent / "frontend"
+
+
+def test_every_kind_of_work_has_a_status_label_and_colour():
+    """The badge in the status line says what is being done: each kind needs a label and the busy colour."""
+    import re
+    utils = (FRONTEND / "js" / "utils.js").read_text(encoding="utf-8")
+    css = (FRONTEND / "css" / "components.css").read_text(encoding="utf-8")
+    for kind in activity.KINDS:
+        assert re.search(rf"\b{kind}\s*:\s*'", utils), f"no label for {kind}"
+        assert f".badge-{kind}" in css, f"no colour for {kind}"
+
+
+def test_there_is_no_separate_bar_for_it():
+    page = (FRONTEND / "app.html").read_text(encoding="utf-8")
+    js = (FRONTEND / "js" / "app.js").read_text(encoding="utf-8")
+    assert "app-activity" not in page and "app-activity" not in js
+    assert "badge(busyWith || app.status)" in js                 # the badge itself shows what is being done
+
+
+def test_the_search_field_of_the_command_menu_has_no_square_outline():
+    css = (FRONTEND / "css" / "base.css").read_text(encoding="utf-8")
+    assert ".palette-input input:focus-visible { outline: none" in css
+

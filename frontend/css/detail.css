@@ -15,34 +15,6 @@
 }
 .detail-status-meta { color: var(--muted); }
 
-/* What is going on with the app right now (core/activity.py) */
-.app-activity {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: -4px 0 14px;
-  padding: 9px 12px;
-  border: 1px solid var(--yellow-border, var(--border));
-  border-radius: 8px;
-  background: var(--surface, transparent);
-  font-size: 13px;
-  min-width: 0;
-}
-.app-activity[hidden] { display: none; }
-.app-activity-spinner {
-  flex: none;
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--yellow, currentColor);
-  border-right-color: transparent;
-  border-radius: 50%;
-  animation: spin .8s linear infinite;
-}
-.app-activity-label { flex: none; font-weight: 600; color: var(--text); }
-.app-activity-detail { flex: 1; min-width: 0; color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.app-activity-time { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
-@media (prefers-reduced-motion: reduce) { .app-activity-spinner { animation-duration: 2.4s; } }
-
 .detail-head-row { display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap; }
 .detail-head-id { flex: 1; min-width: 280px; display: flex; flex-direction: column; gap: 10px; }
 .detail-title-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
