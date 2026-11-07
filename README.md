@@ -135,7 +135,7 @@ Prefer a clone? `git clone https://github.com/Tonioot/Cloudbase && sudo bash Clo
 
 1. Store the admin password the installer shows.
 2. Open the panel at `http://<server-ip>:7823` and log in.
-3. Connect a domain to the panel under **Settings → Domain & SSL** for HTTPS, then close port 7823.
+3. Connect a domain to the panel under **Settings → Domain & SSL** for HTTPS, then close port 7823. Only 80 and 443 (plus UDP 51820 if you add nodes) need to stay open.
 4. Optionally set up app subdomains, so every app gets an address with HTTPS automatically.
 
 ### Adding a node

@@ -30,17 +30,17 @@ export const GUIDES = [
 <p>Instances on remote nodes are built on that node: the agent downloads the source from the primary and builds the same image locally, so nodes don’t need access to your Git host.</p>
 
 <h2>How a request reaches your app</h2>
-<div class="flow">
-  <span class="flow-box">Visitor<small>myapp.example.com</small></span><span class="flow-arrow">→</span>
-  <span class="flow-box">nginx on the primary<small>TLS, load balancing</small></span><span class="flow-arrow">→</span>
-  <span class="flow-box">Instance on the primary<small>127.0.0.1:10001</small></span>
+<div class="reqmap" role="img" aria-label="A visitor reaches nginx on the primary, which forwards to an instance on the primary directly or to an instance on a node through the WireGuard network">
+  <div class="reqmap-cell reqmap-visitor"><span class="flow-box">Visitor<small>myapp.example.com</small></span></div>
+  <div class="reqmap-cell reqmap-link"><span>HTTPS</span><i></i></div>
+  <div class="reqmap-cell reqmap-nginx"><span class="flow-box flow-box--strong">nginx<small>on the primary: HTTPS, load balancing</small></span></div>
+  <div class="reqmap-cell reqmap-link reqmap-link--a"><span>same server</span><i></i><em>127.0.0.1:10001</em></div>
+  <div class="reqmap-cell reqmap-target reqmap-target--a"><span class="flow-box">Instance<small>on the primary</small></span></div>
+  <div class="reqmap-cell reqmap-link reqmap-link--b"><span>WireGuard · node network</span><i></i><em>10.77.0.2:10001</em></div>
+  <div class="reqmap-cell reqmap-target reqmap-target--b"><span class="flow-box">Instance<small>on a node</small></span></div>
 </div>
-<div class="flow">
-  <span class="flow-box">nginx on the primary</span><span class="flow-arrow">→</span>
-  <span class="flow-box">Node network<small>WireGuard, 10.77.0.x</small></span><span class="flow-arrow">→</span>
-  <span class="flow-box">Instance on a node<small>10.77.0.2:10001</small></span>
-</div>
-<p>All public traffic enters through nginx on the primary. nginx spreads requests over every healthy instance of the app. Instances on the primary are reached directly on their host port; instances on other nodes are reached over the <strong>node network</strong>, a private WireGuard connection between the primary and each node. An instance on a node only listens on that private address, never on the node’s public one.</p>
+<p>The domain always points at the <strong>primary</strong>; visitors never talk to a node. nginx on the primary receives every request and picks a healthy instance. Is the instance on the primary itself? Then nginx reaches it on its local port. Is it on a node? Then nginx sends the request over the private <strong>node network</strong> to that node’s own address. The node’s address is only valid inside that network, so an instance on a node can’t be reached from the internet around nginx.</p>
+
 <p>An app with a domain (its own or an automatic subdomain) only listens on localhost, so it can’t be reached around nginx and HTTPS on <code>http://&lt;server-ip&gt;:&lt;port&gt;</code>. An app without a domain keeps its port open, since that is the only way to reach it. A change applies the next time the instances start.</p>
 
 <h2>What runs where</h2>
@@ -66,9 +66,10 @@ export const GUIDES = [
 <h2>Checklist for a new setup</h2>
 <ol class="guide-steps">
   <li><strong>Make ports 80 and 443 reachable.</strong> All web traffic and HTTPS certificates go through them. Open them in the server’s firewall and your hosting provider’s firewall. Server at home? Forward both ports on your router to the server’s local IP address — the domain wizard shows which one.</li>
+  <li><strong>Planning to add nodes? Also open UDP port 51820.</strong> Nodes join the private WireGuard network through it (see <a href="/guides?g=nodes">Nodes</a>). It must be <em>UDP</em>, on the primary only; the nodes themselves need no open ports. At home, forward it on your router too.</li>
   <li><strong>Start on boot.</strong> Run <code>cloudbase enable</code> on the server once, so Cloudbase and its apps come back after a reboot. <code>cloudbase status</code> shows whether the service is installed and running.</li>
   <li><strong>Serve the panel over HTTPS.</strong> Point a domain at the server, enter it under <a href="/settings?s=domain">Domain &amp; SSL</a> and click <strong>Set up HTTPS</strong> — the certificate is free and renews itself. Until then the panel is plain HTTP on port 7823.</li>
-  <li><strong>Close port 7823.</strong> Once the panel has a domain, only ports 80 and 443 need to be open — see <a href="/guides?g=system-settings">System settings</a>.</li>
+  <li><strong>Close port 7823.</strong> Once the panel has a domain, only ports 80 and 443 (and UDP 51820 if you have nodes) need to be open — see <a href="/guides?g=system-settings">System settings</a>.</li>
   <li><strong>Store the admin password</strong> in a password manager, and give teammates their own login instead of sharing it (<a href="/guides?g=users-roles">Users &amp; roles</a>).</li>
   <li><strong>Set a base domain</strong> if you want every app to get an address — with HTTPS — automatically.</li>
 </ol>
