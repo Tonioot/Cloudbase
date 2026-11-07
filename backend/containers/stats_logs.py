@@ -238,6 +238,10 @@ def get_container_stats_by_name(container_name_str: str) -> dict:
                 return {}
         except ImportError:
             pass
+        if isinstance(_e, ValueError):
+            # Docker answers with an empty body while a container is being started or removed: no stats yet
+            log.debug("get_container_stats_by_name: no stats yet for %s", container_name_str)
+            return {}
         log.warning("get_container_stats_by_name failed for %s", container_name_str, exc_info=True)
         return {}
 

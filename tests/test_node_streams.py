@@ -123,3 +123,24 @@ def test_no_local_websocket_or_agent_token_is_left():
         text = path.read_text(encoding="utf-8")
         for gone in ("X-Agent-Token", "x-agent-token", "get_or_create_agent_token", "verify_agent_token", "_local_ws_url"):
             assert gone not in text, f"{path.name}: {gone}"
+
+
+def test_empty_stats_while_a_container_starts_are_not_a_warning(monkeypatch, caplog):
+    """Docker answers with an empty body for a container that is being (re)created: that is 'no stats yet'."""
+    import logging
+    from containers import stats_logs
+
+    class Container:
+        def stats(self, stream=False):
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")      # what requests' JSONDecodeError is
+
+    class Client:
+        class containers:
+            @staticmethod
+            def get(name):
+                return Container()
+
+    monkeypatch.setattr(stats_logs, "_get_client", lambda: Client())
+    with caplog.at_level(logging.WARNING, logger="cloudbase.docker"):
+        assert stats_logs.get_container_stats_by_name("cloudbase-app-1-replica-85") == {}
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
