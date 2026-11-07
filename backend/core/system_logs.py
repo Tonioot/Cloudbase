@@ -59,6 +59,11 @@ def setup_logging() -> None:
     )
     for name in _NOISY_LOGGERS:
         logging.getLogger(name).setLevel(logging.WARNING)
+    # uvicorn logs its errors, including the traceback of a request that failed with a 500, through a handler of its
+    # own that only reaches the journal. Send them through the root handlers instead: into server.log, in the same format.
+    uvicorn_errors = logging.getLogger("uvicorn.error")
+    uvicorn_errors.handlers.clear()
+    uvicorn_errors.propagate = True
 
 
 def component_of(logger_name: Optional[str]) -> str:

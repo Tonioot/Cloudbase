@@ -122,3 +122,20 @@ def test_clone_url_embeds_a_token_only_for_https(apps):
     assert "tok" in apps._build_clone_url("https://github.com/a/b.git", "tok")
     assert apps._build_clone_url("git@github.com:a/b.git", "tok") == "git@github.com:a/b.git"
     assert apps._build_clone_url("https://github.com/a/b.git", None) == "https://github.com/a/b.git"
+
+
+def test_the_traceback_of_a_failed_request_reaches_the_server_log():
+    """uvicorn writes it to a handler of its own that only the journal sees: `cloudbase logs` showed nothing."""
+    import logging
+    from core import system_logs
+    system_logs.setup_logging()
+    uvicorn_errors = logging.getLogger("uvicorn.error")
+    assert uvicorn_errors.propagate and uvicorn_errors.handlers == []
+    try:
+        raise OSError("boom in a request")
+    except OSError:
+        uvicorn_errors.exception("Exception in ASGI application")
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+    text = open(system_logs.SERVER_LOG, encoding="utf-8").read()
+    assert "[ERROR] uvicorn.error: Exception in ASGI application" in text and "boom in a request" in text
