@@ -267,6 +267,10 @@ SESSION_SECRET=change-me</pre>
   <tr><td>Rolling / blue-green redeploy</td><td>The same strategies, without pulling: rebuild the current code and replace instances.</td></tr>
 </table>
 <p>The pull options first ask which <strong>commit</strong> to deploy. The newest commit on the branch is preselected; pick an older one to roll back to a known-good version.</p>
+<p>A build is skipped when the image is already current: same commit, same build and start command, port and variables. This holds for the primary and for every node, so redeploying unchanged code doesn’t rebuild anywhere. <strong>Rebuild image</strong> builds regardless.</p>
+
+<h2>What is happening right now</h2>
+<p>The status badge in the app header and in the sidebar shows what Cloudbase is doing with the app: <em>Deploying</em>, <em>Restarting</em>, <em>Stopping</em> and so on, with the step in the header. When it is done the badge returns to <em>Running</em> (or shows what went wrong). You no longer need the Cloudbase logs for this.</p>
 
 <h2>Rolling deploys</h2>
 <p>For each running instance, in turn:</p>
@@ -1015,7 +1019,7 @@ systemctl list-timers | grep certbot</pre>
 <p>Add an instance to an app and pick the node. The first time, the node downloads the app’s source from the primary and builds the image itself; later deploys only rebuild what changed. Deploys and restarts work exactly as on the primary.</p>
 
 <h2>The node page</h2>
-<p>Click a node in the sidebar to see its CPU, memory and disk over time, the instances it runs, the commands the primary sent it (logs, stats, backups), and the agent’s own log. Rename, disable or remove the node from there.</p>
+<p>Click a node in the sidebar. At the top are the key numbers (CPU, memory, disk and the connection) with a small chart, like on the overview. Below are the <strong>Metrics</strong>: CPU, memory, disk usage, network, disk reads and writes and load average over the period you pick, each of which you can enlarge with <em>Open Large</em>, as on an app. Further down are the instances running on the node, the commands the primary sent it (logs, stats, backups) and the agent’s own log. Rename, disable or remove the node from there.</p>
 
 <h2>Removing a node</h2>
 <p>Move or remove all instances on the node first — a node with instances can’t be deleted. Then remove it in the panel, and run <code>cloudbase uninstall</code> on the server.</p>

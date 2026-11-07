@@ -67,7 +67,8 @@ The goal is to keep multi-server application management transparent and easy to 
 **Operations**
 
 * Live logs per instance, build and deploy output
-* CPU, memory, network and disk metrics with seven days of history
+* CPU, memory, network and disk metrics with seven days of history, for every app and every node
+* The status of an app shows what is happening right now: deploying, restarting, stopping
 * Activity per app and a global audit log
 * Notifications in the panel and to Slack, Microsoft Teams, PagerDuty, e-mail, webhooks, Discord, Telegram and ntfy — problems resolve themselves when fixed
 * Users and custom roles with fine-grained permissions
@@ -88,7 +89,11 @@ Cloudbase has four building blocks.
 
 ### From repository to container
 
-The primary clones the repository to `~/.cloudbase/apps/<name>` and builds a Docker image. Remote nodes download the source from the primary and build the same image locally, so they don't need access to your Git host.
+The primary clones the repository to `~/.cloudbase/apps/<name>` and builds a Docker image. Remote nodes download the source from the primary and build the same image locally, so they don't need access to your Git host. A build is skipped when the image is already current (same commit and settings), on the primary and on nodes alike.
+
+### How nodes are controlled
+
+The primary keeps a list of what should run on each node. The agent on the node fetches that list and makes Docker match it, then reports what it sees. There are no start/stop commands to get lost: after an outage the node simply compares again. Commands remain only for questions and jobs (logs, stats, backups, cron runs). The agent is a small process without a web server of its own.
 
 ### How a request reaches your app
 
