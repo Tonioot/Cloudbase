@@ -111,6 +111,52 @@ def _env_hash(build_env: dict) -> str:
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
+KEY_LABEL = "cloudbase.build_key"
+REVISION_LABEL = "cloudbase.source_revision"
+# Files Cloudbase writes into the working directory itself; they say nothing about the user's code
+_GENERATED_FILES = ("Dockerfile", ".dockerignore")
+
+
+def source_revision_of(app_dir: str) -> str | None:
+    """The git commit the working directory is at, or None when it is not a clean checkout.
+
+    Files that were edited by hand, or added, are not in any commit: then there is no revision to trust,
+    and the image is always built."""
+    try:
+        head = subprocess.run(["git", "-C", app_dir, "rev-parse", "HEAD"], capture_output=True, text=True, timeout=15)
+        if head.returncode != 0:
+            return None
+        status = subprocess.run(["git", "-C", app_dir, "status", "--porcelain"], capture_output=True, text=True, timeout=30)
+        if status.returncode != 0:
+            return None
+        changed = [line for line in status.stdout.splitlines() if line[3:].strip() not in _GENERATED_FILES]
+        return None if changed else head.stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def build_key(app_type: str, start_command: str, port: int, build_command: str, build_env: dict | None,
+              source_revision: str | None) -> str | None:
+    """What an image was made from. The same key means the same image would come out of a build.
+
+    That is the revision of the code plus everything else the build reads: the type, the commands, the port and
+    the environment. None when the revision is unknown (then nothing is known to be current)."""
+    if not source_revision:
+        return None
+    import hashlib
+    env = {k: str(v) for k, v in (build_env or {}).items() if _ARG_NAME_RE.match(str(k))}
+    blob = json.dumps([source_revision, app_type or "", start_command or "", port, build_command or "", _env_hash(env)])
+    return hashlib.sha256(blob.encode()).hexdigest()[:20]
+
+
+def image_key(app_id: int, app_name: str) -> str | None:
+    """The key the image of this app was built with, or None when there is no such image (or no key on it)."""
+    try:
+        return (_get_client().images.get(image_name(app_id, app_name)).labels or {}).get(KEY_LABEL)
+    except Exception:
+        return None
+
+
 def _write_secret_file(build_env: dict) -> str:
     """Env vars as `export K='v'` lines in a 0600 temp file (BuildKit secret source)."""
     import shlex
@@ -216,8 +262,8 @@ def build_image(
     build_command runs once inside the image build (e.g. `npm run build`);
     build_env reaches the build as a BuildKit secret (not as build args, which
     would be readable in the image history).
-    source_revision is stored as the `cloudbase.source_revision` label, which
-    node agents compare to decide whether an image is still current.
+    The image is labelled with the revision it was built from and a key of everything the build read
+    (build_key); build_image_unless_current compares that key to decide whether a build is needed.
     """
     build_lock = _get_build_lock(app_id)
     if not build_lock.acquire(blocking=False):
@@ -254,10 +300,15 @@ def build_image(
 
         _cleanup_before_build(app_id, push_line_fn)
         push_line_fn(app_id, f"[Docker] Building image {img} …")
+        revision = source_revision or source_revision_of(app_dir)
+        key = build_key(app_type, start_command, port, build_command, build_env, revision)
+        labels = {REVISION_LABEL: revision} if revision else {}
+        if key:
+            labels[KEY_LABEL] = key
         _run_build(
             app_id, app_dir, img, push_line_fn,
             buildargs=buildargs,
-            labels={"cloudbase.source_revision": source_revision} if source_revision else None,
+            labels=labels or None,
             secret_env=build_env if use_secret else None,
         )
     except RuntimeError:
@@ -270,3 +321,31 @@ def build_image(
 
     push_line_fn(app_id, f"[Docker] Image built: {img}")
     return img
+
+
+def build_image_unless_current(
+    app_id: int,
+    app_name: str,
+    app_dir: str,
+    push_line_fn,
+    app_type: str = "unknown",
+    start_command: str = "",
+    port: int = 8000,
+    build_command: str = "",
+    build_env: dict | None = None,
+    source_revision: str | None = None,
+) -> tuple[str, bool]:
+    """Like build_image, but does nothing when the image on this machine was built from the same code and settings.
+
+    Returns (image tag, whether it was built). Docker's own layer cache makes an unchanged build cheaper, but
+    not free (the context is sent again, the image is exported again), and an emptied cache makes it as slow
+    as a first build. Deploys use this; the Rebuild button uses build_image, which always builds."""
+    revision = source_revision or source_revision_of(app_dir)
+    key = build_key(app_type, start_command, port, build_command, build_env, revision)
+    img = image_name(app_id, app_name)
+    if key and image_key(app_id, app_name) == key:
+        push_line_fn(app_id, f"[Docker] {img} is current (revision {revision[:8]}, same settings): not rebuilding.")
+        return img, False
+    build_image(app_id, app_name, app_dir, push_line_fn, app_type, start_command, port,
+                build_command=build_command, build_env=build_env, source_revision=revision)
+    return img, True

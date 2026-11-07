@@ -74,8 +74,8 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
             try:
                 def _push(_aid, line):
                     pm._push_line(app_id, str(line))
-                new_img = await asyncio.to_thread(
-                    containers_build.build_image,
+                new_img, _built = await asyncio.to_thread(
+                    containers_build.build_image_unless_current,
                     app_id, app.name, app.working_dir, _push,
                     app.app_type or "unknown", app.start_command or "", _image_port(app),
                     **_image_build_kwargs(app),

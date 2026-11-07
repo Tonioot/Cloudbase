@@ -70,12 +70,12 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
         if tnode.is_local:
             if not app.working_dir:
                 raise HTTPException(400, "No working directory — deploy the app first")
-            pm._push_line(app_id, "[Rolling] Building new image…")
+            pm._push_line(app_id, "[Rolling] Checking the image…")
             try:
                 def _push(_aid, line):
                     pm._push_line(app_id, str(line))
-                new_img = await asyncio.to_thread(
-                    containers_build.build_image,
+                new_img, _built = await asyncio.to_thread(
+                    containers_build.build_image_unless_current,
                     app_id, app.name, app.working_dir, _push,
                     app.app_type or "unknown", app.start_command or "", _image_port(app),
                     **_image_build_kwargs(app),

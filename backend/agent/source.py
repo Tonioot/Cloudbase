@@ -8,9 +8,9 @@ import httpx
 from containers import naming as containers_naming, build as containers_build, processes as pm
 from agent.log import _agent_log
 
-# (app id, revision) pairs built since this agent started: a node that cannot reach a newer
-# revision than the one it was asked for must not rebuild the same thing over and over
-_built: set[tuple[int, str]] = set()
+# Builds since this agent started: a node that cannot reach a newer revision than the one it was asked for
+# must not rebuild the same thing over and over
+_built: set[tuple[int, str]] = set()      # (app id, build key)
 _build_lock = asyncio.Lock()
 
 def _local_app_dir(app_name: str) -> str:
@@ -89,20 +89,21 @@ async def _download_and_extract_source(client: httpx.AsyncClient, state, main_id
     return app_dir
 
 
-async def _build_image_local(local_id: int, app_name: str, app_dir: str, payload: dict) -> str:
-    """Build Docker image natively using dm.build_image (handles Dockerfile generation).
-    Returns image name."""
-
-    app_type = (payload.get("app_type") or "").strip().lower()
-    start_cmd = payload.get("start_command") or ""
-    port = payload.get("internal_port", payload.get("port"))
+def _build_arguments(spec: dict) -> tuple:
+    """What build_image/build_key take, from a spec: one place, so the key checked is the key built."""
+    app_type = (spec.get("app_type") or "").strip().lower()
+    start_cmd = spec.get("start_command") or ""
+    port = spec.get("internal_port", spec.get("port"))
     port = 8000 if port is None else port  # 0 = no port (worker, cron job)
-
     if not app_type or app_type == "unknown":
         app_type = pm.detect_app_type_from_command(start_cmd) if start_cmd else "unknown"
+    return app_type, start_cmd, port, spec.get("build_command") or "", spec.get("env_vars") or {}, spec.get("source_revision") or None
 
+
+async def _build_image_local(local_id: int, app_name: str, app_dir: str, spec: dict) -> str:
+    """Build the Docker image on this node (build_image generates the Dockerfile). Returns the image name."""
+    app_type, start_cmd, port, build_command, build_env, revision = _build_arguments(spec)
     img = containers_naming.image_name(local_id, app_name)
-
     _agent_log(f"[build] Building image {img} for {platform.machine()} in {app_dir}")
 
     def _push(aid, line):
@@ -112,11 +113,8 @@ async def _build_image_local(local_id: int, app_name: str, app_dir: str, payload
         containers_build.build_image,
         local_id, app_name, app_dir, _push,
         app_type, start_cmd, port,
-        build_command=payload.get("build_command") or "",
-        build_env=payload.get("env_vars") or {},
-        # Label the image so the next start sees it is current and skips the
-        # download + rebuild (_ensure_replica_app_deployed compares this label).
-        source_revision=payload.get("source_revision") or None,
+        build_command=build_command, build_env=build_env,
+        source_revision=revision,
     )
     _agent_log(f"[build] Image {img} ready")
     return img
@@ -130,31 +128,24 @@ async def ensure_image(client: httpx.AsyncClient, state, spec: dict, progress: C
     app_name = spec.get("app_name") or spec.get("name") or ""
     if not app_name:
         raise RuntimeError("Missing app_name")
-    desired_revision = spec.get("source_revision")
+    app_type, start_cmd, port, build_command, build_env, revision = _build_arguments(spec)
+    key = containers_build.build_key(app_type, start_cmd, port, build_command, build_env, revision)
 
     img = containers_naming.image_name(main_id, app_name)
     if _local_image_ok(img):
-        if not desired_revision:
+        if not revision:
+            return                  # nothing says what the image was made from: use it, as before
+        if containers_build.image_key(main_id, app_name) == key:
+            _agent_log(f"[deploy] Image {img} is current (revision {revision[:8]}, same settings), skipping build")
             return
-        try:
-            r = subprocess.run(
-                ["docker", "inspect", "--format", "{{index .Config.Labels \"cloudbase.source_revision\"}}", img],
-                capture_output=True, text=True, timeout=10,
-            )
-            image_revision = r.stdout.strip()
-        except Exception:
-            image_revision = ""
-        if image_revision == desired_revision:
-            _agent_log(f"[deploy] Image {img} already at revision {desired_revision}, skipping build")
-            return
-        if (main_id, desired_revision) in _built:
-            return              # built for it before; the source on the primary has moved on since
-        _agent_log(f"[deploy] Image {img} stale ({image_revision!r} != {desired_revision!r}), rebuilding")
+        if (main_id, key) in _built:
+            return              # built for this before; the source on the primary has moved on since
+        _agent_log(f"[deploy] Image {img} is not current, rebuilding")
 
     async with _build_lock:     # one build at a time: a Raspberry Pi cannot do two
         progress("downloading")
         app_dir = await _download_and_extract_source(client, state, main_id, app_name)
         progress("building_image")
         await _build_image_local(main_id, app_name, app_dir, spec)
-    if desired_revision:
-        _built.add((main_id, desired_revision))
+    if key:
+        _built.add((main_id, key))
