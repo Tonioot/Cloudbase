@@ -166,3 +166,12 @@ def test_every_metrics_chart_can_be_opened_large_like_an_apps():
     assert "dialog-backdrop" in script and "dialog-modern" in script            # the same dialog as the app's metrics
     assert "large: true" in script and "timeLabel" in script                    # with time along the bottom
     assert "Escape" in script                                                   # and Escape closes it
+
+
+def test_the_status_dot_has_a_shape_of_its_own():
+    """A span in a line of text has no width or height unless it is a block: only its glow remained, as a green dash."""
+    node_css = (FRONTEND / "css" / "node.css").read_text(encoding="utf-8")
+    dot = node_css[node_css.index(".nd-link-dot {"):node_css.index("}", node_css.index(".nd-link-dot {"))]
+    assert "display: inline-block" in dot and "width: 8px" in dot and "height: 8px" in dot
+    components = (FRONTEND / "css" / "components.css").read_text(encoding="utf-8")
+    assert ".kpi-value--text strong { display: inline-flex" in components

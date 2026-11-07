@@ -1,7 +1,7 @@
 /* The node page: the state of one server at a glance, what runs on it, and its history. */
 
 /* ─── At a glance (key numbers: see .kpi in components.css) ─────────────── */
-.nd-link-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--faint); }
+.nd-link-dot { display: inline-block; vertical-align: middle; width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--faint); }
 .nd-link-dot.up { background: var(--green); box-shadow: 0 0 0 3px var(--green-halo); }
 .nd-link-dot.down { background: var(--red); box-shadow: 0 0 0 3px var(--red-halo); }
 .nd-link-dot.busy { background: var(--yellow); animation: pulse 1.1s ease-in-out infinite; }
