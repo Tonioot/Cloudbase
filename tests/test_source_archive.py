@@ -94,7 +94,9 @@ def _setup(tmp_path):
                               status="running", working_dir=str(source), app_type="python")
             db.add_all([node, app])
             await db.flush()
-            db.add(ApplicationReplica(app_id=app.id, node_id=node.id, status="running", external_port=9501))
+            # two instances of the same app on one node: the check "does this node run the app" must cope with that
+            db.add_all([ApplicationReplica(app_id=app.id, node_id=node.id, status="running", external_port=9501),
+                        ApplicationReplica(app_id=app.id, node_id=node.id, status="running", external_port=9502)])
             await db.commit()
             return app.id, node.id
     return asyncio.run(go())

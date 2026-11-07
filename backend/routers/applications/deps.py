@@ -40,13 +40,14 @@ def _require_node_agent_for_app(app_id_param: str = "app_id"):
         if node is None:
             raise HTTPException(status_code=401, detail="Invalid or disabled node token")
 
+        # "At least one": a node may run several instances of the same app
         replica_result = await db.execute(
-            select(ApplicationReplica).where(
+            select(ApplicationReplica.id).where(
                 ApplicationReplica.app_id == app_id,
                 ApplicationReplica.node_id == node.id,
-            )
+            ).limit(1)
         )
-        if replica_result.scalar_one_or_none() is None:
+        if replica_result.first() is None:
             raise HTTPException(status_code=403, detail="Node has no replica for this app")
 
     return _dep
