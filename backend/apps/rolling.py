@@ -9,17 +9,17 @@ from core.models import Node, ApplicationReplica
 from containers import processes as pm, naming as containers_naming, replicas as containers_replicas, build as containers_build
 from nginx import config as nginx_config, files as nginx_files
 from nodes.registry import ensure_local_node
-from nodes.commands import wait_for_node_command, queue_node_command
+from nodes import desired
 from core.env_crypto import decrypt_env
 from core.audit import log_audit
 from apps.git import _refresh_app_source_revision
 from apps.images import _image_build_kwargs, _image_port
 from apps.nginx_sync import _resolve_ssl_paths, _has_public_nginx_domain
-from apps.runtime import _docker_runtime_options, _remote_replica_command_payload, _start_instance_local
+from apps.runtime import _remote_replica_command_payload, _start_instance_local
 from apps.serializers import _get_or_404
 from apps.validation import _assign_external_port
 from apps.bluegreen import _do_zero_downtime_deploy, _zd_rollback
-from apps.deploy_common import _wait_new_instance_healthy
+from apps.deploy_common import REMOTE_START_TIMEOUT_SECONDS, _wait_new_instance_healthy
 from mesh import routing
 
 log = logging.getLogger("cloudbase.apps")
@@ -84,28 +84,9 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
             if source_revision:
                 app.image_revision = source_revision
         else:
+            # The node downloads the source and builds the image by itself when it starts the new instance
             if tnode.status != "online":
                 raise HTTPException(400, f"Node '{tnode.name}' is offline")
-            pm._push_line(app_id, f"[Rolling] Refreshing source on node '{tnode.name}'…")
-            refresh_cmd = await queue_node_command(
-                db, node_id=tnode.id, app_id=app_id,
-                command_type="refresh_source",
-                payload={
-                    "app_name": app.name,
-                    "app_id": app_id,
-                    "app_type": app.app_type or "unknown",
-                    "start_command": app.start_command or "",
-                    "build_command": app.build_command or "",
-                    "internal_port": _image_port(app),
-                    "env_vars": env_vars,
-                    "docker_options": _docker_runtime_options(app),
-                    "source_revision": source_revision,
-                },
-            )
-            refresh_done = await wait_for_node_command(db, refresh_cmd.id, timeout_seconds=300)
-            if refresh_done.status != "done":
-                raise HTTPException(500, f"Source refresh failed on node '{tnode.name}': {refresh_done.error_message}")
-            pm._push_line(app_id, f"[Rolling] Source refreshed on node '{tnode.name}'.")
 
     has_custom = bool(app.nginx_enabled and app.domain)
     ssl_cert = ssl_key = None
@@ -191,16 +172,12 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
                 continue
 
             remote_payload = _remote_replica_command_payload(app, env_vars, new_ext_port, source_revision)
-            await queue_node_command(
-                db, node_id=tnode.id, app_id=app_id,
-                command_type="start_replica",
-                payload={**remote_payload, "replica_id": new_replica.id},
-            )
+            await desired.start(db, node_id=tnode.id, replica_id=new_replica.id, payload=remote_payload)
             await db.commit()
 
-            pm._push_line(app_id, f"[Rolling] Waiting for instance {new_replica.id} on '{tnode.name}' to be reachable (max 120s)…")
+            pm._push_line(app_id, f"[Rolling] Waiting for instance {new_replica.id} on '{tnode.name}' to be built and reachable (max {REMOTE_START_TIMEOUT_SECONDS // 60} min)…")
             try:
-                remote_backend = await routing.wait_reachable(new_replica.id, 120)
+                remote_backend = await routing.wait_reachable(new_replica.id, REMOTE_START_TIMEOUT_SECONDS)
             except routing.Unreachable as exc:
                 pm._push_line(app_id, f"[Rolling] Remote instance {new_replica.id}: {exc} — aborting roll.")
                 await _zd_rollback(app_id, local_node.id, [(tnode, new_replica.id)], db)
@@ -234,11 +211,7 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
         if tnode.is_local:
             await asyncio.to_thread(containers_replicas.stop_replica_container, app_id, old_replica.id)
         else:
-            await queue_node_command(
-                db, node_id=tnode.id, app_id=app_id,
-                command_type="stop_replica",
-                payload={"app_id": app_id, "replica_id": old_replica.id, "app_name": app.name},
-            )
+            desired.nudge(tnode.id)         # the old instance leaves the list below; the node removes its container
         async with AsyncSessionLocal() as _del_db:
             victim = await _del_db.get(ApplicationReplica, old_replica.id)
             if victim:

@@ -1,7 +1,5 @@
 import asyncio
 import collections
-from collections import deque
-import psutil
 from fastapi import WebSocket, WebSocketDisconnect, APIRouter
 from sqlalchemy import select
 from core import auth
@@ -9,12 +7,11 @@ from containers import processes as pm
 from core.database import AsyncSessionLocal
 from core.models import Application, ApplicationReplica, Node
 from nodes.registry import ensure_local_node
-from apps.stream import _aggregate_frames, _open_remote_stream, _stream_local_container_stats
+from apps.node_streams import stream_system_stats
+from apps.stream import _aggregate_frames, _open_remote_stream
 
 router = APIRouter(tags=["stats"])
 
-
-_local_stats_history: deque = deque(maxlen=60)
 
 
 @router.websocket("/ws/apps/{app_id}/stats")
@@ -27,9 +24,7 @@ async def stream_stats(app_id: int, websocket: WebSocket):
         result = await db.execute(select(Application).where(Application.id == app_id))
         app = result.scalar_one_or_none()
         if not app:
-            # On a node, the local DB has no app rows — the primary owns them.
-            # Stream the containers that run here instead (agent stats relay).
-            await _stream_local_container_stats(websocket, app_id)
+            await websocket.close(code=1008, reason="Unknown app")
             return
         local_node = await ensure_local_node(db)
 
@@ -165,34 +160,11 @@ async def stream_stats(app_id: int, websocket: WebSocket):
 
 
 @router.websocket("/ws/system/stats")
-async def stream_system_stats(websocket: WebSocket):
+async def stream_system_stats_ws(websocket: WebSocket):
     if not await auth.authorize_websocket(websocket, "apps.view"):
         return
     await websocket.accept()
     try:
-        # Replay history so charts populate immediately on connect
-        for snapshot in list(_local_stats_history):
-            await websocket.send_json(snapshot)
-
-        psutil.cpu_percent(interval=None)
-        while True:
-            import time
-            timestamp = int(time.time() * 1000)  # milliseconds
-            mem = psutil.virtual_memory()
-            disk = psutil.disk_usage("/")
-            cpu = await asyncio.to_thread(psutil.cpu_percent, 1)
-            payload = {
-                "timestamp": timestamp,
-                "cpu_percent": cpu,
-                "memory_total_mb": round(mem.total / 1024 / 1024),
-                "memory_used_mb": round(mem.used / 1024 / 1024),
-                "memory_percent": mem.percent,
-                "disk_total_gb": round(disk.total / 1024 / 1024 / 1024, 1),
-                "disk_used_gb": round(disk.used / 1024 / 1024 / 1024, 1),
-                "disk_percent": disk.percent,
-            }
-            _local_stats_history.append(payload)
-            await websocket.send_json(payload)
-            await asyncio.sleep(2)
-    except WebSocketDisconnect:
+        await stream_system_stats(websocket.send_json)
+    except (WebSocketDisconnect, Exception):
         pass

@@ -13,7 +13,7 @@ from containers import replicas as containers_replicas
 from core import applog
 from dbs import links as db_links
 from nodes.registry import ensure_local_node
-from nodes.commands import queue_node_command
+from nodes import desired
 from apps.git import _decrypt_github_token, _refresh_app_source_revision
 from apps.images import _image_build_kwargs, _image_port
 from apps.nginx_sync import _has_public_nginx_domain
@@ -328,13 +328,7 @@ async def _start_replica_runtime(
         env_vars,
         replica.external_port or app.port or 8000,
     )
-    await queue_node_command(
-        db,
-        node_id=replica_node.id,
-        app_id=app.id,
-        command_type="start_replica",
-        payload={**remote_payload, "replica_id": replica.id},
-    )
+    await desired.start(db, node_id=replica_node.id, replica_id=replica.id, payload=remote_payload)
     replica.status = "starting"
     replica.last_error = None
 
@@ -352,15 +346,9 @@ async def _stop_replica_runtime(
         replica.last_error = None
         return
 
+    await desired.stop(db, node_id=replica_node.id, replica_id=replica.id)
     if replica_node.status == "online" and replica_node.enabled:
-        await queue_node_command(
-            db,
-            node_id=replica_node.id,
-            app_id=app.id,
-            command_type="stop_replica",
-            payload={"app_id": app.id, "replica_id": replica.id, "app_name": app.name},
-        )
-        replica.status = "stopping"
+        replica.status = "stopping"                 # "stopped" once the node reports the container gone
         replica.last_error = None
         return
 

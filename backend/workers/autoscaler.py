@@ -17,7 +17,7 @@ from mesh import routing
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
 from nodes.registry import ensure_local_node
 from apps.state import DEPLOY_HEALTH_TIMEOUT_SECONDS, _deploys_in_progress, _scaling_in_progress
-from nodes.commands import wait_for_node_command, queue_node_command
+from nodes import desired
 
 # ── Autoscaler ───────────────────────────────────────────────────────────────
 async def _autoscaler():
@@ -93,21 +93,23 @@ async def _autoscaler():
         # Least-loaded node wins; on a tie prefer the local node (no network hop).
         return min(nodes, key=lambda n: (_node_load(n), not n.is_local))
 
+    async def _wait_until_stopped(replica_id: int, timeout: float) -> bool:
+        """True once the node reports the instance stopped (or it is gone)."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            async with AsyncSessionLocal() as s:
+                r = await s.get(ApplicationReplica, replica_id)
+            if r is None or r.status == "stopped":
+                return True
+            await asyncio.sleep(2)
+        return False
+
     async def _remove_failed_replica(app_id: int, replica_id: int, node: Node) -> None:
         try:
             if node.is_local:
                 await asyncio.to_thread(pm.stop_docker_replica, app_id, replica_id)
             else:
-                async with AsyncSessionLocal() as s:
-                    r = await s.get(ApplicationReplica, replica_id)
-                    if r:
-                        r.status = "stopping"
-                        await s.commit()
-                    a = await s.get(Application, app_id)
-                    await queue_node_command(
-                        s, node_id=node.id, app_id=app_id, command_type="stop_replica",
-                        payload={"app_id": app_id, "replica_id": replica_id, "app_name": a.name if a else ""},
-                    )
+                desired.nudge(node.id)         # the row is deleted below; the node removes the container
         except Exception as e:
             alog.warning("[autoscaler] app_id=%d cleanup of replica %d failed: %s", app_id, replica_id, e)
         async with AsyncSessionLocal() as s:
@@ -133,10 +135,9 @@ async def _autoscaler():
             s.add(replica)
             await s.commit()
             if not node.is_local:
-                await queue_node_command(
-                    s, node_id=node.id, app_id=app_id, command_type="start_replica",
-                    payload={**_remote_replica_command_payload(app, env_vars, new_port), "replica_id": replica.id},
-                )
+                await desired.start(s, node_id=node.id, replica_id=replica.id,
+                                    payload=_remote_replica_command_payload(app, env_vars, new_port))
+                await s.commit()
 
         _say(app_id, f"CPU {avg_cpu:.1f}% > {target:.0f}% over the last {UP_WINDOW}s — adding instance {replica.id} on '{node.name}' ({count} → {count + 1})…")
 
@@ -192,7 +193,6 @@ async def _autoscaler():
                 node = await ensure_local_node(s)
             victim.status = "stopping"
             await s.commit()
-            app_name = (await s.get(Application, app_id)).name
         _say(app_id, f"CPU stayed below {target * 0.5:.0f}% for {DOWN_WINDOW // 60} min (peak {avg_cpu:.1f}%) — removing instance {victim_id} on '{node.name}' ({count} → {count - 1})…")
         await _rewrite_nginx(app_id)
 
@@ -201,15 +201,11 @@ async def _autoscaler():
                 stopped = await asyncio.to_thread(pm.stop_docker_replica, app_id, victim_id)
             else:
                 async with AsyncSessionLocal() as s:
-                    cmd = await queue_node_command(
-                        s, node_id=node.id, app_id=app_id, command_type="stop_replica",
-                        payload={"app_id": app_id, "replica_id": victim_id, "app_name": app_name},
-                    )
-                    done = await wait_for_node_command(s, cmd.id, timeout_seconds=120)
-                stopped = done.status == "done"
+                    await desired.stop(s, node_id=node.id, replica_id=victim_id)
+                    await s.commit()
+                stopped = await _wait_until_stopped(victim_id, timeout=120)
                 if not stopped:
-                    alog.warning("[autoscaler] app_id=%d stop_replica on '%s' ended %s: %s",
-                                app_id, node.name, done.status, done.error_message)
+                    alog.warning("[autoscaler] app_id=%d instance %d on '%s' did not stop in time", app_id, victim_id, node.name)
         except Exception as e:
             stopped = False
             alog.warning("[autoscaler] app_id=%d scale down: stop replica %d raised: %s", app_id, victim_id, e)

@@ -8,40 +8,40 @@ from agent.urls import _normalize_url
 # ─── Managed databases ────────────────────────────────────────────────────────
 # Thin wrappers: db_manager does the work, the primary keeps the state.
 
-async def cmd_db_ensure(_client, _state, _main_id, payload, _headers):
+async def cmd_db_ensure(_client, _state, _main_id, payload):
     return await asyncio.to_thread(dbs_lifecycle.ensure_running, payload["spec"])
 
 
-async def cmd_db_recreate(_client, _state, _main_id, payload, _headers):
+async def cmd_db_recreate(_client, _state, _main_id, payload):
     return await asyncio.to_thread(dbs_lifecycle.recreate, payload["spec"])
 
 
-async def cmd_db_restart(_client, _state, _main_id, payload, _headers):
+async def cmd_db_restart(_client, _state, _main_id, payload):
     return await asyncio.to_thread(dbs_lifecycle.restart, payload["spec"])
 
 
-async def cmd_db_stop(_client, _state, _main_id, payload, _headers):
+async def cmd_db_stop(_client, _state, _main_id, payload):
     return await asyncio.to_thread(dbs_lifecycle.stop, int(payload["database_id"]))
 
 
-async def cmd_db_remove(_client, _state, _main_id, payload, _headers):
+async def cmd_db_remove(_client, _state, _main_id, payload):
     return await asyncio.to_thread(
         dbs_lifecycle.remove, int(payload["database_id"]), bool(payload.get("keep_volume", True))
     )
 
 
-async def cmd_db_states(_client, _state, _main_id, payload, _headers):
+async def cmd_db_states(_client, _state, _main_id, payload):
     return {"states": await asyncio.to_thread(dbs_lifecycle.states, payload.get("database_ids") or [])}
 
 
-async def cmd_db_stats(_client, _state, _main_id, payload, _headers):
+async def cmd_db_stats(_client, _state, _main_id, payload):
     return await asyncio.to_thread(dbs_lifecycle.stats, int(payload["database_id"]), payload.get("data_dir"))
 
 
 _BACKUP_TMP = os.path.expanduser("~/.cloudbase/backup-tmp")
 
 
-async def cmd_db_backup(client, state, _main_id, payload, _headers):
+async def cmd_db_backup(client, state, _main_id, payload):
     """Dump a database on this node and stream the file to the primary."""
     spec, backup_id = payload["spec"], int(payload["backup_id"])
     os.makedirs(_BACKUP_TMP, exist_ok=True)
@@ -65,7 +65,7 @@ async def cmd_db_backup(client, state, _main_id, payload, _headers):
             os.remove(path)
 
 
-async def cmd_db_restore(client, state, _main_id, payload, _headers):
+async def cmd_db_restore(client, state, _main_id, payload):
     """Fetch a backup from the primary and load it into a database on this node."""
     spec, backup_id = payload["spec"], int(payload["backup_id"])
     os.makedirs(_BACKUP_TMP, exist_ok=True)
@@ -86,22 +86,22 @@ async def cmd_db_restore(client, state, _main_id, payload, _headers):
             os.remove(path)
 
 
-async def cmd_db_rotate_password(_client, _state, _main_id, payload, _headers):
+async def cmd_db_rotate_password(_client, _state, _main_id, payload):
     return await asyncio.to_thread(dbs_backup_restore.rotate_password, payload["spec"], payload["new_password"])
 
 
-async def cmd_db_stats_many(_client, _state, _main_id, payload, _headers):
+async def cmd_db_stats_many(_client, _state, _main_id, payload):
     return {"stats": await asyncio.to_thread(dbs_lifecycle.stats_many, payload.get("items") or [])}
 
 
-async def cmd_db_check_updates(_client, _state, _main_id, payload, _headers):
+async def cmd_db_check_updates(_client, _state, _main_id, payload):
     return {"updates": await asyncio.to_thread(dbs_updates.check_updates, payload.get("items") or [])}
 
 
-async def cmd_db_update(_client, _state, _main_id, payload, _headers):
+async def cmd_db_update(_client, _state, _main_id, payload):
     return await asyncio.to_thread(dbs_updates.update, payload["spec"])
 
 
-async def cmd_db_logs(_client, _state, _main_id, payload, _headers):
+async def cmd_db_logs(_client, _state, _main_id, payload):
     lines = await asyncio.to_thread(dbs_lifecycle.logs, int(payload["database_id"]), int(payload.get("lines", 300)))
     return {"lines": lines}

@@ -4,7 +4,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from core.models import Node, ApplicationReplica
 from core import auth as _auth
-from core import auth as _auth_mod
 
 async def _request_can_manage_apps(request: Request) -> bool:
     """Return True if the requester has apps.configure (or is superadmin)."""
@@ -27,17 +26,9 @@ def _require_node_agent_for_app(app_id_param: str = "app_id"):
     """Dependency factory that authenticates node-agent calls and verifies the
     calling node actually has a replica for the requested app.
 
-    Accepts either:
-    - X-Agent-Token: local agent — trusted unconditionally (runs on this machine).
-    - X-Node-Token: remote node — validated against DB and must have a replica of app_id.
+    Needs the X-Node-Token of a node that has a replica of app_id.
     """
     async def _dep(request: Request, app_id: int, db: AsyncSession = Depends(get_db)):
-        agent_token = request.headers.get("X-Agent-Token", "")
-        if agent_token:
-            if not _auth_mod.verify_agent_token(agent_token):
-                raise HTTPException(status_code=401, detail="Invalid agent token")
-            return
-
         node_token = request.headers.get("X-Node-Token", "")
         if not node_token:
             raise HTTPException(status_code=401, detail="Node agent token required")

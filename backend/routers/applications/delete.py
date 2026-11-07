@@ -1,5 +1,4 @@
 import asyncio
-import json
 import os
 import shutil
 from fastapi import APIRouter, HTTPException, Depends
@@ -10,7 +9,7 @@ from core.database import get_db
 from core.models import ApplicationReplica
 from containers import processes as pm, cleanup as containers_cleanup
 from nodes.registry import ensure_local_node
-from nodes.commands import queue_node_command, wait_for_node_command
+from nodes import desired
 from core.audit import log_audit
 from core import auth as _auth
 from apps.nginx_sync import _best_effort_remove_app_nginx, _best_effort_delete_app_certificate
@@ -27,40 +26,21 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dic
     node = await _get_app_node(app, db, local_node)
 
     if not node.is_local:
+        # Nothing to send: once its instances are gone from the node's list, the node removes their containers
+        # (also later, when the node was offline just now)
+        _best_effort_remove_app_nginx(app.name)
+        _best_effort_delete_app_certificate(app)
+        await _cleanup_app_dependencies(db, app.id)
+        await db.delete(app)
+        try:
+            await db.commit()
+        except IntegrityError as e:
+            await db.rollback()
+            raise HTTPException(409, f"App '{app.name}' cannot be deleted because it is still referenced") from e
+        desired.nudge(node.id)
         if node.status == "online":
-            cmd = await queue_node_command(
-                db,
-                node_id=node.id,
-                app_id=app.id,
-                command_type="delete_app",
-                payload={"app_id": app.id, "app_name": app.name},
-            )
-            done = await wait_for_node_command(db, cmd.id, timeout_seconds=60)
-            if done.status != "done":
-                raise HTTPException(500, f"Failed to delete app on node '{node.name}': {done.error_message}")
-            _best_effort_remove_app_nginx(app.name)
-            _best_effort_delete_app_certificate(app)
-            await _cleanup_app_dependencies(db, app.id)
-            await db.delete(app)
-            try:
-                await db.commit()
-            except IntegrityError as e:
-                await db.rollback()
-                raise HTTPException(409, f"App '{app.name}' cannot be deleted because it is still referenced") from e
-            result_payload = json.loads(done.result or "{}") if done.result else {}
-            return {"message": result_payload.get("message") or f"App '{app.name}' deleted"}
-        else:
-            # Node offline — remove from DB only; node cleans up its own files when it reconnects
-            _best_effort_remove_app_nginx(app.name)
-            _best_effort_delete_app_certificate(app)
-            await _cleanup_app_dependencies(db, app.id)
-            await db.delete(app)
-            try:
-                await db.commit()
-            except IntegrityError as e:
-                await db.rollback()
-                raise HTTPException(409, f"App '{app.name}' cannot be deleted because it is still referenced") from e
-            return {"message": f"App '{app.name}' removed (node '{node.name}' was offline — app files may still exist on the node)"}
+            return {"message": f"App '{app.name}' deleted"}
+        return {"message": f"App '{app.name}' removed (node '{node.name}' was offline — it removes the containers when it is back)"}
 
     # Stop and remove all replica containers before deleting
     replica_result = await db.execute(
@@ -71,12 +51,8 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dic
         r_node = node_map.get(replica.node_id)
         if r_node and r_node.is_local:
             await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
-        elif r_node and not r_node.is_local and r_node.status == "online":
-            await queue_node_command(
-                db, node_id=r_node.id, app_id=app_id,
-                command_type="stop_replica",
-                payload={"app_id": app_id, "replica_id": replica.id, "app_name": app.name},
-            )
+        elif r_node and not r_node.is_local:
+            desired.nudge(r_node.id)     # the replica's row goes with the app; its node removes the container
 
     await _best_effort_stop_legacy_app_container(app_id)
     await asyncio.to_thread(containers_cleanup.remove_image, app_id, app.name)

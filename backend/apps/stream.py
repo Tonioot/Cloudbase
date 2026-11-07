@@ -2,14 +2,11 @@ import asyncio
 import json
 import logging
 import secrets
-import time as _time
-from fastapi import WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 from core.database import AsyncSessionLocal
 from core.models import Application, ApplicationReplica, Node
 from nodes.commands import queue_node_command, wait_for_node_command
 from nodes.state import _node_ws_connections, unsubscribe_node_stream, subscribe_node_stream
-from apps.replica_stats import local_app_aggregate_stats
 
 log = logging.getLogger("cloudbase.stats")
 
@@ -127,18 +124,6 @@ async def _open_remote_stream(node: Node, app_id: int, app_name: str, out_q: asy
                 await asyncio.sleep(2)
 
     return asyncio.create_task(_run())
-
-
-async def _stream_local_container_stats(websocket: WebSocket, app_id: int) -> None:
-    """Every 2s send aggregated stats of this host's replica containers of app_id."""
-    try:
-        while True:
-            frame = await local_app_aggregate_stats(app_id)
-            frame["timestamp"] = int(_time.time() * 1000)
-            await websocket.send_json(frame)
-            await asyncio.sleep(2)
-    except (WebSocketDisconnect, Exception):
-        pass
 
 
 async def _get_app_node(app: Application, db, local_node: Node) -> Node:

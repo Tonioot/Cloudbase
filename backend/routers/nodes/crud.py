@@ -12,7 +12,7 @@ from core.audit import log_audit
 from core import auth as _auth
 from mesh import hub
 from nodes.commands import _utcnow, queue_node_command, wait_for_node_command
-from nodes.recovery import run_node_docker_cleanup
+from nodes.liveness import run_node_docker_cleanup
 from nodes.registry import _as_node_dict, ensure_local_node, get_node_or_404
 from nodes.state import _node_ws_connections, _pending_pings, _push_node_event
 from routers.nodes.schemas import InviteRequest, NodeUpdateRequest

@@ -133,7 +133,7 @@ def _resolve_required_permission(method: str, path: str) -> tuple[bool, str | No
     return False, None
 
 
-_NODE_AGENT_PATHS = re.compile(r"/api/apps/\d+/(source-archive|replicas/\d+/substatus)")
+_NODE_AGENT_PATHS = re.compile(r"/api/apps/\d+/source-archive")
 
 
 def _is_local_client(request: Request) -> bool:
@@ -160,11 +160,10 @@ class _AuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         method = request.method
 
-        # On a node, the only clients are this server's own agent (X-Agent-Token,
-        # also on its local log/stats WebSockets) and health checks.
+        # A node has no panel and no clients: its agent calls functions, not its own API.
+        # Only health checks get through.
         if IS_NODE:
-            agent_token = request.headers.get("X-Agent-Token", "")
-            if path == "/api/health" or (agent_token and auth.verify_agent_token(agent_token)):
+            if path == "/api/health":
                 return await call_next(request)
             if path.startswith("/api/") or path.startswith("/ws/"):
                 return JSONResponse({"detail": "This server is a Cloudbase node; use the primary's panel"}, status_code=403)
@@ -198,7 +197,7 @@ class _AuthMiddleware(BaseHTTPMiddleware):
 
         # WebSocket upgrade requests reach BaseHTTPMiddleware as HTTP GET requests.
         # All /ws/* endpoints authenticate themselves via auth.authorize_websocket(),
-        # which now accepts cookies, X-Agent-Token, and X-Node-Token. Pass them through.
+        # which accepts cookies and X-Node-Token. Pass them through.
         if path.startswith("/ws/"):
             return await call_next(request)
 
@@ -217,12 +216,8 @@ class _AuthMiddleware(BaseHTTPMiddleware):
                             return JSONResponse({"detail": "Permission denied"}, status_code=403)
                     return await call_next(request)
 
-            # Allow node_agent.py running locally via X-Agent-Token header
-            agent_token = request.headers.get("X-Agent-Token", "")
-            if agent_token and auth.verify_agent_token(agent_token):
-                return await call_next(request)
-            # Remote node agents (X-Node-Token) only reach the few app endpoints
-            # they call; those check that the node runs the app.
+            # Node agents (X-Node-Token) only reach the app endpoint they call;
+            # it checks that the node runs the app.
             node_token = request.headers.get("X-Node-Token", "")
             if node_token and _NODE_AGENT_PATHS.fullmatch(path):
                 from sqlalchemy import select as _select, and_ as _and

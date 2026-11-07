@@ -70,6 +70,8 @@ def run_replica_container(
             "cloudbase.app_name": app_name,
             "cloudbase.internal_port": str(internal_port),
             "cloudbase.external_port": str(external_port),
+            # which start of this instance it is (nodes compare it with what the primary wants)
+            "cloudbase.spec": str(docker_options.get("spec_hash") or ""),
         },
     }
 
@@ -166,9 +168,12 @@ def list_replica_containers() -> list[dict]:
             continue
         out.append({
             "name": c.name,
+            "id": c.id,
             "app_id": int(m.group(1)),
             "replica_id": int(m.group(2)),
             "status": c.status,
+            "spec": (c.labels or {}).get("cloudbase.spec") or None,
+            "exit_code": (c.attrs.get("State") or {}).get("ExitCode"),
         })
     return out
 

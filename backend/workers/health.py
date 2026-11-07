@@ -1,6 +1,6 @@
 import asyncio
 from core.database import AsyncSessionLocal
-from nodes import registry as nodes_registry, recovery as nodes_recovery
+from nodes import registry as nodes_registry, liveness as nodes_liveness
 
 async def _node_health_monitor():
     await asyncio.sleep(5)
@@ -8,8 +8,7 @@ async def _node_health_monitor():
         try:
             async with AsyncSessionLocal() as db:
                 await nodes_registry.ensure_local_node(db)
-                await nodes_recovery.mark_stale_nodes_offline(db)
-                await nodes_recovery.recover_stranded_replicas(db)
+                await nodes_liveness.mark_stale_nodes_offline(db)
         except asyncio.CancelledError:
             return
         except Exception:

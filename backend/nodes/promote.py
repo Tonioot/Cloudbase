@@ -4,12 +4,12 @@ import logging
 
 from sqlalchemy import and_, select
 
+from apps.nginx_sync import _write_app_nginx_config
+from core import system_config as _syscfg
 from core.database import AsyncSessionLocal
-from core.models import ApplicationReplica, Node
+from core.models import Application, ApplicationReplica, Node
 from mesh import routing
-from nodes import commands
 from nodes.commands import _utcnow
-from nodes.recovery import _regen_nginx_for_app
 
 log = logging.getLogger("cloudbase.nodes")
 
@@ -37,7 +37,7 @@ async def promote_when_reachable(replica_id: int) -> None:
             app_id = replica.app_id
             await db.commit()
         log.info("[mesh] instance %d reachable, live", replica_id)
-        await _regen_nginx_for_app(app_id)
+        await regen_nginx_for_app(app_id)
     except Exception as exc:
         log.warning("[mesh] promoting instance %d failed: %s", replica_id, exc)
     finally:
@@ -64,7 +64,25 @@ def start_promotion(replica_id: int) -> None:
     asyncio.get_running_loop().create_task(promote_when_reachable(replica_id))
 
 
-commands.on_replica_started(start_promotion)
+async def regen_nginx_for_app(app_id: int) -> None:
+    """Rebuild nginx config for an app after an instance went live or dropped out.
+
+    Uses the shared applications writer so transition guards (start/restart pages)
+    are applied consistently across all nginx write paths.
+    """
+    async with AsyncSessionLocal() as db:
+        app = await db.get(Application, app_id)
+        has_custom = bool(app and app.nginx_enabled and app.domain)
+        has_auto = bool(_syscfg.get_base_domain_cached())
+        if not app or not (has_custom or has_auto):
+            return
+        local_node = (await db.execute(select(Node).where(Node.is_local == True))).scalar_one_or_none()  # noqa: E712
+        if not local_node:
+            return
+        try:
+            await _write_app_nginx_config(app, db, local_node)
+        except Exception as e:
+            log.warning("[nginx] reload failed for app=%d: %s", app_id, e)
 
 
 async def link_down(node_id: int) -> None:
@@ -78,4 +96,4 @@ async def link_down(node_id: int) -> None:
             replica.status, replica.substatus = "node_offline", None
         await db.commit()
     for app_id in app_ids:
-        await _regen_nginx_for_app(app_id)
+        await regen_nginx_for_app(app_id)

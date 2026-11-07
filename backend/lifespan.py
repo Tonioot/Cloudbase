@@ -95,9 +95,6 @@ async def lifespan(app: FastAPI):
         await _syscfg.bootstrap_from_config_if_needed(_db)
         await _syscfg.load_cache(_db)
 
-    # Ensure internal agent token exists (used by node_agent.py)
-    auth.get_or_create_agent_token()
-
     # A node is driven by the primary through the agent; the panel loops would
     # only work on its empty local DB, and the orphan cleanup would remove the
     # instances the primary started here.

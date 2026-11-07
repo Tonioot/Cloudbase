@@ -8,16 +8,16 @@ from core.database import AsyncSessionLocal
 from core.models import Node, ApplicationReplica
 from containers import processes as pm, naming as containers_naming, replicas as containers_replicas, build as containers_build
 from nginx import config as nginx_config, files as nginx_files
-from nodes.commands import wait_for_node_command, queue_node_command
+from nodes import desired
 from core.env_crypto import decrypt_env
 from core.audit import log_audit
 from apps.git import _refresh_app_source_revision
 from apps.images import _image_build_kwargs, _image_port
 from apps.nginx_sync import _resolve_ssl_paths, _has_public_nginx_domain
-from apps.runtime import _get_app_node, _docker_runtime_options, _remote_replica_command_payload, _start_instance_local
+from apps.runtime import _get_app_node, _remote_replica_command_payload, _start_instance_local
 from apps.serializers import _get_or_404
 from apps.validation import _assign_external_port
-from apps.deploy_common import _wait_new_instance_healthy
+from apps.deploy_common import REMOTE_START_TIMEOUT_SECONDS, _wait_new_instance_healthy
 from mesh import routing
 
 log = logging.getLogger("cloudbase.apps")
@@ -86,26 +86,7 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
         else:
             if tnode.status != "online":
                 raise HTTPException(400, f"Node '{tnode.name}' is offline")
-            pm._push_line(app_id, f"[ZD] Refreshing source on node '{tnode.name}'…")
-            refresh_cmd = await queue_node_command(
-                db, node_id=tnode.id, app_id=app_id,
-                command_type="refresh_source",
-                payload={
-                    "app_name": app.name,
-                    "app_id": app_id,
-                    "app_type": app.app_type or "unknown",
-                    "start_command": app.start_command or "",
-                    "build_command": app.build_command or "",
-                    "internal_port": _image_port(app),
-                    "env_vars": env_vars,
-                    "docker_options": _docker_runtime_options(app),
-                    "source_revision": source_revision,
-                },
-            )
-            refresh_done = await wait_for_node_command(db, refresh_cmd.id, timeout_seconds=300)
-            if refresh_done.status != "done":
-                raise HTTPException(500, f"Source refresh failed on node '{tnode.name}': {refresh_done.error_message}")
-            pm._push_line(app_id, f"[ZD] Source refreshed on node '{tnode.name}'.")
+            # The node downloads the source and builds the image by itself when it starts the new instance
 
     # ── Step 2: Create new replica rows and start containers on each slot ────
     # new_entries: list of (node, replica_id) — kept for rollback and nginx assembly
@@ -136,11 +117,7 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
         else:
             pm._push_line(app_id, f"[ZD] Queuing start on node '{tnode.name}' for instance {new_replica.id}…")
             remote_payload = _remote_replica_command_payload(app, env_vars, new_ext_port)
-            await queue_node_command(
-                db, node_id=tnode.id, app_id=app_id,
-                command_type="start_replica",
-                payload={**remote_payload, "replica_id": new_replica.id},
-            )
+            await desired.start(db, node_id=tnode.id, replica_id=new_replica.id, payload=remote_payload)
             await db.commit()
 
     # ── Step 3: Health-check every new replica ────────────────────────────────
@@ -151,9 +128,9 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
                 check_backend = f"127.0.0.1:{r.external_port}" if r else None
             label = f"local backend {check_backend}"
         else:
-            pm._push_line(app_id, f"[ZD] Waiting for instance {new_rid} on '{tnode.name}' to be reachable (max 120s)…")
+            pm._push_line(app_id, f"[ZD] Waiting for instance {new_rid} on '{tnode.name}' to be built and reachable (max {REMOTE_START_TIMEOUT_SECONDS // 60} min)…")
             try:
-                check_backend = await routing.wait_reachable(new_rid, 120)
+                check_backend = await routing.wait_reachable(new_rid, REMOTE_START_TIMEOUT_SECONDS)
             except routing.Unreachable as exc:
                 await _zd_rollback(app_id, local_node.id, new_entries, db)
                 raise HTTPException(502, f"Instance {new_rid} on '{tnode.name}': {exc} — rolled back")
@@ -225,13 +202,9 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
             await db.delete(old_r)
             pm._push_line(app_id, f"[ZD] Stopped old local instance {old_r.id}.")
         else:
-            await queue_node_command(
-                db, node_id=old_r.node_id, app_id=app_id,
-                command_type="stop_replica",
-                payload={"app_id": app_id, "replica_id": old_r.id, "app_name": app.name},
-            )
+            desired.nudge(old_r.node_id)    # leaves the list with its row; the node removes the container
             await db.delete(old_r)
-            pm._push_line(app_id, f"[ZD] Queued stop for old remote instance {old_r.id}.")
+            pm._push_line(app_id, f"[ZD] Old remote instance {old_r.id} released; its node removes it.")
 
     first_new_id = new_entries[0][1] if new_entries else None
     await log_audit(db, "app.zero_downtime_deploy", actor=actor, app_id=app_id, detail={"name": app.name})
@@ -251,11 +224,7 @@ async def _zd_rollback(app_id: int, local_node_id: int, new_entries: list[tuple[
                     if tnode.is_local:
                         await asyncio.to_thread(containers_replicas.stop_replica_container, app_id, new_rid)
                     else:
-                        await queue_node_command(
-                            _rb_db, node_id=tnode.id, app_id=app_id,
-                            command_type="stop_replica",
-                            payload={"app_id": app_id, "replica_id": new_rid, "app_name": victim.app_id},
-                        )
+                        desired.nudge(tnode.id)
                     await _rb_db.delete(victim)
                     await _rb_db.commit()
         except Exception as _e:

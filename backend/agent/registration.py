@@ -83,9 +83,13 @@ def _collect_system_info() -> dict:
     return info
 
 
+# 2.x: nodes run what the primary lists (desired state) instead of obeying start/stop commands
+AGENT_VERSION = "2.0.0"
+
+
 def _build_capabilities() -> dict:
     return {
-        "agent_version": "1.1.0",
+        "agent_version": AGENT_VERSION,
         "features": ["streaming_logs", "streaming_stats", "file_management", "nginx_management", "hybrid_mode"],
         "platform": platform.system(),
         "arch": platform.machine(),

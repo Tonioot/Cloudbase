@@ -2370,12 +2370,14 @@ async function initInstances() {
       if (isStarting) {
         const sub = inst.substatus;
         // Steps in the order they always appear — downloading/building may be skipped (cached image)
-        const steps = [
-          { key: 'downloading',        label: 'Downloading source' },
-          { key: 'building_image',     label: 'Building image' },
-          { key: 'creating_container', label: 'Creating container' },
-          { key: 'waiting',            label: 'Starting app' },
-        ];
+        const steps = sub === 'waiting_for_network'
+          ? [{ key: 'waiting_for_network', label: 'Waiting for the node network' }]
+          : [
+              { key: 'downloading',        label: 'Downloading source' },
+              { key: 'building_image',     label: 'Building image' },
+              { key: 'creating_container', label: 'Creating container' },
+              { key: 'waiting',            label: 'Starting app' },
+            ];
         // Determine which step is active and which are done
         const foundIdx = sub ? steps.findIndex(s => s.key === sub) : -1;
         const activeIdx = foundIdx >= 0 ? foundIdx : 0;

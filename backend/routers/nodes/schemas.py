@@ -17,6 +17,18 @@ class RegisterNodeRequest(BaseModel):
     heartbeat_interval: int = Field(default=15, ge=5, le=300)
 
 
+class ReplicaReport(BaseModel):
+    state: str = Field(max_length=20)
+    substatus: Optional[str] = Field(default=None, max_length=40)
+    container_id: Optional[str] = Field(default=None, max_length=200)
+    spec_hash: Optional[str] = Field(default=None, max_length=20)
+    error: Optional[str] = Field(default=None, max_length=2000)
+
+
+class ObservedRequest(BaseModel):
+    replicas: dict[str, ReplicaReport] = Field(default_factory=dict, max_length=5000)
+
+
 class WireguardEnrollRequest(BaseModel):
     public_key: str = Field(min_length=44, max_length=44)
 

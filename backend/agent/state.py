@@ -19,19 +19,6 @@ class AgentState:
     wg_ip: str = ""            # this node's address on the node network, once enrolled
 
 
-def _load_agent_token() -> Optional[str]:
-    token = os.environ.get("AGENT_TOKEN")
-    if token:
-        return token
-    token_file = os.path.expanduser("~/.cloudbase/agent_token")
-    if os.path.exists(token_file):
-        with open(token_file) as f:
-            tok = f.read().strip()
-        if tok:
-            return tok
-    return None
-
-
 def _load_state() -> Optional[AgentState]:
     if not os.path.exists(STATE_PATH):
         return None

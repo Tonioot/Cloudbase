@@ -7,7 +7,7 @@ from core.models import Node as _Node, ApplicationReplica, NodeCommand as _NC
 from containers import replicas as containers_replicas
 from containers import cleanup as containers_cleanup
 from containers import client as containers_client
-from nodes.recovery import run_node_docker_cleanup
+from nodes.liveness import run_node_docker_cleanup
 
 log = logging.getLogger("cloudbase.main")
 

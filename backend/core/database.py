@@ -200,7 +200,7 @@ async def init_db():
                 f"ALTER TABLE stats_history ADD COLUMN {col} {definition}"
             )
 
-        # application_replicas — add tunnel_port (reverse WebSocket tunnel)
+        # application_replicas
         result = await conn.exec_driver_sql("PRAGMA table_info(application_replicas)")
         existing_replica_cols = {row[1] for row in result.fetchall()}
         for col, definition in [
@@ -210,12 +210,22 @@ async def init_db():
             ("docker_tmpfs_enabled",     "BOOLEAN NOT NULL DEFAULT 0"),
             ("docker_tmpfs_size_mb",     "INTEGER"),
             ("substatus",               "VARCHAR(40)"),
+            ("desired",                 "VARCHAR(10)"),
+            ("spec_json",               "TEXT"),
+            ("spec_hash",               "VARCHAR(20)"),
         ]:
             if col in existing_replica_cols:
                 continue
             await conn.exec_driver_sql(
                 f"ALTER TABLE application_replicas ADD COLUMN {col} {definition}"
             )
+        # Instances on other nodes written before nodes were driven by desired state: what they were doing
+        # is what they should keep doing (nodes/desired.py writes their spec the first time a node asks)
+        await conn.exec_driver_sql(
+            "UPDATE application_replicas SET desired = CASE WHEN status IN "
+            "('running','starting','restarting','node_offline','pending') THEN 'running' ELSE 'stopped' END "
+            "WHERE desired IS NULL AND node_id IN (SELECT id FROM nodes WHERE is_local = 0)"
+        )
 
         # users table — add role_id column if missing
         result = await conn.exec_driver_sql("PRAGMA table_info(users)")

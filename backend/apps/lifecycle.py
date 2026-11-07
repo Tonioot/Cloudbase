@@ -24,7 +24,7 @@ from containers import processes as pm
 from core.audit import log_audit
 from core.env_crypto import decrypt_env
 from cron import scheduler as _cron
-from nodes.commands import queue_node_command
+from nodes import desired
 from nodes.registry import ensure_local_node
 
 
@@ -74,26 +74,13 @@ async def restart_app_now(app_id: int, db: AsyncSession, actor: str):
             replica.last_error = f"Node '{replica_node.name}' is offline"
             continue
 
-        if is_live:
-            await queue_node_command(
-                db,
-                node_id=replica_node.id,
-                app_id=app.id,
-                command_type="stop_replica",
-                payload={"app_id": app.id, "replica_id": replica.id, "app_name": app.name},
-            )
         remote_payload = _remote_replica_command_payload(
             app,
             env_vars,
             replica.external_port or app.port or 8000,
         )
-        await queue_node_command(
-            db,
-            node_id=replica_node.id,
-            app_id=app.id,
-            command_type="start_replica",
-            payload={**remote_payload, "replica_id": replica.id},
-        )
+        # A new spec makes the node recreate the container: that is the restart
+        await desired.start(db, node_id=replica_node.id, replica_id=replica.id, payload=remote_payload)
         replica.status = "starting"
         replica.last_error = None
 

@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal, get_db
 from core.models import ApplicationReplica, Node, Application
 from nodes.registry import ensure_local_node
-from nodes.commands import queue_node_command
+from nodes import desired
 from core.env_crypto import decrypt_env
 from core.audit import log_audit
 from core import auth as _auth, config as _cfg
@@ -147,11 +147,7 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
         remote_payload["docker_read_only_root"] = inst_opts.get("read_only_root")
         remote_payload["docker_tmpfs_enabled"] = inst_opts.get("tmpfs_enabled")
         remote_payload["docker_tmpfs_size_mb"] = inst_opts.get("tmpfs_size_mb")
-        await queue_node_command(
-            db, node_id=target_node.id, app_id=app_id,
-            command_type="start_replica",
-            payload={**remote_payload, "replica_id": replica.id},
-        )
+        await desired.start(db, node_id=target_node.id, replica_id=replica.id, payload=remote_payload)
         replica.status = "starting"
 
     await log_audit(db, "app.scale_up", actor=actor, app_id=app_id, detail={"replica_id": replica.id, "node": target_node.name})

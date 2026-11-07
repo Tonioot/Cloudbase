@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal, get_db
 from core.models import ApplicationReplica, Node
 from containers import processes as pm
+from nodes import desired
 from nodes.registry import ensure_local_node
 from nodes.commands import queue_node_command, wait_for_node_command
 from core.env_crypto import decrypt_env
@@ -130,19 +131,10 @@ async def restart_instance(
             replica.status = "error"
             replica.last_error = str(e)
     elif replica_node.status == "online":
-        await queue_node_command(
-            db, node_id=replica_node.id, app_id=app_id,
-            command_type="stop_replica",
-            payload={"app_id": app_id, "replica_id": replica.id, "app_name": app.name},
-        )
         remote_payload = _remote_replica_command_payload(
             app, env_vars, replica.external_port or app.port or 8000
         )
-        await queue_node_command(
-            db, node_id=replica_node.id, app_id=app_id,
-            command_type="start_replica",
-            payload={**remote_payload, "replica_id": replica.id},
-        )
+        await desired.start(db, node_id=replica_node.id, replica_id=replica.id, payload=remote_payload)
         replica.status = "starting"
     else:
         raise HTTPException(400, f"Node '{replica_node.name}' is offline")
@@ -188,15 +180,9 @@ async def delete_instance(
             except Exception:
                 pass
     else:
-        # Always queue a stop, whatever the status says: a "stopped" replica can
-        # still have a running container (e.g. after a lost connection). The agent's
-        # stop is a no-op when no container exists. Queued even when the node is
-        # offline — it is dispatched as soon as the node reconnects.
-        await queue_node_command(
-            db, node_id=replica_node.id, app_id=app_id,
-            command_type="stop_replica",
-            payload={"app_id": app_id, "replica_id": replica.id, "app_name": app.name},
-        )
+        # Nothing to send: the node removes any container whose instance is no longer on its list,
+        # also when it was offline just now and only hears about it when it is back.
+        desired.nudge(replica_node.id)
     # Always delete the DB row regardless of container state or node availability
 
     await db.delete(replica)

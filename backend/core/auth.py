@@ -96,39 +96,6 @@ def create_access_token(username: str, role: str, session_version: int = 0) -> s
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
-# ── Internal agent token (for node_agent.py to authenticate locally) ──────────
-_AGENT_TOKEN_FILE = os.path.expanduser("~/.cloudbase/agent_token")
-
-
-def get_or_create_agent_token() -> str:
-    """Return existing agent token or create a new one."""
-    os.makedirs(os.path.dirname(_AGENT_TOKEN_FILE), exist_ok=True)
-    if os.path.exists(_AGENT_TOKEN_FILE):
-        with open(_AGENT_TOKEN_FILE) as f:
-            tok = f.read().strip()
-        if tok:
-            return tok
-    tok = secrets.token_hex(32)
-    with open(_AGENT_TOKEN_FILE, "w") as f:
-        f.write(tok)
-    os.chmod(_AGENT_TOKEN_FILE, 0o600)
-    return tok
-
-
-def verify_agent_token(token: str) -> bool:
-    """Return True if the token matches the stored agent token."""
-    if not token:
-        return False
-    try:
-        if not os.path.exists(_AGENT_TOKEN_FILE):
-            return False
-        with open(_AGENT_TOKEN_FILE) as f:
-            stored = f.read().strip()
-        return secrets.compare_digest(token, stored)
-    except Exception:
-        return False
-
-
 def _decode_payload(token: str) -> Optional[dict]:
     try:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -307,18 +274,9 @@ async def authorize_websocket(websocket, required_permission: str | None = None)
     Validate a WebSocket connection. Accepts either:
     - Browser session: pdm_token cookie (user JWT) with optional permission check.
     - Node agent: X-Node-Token header (stored in Node.auth_token) — bypasses permission checks.
-    - Local agent: X-Agent-Token header — bypasses permission checks.
 
     Returns True if allowed, False if rejected (connection closed with 1008).
     """
-    # Local agent token (node_agent.py on the same machine)
-    agent_token = websocket.headers.get("x-agent-token", "")
-    if agent_token:
-        if verify_agent_token(agent_token):
-            return True
-        await websocket.close(code=1008, reason="Invalid agent token")
-        return False
-
     # Remote node agent token
     node_token = websocket.headers.get("x-node-token", "")
     if node_token:

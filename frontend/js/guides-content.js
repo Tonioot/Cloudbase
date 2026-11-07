@@ -1007,7 +1007,7 @@ systemctl list-timers | grep certbot</pre>
 <p>Every server is one or the other. A node runs only the agent and its instances: it has no panel of its own (opening it in a browser shows where its primary is), listens on <code>127.0.0.1</code> only and needs no nginx.</p>
 
 <h2>How the connection works</h2>
-<p>The agent keeps an outbound WebSocket open to the primary. Over it, the primary sends commands (start, stop, build, fetch logs or stats) and the agent reports heartbeats with CPU, memory and disk usage.</p>
+<p>The agent keeps an outbound WebSocket open to the primary and reports heartbeats with CPU, memory and disk usage. The primary does not tell a node to start or stop things: it keeps a <strong>list of the instances that should run on that node</strong> and how. The agent asks for that list (straight away when it changes), compares it with the containers Docker really runs, and fixes the difference: it starts what is missing (downloading the source and building the image first), recreates what was started with older settings, and removes what is no longer on the list. It reports what it sees, so the panel shows the real state. Questions and one-off jobs (logs, stats, cleanup, backups, cron runs) are still sent as commands.</p>
 <p>Besides that, every node joins the <strong>node network</strong>: a private WireGuard network with the primary at the centre. The node connects outwards to the primary (UDP port <code>51820</code>, which must be reachable on the primary), so the node itself needs no open ports and no public IP. The primary reaches each instance directly at the node’s private address, for example <code>10.77.0.2:10001</code>, and nginx puts it in the app’s load balancer. WireGuard runs in the kernel, so this adds almost no overhead and one connection carries all instances of a node.</p>
 <p>The node network is set up by the installer (<code>cloudbase wireguard</code> repairs or repeats it). It needs the <code>wireguard-tools</code> package and a kernel with WireGuard, which every current distribution has. The primary finds its own public IP address, so no domain is needed (a panel domain behind Cloudflare’s proxy can’t carry this traffic, and isn’t used). Forward UDP port <code>51820</code> to the primary. Only if the found address is wrong, set it under <em>Settings → System settings → Node network</em>.</p>
 
@@ -1015,7 +1015,7 @@ systemctl list-timers | grep certbot</pre>
 <p>Add an instance to an app and pick the node. The first time, the node downloads the app’s source from the primary and builds the image itself; later deploys only rebuild what changed. Deploys and restarts work exactly as on the primary.</p>
 
 <h2>The node page</h2>
-<p>Click a node in the sidebar to see its CPU, memory and disk over time, the instances it runs, the commands the primary sent it, and the agent’s own log. Rename, disable or remove the node from there.</p>
+<p>Click a node in the sidebar to see its CPU, memory and disk over time, the instances it runs, the commands the primary sent it (logs, stats, backups), and the agent’s own log. Rename, disable or remove the node from there.</p>
 
 <h2>Removing a node</h2>
 <p>Move or remove all instances on the node first — a node with instances can’t be deleted. Then remove it in the panel, and run <code>cloudbase uninstall</code> on the server.</p>
@@ -1039,18 +1039,18 @@ systemctl list-timers | grep certbot</pre>
 <p>The primary marks a node offline when its WebSocket closes or its heartbeats stop. Its running instances become <code>node offline</code>, and nginx stops sending them traffic. Instances on other nodes keep serving.</p>
 
 <h2>When it comes back</h2>
-<p>As soon as the agent is connected again, the primary sends a start command for every <code>node offline</code> instance on it:</p>
+<p>There is nothing to recover by command: the node asks for its list again as soon as it is connected, and makes Docker equal to it:</p>
 <ul>
   <li>If the container survived (only the connection dropped), the agent keeps it. The container isn’t restarted.</li>
   <li>If the container is gone (the server rebooted), it’s started again from the image on the node — rebuilt first if needed.</li>
 </ul>
-<p>The instance goes through <code>starting</code> back to <code>running</code> and rejoins the load balancer. The app’s log shows <em>Node came back online — recovering instance …</em>.</p>
+<p>The instance goes through <code>starting</code> back to <code>running</code> (once the primary can reach it over the node network) and rejoins the load balancer.</p>
 
 <h2>When only the node network drops</h2>
 <p>The node network can break while the agent stays connected, for example when the node loses its route to UDP port <code>51820</code>. The primary notices when the WireGuard handshake stops (after about three minutes), takes the node’s instances out of nginx and marks them <code>node offline</code>. When the network is back they are recovered the same way, so a running container is never mistaken for a stopped one.</p>
 
 <h2>Orphaned containers</h2>
-<p>Every few minutes the agent compares the instance containers on its server with what the primary expects. A container the primary doesn’t know (anymore) — for example of an instance you deleted while the node was offline — is removed. To prevent mistakes during restarts, a container is only removed when it’s older than two minutes and two checks in a row agree. Stop commands queued while a node was offline are still carried out when it reconnects.</p>
+<p>The agent keeps Docker equal to its list, so a container the primary doesn’t know (anymore) — for example of an instance you deleted while the node was offline — is removed as soon as the node has received its list. A node never removes anything before it has received that list, so an agent that starts while the primary is unreachable leaves everything running.</p>
 
 <h2>Checking by hand</h2>
 <pre>cloudbase node-status                        # on the node: is the agent connected?

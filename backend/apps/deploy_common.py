@@ -8,6 +8,10 @@ from apps.nginx_sync import _http_service_ready
 from mesh import routing
 from apps.state import DEPLOY_HEALTH_PROGRESS_SECONDS, _deploys_in_progress, _scaling_in_progress, DEPLOY_HEALTH_TIMEOUT_SECONDS
 
+# A new instance on another node may first have to download the source and build the image
+REMOTE_START_TIMEOUT_SECONDS = 900
+
+
 @contextlib.contextmanager
 def _single_deploy(app_id: int):
     """Reject a second rolling / blue-green deploy while one is running for this app.

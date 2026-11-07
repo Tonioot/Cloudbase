@@ -9,19 +9,18 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
-from core.models import Deployment, ApplicationReplica, Node
+from core.models import Deployment
 from containers import processes as pm
 from containers import naming as containers_naming
 from containers import build as containers_build
 from nodes.registry import ensure_local_node
-from nodes.commands import queue_node_command
 from core.audit import log_audit
 from core import auth as _auth
 from apps.rolling import _do_rolling_deploy
 from apps.bluegreen import _do_zero_downtime_deploy
 from apps.deploy_common import _single_deploy
 from apps.git import _build_clone_url, _current_branch, _decrypt_github_token, _deploy_app, _fetch_origin, _refresh_app_source_revision, _resolve_source_revision, _sync_app_source
-from apps.images import _image_build_kwargs, _image_port, _node_build_payload
+from apps.images import _image_build_kwargs, _image_port
 from apps.serializers import _deployment_dict, _get_or_404
 from apps.state import _deploys_in_progress
 from apps.validation import _check_git_ref
@@ -102,28 +101,8 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
         app.image_revision = source_revision
     await log_audit(db, "app.pull", actor=actor, app_id=app_id, detail={"name": app.name, "commit": commit_info})
 
-    remote_replica_result = await db.execute(
-        select(ApplicationReplica, Node)
-        .join(Node, ApplicationReplica.node_id == Node.id)
-        .where(ApplicationReplica.app_id == app_id, Node.is_local == False)
-    )
-    remote_nodes_notified: set[int] = set()
-    for _, r_node in remote_replica_result.all():
-        if r_node.id not in remote_nodes_notified:
-            await queue_node_command(
-                db, node_id=r_node.id, app_id=app_id,
-                command_type="refresh_source",
-                payload={
-                    "app_id": app_id,
-                    "app_name": app.name,
-                    "commit": commit_info,
-                    "source_revision": source_revision,
-                    **_node_build_payload(app),
-                },
-            )
-            action_logs.append(f"[Remote] Queued source refresh on node '{r_node.name}'.")
-            remote_nodes_notified.add(r_node.id)
-
+    # Instances on other nodes are not touched: a node downloads and builds the new revision when
+    # one of its instances is started or restarted (a deploy or a restart)
     await db.commit()
     if was_running:
         action_logs.append("[Docker] Image rebuilt. Running container left untouched (no stop/restart). Restart manually to use the new image.")

@@ -1,14 +1,15 @@
 import json
+import secrets
 import socket
 import asyncio
 from typing import Optional
 import httpx
 import websockets
 from agent.db_control import _db_control_loop
-from agent.dispatch import _BACKGROUND_COMMANDS, _active_streams, _execute_command, _execute_in_background
+from agent.dispatch import _active_streams, _execute_command, _execute_in_background
 from agent import mesh as agent_mesh
 from agent.log import _agent_log
-from agent.orphans import _cleanup_orphaned_replica_containers
+from agent.reconcile import Reconciler
 from agent.registration import _build_capabilities, _collect_node_metrics, _collect_system_info, _register, _report_result
 from agent.state import AgentState, _load_state, _save_state
 from agent.urls import _normalize_url, _ws_url
@@ -34,7 +35,14 @@ async def _maybe_upgrade_to_https(client: httpx.AsyncClient, state: AgentState, 
     return True
 
 
-async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState):
+# Told to the primary on every connect: a new value means this agent process started over, so whatever
+# the old process was working on will never be answered
+SESSION = secrets.token_hex(8)
+
+_STREAM_COMMANDS = ("stream_logs", "stream_stats", "node_stats_stream")
+
+
+async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState, reconciler: Reconciler):
     attempt = 0
     while True:
         ws_url = _ws_url(state.main_url)
@@ -50,10 +58,9 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState):
                     async with _ws_lock:
                         await ws.send(payload)
 
-                await _ws_send(json.dumps({"type": "auth", "token": state.auth_token}))
+                await _ws_send(json.dumps({"type": "auth", "token": state.auth_token, "session": SESSION}))
 
                 async def _heartbeat_task():
-                    await _cleanup_orphaned_replica_containers(client, state)
                     while True:
                         await asyncio.sleep(state.heartbeat_interval)
                         await _ws_send(json.dumps({
@@ -62,9 +69,6 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState):
                             "metadata_json": _collect_system_info(),
                             "capabilities": _build_capabilities()
                         }))
-                        _heartbeat_task._cleanup_tick = getattr(_heartbeat_task, "_cleanup_tick", 0) + 1
-                        if _heartbeat_task._cleanup_tick % 5 == 0:
-                            await _cleanup_orphaned_replica_containers(client, state)
 
                 hb_task = asyncio.create_task(_heartbeat_task())
                 try:
@@ -74,19 +78,12 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState):
 
                         if mtype == "command":
                             cmd = data["command"]
-                            if cmd.get("command_type") in _BACKGROUND_COMMANDS:
+                            if cmd.get("command_type") in _STREAM_COMMANDS:
+                                await _execute_command(client, state, cmd, ws_main=ws, ws_send_fn=_ws_send)   # streams have no result to report
+                            else:
                                 asyncio.create_task(_execute_in_background(client, state, cmd))
-                                continue
-                            status, res, err = await _execute_command(client, state, cmd, ws_main=ws, ws_send_fn=_ws_send)
-                            # Streaming commands use id=-1 and have no DB record — never ACK them
-                            if status != "streaming" and cmd.get("id", -1) != -1:
-                                await _ws_send(json.dumps({
-                                    "type": "command_result",
-                                    "command_id": cmd["id"],
-                                    "status": status,
-                                    "result": res,
-                                    "error_message": err
-                                }))
+                        elif mtype == "sync":
+                            reconciler.nudge()          # the list of what to run changed
                         elif mtype == "cancel_stream":
                             sid = data.get("stream_id")
                             if sid and sid in _active_streams:
@@ -132,12 +129,14 @@ async def start_agent(main_url=None, invite_code=None, node_name=None, public_ho
     db_control = asyncio.create_task(_db_control_loop(state))
     try:
         async with httpx.AsyncClient() as client:
-            join = asyncio.create_task(agent_mesh.join_forever(client, state))
+            reconciler = Reconciler(client, state)
+            background = [asyncio.create_task(agent_mesh.join_forever(client, state)), asyncio.create_task(reconciler.run())]
             try:
                 await _drain_stale_commands(client, state)
-                await _run_websocket_loop(client, state)
+                await _run_websocket_loop(client, state, reconciler)
             finally:
-                join.cancel()
+                for task in background:
+                    task.cancel()
     finally:
         db_control.cancel()
 
@@ -155,14 +154,6 @@ async def _drain_stale_commands(client: httpx.AsyncClient, state: AgentState) ->
             return
         commands = resp.json().get("commands") or []
         for cmd in commands:
-            # A stop is still wanted after a restart: it is how a replica deleted
-            # while this node was offline gets its container removed. It is
-            # idempotent, so run it instead of discarding it.
-            if cmd.get("command_type") == "stop_replica":
-                _agent_log(f"[agent] Running queued stop command {cmd['id']} from before restart")
-                status, res, err = await _execute_command(client, state, cmd)
-                await _report_result(client, state, cmd["id"], status=status, result=res, error_message=err)
-                continue
             _agent_log(f"[agent] Draining stale command {cmd['id']} ({cmd.get('command_type')})")
             await _report_result(client, state, cmd["id"], status="failed", error_message="Agent restarted — command discarded")
     except Exception as e:

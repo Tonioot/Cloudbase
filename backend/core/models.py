@@ -181,6 +181,11 @@ class ApplicationReplica(Base):
     status        = Column(String(20), default="stopped")  # pending|starting|running|stopping|stopped|error
     substatus     = Column(String(40), nullable=True)       # building_image|creating_container|waiting — only set during starting
     last_error    = Column(Text, nullable=True)
+    # What the primary wants a node to run (instances on other nodes only; see nodes/desired.py).
+    # status above is what the primary concludes from what the node reports.
+    desired       = Column(String(10), nullable=True)    # running | stopped
+    spec_json     = Column(Text, nullable=True)          # encrypted snapshot of how to start it
+    spec_hash     = Column(String(20), nullable=True)    # changes whenever the spec does (a restart changes it too)
     # Per-instance Docker resource overrides (null = use app-level defaults)
     docker_cpu_limit        = Column(Float, nullable=True)
     docker_memory_limit_mb  = Column(Integer, nullable=True)

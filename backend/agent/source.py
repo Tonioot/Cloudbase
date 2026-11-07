@@ -1,13 +1,17 @@
+"""Getting an app's source and its Docker image onto this node."""
 import os
-import time
 import asyncio
 import platform
 import subprocess
-from typing import Optional
+from typing import Callable
 import httpx
 from containers import naming as containers_naming, build as containers_build, processes as pm
 from agent.log import _agent_log
-from agent.urls import _LOCAL_API_BASE
+
+# (app id, revision) pairs built since this agent started: a node that cannot reach a newer
+# revision than the one it was asked for must not rebuild the same thing over and over
+_built: set[tuple[int, str]] = set()
+_build_lock = asyncio.Lock()
 
 def _local_app_dir(app_name: str) -> str:
     # Keep source extraction path aligned with backend deploy path derivation.
@@ -39,15 +43,13 @@ def _local_image_ok(img: str) -> bool:
         return False
 
 
-async def _download_and_extract_source(client: httpx.AsyncClient, state, main_id: int, app_name: str, headers) -> str:
+async def _download_and_extract_source(client: httpx.AsyncClient, state, main_id: int, app_name: str) -> str:
     """Download source archive from primary, extract to local app dir. Returns app_dir."""
     import tarfile, io, shutil
     app_dir = _local_app_dir(app_name)
 
     main_base = state.main_url.rstrip("/")
     url = f"{main_base}/api/apps/{main_id}/source-archive"
-    # Use X-Node-Token for requests to the external primary — X-Agent-Token only
-    # works on the local loopback API (127.0.0.1).
     external_headers = {"X-Node-Token": state.auth_token}
     _agent_log(f"[source] Downloading source for '{app_name}' from primary")
     resp = await client.get(url, headers=external_headers, timeout=300)
@@ -120,39 +122,20 @@ async def _build_image_local(local_id: int, app_name: str, app_dir: str, payload
     return img
 
 
-async def _report_replica_substatus(client: httpx.AsyncClient, state, main_id: int, replica_id: int, substatus: Optional[str]) -> None:
-    """Fire-and-forget: update substatus on the main server so the UI can show startup progress."""
-    try:
-        await client.patch(
-            f"{state.main_url}/api/apps/{main_id}/replicas/{replica_id}/substatus",
-            json={"substatus": substatus},
-            headers={"X-Node-Token": state.auth_token},
-            timeout=5,
-        )
-    except Exception as e:
-        _agent_log(f"[agent] substatus report failed (replica={replica_id} substatus={substatus}): {e}")
+async def ensure_image(client: httpx.AsyncClient, state, spec: dict, progress: Callable[[str], None]) -> None:
+    """Make sure this node has an image for the spec: only downloads and builds when it is missing or at another revision.
 
-
-async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id, payload, headers, replica_id: Optional[int] = None) -> int:
-    """Ensure source + image are ready on this node. Only downloads/builds when needed.
-    Returns main_id (used directly as the image app_id — no local DB needed)."""
-
-    app_name = payload.get("app_name") or payload.get("name") or ""
+    `progress` is told what is happening ("downloading", "building_image")."""
+    main_id = int(spec["app_id"])
+    app_name = spec.get("app_name") or spec.get("name") or ""
     if not app_name:
         raise RuntimeError("Missing app_name")
-    desired_revision = payload.get("source_revision")
-    desired_start_command = payload.get("start_command") or ""
-    desired_app_type = (payload.get("app_type") or "").strip().lower()
-    if not desired_app_type or desired_app_type == "unknown":
-        desired_app_type = pm.detect_app_type_from_command(desired_start_command) if desired_start_command else "unknown"
+    desired_revision = spec.get("source_revision")
 
-    # Check if we already have a valid image built under main_id
-    img = containers_naming.image_name(int(main_id), app_name)
+    img = containers_naming.image_name(main_id, app_name)
     if _local_image_ok(img):
         if not desired_revision:
-            _agent_log(f"[deploy] Image {img} already present, skipping build")
-            return int(main_id)
-        # Check revision via docker inspect label
+            return
         try:
             r = subprocess.run(
                 ["docker", "inspect", "--format", "{{index .Config.Labels \"cloudbase.source_revision\"}}", img],
@@ -163,29 +146,15 @@ async def _ensure_replica_app_deployed(client: httpx.AsyncClient, state, main_id
             image_revision = ""
         if image_revision == desired_revision:
             _agent_log(f"[deploy] Image {img} already at revision {desired_revision}, skipping build")
-            return int(main_id)
+            return
+        if (main_id, desired_revision) in _built:
+            return              # built for it before; the source on the primary has moved on since
         _agent_log(f"[deploy] Image {img} stale ({image_revision!r} != {desired_revision!r}), rebuilding")
 
-    # Image missing or stale — report substatus and build
-    if replica_id is not None:
-        await _report_replica_substatus(client, state, int(main_id), replica_id, "downloading")
-    app_dir = await _download_and_extract_source(client, state, int(main_id), app_name, headers)
-    if replica_id is not None:
-        await _report_replica_substatus(client, state, int(main_id), replica_id, "building_image")
-    await _build_image_local(int(main_id), app_name, app_dir, payload)
-    return int(main_id)
-
-
-async def _wait_local_api(client, timeout: float = 90) -> None:
-    """After a node reboot the agent can be up before the local Cloudbase API."""
-    deadline = time.monotonic() + timeout
-    while True:
-        try:
-            r = await client.get(f"{_LOCAL_API_BASE}/api/health", timeout=3)
-            if r.status_code < 500:
-                return
-        except Exception:
-            pass
-        if time.monotonic() > deadline:
-            raise RuntimeError("Local Cloudbase API did not come up in time")
-        await asyncio.sleep(2)
+    async with _build_lock:     # one build at a time: a Raspberry Pi cannot do two
+        progress("downloading")
+        app_dir = await _download_and_extract_source(client, state, main_id, app_name)
+        progress("building_image")
+        await _build_image_local(main_id, app_name, app_dir, spec)
+    if desired_revision:
+        _built.add((main_id, desired_revision))

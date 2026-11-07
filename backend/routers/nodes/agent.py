@@ -11,15 +11,18 @@ from core.models import Node, NodeInvite
 from core.audit import log_audit
 from mesh import hub
 from core import config as _cfg, system_config as _syscfg
-from nodes.commands import _apply_command_result, _claim_pending_commands, _commit_with_sqlite_lock_retry, _dispatch_queued_commands_ws, _utcnow
-from nodes.recovery import _recover_node_replicas_once
+from nodes import observed, snapshot
+from nodes.commands import _apply_command_result, _claim_pending_commands, _commit_with_sqlite_lock_retry, _dispatch_queued_commands_ws, _utcnow, fail_commands_in_flight
 from nodes.registry import _as_node_dict, get_node_by_token_or_401
 from nodes.state import _get_node_event, _node_event_subscribers, _node_ws_connections, _pending_pings, _push_node_event, push_node_stream_data
-from routers.nodes.schemas import CommandResultRequest, RegisterNodeRequest, WireguardEnrollRequest
+from routers.nodes.schemas import CommandResultRequest, ObservedRequest, RegisterNodeRequest, WireguardEnrollRequest
 from core.models import ApplicationReplica
 from core.models import Application
 
 log = logging.getLogger("cloudbase.nodes")
+
+# node id -> the session id its agent sent when it connected (a new process sends a new one)
+_node_sessions: dict[int, str] = {}
 
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"])
@@ -95,6 +98,36 @@ async def enroll_wireguard(
         raise HTTPException(401, "Missing node token")
     node = await get_node_by_token_or_401(x_node_token, db)
     return await hub.enroll(db, node, req.public_key)
+
+
+@router.get("/agent/desired")
+async def agent_desired(
+    have: str = "",
+    x_node_token: Optional[str] = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """The instances this node should run. `have` is the hash of the list the agent already knows."""
+    if not x_node_token:
+        raise HTTPException(401, "Missing node token")
+    node = await get_node_by_token_or_401(x_node_token, db)
+    snap = await snapshot.snapshot(db, node.id)
+    if have and have == snap["hash"]:
+        return {"hash": snap["hash"], "unchanged": True}
+    return snap
+
+
+@router.post("/agent/observed")
+async def agent_observed(
+    req: ObservedRequest,
+    x_node_token: Optional[str] = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """What the node sees of its instances."""
+    if not x_node_token:
+        raise HTTPException(401, "Missing node token")
+    node = await get_node_by_token_or_401(x_node_token, db)
+    await observed.apply(node.id, {k: v.model_dump() for k, v in req.replicas.items()})
+    return {"ok": True}
 
 
 @router.get("/agent/commands")
@@ -176,7 +209,6 @@ async def agent_ws(websocket: WebSocket):
 
         async with AsyncSessionLocal() as db:
             node = await get_node_by_token_or_401(token, db)
-            was_offline = node.status == "offline"
             node.status = "online"
             node.last_seen = _utcnow()
             node.offline_since = None
@@ -192,8 +224,11 @@ async def agent_ws(websocket: WebSocket):
         _node_ws_connections[node_id] = websocket
         _get_node_event(node_id).set()
 
-        if was_offline:
-            asyncio.create_task(_recover_node_replicas_once(node_id))
+        # A new agent process cannot answer what the old one was doing; a mere reconnect can still
+        session = (hello or {}).get("session")
+        if session is None or _node_sessions.get(node_id) != session:
+            await fail_commands_in_flight(node_id)
+        _node_sessions[node_id] = session
 
         log.info("WS agent authenticated: node '%s' (id=%d) from %s", node.name, node_id, client_addr)
 
@@ -249,7 +284,9 @@ async def agent_ws(websocket: WebSocket):
                     _push_node_event(node_id, {"type": "node_offline", "node_id": node_id})
 
                 if event_task in done:
+                    event.clear()
                     await _dispatch_queued_commands_ws(node_id, websocket)
+                    await websocket.send_json({"type": "sync"})        # the list of what to run may have changed
                     event_task = asyncio.create_task(event.wait())
 
                 if receive_task in done:

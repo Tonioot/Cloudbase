@@ -98,68 +98,6 @@ async def logs_tail(app_id: int, limit: int = Query(200, ge=1, le=2000), db: Asy
     }
 
 
-async def _follow_local_app_containers(websocket: WebSocket, app_id: int) -> None:
-    """Stream every local replica container of app_id: recent lines, then live.
-
-    Rescans every few seconds so instances started later are picked up too.
-    """
-    import threading
-
-    loop = asyncio.get_running_loop()
-    q: asyncio.Queue = asyncio.Queue()
-    followed: set[str] = set()
-    streams: list = []
-    prefix = f"cloudbase-app-{app_id}-replica-"
-
-    def _reader(name: str, tail: int) -> None:
-        try:
-            stream = containers_client._get_client().containers.get(name).logs(stream=True, follow=True, timestamps=False, tail=tail)
-            streams.append(stream)
-            for raw in stream:
-                loop.call_soon_threadsafe(q.put_nowait, raw.decode("utf-8", errors="replace").rstrip())
-        except Exception:
-            pass
-        finally:
-            loop.call_soon_threadsafe(followed.discard, name)   # allow re-attach after a restart
-
-    def _running_containers() -> list[str]:
-        try:
-            return [c.name for c in containers_client._get_client().containers.list(filters={"name": prefix})
-                    if c.name.startswith(prefix)]
-        except Exception:
-            return []
-
-    async def _scan(first: bool) -> None:
-        for name in await asyncio.to_thread(_running_containers):
-            if name not in followed:
-                followed.add(name)
-                threading.Thread(target=_reader, args=(name, 200 if first else 50), daemon=True).start()
-
-    # Completes when the client goes away, even while no log lines are flowing
-    closed = asyncio.ensure_future(websocket.receive_text())
-    try:
-        await _scan(first=True)
-        last_scan = loop.time()
-        while not closed.done():
-            try:
-                line = await asyncio.wait_for(q.get(), timeout=3.0)
-                await websocket.send_text(line + "\n")
-            except asyncio.TimeoutError:
-                pass
-            if loop.time() - last_scan >= 3.0:
-                await _scan(first=False)
-                last_scan = loop.time()
-    except (WebSocketDisconnect, Exception):
-        pass
-    finally:
-        closed.cancel()
-        for stream in streams:
-            try:
-                stream.close()
-            except Exception:
-                pass
-
-
 @router.websocket("/ws/apps/{app_id}/logs")
 async def stream_logs(app_id: int, websocket: WebSocket):
     if not await auth.authorize_websocket(websocket, "apps.view"):
@@ -170,9 +108,7 @@ async def stream_logs(app_id: int, websocket: WebSocket):
         result = await db.execute(select(Application).where(Application.id == app_id))
         app = result.scalar_one_or_none()
         if not app:
-            # On a node, the local DB has no app rows — the primary owns them.
-            # Follow the replica containers that run here instead (agent log relay).
-            await _follow_local_app_containers(websocket, app_id)
+            await websocket.close(code=1008, reason="Unknown app")
             return
 
         local_node = await ensure_local_node(db)

@@ -1,7 +1,6 @@
 DELETE  /api/apps/{app_id}
 DELETE  /api/apps/{app_id}/instances/{instance_id}
 DELETE  /api/apps/{app_id}/replicas/{replica_id}
-DELETE  /api/apps/{app_id}/replicas/{replica_id}/stop-remote
 DELETE  /api/databases/{database_id}
 DELETE  /api/databases/{database_id}/backups/{backup_id}
 DELETE  /api/databases/{database_id}/links/{link_id}
@@ -33,9 +32,7 @@ GET     /api/apps/{app_id}/maintenance-pages
 GET     /api/apps/{app_id}/maintenance-pages/preview/{page_type}
 GET     /api/apps/{app_id}/nginx-debug
 GET     /api/apps/{app_id}/replicas
-GET     /api/apps/{app_id}/replicas/aggregate-stats
 GET     /api/apps/{app_id}/replicas/{replica_id}/logs
-GET     /api/apps/{app_id}/replicas/{replica_id}/stats-remote
 GET     /api/apps/{app_id}/source-archive
 GET     /api/apps/{app_id}/stats
 GET     /api/apps/{app_id}/stats/history
@@ -59,6 +56,7 @@ GET     /api/health
 GET     /api/nodes
 GET     /api/nodes/agent/commands
 GET     /api/nodes/agent/databases/{database_id}/backups/{backup_id}/download
+GET     /api/nodes/agent/desired
 GET     /api/nodes/agent/my-replicas
 GET     /api/nodes/mesh
 GET     /api/nodes/{node_id}/agent-logs
@@ -113,7 +111,6 @@ GET     /{full_path:path}
 MOUNT /css
 MOUNT /fonts
 MOUNT /js
-PATCH   /api/apps/{app_id}/replicas/{replica_id}/substatus
 PATCH   /api/databases/{database_id}
 PATCH   /api/nodes/{node_id}
 POST    /api/apps
@@ -134,7 +131,6 @@ POST    /api/apps/{app_id}/pull
 POST    /api/apps/{app_id}/pull/stream
 POST    /api/apps/{app_id}/rebuild
 POST    /api/apps/{app_id}/rebuild/stream
-POST    /api/apps/{app_id}/replicas/run-remote
 POST    /api/apps/{app_id}/restart
 POST    /api/apps/{app_id}/scale
 POST    /api/apps/{app_id}/start
@@ -158,6 +154,7 @@ POST    /api/domains/certificate
 POST    /api/domains/check
 POST    /api/nodes/agent/commands/{command_id}/result
 POST    /api/nodes/agent/databases/{database_id}/backups/{backup_id}/upload
+POST    /api/nodes/agent/observed
 POST    /api/nodes/agent/register
 POST    /api/nodes/agent/wireguard
 POST    /api/nodes/invites

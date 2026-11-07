@@ -69,13 +69,6 @@ def test_none_algorithm_token_is_rejected():
     assert auth.decode_token(unsigned) is None
 
 
-def test_agent_token_is_stable_and_checked_in_constant_time_form():
-    tok = auth.get_or_create_agent_token()
-    assert tok == auth.get_or_create_agent_token()
-    assert auth.verify_agent_token(tok)
-    assert not auth.verify_agent_token("") and not auth.verify_agent_token(tok[:-1] + "0x")
-
-
 def test_login_rate_limit_blocks_after_five_attempts():
     ip = "203.0.113.9"
     auth._login_attempts.pop(ip, None)

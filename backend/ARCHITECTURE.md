@@ -22,7 +22,7 @@ agent/                      the node agent (runs on remote servers, talks to the
 |---|---|
 | `core/` | `config`, `database` + `models`, `auth` (+ `access`: permission map and middleware), `env_crypto`, `token_vault`, `system_config`, `applog`/`system_logs`, `paths` (every file location), `runtime` (port, `IS_NODE`), `history` |
 | `apps/` | application logic: `git`, `images`, `validation`, `nginx_sync`, `runtime` (starting/stopping replicas), `replica_stats`, `deployments` (run a deploy), `deploy_common`/`rolling`/`bluegreen`, `lifecycle`, `serializers`, `state` |
-| `nodes/` | `state` (live connections), `commands` (the command queue), `registry` (local node, lookups), `recovery`, `promote` (an instance goes live once reachable; takes instances out when the link breaks) |
+| `nodes/` | `state` (live connections), `desired` (what each node should run: written by start/stop), `snapshot` (the list a node asks for), `observed` (a node's report becomes a status), `promote` (an instance goes live once reachable; leaves nginx when the link breaks), `commands` (one-off questions and jobs: logs, stats, backups, cron), `registry` (local node, lookups), `liveness` (silent nodes go offline) |
 | `mesh/` | the node network (WireGuard, hub and spoke with the primary as hub): `addressing`, `helper` (client for the root helper `scripts/cloudbase-wireguard`, via sudo), `hub` (interface, peers, enrolment, handshake health), `routing` (`backend_for`, `wait_reachable`) |
 | `containers/` | Docker on one host: `client`, `naming`, `buildkit`, `dockerfiles`, `build`, `cleanup`, `apps`, `replicas`, `jobs`, `stats_logs`, `processes` |
 | `nginx/` | `paths`, `pages` (HTML), `config` (nginx config text), `files` (writers), `certbot` (read-only lookups), `certificates` (issuing), `panel` |
@@ -56,3 +56,27 @@ ruff check backend tests scripts
 ## The frontend
 
 Plain HTML pages with their own CSS and ES modules, no build step. `core/frontend_assets.py` makes switching between pages quick when a page leaves the server: `?v=<content hash>` on every css/js URL (cached for a year, see `routers/frontend.py`), an import map so `import './x.js'` hits the same cache, `modulepreload` for the whole module graph (one parallel round instead of a chain of 4-6), self-hosted fonts in `frontend/fonts/` (named after their content hash), and the page colour set inline. In the browser the sidebar lists and hidden menu items are remembered per tab (`sessionStorage`, `cb-index`, `cb-hidden-perms`) so they are there from the first frame, and `@view-transition` keeps the old page up until the new one can be drawn. `tests/test_frontend.py` checks all of it.
+
+## How the primary drives a node
+
+Instances on another node are **not** started with commands. The primary keeps, per instance, whether it
+should run and a *spec* (revision, port, environment, limits): `desired`, `spec_json`, `spec_hash` on the
+replica row (`nodes/desired.py`). Starting, restarting or deploying writes a new spec (a new `spec_hash`);
+stopping sets `desired = stopped`; deleting the row removes it from the list.
+
+The node's agent (`agent/reconcile.py`) asks for its list (`GET /api/nodes/agent/desired?have=<hash>`, also
+when the primary nudges it over the websocket), compares it with the containers Docker really has, and repairs
+the difference: start what is missing (downloading the source and building the image first), recreate what was
+started with another spec, remove what is not on the list. It reports what it sees
+(`POST /api/nodes/agent/observed`); `nodes/observed.py` turns that into the instance status, and
+`nodes/promote.py` only lets an instance go live when the primary can reach it over the node network.
+
+Safety rules: a node removes nothing before it has received the list in this run; a failing start is retried
+with a growing delay and given up after a few attempts until the spec changes; a container Docker is restarting
+by itself is reported, not fought; a container made before desired state is adopted, not recreated.
+
+What stays a command (`nodes/commands.py`, over the websocket, answered over HTTP): logs, stats, Docker
+cleanup, database operations and cron runs. Every command runs beside the connection, so a slow one never holds
+up the others; a new agent process (new `session` in its hello) fails what the old one was doing.
+
+The agent calls functions, not its own server: there is no local API call and no local agent token.

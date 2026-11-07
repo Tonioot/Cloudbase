@@ -341,37 +341,6 @@ def test_an_unreachable_instance_waits_for_recovery_when_the_link_is_down_and_fa
     assert _replica_row(r_up).status == "error" and "did not become reachable" in _replica_row(r_up).last_error
 
 
-def test_a_broken_link_takes_the_instances_out_and_a_restored_one_brings_them_back(client, nodes):
-    from nodes import promote
-    from nodes.recovery import recover_node_replicas
-    from core.database import AsyncSessionLocal
-    from core.models import NodeCommand
-    from sqlalchemy import select
-    node_id, _ = nodes("wg-flap", ip="127.0.0.1", wg_state="up")
-    rid, _ = _replica(node_id, 9395, status="running")
-    _run(promote.link_down(node_id))
-    assert _replica_row(rid).status == "node_offline"
-
-    async def queued():
-        async with AsyncSessionLocal() as db:
-            return (await db.execute(select(NodeCommand).where(NodeCommand.node_id == node_id))).scalars().all()
-
-    async def set_state(value):
-        async with AsyncSessionLocal() as db:
-            from core.models import Node
-            (await db.get(Node, node_id)).wg_state = value
-            await db.commit()
-
-    _run(set_state("down"))
-    _run(recover_node_replicas(node_id))                        # link still down: nothing is started
-    assert _run(queued()) == [] and _replica_row(rid).status == "node_offline"
-
-
-def test_promotion_is_wired_to_started_instances():
-    from nodes import commands, promote
-    assert promote.start_promotion in commands._replica_started_hooks
-
-
 # ── the agent ────────────────────────────────────────────────────────────────
 class _FakeResponse:
     def __init__(self, body):
@@ -391,36 +360,6 @@ class _FakeClient:
     async def post(self, url, json=None, **kw):
         self.posted.append((url, json))
         return _FakeResponse({"container_id": "c1"})
-
-
-def test_the_agent_publishes_instances_on_its_node_network_address_only(monkeypatch):
-    from agent import source
-    from agent.commands import apps as agent_apps
-    from agent.state import AgentState
-
-    async def noop(*a, **k):
-        return 7
-
-    for name in ("_wait_local_api", "_report_replica_substatus"):
-        monkeypatch.setattr(agent_apps, name, noop)
-    monkeypatch.setattr(agent_apps, "_ensure_replica_app_deployed", noop)
-    monkeypatch.setattr(agent_apps.containers_replicas, "is_replica_container_running", lambda *a: False)
-    assert source
-    client = _FakeClient()
-    payload = {"replica_id": 5, "app_name": "x", "external_port": 8123, "docker_options": {"bind_host": "127.0.0.1", "restart_policy": "no"}}
-
-    state = AgentState(main_url="http://p", auth_token="t", node_id=1, node_name="n", wg_ip="10.77.0.5")
-    _run(agent_apps.cmd_start_replica(client, state, 1, payload, {}))
-    body = client.posted[0][1]
-    assert body["docker_options"]["bind_host"] == "10.77.0.5" and body["docker_options"]["restart_policy"] == "no"
-
-
-def test_the_agent_refuses_to_start_instances_before_it_is_on_the_node_network():
-    from agent.commands import apps as agent_apps
-    from agent.state import AgentState
-    state = AgentState(main_url="http://p", auth_token="t", node_id=1, node_name="n")
-    with pytest.raises(RuntimeError, match="node network"):
-        _run(agent_apps.cmd_start_replica(_FakeClient(), state, 1, {"replica_id": 5, "external_port": 8123}, {}))
 
 
 def _agent_state():

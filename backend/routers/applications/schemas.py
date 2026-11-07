@@ -104,22 +104,6 @@ class ScaleRequest(BaseModel):
     docker_tmpfs_size_mb: Optional[int] = None
 
 
-class RunReplicaRequest(BaseModel):
-    replica_id: int
-    internal_port: int
-    external_port: int
-    env_vars: Optional[dict] = None
-    docker_options: Optional[dict] = None
-    local_app_id: Optional[int] = None
-    # app_name is supplied by the remote agent so this endpoint never needs a
-    # local DB lookup (the app only lives in the main node's database).
-    app_name: Optional[str] = None
-
-
-class _SubstatusUpdate(BaseModel):
-    substatus: Optional[str] = None
-
-
 class RenderPageRequest(BaseModel):
     page_type: str
     page: MaintenancePageConfig
