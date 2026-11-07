@@ -357,7 +357,8 @@ kbd {
 
 .palette {
   width: min(600px, calc(100vw - 32px));
-  max-height: 60vh;
+  /* A fixed height: the box must not grow and shrink with the number of results while you type */
+  height: min(440px, 60vh);
   display: flex;
   flex-direction: column;
   border-radius: var(--radius-lg);
@@ -388,7 +389,7 @@ kbd {
 .palette-input:focus-within { color: var(--text-2); border-bottom-color: var(--line-strong); }
 .palette-input input::placeholder { color: var(--faint); }
 
-.palette-list { overflow-y: auto; padding: 6px; }
+.palette-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; }
 .palette-group { padding: 10px 10px 4px; font-size: 11px; color: var(--faint); letter-spacing: .02em; }
 .palette-empty { padding: 28px; text-align: center; color: var(--muted); }
 

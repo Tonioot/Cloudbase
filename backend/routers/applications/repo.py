@@ -3,7 +3,8 @@ import logging
 import os
 import re
 from fastapi import HTTPException, Query, Depends, APIRouter
-from fastapi.responses import Response
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from containers import processes as pm
@@ -34,6 +35,45 @@ async def check_repo(req: CheckRepoRequest, _user: dict = Depends(_auth.require_
     return {"ok": ok, "repo_url": url, "message": msg, "default_branch": default_branch, "branches": branches[:200]}
 
 
+# Never part of what a node builds from
+_NOT_SENT = {".git", "__pycache__", "node_modules", ".venv", "venv"}
+
+
+def _remove_quietly(path: str) -> None:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def _pack_source(source_dir: str) -> tuple[str, list[str]]:
+    """The working directory as a .tar.gz in a temporary file (not in memory: the source can be hundreds of MB).
+
+    A file that cannot be read (a leftover owned by someone else, one that vanished) is left out and reported,
+    instead of failing the whole download. Returns (path of the archive, the files left out)."""
+    import tarfile
+    import tempfile
+    skipped: list[str] = []
+    fd, path = tempfile.mkstemp(prefix="cb-source-", suffix=".tar.gz")
+    try:
+        with os.fdopen(fd, "wb") as raw, tarfile.open(fileobj=raw, mode="w:gz") as tar:
+            for directory, dirs, files in os.walk(source_dir):
+                dirs[:] = [d for d in dirs if d not in _NOT_SENT]
+                for name in [""] + files:                  # the directory itself, then its files
+                    full = os.path.join(directory, name) if name else directory
+                    if name in _NOT_SENT:
+                        continue
+                    arcname = os.path.relpath(full, source_dir)
+                    try:
+                        tar.add(full, arcname=("." if arcname == "." else arcname), recursive=False)
+                    except OSError as exc:
+                        skipped.append(f"{arcname} ({exc.__class__.__name__})")
+    except BaseException:
+        _remove_quietly(path)
+        raise
+    return path, skipped
+
+
 @router.get("/{app_id}/source-archive")
 async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db), _node: None = Depends(_source_archive_auth)):
     """Return a .tar.gz of the app's working directory for remote nodes to build from.
@@ -42,9 +82,6 @@ async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db), _n
     source_dir = pm.app_source_dir(app)
     if not source_dir or not os.path.exists(source_dir):
         raise HTTPException(404, "App source directory not found — deploy the app first")
-
-    import tarfile
-    import io
 
     # Refresh the generated Dockerfile first so the node receives the current
     # one (with marker). Nodes get no .git, so they treat an unmarked
@@ -61,18 +98,16 @@ async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db), _n
     except Exception as exc:
         log.warning("[source-archive] Could not refresh Dockerfile for app=%s: %s", app.name, exc)
 
-    def _make_archive() -> bytes:
-        buf = io.BytesIO()
-        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            tar.add(source_dir, arcname=".", recursive=True,
-                    filter=lambda m: None if os.path.basename(m.name) in {".git", "__pycache__", "node_modules", ".venv", "venv"} else m)
-        return buf.getvalue()
-
-    data = await asyncio.to_thread(_make_archive)
-    return Response(
-        content=data,
-        media_type="application/gzip",
-        headers={"Content-Disposition": f"attachment; filename={app.name}-source.tar.gz"},
+    try:
+        path, skipped = await asyncio.to_thread(_pack_source, source_dir)
+    except Exception as exc:
+        log.error("[source-archive] Could not pack the source of app=%s: %s", app.name, exc, exc_info=True)
+        raise HTTPException(500, f"Could not pack the source of '{app.name}': {type(exc).__name__}: {exc}") from exc
+    if skipped:
+        log.warning("[source-archive] app=%s: left out %d file(s) that could not be read, e.g. %s", app.name, len(skipped), skipped[0])
+    return FileResponse(
+        path, media_type="application/gzip", filename=f"{app.name}-source.tar.gz",
+        background=BackgroundTask(_remove_quietly, path),
     )
 
 

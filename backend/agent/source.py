@@ -53,7 +53,13 @@ async def _download_and_extract_source(client: httpx.AsyncClient, state, main_id
     external_headers = {"X-Node-Token": state.auth_token}
     _agent_log(f"[source] Downloading source for '{app_name}' from primary")
     resp = await client.get(url, headers=external_headers, timeout=300)
-    resp.raise_for_status()
+    if resp.status_code != 200:
+        # Say why: the primary explains itself in its answer, a bare "500" in the log does not
+        try:
+            reason = resp.json().get("detail") or resp.text
+        except Exception:
+            reason = resp.text
+        raise RuntimeError(f"the primary could not give the source of '{app_name}' (HTTP {resp.status_code}: {str(reason)[:300]})")
 
     # Extract to a temp dir first, then atomically replace to avoid partial states
     tmp_dir = app_dir + ".tmp"

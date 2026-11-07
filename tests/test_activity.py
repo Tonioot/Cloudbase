@@ -169,3 +169,9 @@ def test_the_search_field_of_the_command_menu_has_no_square_outline():
     css = (FRONTEND / "css" / "base.css").read_text(encoding="utf-8")
     assert ".palette-input input:focus-visible { outline: none" in css
 
+
+
+def test_the_command_menu_keeps_its_size_while_you_type():
+    css = (FRONTEND / "css" / "base.css").read_text(encoding="utf-8")
+    palette = css[css.index(".palette {"):css.index("@keyframes palette-in")]
+    assert "height: min(" in palette and "max-height" not in palette
