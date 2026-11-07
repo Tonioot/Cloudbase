@@ -20,11 +20,13 @@ from apps.serializers import _get_or_404
 from apps.validation import _assign_external_port
 from apps.bluegreen import _do_zero_downtime_deploy, _zd_rollback
 from apps.deploy_common import REMOTE_START_TIMEOUT_SECONDS, _wait_new_instance_healthy
+from core import activity
 from mesh import routing
 
 log = logging.getLogger("cloudbase.apps")
 
 
+@activity.tracked("deploying")
 async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
     """Rolling deploy: replace each running replica one at a time with a freshly built image.
     While one replica is cycling, the others keep serving traffic — no downtime page is shown.

@@ -18,11 +18,13 @@ from apps.runtime import _get_app_node, _remote_replica_command_payload, _start_
 from apps.serializers import _get_or_404
 from apps.validation import _assign_external_port
 from apps.deploy_common import REMOTE_START_TIMEOUT_SECONDS, _wait_new_instance_healthy
+from core import activity
 from mesh import routing
 
 log = logging.getLogger("cloudbase.apps")
 
 
+@activity.tracked("deploying")
 async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: Node, actor: str):
     app = await _get_or_404(app_id, db)
 

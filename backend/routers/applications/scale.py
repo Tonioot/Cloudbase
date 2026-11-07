@@ -4,6 +4,7 @@ from fastapi import Depends, APIRouter, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal, get_db
+from core import activity
 from core.models import ApplicationReplica, Node, Application
 from nodes.registry import ensure_local_node
 from nodes import desired
@@ -23,6 +24,7 @@ log = logging.getLogger("cloudbase.apps")
 
 
 @router.post("/{app_id}/scale")
+@activity.tracked("scaling")
 async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.scale")), actor: str = Depends(_auth.get_current_actor)):
     if (await _get_or_404(app_id, db)).cron_schedule:
         raise HTTPException(400, "A cron job has no instances: each run starts its own container")

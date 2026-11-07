@@ -35,6 +35,11 @@ def fake_hub(tmp_path, monkeypatch):
         "json.dump(s, open(P, 'w')); print(json.dumps(out))\n")
     monkeypatch.setenv("CLOUDBASE_WG_HELPER", f"{sys.executable} {script}")
     from mesh import hub, publicip
+    from workers import mesh as mesh_worker
+
+    async def no_tick():
+        return None
+    monkeypatch.setattr(mesh_worker, "tick", no_tick)           # the app's own monitor must not race the test
     monkeypatch.setattr(publicip, "detect", lambda: "203.0.113.7")
     monkeypatch.setitem(hub._hub, "up", False)
     monkeypatch.setitem(hub._hub, "error", None)

@@ -20,6 +20,7 @@ from apps.runtime import (
 )
 from apps.serializers import _get_or_404
 from apps.state import _set_active_transition_mode
+from core import activity
 from containers import processes as pm
 from core.audit import log_audit
 from core.env_crypto import decrypt_env
@@ -28,6 +29,7 @@ from nodes import desired
 from nodes.registry import ensure_local_node
 
 
+@activity.tracked("restarting")
 async def restart_app_now(app_id: int, db: AsyncSession, actor: str):
     app = await _get_or_404(app_id, db)
     if app.cron_schedule:
@@ -104,6 +106,7 @@ async def restart_app_now(app_id: int, db: AsyncSession, actor: str):
     return {"status": app.status, "instance_count": len(replicas)}
 
 
+@activity.tracked("starting")
 async def start_app_now(app_id: int, db: AsyncSession, actor: str):
     app = await _get_or_404(app_id, db)
     if app.cron_schedule:

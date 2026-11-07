@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from notify import emit as notify_emit
 from containers import processes as pm, naming as containers_naming, build as containers_build
 from core.database import AsyncSessionLocal
+from core import activity
 from core.models import Application, Deployment
 from apps import state as apps_state, deploy_common as apps_deploy_common, rolling as apps_rolling, bluegreen as apps_bluegreen, git as apps_git, nginx_sync as apps_nginx_sync, runtime as apps_runtime, images as apps_images
 from core.audit import log_audit as apps_log_audit
@@ -29,6 +30,7 @@ def _commit_details(app_dir: str) -> tuple[Optional[str], Optional[str], Optiona
     return sha, subject[:500], author[:200]
 
 
+@activity.tracked("deploying")
 async def run_deploy(
     app_id: int,
     *,

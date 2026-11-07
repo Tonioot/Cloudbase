@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
+from core import activity
 from core.models import Deployment
 from containers import processes as pm
 from containers import naming as containers_naming
@@ -35,6 +36,7 @@ log = logging.getLogger("cloudbase.apps")
 
 
 @router.post("/{app_id}/pull")
+@activity.tracked("updating")
 async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None), db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
     target_commit = _check_git_ref(payload.commit if payload else None)
@@ -123,6 +125,7 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
 
 
 @router.post("/{app_id}/rebuild")
+@activity.tracked("building")
 async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
 
@@ -224,6 +227,7 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
         loop.call_soon_threadsafe(queue.put_nowait, str(line))
 
     async def _do_pull() -> None:
+        entry = activity.begin(app_id, "updating", "Fetching the latest commit")
         try:
             commit_info, source_revision = await _sync_app_source(app, app_dir, target_commit, _q)
 
@@ -265,6 +269,7 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
         except Exception as exc:
             result_holder["error"] = str(exc)
         finally:
+            activity.end(app_id, entry)
             loop.call_soon_threadsafe(queue.put_nowait, None)
 
     asyncio.create_task(_do_pull())
@@ -305,6 +310,7 @@ async def rebuild_docker_image_stream(app_id: int, _user: dict = Depends(_auth.r
         loop.call_soon_threadsafe(queue.put_nowait, str(line))
 
     async def _do_rebuild() -> None:
+        entry = activity.begin(app_id, "building", "Building the image")
         try:
             _q("[Docker] Rebuilding image…")
 
@@ -343,6 +349,7 @@ async def rebuild_docker_image_stream(app_id: int, _user: dict = Depends(_auth.r
         except Exception as exc:
             result_holder["error"] = str(exc)
         finally:
+            activity.end(app_id, entry)
             loop.call_soon_threadsafe(queue.put_nowait, None)
 
     asyncio.create_task(_do_rebuild())

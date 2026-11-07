@@ -1,6 +1,7 @@
 from fastapi import Depends, APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
+from core import activity
 from cron import scheduler as _cron
 from nodes.registry import ensure_local_node
 from core.audit import log_audit
@@ -19,6 +20,7 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict
 
 
 @router.post("/{app_id}/stop")
+@activity.tracked("stopping")
 async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.stop")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
     if app.cron_schedule:

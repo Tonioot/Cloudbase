@@ -98,7 +98,15 @@ export async function initApp() {
   renderHeader();
   initTabs();
   startBgStats();          // Collect stats in the background from the start
-  setInterval(refreshApp, 6000);
+  scheduleRefresh();
+}
+
+// Looks again often while something is being done to the app, so the step shown follows what happens
+function scheduleRefresh() {
+  setTimeout(async () => {
+    await refreshApp();
+    scheduleRefresh();
+  }, app && app.activity ? 1500 : 6000);
 }
 
 async function refreshApp() {
@@ -332,7 +340,39 @@ async function _toggleMode_legacy(type) {
   }
 }
 
+let _activityTimer = null;
+let _activitySince = 0;
+
+/** The bar under the status: what is being done to the app right now, which step, and for how long. */
+function renderActivity() {
+  const el = document.getElementById('app-activity');
+  if (!el) return;
+  const a = app.activity;
+  if (!a) {
+    el.hidden = true;
+    el.innerHTML = '';
+    clearInterval(_activityTimer);
+    _activityTimer = null;
+    return;
+  }
+  _activitySince = a.since;
+  el.hidden = false;
+  el.innerHTML = `<span class="app-activity-spinner" aria-hidden="true"></span>
+    <span class="app-activity-label">${escHtml(a.label)}…</span>
+    <span class="app-activity-detail" title="${escHtml(a.detail || '')}">${escHtml(a.detail || '')}</span>
+    <span class="app-activity-time"></span>`;
+  const tick = () => {
+    const t = el.querySelector('.app-activity-time');
+    if (!t) return;
+    const s = Math.max(0, Math.floor(Date.now() / 1000 - _activitySince));
+    t.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  };
+  tick();
+  if (!_activityTimer) _activityTimer = setInterval(tick, 1000);
+}
+
 function updateHeaderStatus() {
+  renderActivity();
   const badgeEl = document.getElementById('app-badge');
   // Traffic mode is shown next to the status — it is otherwise only visible in the ⋯ menu
   const modeChip = app.maintenance_mode
@@ -344,7 +384,7 @@ function updateHeaderStatus() {
   document.getElementById('app-meta').textContent = formatPortSummary(app);
 
   const s = app.status;
-  const busy = (s === 'deploying');
+  const busy = (s === 'deploying') || !!app.activity;       // no second click while something is being done
 
   const btnStart   = document.getElementById('btn-start');
   const btnStop    = document.getElementById('btn-stop');

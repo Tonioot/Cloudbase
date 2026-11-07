@@ -4,6 +4,7 @@ from fastapi import Depends, APIRouter, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal, get_db
+from core import activity
 from core.models import ApplicationReplica, Node
 from containers import processes as pm
 from nodes import desired
@@ -92,6 +93,7 @@ async def get_instance_stats(app_id: int, _user: dict = Depends(_auth.require_pe
 
 
 @router.post("/{app_id}/instances/{instance_id}/restart")
+@activity.tracked("restarting")
 async def restart_instance(
     app_id: int,
     instance_id: int,

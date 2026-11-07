@@ -4,7 +4,7 @@ import threading
 from collections import deque
 from typing import Optional
 
-from core import applog
+from core import activity, applog
 from containers import apps as containers_apps
 from containers import naming as containers_naming
 from containers import replicas as containers_replicas
@@ -96,6 +96,7 @@ def unsubscribe_logs(app_id: int, q: asyncio.Queue) -> None:
 def _push_line(app_id: int, line: str) -> None:
     """Push a Cloudbase message to the app's live log and keep it in the app's Cloudbase log."""
     applog.record_push(app_id, line)
+    activity.note(app_id, line)
     _push_container_line(app_id, line)
 
 

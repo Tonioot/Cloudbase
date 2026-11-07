@@ -4,6 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.models import Application, Deployment, Node, ApplicationReplica
+from core import activity
 from nginx import certbot as nginx_certbot
 from cron import scheduler as _cron
 from core.env_crypto import decrypt_env
@@ -56,6 +57,7 @@ def _app_to_dict(
         "build_command": app.build_command,
         "port": app.port,
         "status": app.status,
+        "activity": activity.get(app.id),        # what is being done to the app right now, or None
         "working_dir": app.working_dir,
         "last_error": app.last_error,
         "env_vars": {k: "" for k in decrypt_env(app.env_vars or "")} if include_sensitive else {},

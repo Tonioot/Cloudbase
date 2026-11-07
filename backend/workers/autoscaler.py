@@ -5,6 +5,7 @@ from typing import Optional
 import psutil
 from sqlalchemy import select
 from core.database import AsyncSessionLocal
+from core import activity
 from core.models import Application, Node, StatsHistory, ApplicationReplica
 from core.env_crypto import decrypt_env
 from core.audit import log_audit
@@ -62,6 +63,7 @@ async def _autoscaler():
         alog.log(level, "[autoscaler] app_id=%d %s", app_id, msg, extra={"no_applog": True})
         applog.write(app_id, msg, level, "autoscaler")
         pm._push_container_line(app_id, f"[Autoscaler] {msg}")
+        activity.step(app_id, msg)
 
     async def _audit(app_id: int, action: str, detail: dict) -> None:
         try:
@@ -234,7 +236,8 @@ async def _autoscaler():
 
     async def _run_action(app_id: int, coro) -> None:
         try:
-            await coro
+            with activity.track(app_id, "scaling"):
+                await coro
         except Exception as e:
             alog.warning("[autoscaler] app_id=%d scale action error: %s", app_id, e)
         finally:
