@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core import config as _cfg
 from core.database import AsyncSessionLocal
 from core.models import Node
-from mesh import addressing, helper
+from mesh import addressing, helper, publicip
 
 log = logging.getLogger("cloudbase.mesh")
 
@@ -94,8 +94,13 @@ async def enroll(db: AsyncSession, node: Node, public_key: str) -> dict:
     await db.commit()
     if not await ensure_hub():
         raise HTTPException(503, f"The hub could not start: {_hub['error'] or 'unknown error'}")
+    # Where the node can try to reach this primary, best first. The panel's own address is added by the
+    # node itself; it often belongs to a proxy that does not carry UDP, so it comes last.
+    configured = cfg.get("endpoint") or ""
+    found = None if configured else await asyncio.to_thread(publicip.detect)
     return {"address": f"{node.wg_ip}/32", "allowed": str(addressing.network(cfg["subnet"])),
-            "hub_public_key": _hub["public_key"], "port": int(cfg["port"]), "endpoint": cfg.get("endpoint") or ""}
+            "hub_public_key": _hub["public_key"], "port": int(cfg["port"]),
+            "endpoints": [configured or found] if (configured or found) else []}
 
 
 async def refresh_states() -> list[tuple[int, str | None, str]]:

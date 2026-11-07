@@ -9,15 +9,40 @@ from agent.state import AgentState, _save_state
 from mesh import addressing, helper
 
 RETRY_SECONDS = 30
+HANDSHAKE_WAIT_SECONDS = 15
 
 
-def _endpoint(state: AgentState, answer: dict) -> str:
-    """Where the primary listens: the configured endpoint, or the host the agent already talks to."""
-    endpoint = answer.get("endpoint") or ""
-    if endpoint:
-        return endpoint if ":" in endpoint else f"{endpoint}:{answer['port']}"
-    host = urlparse(state.main_url).hostname or ""
-    return f"[{host}]:{answer['port']}" if ":" in host else f"{host}:{answer['port']}"
+def _with_port(host: str, port: int) -> str:
+    if host.startswith("[") or host.count(":") == 1:
+        return host                                   # already host:port or [v6]:port
+    return f"[{host}]:{port}" if ":" in host else f"{host}:{port}"
+
+
+def _candidates(state: AgentState, answer: dict) -> list[str]:
+    """Where the primary may listen, best first: what the primary says, then the address of the panel."""
+    hosts = list(answer.get("endpoints") or [])
+    panel = urlparse(state.main_url).hostname
+    if panel:
+        hosts.append(panel)
+    out: list[str] = []
+    for host in hosts:
+        endpoint = _with_port(host, int(answer["port"]))
+        if endpoint not in out and addressing.is_valid_endpoint(endpoint):
+            out.append(endpoint)
+    return out
+
+
+async def _handshake_within(seconds: int) -> bool:
+    """Whether the hub answered: WireGuard has shaken hands with it."""
+    for _ in range(seconds):
+        try:
+            status = await asyncio.to_thread(helper.status)
+        except helper.HelperError:
+            return False
+        if any(p.get("latest_handshake") for p in status.get("peers", [])):
+            return True
+        await asyncio.sleep(1)
+    return False
 
 
 async def join_once(client: httpx.AsyncClient, state: AgentState) -> None:
@@ -26,15 +51,20 @@ async def join_once(client: httpx.AsyncClient, state: AgentState) -> None:
                              headers={"X-Node-Token": state.auth_token}, timeout=30)
     resp.raise_for_status()
     answer = resp.json()
-    endpoint = _endpoint(state, answer)
-    if not addressing.is_valid_endpoint(endpoint):
-        raise RuntimeError(f"the primary gave an unusable endpoint: {endpoint}")
-    await asyncio.to_thread(helper.start_node, answer["address"], answer["hub_public_key"], endpoint, answer["allowed"])
     ip = answer["address"].split("/")[0]
-    if state.wg_ip != ip:
-        state.wg_ip = ip
-        _save_state(state)
-    _agent_log(f"[mesh] joined the node network as {ip} (hub {endpoint})")
+    tried = _candidates(state, answer)
+    for endpoint in tried:
+        await asyncio.to_thread(helper.start_node, answer["address"], answer["hub_public_key"], endpoint, answer["allowed"])
+        if state.wg_ip != ip:
+            state.wg_ip = ip                           # the address exists now, whether or not the hub answers yet
+            _save_state(state)
+        if await _handshake_within(HANDSHAKE_WAIT_SECONDS):
+            _agent_log(f"[mesh] joined the node network as {ip} (hub {endpoint})")
+            return
+        _agent_log(f"[mesh] no answer from {endpoint}")
+    raise RuntimeError(
+        f"the primary did not answer on UDP port {answer['port']} at {', '.join(tried) or 'any address'}. "
+        f"Forward UDP port {answer['port']} to the primary (router/firewall)")
 
 
 async def join_forever(client: httpx.AsyncClient, state: AgentState) -> None:

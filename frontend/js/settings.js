@@ -229,8 +229,8 @@ function renderSystem(root) {
       `<div id="wg-status" class="field-hint">Checking…</div>
       <div class="field">
         <label class="field-label" for="sys-wg-endpoint">Address of this primary</label>
-        <input class="input" id="sys-wg-endpoint" type="text" placeholder="same address the nodes use for the panel" />
-        <div class="field-hint">Host name or IP that nodes use to reach this primary on UDP port <code id="wg-port">51820</code>. Leave empty to use the address they already connect to the panel with. Applies to nodes the next time they start.</div>
+        <input class="input" id="sys-wg-endpoint" type="text" placeholder="found automatically" />
+        <div class="field-hint">Only needed if the automatically found public IP is wrong. Nodes reach this primary on UDP port <code id="wg-port">51820</code>, which must be forwarded to this server. A panel domain behind Cloudflare’s proxy is not used for this.</div>
       </div>`)}
     ${group('Limits', 'Upper bounds that protect the server from runaway scaling.',
       `<div class="form-pair">

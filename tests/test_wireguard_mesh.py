@@ -34,7 +34,8 @@ def fake_hub(tmp_path, monkeypatch):
         "else:\n    out = {}\n"
         "json.dump(s, open(P, 'w')); print(json.dumps(out))\n")
     monkeypatch.setenv("CLOUDBASE_WG_HELPER", f"{sys.executable} {script}")
-    from mesh import hub
+    from mesh import hub, publicip
+    monkeypatch.setattr(publicip, "detect", lambda: "203.0.113.7")
     monkeypatch.setitem(hub._hub, "up", False)
     monkeypatch.setitem(hub._hub, "error", None)
 
@@ -111,9 +112,19 @@ def test_a_node_gets_an_address_and_the_hub_learns_about_it(client, fake_hub, no
     answer = ra.json()
     assert answer["address"] == "10.77.0.2/32" and answer["allowed"] == "10.77.0.0/16" and answer["port"] == 51820
     assert answer["hub_public_key"].startswith("HUBKEY")
+    assert answer["endpoints"] == ["203.0.113.7"]                    # found by the primary itself, no domain needed
     assert _enroll(client, token_b, KEYS[1]).json()["address"] == "10.77.0.3/32"
     assert fake_hub.read()["peers"] == [{"public_key": KEYS[0], "ip": "10.77.0.2"}, {"public_key": KEYS[1], "ip": "10.77.0.3"}]
     assert ["hub", "10.77.0.1/16", "51820"] in fake_hub.read()["calls"]
+
+
+def test_a_configured_address_is_used_instead_of_looking_one_up(client, fake_hub, nodes, monkeypatch):
+    from core import config
+    from mesh import publicip
+    monkeypatch.setitem(config._config.setdefault("wireguard", {}), "endpoint", "vpn.example.test")
+    monkeypatch.setattr(publicip, "detect", lambda: pytest.fail("must not look up the address"))
+    _, token = nodes("wg-cfg")
+    assert _enroll(client, token, KEYS[0]).json()["endpoints"] == ["vpn.example.test"]
 
 
 def test_enrolling_twice_keeps_the_same_address(client, fake_hub, nodes):
@@ -412,29 +423,78 @@ def test_the_agent_refuses_to_start_instances_before_it_is_on_the_node_network()
         _run(agent_apps.cmd_start_replica(_FakeClient(), state, 1, {"replica_id": 5, "external_port": 8123}, {}))
 
 
-def test_the_agent_joins_with_the_hub_the_primary_describes(monkeypatch):
-    from agent import mesh as agent_mesh
+def _agent_state():
     from agent.state import AgentState
+    return AgentState(main_url="https://panel.example.test", auth_token="t", node_id=1, node_name="n")
+
+
+def test_the_node_tries_the_primarys_address_first_and_the_panel_address_last():
+    from agent.mesh import _candidates
+    answer = {"endpoints": ["203.0.113.7"], "port": 51820}
+    assert _candidates(_agent_state(), answer) == ["203.0.113.7:51820", "panel.example.test:51820"]
+    assert _candidates(_agent_state(), {"endpoints": ["vpn.example.test:4000"], "port": 51820})[0] == "vpn.example.test:4000"
+    assert _candidates(_agent_state(), {"endpoints": [], "port": 51820}) == ["panel.example.test:51820"]
+    assert _candidates(_agent_state(), {"endpoints": ["panel.example.test"], "port": 51820}) == ["panel.example.test:51820"]   # no duplicates
+
+
+class _JoinClient:
+    async def post(self, url, json=None, headers=None, timeout=None):
+        assert url == "https://panel.example.test/api/nodes/agent/wireguard" and json == {"public_key": KEYS[4]}
+        return _FakeResponse({"address": "10.77.0.7/32", "allowed": "10.77.0.0/16", "hub_public_key": KEYS[0],
+                              "port": 51820, "endpoints": ["203.0.113.7"]})
+
+
+def _join_with(monkeypatch, answers_on: set):
+    """Run a join where only the endpoints in answers_on respond with a handshake."""
+    from agent import mesh as agent_mesh
     from mesh import helper
     started = []
     monkeypatch.setattr(helper, "keygen", lambda: KEYS[4])
     monkeypatch.setattr(helper, "start_node", lambda *args: started.append(args) or KEYS[4])
+    monkeypatch.setattr(helper, "status", lambda: {"peers": [{"latest_handshake": 5 if started[-1][2] in answers_on else 0}]})
     monkeypatch.setattr(agent_mesh, "_save_state", lambda s: None)
+    monkeypatch.setattr(agent_mesh, "HANDSHAKE_WAIT_SECONDS", 1)
+    real_sleep = asyncio.sleep
 
-    class Client:
-        async def post(self, url, json=None, headers=None, timeout=None):
-            assert url == "http://pi.example.test:7823/api/nodes/agent/wireguard" and json == {"public_key": KEYS[4]}
-            return _FakeResponse({"address": "10.77.0.7/32", "allowed": "10.77.0.0/16", "hub_public_key": KEYS[0], "port": 51820, "endpoint": ""})
-
-    state = AgentState(main_url="http://pi.example.test:7823", auth_token="t", node_id=1, node_name="n")
-    _run(agent_mesh.join_once(Client(), state))
-    assert started == [("10.77.0.7/32", KEYS[0], "pi.example.test:51820", "10.77.0.0/16")] and state.wg_ip == "10.77.0.7"
+    async def quick_sleep(seconds):
+        await real_sleep(0)
+    monkeypatch.setattr(agent_mesh.asyncio, "sleep", quick_sleep)
+    state = _agent_state()
+    return agent_mesh, state, started
 
 
-def test_the_configured_endpoint_wins_over_the_address_the_agent_uses():
-    from agent.mesh import _endpoint
-    from agent.state import AgentState
-    state = AgentState(main_url="https://panel.example.test", auth_token="t", node_id=1, node_name="n")
-    assert _endpoint(state, {"endpoint": "vpn.example.test", "port": 51820}) == "vpn.example.test:51820"
-    assert _endpoint(state, {"endpoint": "203.0.113.5:4000", "port": 51820}) == "203.0.113.5:4000"
-    assert _endpoint(state, {"endpoint": "", "port": 51820}) == "panel.example.test:51820"
+def test_the_agent_stays_on_the_first_address_that_answers(monkeypatch):
+    agent_mesh, state, started = _join_with(monkeypatch, {"203.0.113.7:51820"})
+    _run(agent_mesh.join_once(_JoinClient(), state))
+    assert [s[2] for s in started] == ["203.0.113.7:51820"] and state.wg_ip == "10.77.0.7"
+
+
+def test_the_agent_falls_back_to_the_panel_address(monkeypatch):
+    agent_mesh, state, started = _join_with(monkeypatch, {"panel.example.test:51820"})
+    _run(agent_mesh.join_once(_JoinClient(), state))
+    assert [s[2] for s in started] == ["203.0.113.7:51820", "panel.example.test:51820"]
+
+
+def test_when_nothing_answers_the_error_says_what_to_forward(monkeypatch):
+    agent_mesh, state, started = _join_with(monkeypatch, set())
+    with pytest.raises(RuntimeError, match="Forward UDP port 51820"):
+        _run(agent_mesh.join_once(_JoinClient(), state))
+    assert state.wg_ip == "10.77.0.7"                    # the node already has its address, for when the hub does answer
+
+
+def test_the_primary_finds_its_own_public_address(monkeypatch):
+    from mesh import publicip
+    monkeypatch.setattr(publicip, "_cache", {"ip": None, "at": 0.0})
+    answers = iter(["10.0.0.5", "not an ip", "93.184.216.34"])       # private and garbage answers are ignored
+    monkeypatch.setattr(publicip, "_fetch", lambda url: next(answers))
+    monkeypatch.setattr(publicip, "SERVICES", ("a", "b", "c"))
+    assert publicip.detect() == "93.184.216.34"
+    monkeypatch.setattr(publicip, "_fetch", lambda url: pytest.fail("cached for an hour"))
+    assert publicip.detect() == "93.184.216.34"
+
+
+def test_without_any_answer_there_is_no_public_address(monkeypatch):
+    from mesh import publicip
+    monkeypatch.setattr(publicip, "_cache", {"ip": None, "at": 0.0})
+    monkeypatch.setattr(publicip, "_fetch", lambda url: (_ for _ in ()).throw(OSError("offline")))
+    assert publicip.detect() is None
