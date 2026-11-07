@@ -996,8 +996,12 @@ systemctl list-timers | grep certbot</pre>
   title: 'Adding nodes',
   summary: 'Connect more servers, how the node network works, and turning a node into a primary.',
   keywords: 'node add connect invite agent wireguard node network remote server disconnect primary convert',
-  lead: 'A node is an extra server that runs instances for the primary. Nodes are controlled by a small agent and connect to the primary over a private WireGuard network — they need no inbound ports.',
+  lead: 'A node is an extra server that runs instances for the primary. Nodes are controlled by a small agent and talk to the primary over a private WireGuard network (a VPN, no tunnels per app). Before you add one, open UDP port 51820 on the primary.',
   body: `
+<h2>Before you add a node</h2>
+<div class="callout callout--warn"><p>Open <strong>UDP port <code>51820</code></strong> on the primary (at home: forward it on your router to the primary). Nodes join a private WireGuard network through that port; without it the node connects but cannot run instances, and the node page says <em>Not on the node network</em>. The node itself needs no open ports and no public IP, and no domain is needed. Note the protocol: <strong>UDP</strong>, not TCP.</p></div>
+<p>This VPN replaces the reverse tunnels older versions used: one encrypted connection per node carries the traffic to all its instances, and nothing has to be started per instance.</p>
+
 <h2>Connecting a node</h2>
 <ol class="guide-steps">
   <li>On the overview, click <strong>Add node</strong>. Cloudbase creates an invite code that’s valid for 30 minutes and shows the command to run.</li>
@@ -1051,6 +1055,7 @@ systemctl list-timers | grep certbot</pre>
 <p>The instance goes through <code>starting</code> back to <code>running</code> (once the primary can reach it over the node network) and rejoins the load balancer.</p>
 
 <h2>When only the node network drops</h2>
+<p>If a node never gets onto the node network, check in this order: UDP <code>51820</code> reaches the primary (firewall and router, UDP not TCP), the primary found the right public IP (<em>Settings → System settings → Node network</em>), and <code>cloudbase wireguard</code> was run on both servers.</p>
 <p>The node network can break while the agent stays connected, for example when the node loses its route to UDP port <code>51820</code>. The primary notices when the WireGuard handshake stops (after about three minutes), takes the node’s instances out of nginx and marks them <code>node offline</code>. When the network is back they are recovered the same way, so a running container is never mistaken for a stopped one.</p>
 
 <h2>Orphaned containers</h2>

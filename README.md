@@ -117,6 +117,7 @@ When a node goes offline, its instances are marked `node offline` and taken out 
 * Linux with systemd (Ubuntu, Debian, Fedora, RHEL, Arch, openSUSE)
 * Root access (`sudo`)
 * Ports 80 and 443 reachable from the internet for domains and HTTPS
+* With extra nodes: **UDP port `51820`** open on the primary (forward it on your router). Nodes join a private WireGuard network through it; they need no open ports themselves
 
 The installer adds Python 3, Git, Docker, NGINX and certbot if they're missing.
 
@@ -139,7 +140,7 @@ Prefer a clone? `git clone https://github.com/Tonioot/Cloudbase && sudo bash Clo
 
 ### Adding a node
 
-Click **Add node** in the panel and run the command it shows on the new server. It installs Cloudbase and connects it in one go:
+Make sure UDP port `51820` is open on the primary first. Then click **Add node** in the panel and run the command it shows on the new server. It installs Cloudbase and connects it in one go:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Tonioot/Cloudbase/main/install.sh | sudo bash -s -- --node --main-url https://panel.example.com --invite-code <code>
