@@ -17,7 +17,7 @@ from apps.nginx_sync import _resolve_ssl_paths, _has_public_nginx_domain
 from apps.runtime import _get_app_node, _remote_replica_command_payload, _start_instance_local
 from apps.serializers import _get_or_404
 from apps.validation import _assign_external_port
-from apps.deploy_common import REMOTE_START_TIMEOUT_SECONDS, _wait_new_instance_healthy
+from apps.deploy_common import REMOTE_START_TIMEOUT_SECONDS, _mark_stopping, _wait_new_instance_healthy
 from core import activity
 from mesh import routing
 
@@ -200,6 +200,7 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
     )
     for old_r in old_res.scalars().all():
         if old_r.node_id is None or old_r.node_id == local_node.id:
+            await _mark_stopping(old_r.id)
             await asyncio.to_thread(containers_replicas.stop_replica_container, app_id, old_r.id)
             await db.delete(old_r)
             pm._push_line(app_id, f"[ZD] Stopped old local instance {old_r.id}.")

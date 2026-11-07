@@ -132,3 +132,13 @@ def test_every_operation_that_changes_an_app_is_tracked():
         text = (backend / path).read_text(encoding="utf-8")
         for needle in needles:
             assert needle in text, f"{path}: {needle}"
+
+
+def test_a_deploy_takes_the_old_instance_out_of_running_before_it_stops_the_container():
+    """Otherwise the crash monitor takes the stop for a crash ("Instance 84 exited") and may restart it."""
+    from pathlib import Path
+    backend = Path(__file__).resolve().parent.parent / "backend"
+    for path, stop in (("apps/rolling.py", "stop_replica_container, app_id, old_replica.id"),
+                       ("apps/bluegreen.py", "stop_replica_container, app_id, old_r.id")):
+        text = (backend / path).read_text(encoding="utf-8")
+        assert text.index("_mark_stopping(") < text.index(stop), path

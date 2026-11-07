@@ -8,6 +8,18 @@ from apps.nginx_sync import _http_service_ready
 from mesh import routing
 from apps.state import DEPLOY_HEALTH_PROGRESS_SECONDS, _deploys_in_progress, _scaling_in_progress, DEPLOY_HEALTH_TIMEOUT_SECONDS
 
+async def _mark_stopping(replica_id: int) -> None:
+    """Take an instance out of "running" before its container is stopped on purpose.
+
+    The crash monitor watches the running ones: it would take the stop for a crash and, with a restart
+    policy, start the container again just before the deploy deletes the instance."""
+    async with AsyncSessionLocal() as db:
+        replica = await db.get(ApplicationReplica, replica_id)
+        if replica:
+            replica.status = "stopping"
+            await db.commit()
+
+
 # A new instance on another node may first have to download the source and build the image
 REMOTE_START_TIMEOUT_SECONDS = 900
 

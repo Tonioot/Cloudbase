@@ -19,7 +19,7 @@ from apps.runtime import _remote_replica_command_payload, _start_instance_local
 from apps.serializers import _get_or_404
 from apps.validation import _assign_external_port
 from apps.bluegreen import _do_zero_downtime_deploy, _zd_rollback
-from apps.deploy_common import REMOTE_START_TIMEOUT_SECONDS, _wait_new_instance_healthy
+from apps.deploy_common import REMOTE_START_TIMEOUT_SECONDS, _mark_stopping, _wait_new_instance_healthy
 from core import activity
 from mesh import routing
 
@@ -211,6 +211,7 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
 
         # Stop old replica
         if tnode.is_local:
+            await _mark_stopping(old_replica.id)
             await asyncio.to_thread(containers_replicas.stop_replica_container, app_id, old_replica.id)
         else:
             desired.nudge(tnode.id)         # the old instance leaves the list below; the node removes its container
