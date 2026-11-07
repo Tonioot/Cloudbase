@@ -67,6 +67,7 @@ export const api = {
   disableNode:(nodeId) => request('POST', `/nodes/${nodeId}/disable`),
   deleteNode:(nodeId) => request('DELETE', `/nodes/${nodeId}`),
   pingNode:(nodeId) => request('POST', `/nodes/${nodeId}/ping`),
+  getNodeWorkloads:(nodeId) => request('GET', `/nodes/${nodeId}/workloads`),
   cleanupNodeDocker:(nodeId) => request('POST', `/nodes/${nodeId}/docker-cleanup`),
   getNodeConnectionStatus:(nodeId) => request('GET', `/nodes/${nodeId}/connection-status`),
   getNodeMetricsHistory:(nodeId, hours = 1) => request('GET', `/nodes/${nodeId}/metrics/history?hours=${hours}`),

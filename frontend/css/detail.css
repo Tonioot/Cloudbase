@@ -169,7 +169,6 @@
 .smet-mono   { font-family: var(--font-mono); font-size: 12px; }
 
 .stats-charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-.node-charts-grid  { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
 .history-row       { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 
 .chart-card.card { background: transparent; }
@@ -350,14 +349,6 @@
 .env-count { color: var(--faint); }
 
 /* ─── Node detail pieces ────────────────────────────────────────────────── */
-.node-overview-panel { display: flex; flex-direction: column; gap: 20px; }
-.node-overview-panel.card { background: transparent; border: 0; padding: 0; }
-
-.node-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
-.node-summary-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 0; border: 0; background: none; }
-.node-summary-label { font-size: 12px; color: var(--muted); text-transform: none; letter-spacing: 0; }
-.node-summary-value { font-size: 26px; font-weight: 300; letter-spacing: -0.03em; color: var(--text); font-variant-numeric: tabular-nums; }
-
 .node-details-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 24px; }
 .node-detail-item {
   display: flex;
@@ -390,13 +381,13 @@
 
 /* ─── Responsive ────────────────────────────────────────────────────────── */
 @media (max-width: 1000px) {
-  .stats-layout, .history-row, .stats-charts-grid, .node-charts-grid { grid-template-columns: 1fr; }
+  .stats-layout, .history-row, .stats-charts-grid { grid-template-columns: 1fr; }
   .settings-group { grid-template-columns: 1fr; gap: 14px; }
 }
 @media (max-width: 720px) {
   .detail-name { font-size: 30px; }
   .files-sidebar { width: 180px; }
-  .node-summary-grid, .node-details-grid { grid-template-columns: 1fr; }
+  .node-details-grid { grid-template-columns: 1fr; }
 }
 
 #app-badge { display: inline-flex; align-items: center; gap: 10px; }
@@ -433,9 +424,6 @@
 .inst-row > div[style*="border-top"] { margin-left: 70px; }
 
 /* ─── Node page ─────────────────────────────────────────────────────────── */
-.node-chart-stack { display: flex; flex-direction: column; gap: 14px; }
-.node-bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
-.node-panel { min-width: 0; display: flex; flex-direction: column; }
 .node-log-frame {
   position: relative;
   height: 420px;
@@ -447,18 +435,7 @@
 }
 .node-log-frame .node-log-view { flex: 1; min-height: 0; }
 
-.cmd-list { height: 420px; overflow-y: auto; display: flex; flex-direction: column; }
-.cmd-row { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; gap: 12px; align-items: baseline; padding: 11px 0; border-bottom: 1px solid var(--line); }
-.cmd-row .dot { transform: translateY(-1px); }
-.cmd-row-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.cmd-row-type { font-family: var(--font-mono); font-size: 12px; color: var(--text); }
-.cmd-row-meta { font-size: 12px; color: var(--muted); }
-.cmd-row-error { font-family: var(--font-mono); font-size: 11px; color: var(--red); overflow-wrap: anywhere; }
-.cmd-row-status { font-size: 12px; }
 
-@media (max-width: 1000px) {
-  .node-bottom { grid-template-columns: 1fr; }
-}
 
 /* Settings forms stay a readable width on wide screens: label, field, hint
    and toggle sit together instead of stretching across the page. */

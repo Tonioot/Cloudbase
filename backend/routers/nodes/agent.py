@@ -11,7 +11,7 @@ from core.models import Node, NodeInvite
 from core.audit import log_audit
 from mesh import hub
 from core import config as _cfg, system_config as _syscfg
-from nodes import observed, snapshot
+from nodes import metrics as node_metrics, observed, snapshot
 from nodes.commands import _apply_command_result, _claim_pending_commands, _commit_with_sqlite_lock_retry, _dispatch_queued_commands_ws, _utcnow, fail_commands_in_flight
 from nodes.registry import _as_node_dict, get_node_by_token_or_401
 from nodes.state import _get_node_event, _node_event_subscribers, _node_ws_connections, _pending_pings, _push_node_event, push_node_stream_data
@@ -314,9 +314,7 @@ async def agent_ws(websocket: WebSocket):
                                 live_node.metadata_json = json.dumps(incoming.get("metadata_json") or {})
                             metrics = incoming.get("node_metrics") or {}
                             if metrics:
-                                live_node.node_cpu_percent = metrics.get("cpu_percent")
-                                live_node.node_memory_percent = metrics.get("memory_percent")
-                                live_node.node_disk_percent = metrics.get("disk_percent")
+                                node_metrics.store_heartbeat(live_node, metrics)
                             committed = await _commit_with_sqlite_lock_retry(
                                 db,
                                 context=f"agent_ws/heartbeat node_id={node_id}",

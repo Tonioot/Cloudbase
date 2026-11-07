@@ -853,7 +853,7 @@ function renderNotifications(root) {
     ${group('Rules', 'When something counts as a problem, whether open problems are repeated, and whether the all-clear is sent.',
       `<div id="nc-rules"><div class="settings-note">Loading…</div></div>`)}
     ${group('Delivery log', 'The last messages that were sent, or that are being retried. Failed messages are retried after 30 seconds, 2 and 10 minutes, half an hour and an hour.',
-      `<div id="nc-log"><div class="settings-note">Loading…</div></div>`)}
+      `<div id="nc-log" class="scroll-list"><div class="settings-note">Loading…</div></div>`)}
   `;
 
   const state = { catalog: null, settings: null, channels: [], apps: [], dirty: new Set() };

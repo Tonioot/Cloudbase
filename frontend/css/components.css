@@ -289,6 +289,36 @@ select.input { padding-right: 28px; }
 .segmented button.active, .segmented button[aria-pressed="true"] { background: var(--hover); color: var(--text); }
 
 /* ─── Tables ────────────────────────────────────────────────────────────── */
+/* Key numbers: a label, a big number and a small chart, without a box (the overview and the node page) */
+.kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 28px 32px;
+  padding-bottom: 36px;
+}
+.kpi { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.kpi-label { font-size: 12px; color: var(--muted); }
+.kpi-value { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+.kpi-value strong {
+  font-size: 30px;
+  font-weight: 300;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.kpi-value span { color: var(--muted); }
+.kpi-spark { width: 96px; height: 18px; overflow: visible; }
+.kpi-spark polyline { fill: none; stroke: var(--text-2); stroke-width: 1.4; stroke-linejoin: round; stroke-linecap: round; }
+.kpi-spark.accent polyline { stroke: var(--accent); }
+.kpi-sub { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.kpi-sub.faint { color: var(--faint); }
+.kpi-value--text { align-items: center; gap: 8px; min-height: 36px; }
+.kpi-value--text strong { font-size: 18px; font-weight: 500; letter-spacing: -0.01em; }
+
+/* A long list stays a fixed height and scrolls inside, with its header in view */
+.scroll-list { max-height: 360px; overflow-y: auto; }
+.scroll-list .table thead th { position: sticky; top: 0; z-index: 1; background: var(--bg); }
+
 .table { width: 100%; border-collapse: collapse; }
 .table th {
   padding: 10px 12px;

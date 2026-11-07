@@ -64,6 +64,7 @@ GET     /api/nodes/{node_id}/commands
 GET     /api/nodes/{node_id}/commands/{command_id}
 GET     /api/nodes/{node_id}/connection-status
 GET     /api/nodes/{node_id}/metrics/history
+GET     /api/nodes/{node_id}/workloads
 GET     /api/notifications
 GET     /api/notifications/apps/{app_id}
 GET     /api/notifications/catalog

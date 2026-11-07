@@ -12,6 +12,7 @@ from core.audit import log_audit
 from core import auth as _auth
 from mesh import hub
 from nodes.commands import _utcnow, queue_node_command, wait_for_node_command
+from nodes import workloads as node_workloads
 from nodes.liveness import run_node_docker_cleanup
 from nodes.registry import _as_node_dict, ensure_local_node, get_node_or_404
 from nodes.state import _node_ws_connections, _pending_pings, _push_node_event
@@ -226,6 +227,12 @@ async def get_node_connection_status(node_id: int, db: AsyncSession = Depends(ge
         } if node.node_cpu_percent is not None else None,
         "pending_commands": pending_count,
     }
+
+
+@router.get("/{node_id}/workloads")
+async def get_node_workloads(node_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("nodes.view"))):
+    """The instances and databases that run on this node, for its page."""
+    return await node_workloads.workloads(db, await get_node_or_404(node_id, db))
 
 
 @router.get("/{node_id}/agent-logs")

@@ -5,16 +5,10 @@ from typing import Any, Optional
 import httpx
 import psutil
 from agent.state import AgentState
+from core import sysmetrics
 
 def _collect_node_metrics() -> dict:
-    try:
-        return {
-            "cpu_percent": psutil.cpu_percent(interval=None),
-            "memory_percent": psutil.virtual_memory().percent,
-            "disk_percent": psutil.disk_usage("/").percent,
-        }
-    except Exception:
-        return {}
+    return sysmetrics.collect()
 
 
 def _collect_system_info() -> dict:

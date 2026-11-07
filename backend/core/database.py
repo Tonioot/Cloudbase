@@ -118,6 +118,11 @@ async def init_db():
             ("wg_ip",               "VARCHAR(20)"),
             ("wg_state",            "VARCHAR(20)"),
             ("wg_handshake_at",     "DATETIME"),
+            ("node_net_rx",         "FLOAT"),
+            ("node_net_tx",         "FLOAT"),
+            ("node_disk_read",      "FLOAT"),
+            ("node_disk_write",     "FLOAT"),
+            ("node_load_1",         "FLOAT"),
         ]:
             if col in existing_node_cols:
                 continue
@@ -199,6 +204,12 @@ async def init_db():
             await conn.exec_driver_sql(
                 f"ALTER TABLE stats_history ADD COLUMN {col} {definition}"
             )
+
+        result = await conn.exec_driver_sql("PRAGMA table_info(node_metrics_history)")
+        existing_history_cols = {row[1] for row in result.fetchall()}
+        for col in ("net_rx_bytes", "net_tx_bytes", "disk_read_bytes", "disk_write_bytes", "load_1"):
+            if existing_history_cols and col not in existing_history_cols:
+                await conn.exec_driver_sql(f"ALTER TABLE node_metrics_history ADD COLUMN {col} FLOAT")
 
         # application_replicas
         result = await conn.exec_driver_sql("PRAGMA table_info(application_replicas)")

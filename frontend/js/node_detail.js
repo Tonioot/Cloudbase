@@ -1,20 +1,40 @@
-import { api, wsNodeEvents, wsNodeCommands, wsSystemStats } from './api.js';
-import { badge, toast, confirm, prompt, spinner, fmtDate, timeAgo, fmtUptime, icon, cssVar } from './utils.js';
+import { api, wsNodeEvents, wsSystemStats } from './api.js';
+import { badge, toast, confirm, prompt, spinner, fmtDate, timeAgo, fmtUptime, cssVar, sparkPoints } from './utils.js';
 import { setCrumbs } from './shell.js';
 
 const params  = new URLSearchParams(location.search);
 const NODE_ID = parseInt(params.get('id'));
 
 let node = null;
+let workloads = { instances: [], databases: [] };
+let lastPing = null;               // { ms } | { unreachable: true } | null
 let hasLoadedLogs = false;
 let lastLogsText = '';
 let latestLogsRequest = 0;
+let activeTab = 'log';
 
-// ── Chart state ───────────────────────────────────────────────────────────────
-let nChartCpu = null, nChartMem = null, nChartDisk = null;
+// ── Metrics ───────────────────────────────────────────────────────────────────
+// One request gives every series (usage, network and disk rates, load) at the resolution the range needs.
+let metricSamples = [];
 let _nodeRangeHours = 1;
-const nCpuData = [], nMemData = [], nDiskData = [];
-const MAX_PTS  = 60;
+const METRICS_REFRESH_MS = 30000;      // the server samples every 30 seconds
+
+const fmtPct = v => `${v.toFixed(v < 10 ? 1 : 0)}%`;
+const fmtLoad = v => v.toFixed(v < 10 ? 2 : 1);
+function fmtRate(v) {
+    if (v < 1024) return `${Math.round(v)} B/s`;
+    if (v < 1048576) return `${(v / 1024).toFixed(v < 10240 ? 1 : 0)} KB/s`;
+    return `${(v / 1048576).toFixed(v < 10485760 ? 1 : 0)} MB/s`;
+}
+const CHARTS = [
+    { id: 'cpu',  title: 'CPU',          unit: '%',    fmt: fmtPct,  series: [{ key: 'cpu',  color: '--accent' }], pct: true },
+    { id: 'mem',  title: 'Memory',       unit: '%',    fmt: fmtPct,  series: [{ key: 'mem',  color: '--purple' }], pct: true },
+    { id: 'disk', title: 'Disk usage',   unit: '%',    fmt: fmtPct,  series: [{ key: 'disk', color: '--yellow' }], pct: true },
+    { id: 'net',  title: 'Network',      unit: 'B/s',  fmt: fmtRate, series: [{ key: 'net_in', color: '--accent', label: 'In' }, { key: 'net_out', color: '--purple', label: 'Out' }] },
+    { id: 'io',   title: 'Disk reads and writes', unit: 'B/s', fmt: fmtRate, series: [{ key: 'disk_read', color: '--accent', label: 'Read' }, { key: 'disk_write', color: '--yellow', label: 'Write' }] },
+    { id: 'load', title: 'Load average', unit: '1 min', fmt: fmtLoad, series: [{ key: 'load', color: '--green' }] },
+];
+const RANGE_LABELS = { 1: 'Last hour', 24: 'Last 24 hours', 168: 'Last 7 days' };
 
 export async function initNodePage() {
     if (!NODE_ID || isNaN(NODE_ID)) {
@@ -23,8 +43,7 @@ export async function initNodePage() {
     }
 
     try {
-        const nodes = await api.listNodes();
-        node = nodes.find(n => n.id === NODE_ID);
+        node = (await api.listNodes()).find(n => n.id === NODE_ID);
         if (!node) { window.location.href = '/'; return; }
     } catch (err) {
         toast(err.message, 'error');
@@ -32,71 +51,90 @@ export async function initNodePage() {
         return;
     }
 
-    renderHeader();
-    renderHeader_overview();
+    renderAll();
+    buildCharts();
+    loadMetrics();
+    refreshWorkloads();
     loadLogs();
-    loadHistory();
     setupWebSockets();
 
     document.getElementById('btn-rename').onclick = renameNode;
     document.getElementById('btn-toggle-enable').onclick = toggleEnable;
     document.getElementById('btn-delete').onclick = deleteNode;
-    document.getElementById('btn-refresh-logs').onclick = loadLogs;
+    document.getElementById('btn-refresh-logs').onclick = () => (activeTab === 'log' ? loadLogs() : loadHistory());
     document.getElementById('btn-docker-cleanup').onclick = cleanupDocker;
-    setInterval(loadLogs, 12000);
-    setInterval(loadHistory, 15000);
+    initTabs();
+
+    setInterval(refreshNode, 8000);
+    setInterval(loadMetrics, METRICS_REFRESH_MS);
+    setInterval(refreshWorkloads, 6000);
+    setInterval(() => { if (activeTab === 'log') loadLogs(); }, 12000);
+    setInterval(() => { if (activeTab === 'commands') loadHistory(); }, 10000);
 
     if (!node.is_local) autoPing();
+    else wsSystemStats(data => updateMetrics({ cpu_percent: data.cpu_percent, memory_percent: data.memory_percent, disk_percent: data.disk_percent }));
+}
 
-    if (node.is_local) {
-        wsSystemStats(data => {
-            updateMetrics({ cpu_percent: data.cpu_percent, memory_percent: data.memory_percent, disk_percent: data.disk_percent });
-        });
-    }
+/** Everything that comes from the node itself, drawn again. */
+function renderAll() {
+    renderHeader();
+    renderTiles();
+    renderAbout();
+}
+
+window.addEventListener('resize', () => drawCharts());
+
+async function refreshNode() {
+    try {
+        const fresh = (await api.listNodes()).find(n => n.id === NODE_ID);
+        if (!fresh) return;
+        const wasOnline = node.status === 'online';
+        node = fresh;
+        renderAll();
+        if (wasOnline !== (node.status === 'online')) _setChartsOfflineState(node.status !== 'online');
+    } catch { /* the next round tries again */ }
+}
+
+async function refreshWorkloads() {
+    try {
+        workloads = await api.getNodeWorkloads(NODE_ID);
+        renderRunning();
+    } catch { /* keep what is shown */ }
 }
 
 async function autoPing() {
-    const pingBadge = document.getElementById('node-ping-badge');
-    const val       = document.getElementById('node-ping-val');
-    if (!pingBadge || !val) return;
-    pingBadge.style.display = 'flex';
-
     const run = async () => {
-        val.textContent = '…';
-        pingBadge.style.color = 'var(--text-muted)';
         try {
             const r = await api.pingNode(NODE_ID);
-            if (r.reachable) {
-                val.textContent = `${r.latency_ms}ms`;
-                pingBadge.style.color = r.latency_ms < 100 ? 'var(--green)' : r.latency_ms < 300 ? 'var(--yellow)' : 'var(--red)';
-            } else {
-                val.textContent = 'unreachable';
-                pingBadge.style.color = 'var(--red)';
-            }
+            lastPing = r.reachable ? { ms: r.latency_ms } : { unreachable: true };
         } catch {
-            val.textContent = 'error';
-            pingBadge.style.color = 'var(--text-muted)';
+            lastPing = null;
         }
+        renderTiles();
     };
-
     await run();
-    pingBadge.onclick = run;
     setInterval(run, 15000);
 }
 
+/* ─── Header ───────────────────────────────────────────────────────────── */
 function renderHeader() {
-    document.getElementById('node-name').textContent       = node.name;
+    document.getElementById('node-name').textContent = node.name;
     setCrumbs([{ label: 'Nodes', href: '/#nodes-section' }, node.name]);
     document.title = `${node.name} — Node — Cloudbase`;
 
     const online = node.status === 'online';
-    document.getElementById('node-status-badge').innerHTML =
-        `<span class="badge ${online ? 'badge-running' : 'badge-error'}">${online ? 'Online' : escHtml(node.status || 'offline')}</span>`;
+    const badgeEl = document.getElementById('node-status-badge');
+    if (!node.enabled && !node.is_local) badgeEl.innerHTML = '<span class="badge badge-stopped">Disabled</span>';
+    else badgeEl.innerHTML = `<span class="badge ${online ? 'badge-running' : 'badge-error'}">${online ? 'Online' : 'Offline'}</span>`;
 
-    const roleLabel = node.is_local ? 'Primary Node' : node.role === 'hybrid' ? 'Hybrid' : 'Node';
-    const connType  = node.is_local ? 'local' : node.websocket_connected ? 'WebSocket' : 'Connecting';
-    document.getElementById('node-meta').textContent =
-        `${roleLabel} · ${connType}${node.api_base_url ? ' · ' + node.api_base_url : ''}`;
+    const meta = node.metadata || {};
+    const role = node.is_local ? 'Primary node — this server' : node.role === 'hybrid' ? 'Hybrid node' : 'Node';
+    document.getElementById('node-meta').textContent = [
+        role,
+        node.agent_version ? `agent ${node.agent_version}` : null,
+        meta.os_short || meta.os || null,
+        meta.arch || null,
+    ].filter(Boolean).join(' · ');
 
     const toggleBtn = document.getElementById('btn-toggle-enable');
     if (node.is_local) {
@@ -104,178 +142,400 @@ function renderHeader() {
         toggleBtn.style.display = 'none';
         document.getElementById('btn-delete').style.display = 'none';
     } else {
-        toggleBtn.textContent = node.enabled ? 'Disable Node' : 'Enable Node';
-        toggleBtn.className   = `btn ${node.enabled ? 'btn-secondary' : 'btn-success'}`;
+        toggleBtn.textContent = node.enabled ? 'Disable' : 'Enable';
     }
 }
 
-function setupWebSockets() {
-    if (node.is_local) return;
-
-    wsNodeEvents(node.id, event => {
-        if (event.type === 'node_health') {
-            updateMetrics(event);
-            if (node.status !== 'online') {
-                node.status = 'online';
-                _setChartsOfflineState(false);
-            }
-        }
-        if (event.type === 'node_offline') {
-            node.status = 'offline';
-            _setChartsOfflineState(true);
-        }
-    });
-
-    wsNodeCommands(node.id, msg => {
-        if (msg.type === 'snapshot') renderCommands(msg.commands);
-    });
+/* ─── At a glance ──────────────────────────────────────────────────────── */
+function setTile(id, { value, sub, spark }) {
+    const tile = document.getElementById(id);
+    if (!tile) return;
+    const line = tile.querySelector('.kpi-spark polyline');
+    if (line) line.setAttribute('points', spark ? sparkPoints(spark) : '');
+    tile.querySelector('.kpi-value strong').textContent = value;
+    tile.querySelector('.kpi-sub').textContent = sub || '\u00a0';
 }
 
-/* ─── Overview tab ─────────────────────────────────────────────────────── */
-function renderHeader_overview() {
-    if (node.node_metrics) updateMetrics(node.node_metrics);
+const pctText = p => (p == null ? '—' : p.toFixed(p < 10 ? 1 : 0));
+const gb = mb => (mb / 1024).toFixed(mb >= 10240 ? 0 : 1);
 
-    const meta   = node.metadata || {};
-    const connLabel = node.is_local ? 'Local' : node.websocket_connected ? 'WebSocket' : 'Connecting';
+function renderTiles() {
+    const m = node.node_metrics || {};
+    const meta = node.metadata || {};
+    const online = node.status === 'online' || node.is_local;
 
-    const grid = document.getElementById('node-info-grid');
-    grid.innerHTML = [
-        _detailItem('Connection', connLabel),
-        _detailItem('Agent', node.agent_version || '\u2014'),
-        _detailItem('Last Seen', (node.is_local || node.websocket_connected) ? 'Connected' : timeAgo(node.last_seen), {
-            valueClass: (node.is_local || node.websocket_connected) ? 'node-detail-value-live' : ''
-        }),
-        _detailItem('Uptime', `<span id="n-uptime">—</span>`, { html: true }),
-        meta.hostname ? _detailItem('Hostname', meta.hostname) : '',
-        meta.ip ? _detailItem('IP Address', meta.ip, { valueClass: 'node-detail-value-mono' }) : '',
-        meta.os ? _detailItem('OS', meta.os_short || meta.os) : '',
-        meta.arch ? _detailItem('Architecture', meta.arch) : '',
-        meta.cpu_count ? _detailItem('CPU Cores', `${meta.cpu_count}P / ${meta.cpu_count_logical || meta.cpu_count}L`) : '',
-        meta.ram_total_mb ? _detailItem('RAM', `${Math.round(meta.ram_total_mb / 1024)}GB`) : '',
-        meta.disk_total_gb ? _detailItem('Storage', `${meta.disk_total_gb}GB`) : '',
-        _detailItem('Node ID', `#${node.id}`, { valueClass: 'node-detail-value-mono' }),
-    ].join('');
-
-    if (meta.uptime_secs) { const el = document.getElementById('n-uptime'); if (el) el.textContent = fmtUptime(meta.uptime_secs); }
-
-    renderCommands([]);
-    _initNodeCharts();
+    const last = key => metricSamples.slice(-40).map(x => x[key]).filter(v => v != null);   // the last 20 minutes, small
+    setTile('tile-cpu', {
+        spark: last('cpu'),
+        value: online ? pctText(m.cpu_percent) : '—',
+        sub: meta.cpu_count ? `${meta.cpu_count_logical || meta.cpu_count} cores${meta.cpu_model ? ' · ' + meta.cpu_model : ''}` : '',
+    });
+    setTile('tile-mem', {
+        spark: last('mem'),
+        value: online ? pctText(m.memory_percent) : '—',
+        sub: meta.ram_total_mb && m.memory_percent != null ? `${gb(meta.ram_total_mb * m.memory_percent / 100)} of ${gb(meta.ram_total_mb)} GB` : '',
+    });
+    setTile('tile-disk', {
+        spark: last('disk'),
+        value: online ? pctText(m.disk_percent) : '—',
+        sub: meta.disk_total_gb && m.disk_percent != null ? `${(meta.disk_total_gb * m.disk_percent / 100).toFixed(0)} of ${meta.disk_total_gb} GB` : '',
+    });
+    renderConnection();
 }
 
+/** The connection tile: how the primary reaches this node, in words. */
+function renderConnection() {
+    const tile = document.getElementById('tile-net');
+    const value = tile.querySelector('.kpi-value strong');
+    const [sub1, sub2] = tile.querySelectorAll('.kpi-sub');
+    const dot = state => `<span class="nd-link-dot ${state}"></span>`;
+    const ping = lastPing?.ms != null ? `${lastPing.ms} ms` : lastPing?.unreachable ? 'not answering' : '';
+    let html, line1 = '', line2 = '';
+
+    if (node.is_local) {
+        html = `${dot('up')}This server`;
+        line1 = 'The primary itself';
+    } else if (node.status !== 'online') {
+        html = `${dot('down')}Offline`;
+        line1 = `Last seen ${timeAgo(node.last_seen)}`;
+        line2 = 'Its instances come back by themselves';
+    } else if (node.wg_state === 'up') {
+        html = `${dot('up')}Connected`;
+        line1 = `Node network ${node.wg_ip || ''}`.trim();
+        line2 = [node.wg_handshake_at ? `handshake ${timeAgo(node.wg_handshake_at)}` : null, ping || null].filter(Boolean).join(' \u00b7 ');
+    } else if (node.wg_state === 'down') {
+        html = `${dot('down')}Network down`;
+        line1 = 'Its instances are out of rotation';
+        line2 = 'The agent is still connected';
+    } else {
+        html = `${dot('busy')}Not on the node network`;
+        line1 = 'Run on the node: cloudbase wireguard';
+        line2 = 'It can\u2019t run instances until then';
+    }
+    value.innerHTML = html;
+    sub1.textContent = line1 || '\u00a0';
+    sub2.textContent = line2 || '\u00a0';
+}
+
+/* ─── What runs here ───────────────────────────────────────────────────── */
+function renderRunning() {
+    const list = document.getElementById('run-list');
+    const { instances, databases } = workloads;
+    document.getElementById('run-count').textContent = [
+        instances.length ? `${instances.length} instance${instances.length === 1 ? '' : 's'}` : null,
+        databases.length ? `${databases.length} database${databases.length === 1 ? '' : 's'}` : null,
+    ].filter(Boolean).join(' · ');
+
+    if (!instances.length && !databases.length) {
+        list.innerHTML = `<div class="nd-empty"><strong>Nothing runs here yet</strong>Pick this node when you add an instance to an app, or when you create a database.</div>`;
+        return;
+    }
+
+    const instanceRow = i => {
+        const detail = i.last_error && i.status === 'error'
+            ? `<span class="nd-sub error">${escHtml(i.last_error)}</span>`
+            : `<span class="nd-sub">Instance ${i.id}${i.substatus ? ' · ' + escHtml(i.substatus.replace(/_/g, ' ')) : ''}</span>`;
+        return `<tr class="clickable" data-href="/app?id=${i.app_id}">
+            <td><span class="nd-name"><a href="/app?id=${i.app_id}">${escHtml(i.app_name)}</a></span>${detail}</td>
+            <td><span class="nd-kind">Instance</span></td>
+            <td>${badge(i.status)}</td>
+            <td class="nd-addr">${i.address ? escHtml(i.address) : '—'}</td>
+        </tr>`;
+    };
+    const databaseRow = d => `<tr class="clickable" data-href="/database?id=${d.id}">
+            <td><span class="nd-name"><a href="/database?id=${d.id}">${escHtml(d.name)}</a></span><span class="nd-sub">${escHtml(d.engine)} ${escHtml(d.version)}</span></td>
+            <td><span class="nd-kind">Database</span></td>
+            <td>${badge(d.status)}</td>
+            <td class="nd-addr">—</td>
+        </tr>`;
+
+    list.innerHTML = `<table class="table nd-run">
+        <thead><tr><th>Name</th><th>Kind</th><th>Status</th><th>Reached at</th></tr></thead>
+        <tbody>${instances.map(instanceRow).join('')}${databases.map(databaseRow).join('')}</tbody>
+    </table>`;
+    list.querySelectorAll('tr[data-href]').forEach(tr => tr.addEventListener('click', e => {
+        if (!e.target.closest('a')) location.href = tr.dataset.href;
+    }));
+}
+
+/* ─── This server ──────────────────────────────────────────────────────── */
 // Values are escaped (most come from the node's own registration); html: true for trusted markup.
 function _detailItem(label, val, { valueClass = '', html = false } = {}) {
     const classes = ['node-detail-value', valueClass].filter(Boolean).join(' ');
     return `<div class="node-detail-item"><span class="node-detail-label">${label}</span><span class="${classes}">${html ? val : escHtml(val)}</span></div>`;
 }
 
+function renderAbout() {
+    const meta = node.metadata || {};
+    const connected = node.is_local || node.websocket_connected;
+    document.getElementById('node-info-grid').innerHTML = [
+        meta.hostname ? _detailItem('Hostname', meta.hostname) : '',
+        meta.ip ? _detailItem('IP address', meta.ip, { valueClass: 'node-detail-value-mono' }) : '',
+        node.wg_ip ? _detailItem('Node network address', node.wg_ip, { valueClass: 'node-detail-value-mono' }) : '',
+        meta.os ? _detailItem('Operating system', meta.os_short || meta.os) : '',
+        meta.arch ? _detailItem('Architecture', meta.arch) : '',
+        meta.cpu_model ? _detailItem('Processor', meta.cpu_model) : '',
+        meta.cpu_count ? _detailItem('CPU cores', `${meta.cpu_count} physical / ${meta.cpu_count_logical || meta.cpu_count} logical`) : '',
+        meta.ram_total_mb ? _detailItem('Memory', `${Math.round(meta.ram_total_mb / 1024)} GB`) : '',
+        meta.disk_total_gb ? _detailItem('Storage', `${meta.disk_total_gb} GB`) : '',
+        meta.uptime_secs ? _detailItem('Uptime', fmtUptime(meta.uptime_secs)) : '',
+        _detailItem('Agent', node.agent_version || '—'),
+        _detailItem('Last seen', connected ? 'Connected now' : timeAgo(node.last_seen), { valueClass: connected ? 'node-detail-value-live' : '' }),
+        _detailItem('Node ID', `#${node.id}`, { valueClass: 'node-detail-value-mono' }),
+    ].join('');
+}
+
+/* ─── Live updates ─────────────────────────────────────────────────────── */
+function setupWebSockets() {
+    if (node.is_local) return;
+    wsNodeEvents(node.id, event => {
+        if (event.type === 'node_health') {
+            updateMetrics(event);
+            if (node.status !== 'online') {
+                node.status = 'online';
+                _setChartsOfflineState(false);
+                renderAll();
+            }
+        }
+        if (event.type === 'node_offline') {
+            node.status = 'offline';
+            _setChartsOfflineState(true);
+            renderAll();
+        }
+    });
+}
 
 function updateMetrics(m) {
-    const _set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-    if (m.cpu_percent    != null) _set('n-cpu',    `${m.cpu_percent.toFixed(1)}%`);
-    if (m.memory_percent != null) _set('n-mem',    `${m.memory_percent.toFixed(1)}%`);
-    if (m.disk_percent   != null) _set('n-disk',   `${m.disk_percent.toFixed(1)}%`);
-    if (m.uptime_secs    != null) _set('n-uptime', fmtUptime(m.uptime_secs));
-
-    // Feed charts — live points only on the 1-hour view; longer ranges show stored history
-    if (_nodeRangeHours !== 1) return;
-    const t = Date.now();
-    if (m.cpu_percent    != null) { nCpuData.push({t, v: m.cpu_percent});    if (nCpuData.length  > MAX_PTS) nCpuData.shift(); }
-    if (m.memory_percent != null) { nMemData.push({t, v: m.memory_percent}); if (nMemData.length  > MAX_PTS) nMemData.shift(); }
-    if (m.disk_percent   != null) { nDiskData.push({t, v: m.disk_percent});  if (nDiskData.length > MAX_PTS) nDiskData.shift(); }
-    _updateNodeChart(nChartCpu,  nCpuData);
-    _updateNodeChart(nChartMem,  nMemData);
-    _updateNodeChart(nChartDisk, nDiskData);
+    node.node_metrics = { ...(node.node_metrics || {}), ...pick(m, ['cpu_percent', 'memory_percent', 'disk_percent']) };
+    renderTiles();
 }
 
-function _metricBar(label, pct) {
-    if (pct == null) return '';
-    const color = pct > 80 ? 'var(--red)' : pct > 60 ? 'var(--yellow)' : 'var(--accent)';
-    return `
-        <div>
-            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-secondary);margin-bottom:5px">
-                <span>${label}</span><span style="font-weight:600;color:${color}">${pct.toFixed(1)}%</span>
+function pick(obj, keys) {
+    return Object.fromEntries(keys.filter(k => obj[k] != null).map(k => [k, obj[k]]));
+}
+
+// ── Charts ────────────────────────────────────────────────────────────────────
+const OFFLINE_SVG = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg>`;
+
+function buildCharts() {
+    document.getElementById('nd-charts').innerHTML = CHARTS.map(c => `
+        <div class="card chart-card">
+            <div class="chart-hdr">
+                <div>
+                    <div class="chart-title">${c.title}</div>
+                    <div class="chart-subtitle node-range-label">${RANGE_LABELS[_nodeRangeHours]}</div>
+                    ${c.series.length > 1 ? `<div class="nd-legend">${c.series.map(x => `<span class="nd-key" style="--c:var(${x.color})">${x.label}</span>`).join('')}</div>` : ''}
+                </div>
+                <div class="nd-chart-tools">
+                    <button type="button" class="btn btn-secondary btn-sm history-open-btn" data-chart="${c.id}" style="font-size:10px;padding:3px 8px">Open Large</button>
+                    <span class="chart-badge">${c.unit}</span>
+                </div>
             </div>
-            <div style="height:4px;background:var(--bg-muted);border-radius:3px">
-                <div style="height:100%;width:${Math.min(pct, 100)}%;background:${color};border-radius:3px;transition:width .4s"></div>
-            </div>
-        </div>`;
+            <canvas id="chart-${c.id}" style="width:100%;height:110px;display:block"></canvas>
+            <div id="chart-${c.id}-empty" class="chart-offline-overlay" style="display:none"></div>
+        </div>`).join('');
+    _setChartsOfflineState(node.status !== 'online' && !node.is_local);
+    document.getElementById('nd-charts').addEventListener('click', e => {
+        const btn = e.target.closest('[data-chart]');
+        if (btn) openLargeChart(btn.dataset.chart);
+    });
+    initRange();
 }
 
-// ── Node sparkline charts ─────────────────────────────────────────────────────
-function _initNodeCharts() {
-    nChartCpu  = _nodeChart('node-chart-cpu',  '--accent');
-    nChartMem  = _nodeChart('node-chart-mem',  '--purple');
-    nChartDisk = _nodeChart('node-chart-disk', '--yellow');
-
-    const offline = node.status !== 'online';
-    _setChartsOfflineState(offline);
-    _initNodeRange();
-    _loadNodeHistory();
-}
-
-// The server samples every node in the background and keeps 7 days. Prefill
-// the charts with that so they are not empty when the page opens.
-async function _loadNodeHistory(hours = _nodeRangeHours) {
-    try {
-        const { samples = [] } = await api.getNodeMetricsHistory(NODE_ID, hours);
-        if (hours !== _nodeRangeHours) return;   // a newer range was picked meanwhile
-        const live = hours === 1;
-        const recent = live ? samples.slice(-MAX_PTS) : samples;
-        const fill = (arr, key) => {
-            const pts = recent.filter(x => x[key] != null).map(x => ({ t: x.ts, v: x[key] }));
-            const keepLive = live ? arr.filter(p => p.t > (pts.at(-1)?.t ?? 0)) : [];
-            arr.splice(0, arr.length, ...pts, ...keepLive);
-            if (live && arr.length > MAX_PTS) arr.splice(0, arr.length - MAX_PTS);
-        };
-        fill(nCpuData, 'cpu');
-        fill(nMemData, 'mem');
-        fill(nDiskData, 'disk');
-        _updateNodeChart(nChartCpu,  nCpuData);
-        _updateNodeChart(nChartMem,  nMemData);
-        _updateNodeChart(nChartDisk, nDiskData);
-    } catch { /* history is optional */ }
-}
-
-function _initNodeRange() {
+function initRange() {
     const group = document.getElementById('node-range');
-    if (!group) return;
-    const labels = { 1: 'Last hour · live', 24: 'Last 24 hours', 168: 'Last 7 days' };
     group.addEventListener('click', e => {
         const btn = e.target.closest('[data-hours]');
         if (!btn) return;
         _nodeRangeHours = Number(btn.dataset.hours);
         group.querySelectorAll('[data-hours]').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
-        document.querySelectorAll('.node-range-label').forEach(el => { el.textContent = labels[_nodeRangeHours]; });
-        _loadNodeHistory(_nodeRangeHours);
+        document.querySelectorAll('.node-range-label').forEach(el => { el.textContent = RANGE_LABELS[_nodeRangeHours]; });
+        loadMetrics();
     });
 }
 
+// The server samples every node in the background and keeps 7 days, so the charts are full when the page opens.
+async function loadMetrics() {
+    const hours = _nodeRangeHours;
+    try {
+        const { samples = [] } = await api.getNodeMetricsHistory(NODE_ID, hours);
+        if (hours !== _nodeRangeHours) return;   // another range was picked meanwhile
+        metricSamples = samples;
+        drawCharts();
+        renderTiles();
+    } catch { /* history is optional */ }
+}
+
+function drawCharts() {
+    for (const c of CHARTS) drawChart(c);
+}
+
+/** A step of 1, 2 or 5 times a power of ten above the value: the top of a chart that is not a percentage. */
+function niceMax(v) {
+    if (v <= 0) return 1;
+    const p = Math.pow(10, Math.floor(Math.log10(v)));
+    return [1, 2, 5, 10].map(m => m * p).find(x => x >= v) || v;
+}
+
+/** Time labels along the bottom of a large chart: evenly spread, as many as fit. */
+function timeLabel(t) {
+    const d = new Date(t);
+    return _nodeRangeHours > 24
+        ? d.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })
+        : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function drawChart(chart, { canvas = document.getElementById(`chart-${chart.id}`), large = false } = {}) {
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const dpr = devicePixelRatio;
+    canvas.width  = canvas.offsetWidth  * dpr;
+    canvas.height = canvas.offsetHeight * dpr;
+    const W = canvas.width, H = canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    const lines = chart.series.map(s => ({ ...s, pts: metricSamples.filter(x => x[s.key] != null).map(x => ({ t: x.ts, v: x[s.key] })) }));
+    const all = lines.flatMap(l => l.pts);
+    if (all.length < 2) {
+        ctx.font = `${12 * dpr}px Geist, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = cssVar('--faint');
+        ctx.fillText('Collecting data\u2026', W / 2, H / 2);
+        return;
+    }
+
+    const rawMax = Math.max(...all.map(p => p.v));
+    const yMax = chart.pct ? Math.max(Math.ceil(rawMax / 10) * 10, 10) : niceMax(rawMax);
+    const t0 = Math.min(...all.map(p => p.t)), t1 = Math.max(...all.map(p => p.t));
+    const steps = large ? 4 : 2;                                  // grid lines: 0, half and top; the large one has quarters
+    ctx.font = `${(large ? 10 : 9) * dpr}px Geist, sans-serif`;
+    const labelWidth = Math.max(...Array.from({ length: steps + 1 }, (_, i) => ctx.measureText(chart.fmt(yMax * i / steps).replace('%', '')).width)) / dpr + 10;
+    const pL = labelWidth * dpr, pR = (large ? 12 : 6) * dpr, pT = (large ? 24 : 16) * dpr, pB = (large ? 24 : 4) * dpr;
+    const cW = W - pL - pR, cH = H - pT - pB;
+    const x = t => pL + (t1 === t0 ? 0 : (t - t0) / (t1 - t0)) * cW;
+    const y = v => pT + cH - Math.min(Math.max(v, 0) / yMax, 1) * cH;
+
+    // Grid lines and labels
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    for (let i = 0; i <= steps; i++) {
+        const yy = pT + cH - (i / steps) * cH;
+        ctx.strokeStyle = cssVar('--line');
+        ctx.lineWidth = dpr;
+        ctx.beginPath(); ctx.moveTo(pL, yy); ctx.lineTo(W - pR, yy); ctx.stroke();
+        ctx.fillStyle = cssVar('--faint');
+        ctx.fillText(chart.fmt(yMax * i / steps).replace('%', ''), pL - 4 * dpr, yy);
+    }
+
+    // Time along the bottom of the large chart
+    if (large) {
+        ctx.font = `${9.5 * dpr}px Geist, sans-serif`;
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = cssVar('--faint');
+        const labelPx = ctx.measureText(timeLabel(t0)).width + 28 * dpr;
+        const count = Math.max(2, Math.min(10, Math.floor(cW / labelPx)));
+        for (let i = 0; i < count; i++) {
+            ctx.textAlign = i === 0 ? 'left' : i === count - 1 ? 'right' : 'center';
+            ctx.fillText(timeLabel(t0 + (t1 - t0) * i / (count - 1)), pL + (cW * i) / (count - 1), pT + cH + 6 * dpr);
+        }
+    }
+
+    lines.forEach((line, index) => {
+        if (line.pts.length < 2) return;
+        const color = cssVar(line.color);
+        const stroke = () => {
+            ctx.beginPath();
+            line.pts.forEach((p, i) => (i === 0 ? ctx.moveTo(x(p.t), y(p.v)) : ctx.lineTo(x(p.t), y(p.v))));
+        };
+        if (index === 0 || lines.length === 1) {              // the first line gets the soft fill under it
+            const grad = ctx.createLinearGradient(0, pT, 0, pT + cH);
+            grad.addColorStop(0, color + '1c');
+            grad.addColorStop(1, color + '00');
+            stroke();
+            ctx.lineTo(x(line.pts.at(-1).t), pT + cH);
+            ctx.lineTo(x(line.pts[0].t), pT + cH);
+            ctx.closePath();
+            ctx.fillStyle = grad;
+            ctx.fill();
+        }
+        stroke();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = (large ? 2 : 1.5) * dpr;
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+    });
+
+    // The latest value of a single line, top right
+    if (lines.length === 1) {
+        ctx.font = `600 ${(large ? 12 : 10) * dpr}px Geist, sans-serif`;
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = cssVar(lines[0].color);
+        ctx.fillText(chart.fmt(lines[0].pts.at(-1).v), W - pR, 4 * dpr);
+    }
+}
+
+/** The same chart in a big dialog, like "Open Large" on an app's metrics. */
+function openLargeChart(id) {
+    const chart = CHARTS.find(c => c.id === id);
+    const hasData = chart && chart.series.some(s => metricSamples.filter(x => x[s.key] != null).length >= 2);
+    if (!hasData) {
+        toast('No history data to enlarge yet', 'error');
+        return;
+    }
+    const legend = chart.series.length > 1
+        ? chart.series.map(x => `<span class="nd-key" style="--c:var(${x.color})">${x.label}</span>`).join('')
+        : '';
+    const backdrop = document.createElement('div');
+    backdrop.className = 'dialog-backdrop';
+    backdrop.innerHTML = `
+        <div class="dialog dialog-modern" style="max-width:min(1100px,96vw);width:min(1100px,96vw)">
+            <div class="dialog-title">${chart.title}</div>
+            <div class="dialog-body" style="padding:14px 16px 10px;display:flex;flex-direction:column;gap:8px">
+                <div style="display:flex;gap:14px;align-items:center;font-size:12px;color:var(--muted)">
+                    <span>${RANGE_LABELS[_nodeRangeHours]} \u00b7 ${chart.unit}</span><span class="nd-legend" style="margin:0">${legend}</span>
+                </div>
+                <div style="height:min(62vh,560px)"><canvas id="nd-large-canvas" style="width:100%;height:100%;display:block"></canvas></div>
+            </div>
+            <div class="dialog-actions"><button class="btn btn-secondary" id="nd-large-close">Close</button></div>
+        </div>`;
+    document.body.appendChild(backdrop);
+    const canvas = backdrop.querySelector('#nd-large-canvas');
+    const draw = () => drawChart(chart, { canvas, large: true });
+    draw();
+    window.addEventListener('resize', draw, { passive: true });
+    const close = () => {
+        window.removeEventListener('resize', draw);
+        document.removeEventListener('keydown', onKey);
+        backdrop.remove();
+    };
+    const onKey = e => { if (e.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    backdrop.querySelector('#nd-large-close').onclick = close;
+    backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
+}
+
 function _setChartsOfflineState(offline) {
-    const offlineSvg = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg>`;
-    const pairs = [
-        ['node-chart-cpu',  'node-chart-cpu-empty'],
-        ['node-chart-mem',  'node-chart-mem-empty'],
-        ['node-chart-disk', 'node-chart-disk-empty'],
-    ];
-    pairs.forEach(([canvasId, overlayId]) => {
-        const canvas  = document.getElementById(canvasId);
-        const overlay = document.getElementById(overlayId);
-        if (!overlay) return;
+    for (const c of CHARTS) {
+        const canvas = document.getElementById(`chart-${c.id}`);
+        const overlay = document.getElementById(`chart-${c.id}-empty`);
+        if (!overlay) continue;
         if (offline) {
-            overlay.innerHTML = `${offlineSvg}<span>Node offline</span>`;
+            overlay.innerHTML = `${OFFLINE_SVG}<span>Node offline</span>`;
             overlay.style.display = 'flex';
             if (canvas) canvas.style.opacity = '0';
         } else {
             overlay.style.display = 'none';
             if (canvas) canvas.style.opacity = '1';
         }
-    });
+    }
 
     const logsOverlay = document.getElementById('node-logs-empty');
     const logsContent = document.getElementById('node-logs-content');
     if (logsOverlay) {
         if (offline) {
-            logsOverlay.innerHTML = `${offlineSvg}<span>Node offline</span>`;
+            logsOverlay.innerHTML = `${OFFLINE_SVG}<span>Node offline</span>`;
             logsOverlay.style.display = 'flex';
             if (logsContent) logsContent.style.opacity = '0';
             hasLoadedLogs = false;
@@ -287,114 +547,25 @@ function _setChartsOfflineState(offline) {
     }
 }
 
-function _nodeChart(id, color) {
-    const canvas = document.getElementById(id);
-    if (!canvas) return null;
-    return { canvas, ctx: canvas.getContext('2d'), color };
+/* ─── Agent log and commands ───────────────────────────────────────────── */
+function initTabs() {
+    const group = document.getElementById('nd-tabs');
+    group.addEventListener('click', e => {
+        const btn = e.target.closest('[data-tab]');
+        if (!btn) return;
+        activeTab = btn.dataset.tab;
+        group.querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+        document.getElementById('tab-log').hidden = activeTab !== 'log';
+        document.getElementById('tab-commands').hidden = activeTab !== 'commands';
+        if (activeTab === 'commands') loadHistory();
+        else loadLogs();
+    });
 }
 
-function _updateNodeChart(chart, data) {
-    if (!chart) return;
-    const { canvas, ctx } = chart;
-    // Colours are design tokens so the charts follow the theme
-    const color = chart.color.startsWith('--') ? cssVar(chart.color) : chart.color;
-    canvas.width  = canvas.offsetWidth  * devicePixelRatio;
-    canvas.height = canvas.offsetHeight * devicePixelRatio;
-    const W = canvas.width, H = canvas.height, dpr = devicePixelRatio;
-    ctx.clearRect(0, 0, W, H);
-    if (data.length < 2) return;
-
-    const vals   = data.map(d => d.v);
-    const rawMax = Math.max(...vals);
-    const yMax   = rawMax === 0 ? 10 : Math.max(Math.ceil(rawMax / 10) * 10, 10);
-
-    const pL = 26 * dpr;   // left — y labels
-    const pR =  6 * dpr;   // right
-    const pT = 16 * dpr;   // top  — current value label
-    const pB =  4 * dpr;   // bottom (no time labels — too small)
-
-    const cW = W - pL - pR;
-    const cH = H - pT - pB;
-    const xStp = cW / (vals.length - 1);
-    const yS   = v => pT + cH - Math.min(Math.max(v, 0) / yMax, 1) * cH;
-
-    // Grid lines + Y labels: 0 / 50 / 100 % of max
-    ctx.font = `${9 * dpr}px Geist, sans-serif`;
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
-    for (let i = 0; i <= 2; i++) {
-        const frac = i / 2;
-        const y    = pT + cH - frac * cH;
-        ctx.strokeStyle = cssVar('--line');
-        ctx.lineWidth   = dpr;
-        ctx.beginPath(); ctx.moveTo(pL, y); ctx.lineTo(W - pR, y); ctx.stroke();
-        ctx.fillStyle = cssVar('--faint');
-        ctx.fillText((yMax * frac).toFixed(0), pL - 4 * dpr, y);
-    }
-
-    // Gradient fill
-    const grad = ctx.createLinearGradient(0, pT, 0, pT + cH);
-    grad.addColorStop(0, color + '1c');
-    grad.addColorStop(1, color + '00');
-    ctx.beginPath();
-    ctx.moveTo(pL, yS(vals[0]));
-    vals.forEach((v, i) => { if (i > 0) ctx.lineTo(pL + i * xStp, yS(v)); });
-    ctx.lineTo(pL + (vals.length - 1) * xStp, pT + cH);
-    ctx.lineTo(pL, pT + cH);
-    ctx.closePath();
-    ctx.fillStyle = grad;
-    ctx.fill();
-
-    // Line
-    ctx.beginPath();
-    ctx.moveTo(pL, yS(vals[0]));
-    vals.forEach((v, i) => { if (i > 0) ctx.lineTo(pL + i * xStp, yS(v)); });
-    ctx.strokeStyle = color;
-    ctx.lineWidth   = 1.5 * dpr;
-    ctx.lineJoin    = 'round';
-    ctx.stroke();
-
-    // Current value — top right
-    const cur = vals[vals.length - 1];
-    ctx.font         = `600 ${10 * dpr}px Geist, sans-serif`;
-    ctx.textAlign    = 'right';
-    ctx.textBaseline = 'top';
-    ctx.fillStyle    = color;
-    ctx.fillText(`${cur.toFixed(1)}%`, W - pR, 3 * dpr);
-}
-
-
-function _emptyState(svgPath, label) {
-    const svg = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">${svgPath}</svg>`;
-    return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;height:100%;color:var(--text-muted)">${svg}<span style="font-size:11px;font-weight:500;opacity:0.5">${label}</span></div>`;
-}
-
-function renderCommands(cmds) {
-    const list = document.getElementById('node-cmd-list');
-    if (!list) return;
-    if (!cmds.length) {
-        list.innerHTML = `<div style="font-size:12px;color:var(--text-muted)">No active commands.</div>`;
-        return;
-    }
-    list.innerHTML = cmds.map(c => `
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:8px">
-            <div>
-                <div style="font-size:13px;font-weight:500;color:var(--text-primary)">${escHtml(c.command_type)}</div>
-                ${c.app_id ? `<div style="font-size:11px;color:var(--text-muted)">App #${c.app_id}</div>` : ''}
-            </div>
-            <div style="text-align:right">
-                <div style="font-size:12px;font-weight:600">${escHtml(c.status)}</div>
-                <div style="font-size:11px;color:var(--text-muted)">${new Date(c.created_at).toLocaleTimeString()}</div>
-            </div>
-        </div>
-    `).join('');
-}
-
-/* ─── Logs & History tab ────────────────────────────────────────────────── */
 async function loadLogs() {
     const content = document.getElementById('node-logs-content');
     if (!content) return;
-    if (!node || node.status !== 'online') {
+    if (!node || (node.status !== 'online' && !node.is_local)) {
         _setChartsOfflineState(true);
         return;
     }
@@ -431,6 +602,36 @@ async function loadLogs() {
     }
 }
 
+function _isNearBottom(el, threshold = 28) {
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+}
+
+async function loadHistory() {
+    const list = document.getElementById('node-history-list');
+    if (!list) return;
+    if (!list.children.length) list.innerHTML = `<span style="color:var(--muted)">${spinner} Loading…</span>`;
+    try {
+        const history = await api.listNodeCommands(NODE_ID);
+        if (!history.length) {
+            list.innerHTML = `<span style="color:var(--muted)">No commands yet. Questions and jobs the primary sends this node (logs, stats, backups) show up here.</span>`;
+            return;
+        }
+        list.innerHTML = history.slice(0, 80).map(c => {
+            const tone = c.status === 'done' ? 'var(--green)' : (c.status === 'failed' ? 'var(--red)' : 'var(--yellow)');
+            return `<div class="cmd-row">
+                <span class="dot" style="background:${tone}"></span>
+                <span class="cmd-row-time">${fmtDate(c.created_at)}</span>
+                <span class="cmd-row-type">${escHtml(c.command_type)}${c.app_id ? ' \u00b7 app #' + c.app_id : ''}</span>
+                <span class="cmd-row-status" style="color:${tone}">${escHtml(c.status)}</span>
+                ${c.error_message ? `<span class="cmd-row-error">${escHtml(c.error_message)}</span>` : ''}
+            </div>`;
+        }).join('');
+    } catch (e) {
+        list.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`;
+    }
+}
+
+/* ─── Actions ───────────────────────────────────────────────────────────── */
 async function cleanupDocker() {
     const btn = document.getElementById('btn-docker-cleanup');
     btn.disabled = true;
@@ -448,46 +649,6 @@ async function cleanupDocker() {
     }
 }
 
-function _isNearBottom(el, threshold = 28) {
-    return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
-}
-
-async function loadHistory() {
-    const list = document.getElementById('node-history-list');
-    if (!list) return;
-    list.style.alignItems = '';
-    list.style.justifyContent = '';
-    list.innerHTML = `<div style="padding:12px 0;font-size:12px;color:var(--text-muted)">${spinner} Loading…</div>`;
-    try {
-        const history = await api.listNodeCommands(NODE_ID);
-        if (!history.length) {
-            list.style.alignItems = 'center';
-            list.style.justifyContent = 'center';
-            list.innerHTML = _emptyState('<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>', 'No command history');
-            return;
-        }
-        list.style.alignItems = '';
-        list.style.justifyContent = '';
-        list.innerHTML = history.slice(0, 50).map(c => {
-            const ok = c.status === 'done';
-            const tone = ok ? 'var(--green)' : (c.status === 'failed' ? 'var(--red)' : 'var(--yellow)');
-            return `
-            <div class="cmd-row">
-                <span class="dot" style="background:${tone}"></span>
-                <span class="cmd-row-main">
-                    <span class="cmd-row-type">${escHtml(c.command_type)}</span>
-                    <span class="cmd-row-meta">${fmtDate(c.created_at)}${c.app_id ? ' · app #' + c.app_id : ''}</span>
-                    ${c.error_message ? `<span class="cmd-row-error">${escHtml(c.error_message)}</span>` : ''}
-                </span>
-                <span class="cmd-row-status" style="color:${tone}">${escHtml(c.status)}</span>
-            </div>`;
-        }).join('');
-    } catch (e) {
-        list.innerHTML = `<div style="color:var(--red);font-size:12px">${escHtml(e.message)}</div>`;
-    }
-}
-
-/* ─── Actions ───────────────────────────────────────────────────────────── */
 async function renameNode() {
     const newName = await prompt('Rename Node', 'New display name for this node', node.name);
     if (!newName || newName === node.name) return;
@@ -495,9 +656,7 @@ async function renameNode() {
     try {
         const updated = await api.updateNode(NODE_ID, { name: newName.trim() });
         node.name = updated.name;
-        document.getElementById('node-name').textContent = updated.name;
-        setCrumbs([{ label: 'Nodes', href: '/#nodes-section' }, updated.name]);
-        document.title = `${updated.name} — Node — Cloudbase`;
+        renderHeader();
         toast('Node name updated');
     } catch (e) {
         toast(e.message, 'error');
@@ -531,7 +690,6 @@ async function deleteNode() {
         toast(e.message, 'error');
     }
 }
-
 
 function escHtml(v) {
     return String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

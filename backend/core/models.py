@@ -131,6 +131,12 @@ class Node(Base):
     node_cpu_percent    = Column(Float, nullable=True)
     node_memory_percent = Column(Float, nullable=True)
     node_disk_percent   = Column(Float, nullable=True)
+    # Latest network / disk counters (bytes since boot) and load of the server (see nodes/metrics.py)
+    node_net_rx         = Column(Float, nullable=True)
+    node_net_tx         = Column(Float, nullable=True)
+    node_disk_read      = Column(Float, nullable=True)
+    node_disk_write     = Column(Float, nullable=True)
+    node_load_1         = Column(Float, nullable=True)
     wg_public_key       = Column(String(60), nullable=True)   # WireGuard public key of this node
     wg_ip               = Column(String(20), nullable=True)   # its address on the private network
     wg_state            = Column(String(20), nullable=True)   # up | down | None (not enrolled)
@@ -245,6 +251,11 @@ class NodeMetricsHistory(Base):
     cpu_percent    = Column(Float, nullable=True)
     memory_percent = Column(Float, nullable=True)
     disk_percent   = Column(Float, nullable=True)
+    net_rx_bytes     = Column(Float, nullable=True)     # counters since boot: the charts show the rate between samples
+    net_tx_bytes     = Column(Float, nullable=True)
+    disk_read_bytes  = Column(Float, nullable=True)
+    disk_write_bytes = Column(Float, nullable=True)
+    load_1           = Column(Float, nullable=True)
 
 
 class SystemConfig(Base):

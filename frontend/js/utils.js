@@ -242,6 +242,16 @@ export function mergeEnvIntoRows(container, vars, addRow) {
 }
 
 /* ─── Format helpers ────────────────────────────────────────────────────── */
+/** Points for a small sparkline (an SVG polyline) from a list of numbers; '' while there is nothing to show. */
+export function sparkPoints(values, w = 96, h = 18, pad = 2) {
+  if (values.length < 2) return '';
+  const max = Math.max(...values), min = Math.min(...values);
+  if (max === min) return '';  // no variation yet: a flat line carries no information
+  const span = max - min;
+  return values.map((v, i) =>
+    `${(i * w / (values.length - 1)).toFixed(1)},${(h - pad - ((v - min) / span) * (h - pad * 2)).toFixed(1)}`).join(' ');
+}
+
 export function fmtUptime(secs) {
   const d = Math.floor(secs / 86400);
   if (d > 0) return `${d}d ${Math.floor((secs % 86400) / 3600)}h`;

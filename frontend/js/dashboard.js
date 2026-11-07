@@ -1,5 +1,5 @@
 import { api, wsNodeEvents, PermissionError } from './api.js';
-import { icon, toast, confirm } from './utils.js';
+import { icon, toast, confirm, sparkPoints } from './utils.js';
 import { openDeployModal } from './modal.js';
 import { cronSummary } from './cron.js';
 import { renderDatabasesTable, openCreateDatabaseDialog } from './databases.js';
@@ -173,15 +173,6 @@ async function loadOverviewHistory() {
     _history.nodes = pick('nodes_online');
     renderKpis();
   } catch { /* sparklines are optional */ }
-}
-
-function sparkPoints(values, w = 96, h = 18, pad = 2) {
-  if (values.length < 2) return '';
-  const max = Math.max(...values), min = Math.min(...values);
-  if (max === min) return '';  // no variation yet: a flat line carries no information
-  const span = max - min;
-  return values.map((v, i) =>
-    `${(i * w / (values.length - 1)).toFixed(1)},${(h - pad - ((v - min) / span) * (h - pad * 2)).toFixed(1)}`).join(' ');
 }
 
 function setKpi(id, value, unit, histKey) {

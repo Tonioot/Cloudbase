@@ -4,6 +4,8 @@ import logging
 import time as _time
 from collections import deque
 import psutil
+from core import sysmetrics
+from nodes import metrics as node_metrics
 from sqlalchemy import select
 from core.database import AsyncSessionLocal
 from core.models import Application, Node as _Node, ApplicationReplica as _AR, OverviewHistory, NodeMetricsHistory, StatsHistory, ApplicationReplica as _AppReplica, Application as _App
@@ -294,11 +296,13 @@ async def _overview_sampler():
                 for n in online:
                     if n.is_local:
                         vm = psutil.virtual_memory()
-                        cpu, mem, disk = local_cpu, vm.percent, psutil.disk_usage("/").percent
+                        readings = {**sysmetrics.collect(), "cpu_percent": local_cpu}
+                        cpu, mem = local_cpu, vm.percent
                         mem_total += vm.total / 1024 / 1024
                         mem_used += vm.used / 1024 / 1024
                     else:
-                        cpu, mem, disk = n.node_cpu_percent, n.node_memory_percent, n.node_disk_percent
+                        readings = node_metrics.readings_of(n)
+                        cpu, mem = n.node_cpu_percent, n.node_memory_percent
                         try:
                             total = (json.loads(n.metadata_json or "{}") or {}).get("ram_total_mb")
                         except Exception:
@@ -308,8 +312,7 @@ async def _overview_sampler():
                             mem_used += total * mem / 100
                     if cpu is not None:
                         cpu_vals.append(cpu)
-                    db.add(NodeMetricsHistory(node_id=n.id, timestamp=now, cpu_percent=cpu,
-                                              memory_percent=mem, disk_percent=disk))
+                    db.add(node_metrics.history_row(n.id, now, readings))
 
                 db.add(OverviewHistory(
                     timestamp=now,
