@@ -119,7 +119,8 @@ cloudbase stop</pre>
 <ul>
   <li><strong>Web Service</strong> — anything that listens on a port and serves HTTP: an API, a Next.js or Django app, a dashboard.</li>
   <li><strong>Static Site</strong> — plain HTML/CSS/JS, served by nginx. Optionally built first (Vite, Astro, a React SPA).</li>
-  <li><strong>Background Worker</strong> — no port and no URL: Discord bots, queue consumers, scheduled jobs.</li>
+  <li><strong>Background Worker</strong> — no port and no URL: Discord bots, queue consumers.</li>
+  <li><strong>Cron Job</strong> — runs a command on a schedule instead of staying up: backups, reports, cleanups. Each run gets a fresh container. See <a href="/guides?g=cron-jobs">Cron jobs</a>.</li>
 </ul>
 
 <h2>2. Source</h2>
@@ -131,7 +132,7 @@ cloudbase stop</pre>
 
 <h2>3. Process</h2>
 <ul>
-  <li><strong>Start command</strong> — what runs inside the container, e.g. <code>npm start</code>, <code>python main.py</code>, <code>gunicorn app:app -b 0.0.0.0:8000</code>. For static sites this field becomes the <strong>publish directory</strong> (the folder with <code>index.html</code>).</li>
+  <li><strong>Start command</strong> — what runs inside the container, e.g. <code>npm start</code>, <code>python main.py</code>, <code>gunicorn app:app -b 0.0.0.0:8000</code>. For static sites this field becomes the <strong>publish directory</strong> (the folder with <code>index.html</code>). For a cron job it becomes the <strong>command</strong> that runs on every run, and you also pick the schedule, timezone and time limit.</li>
   <li><strong>Build command</strong> — runs once while the image is built, e.g. <code>npm run build</code>. Not run on every start.</li>
   <li><strong>Internal port</strong> — the port your app listens on <em>inside</em> the container. Your app must listen on <code>0.0.0.0</code>, not <code>localhost</code>, or nginx can’t reach it.</li>
 </ul>
@@ -167,8 +168,8 @@ cloudbase stop</pre>
   slug: 'app-types',
   group: 'Apps',
   title: 'App types & builds',
-  summary: 'Web services, static sites and workers, generated vs. your own Dockerfile, and build commands.',
-  keywords: 'dockerfile build command static worker runtime node python go ruby php',
+  summary: 'Web services, static sites, workers and cron jobs, generated vs. your own Dockerfile, and build commands.',
+  keywords: 'dockerfile build command static worker cron job runtime node python go ruby php',
   lead: 'Every app becomes a Docker image. How that image is made depends on the app type, on whether your repository has its own Dockerfile, and on the build command.',
   body: `
 <h2>Web services</h2>
@@ -181,6 +182,9 @@ cloudbase stop</pre>
 
 <h2>Background workers</h2>
 <p>Workers have no port and no domain. Cloudbase starts the container, restarts it according to its restart policy and streams its logs. Maintenance pages, domains and health checks don’t apply.</p>
+
+<h2>Cron jobs</h2>
+<p>A cron job is built like any other app, but it doesn’t stay up: it has no port and no domain, and it runs its <strong>command</strong> on a schedule in a fresh container per run. You set the schedule (cron syntax and timezone), a time limit and the node the runs start on. The start command field is replaced by that command; an empty command runs the image’s own. Maintenance pages and health checks don’t apply. Runs, exit codes and output are on the Runs tab — see <a href="/guides?g=cron-jobs">Cron jobs</a>.</p>
 
 <h2>Generated Dockerfile</h2>
 <p>Without a Dockerfile in the repository, Cloudbase writes one based on the runtime it detects from the start command:</p>
