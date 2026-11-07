@@ -197,6 +197,24 @@ def gateway_ip() -> str:
 
 # ── Listeners ─────────────────────────────────────────────────────────────────
 
+WARN_EVERY_SECONDS = 30
+_last_warned: dict[int, float] = {}
+_not_logged: dict[int, int] = {}
+
+
+def _warn_upstream_failed(database_id: int, error: Exception) -> None:
+    """While the primary is away every client that connects fails: say so once in a while, not for each of them."""
+    import time
+    now = time.monotonic()
+    if now - _last_warned.get(database_id, -WARN_EVERY_SECONDS) < WARN_EVERY_SECONDS:
+        _not_logged[database_id] = _not_logged.get(database_id, 0) + 1
+        return
+    more = _not_logged.pop(database_id, 0)
+    _last_warned[database_id] = now
+    log.warning("[db-proxy] database %s: upstream connection failed: %s%s", database_id, error,
+                f" ({more} more connections failed in the last {WARN_EVERY_SECONDS}s)" if more else "")
+
+
 async def _serve(database_id: int, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     client = TcpStream(reader, writer)
     if _connector is None:
@@ -205,7 +223,7 @@ async def _serve(database_id: int, reader: asyncio.StreamReader, writer: asyncio
     try:
         upstream = await _connector(database_id)
     except Exception as e:
-        log.warning("[db-proxy] database %s: upstream connection failed: %s", database_id, e)
+        _warn_upstream_failed(database_id, e)
         await client.close()
         return
     await pipe(client, upstream)
