@@ -396,7 +396,7 @@
 .inst-list { overflow-x: auto; }
 .inst-main {
   display: grid;
-  grid-template-columns: 100px 110px minmax(100px, 1fr) 80px 120px 130px 72px 150px;
+  grid-template-columns: 108px 110px minmax(100px, 1fr) 80px 120px 130px 72px 150px;
   gap: 14px;
   align-items: center;
   min-width: 860px;
@@ -404,7 +404,7 @@
 .inst-head { padding: 10px 0; font-size: 12px; color: var(--faint); border-bottom: 1px solid var(--line); }
 .inst-row { padding: 12px 0; border-bottom: 1px solid var(--line); }
 #btn-remove-selected[hidden], #btn-restart-selected[hidden] { display: none; }
-.inst-id { display: inline-flex; align-items: center; gap: 8px; }
+.inst-id { display: inline-flex; align-items: center; gap: 14px; }
 .inst-check { position: relative; display: inline-flex; cursor: pointer; }
 .inst-check input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
 .inst-check-box {
@@ -444,7 +444,7 @@
 .inst-node { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inst-uptime { color: var(--muted); font-size: 12px; }
 .inst-actions { display: flex; justify-content: flex-end; gap: 6px; }
-.inst-meta { display: flex; gap: 14px; padding: 6px 0 0 114px; font-size: 12px; color: var(--faint); }
+.inst-meta { display: flex; gap: 14px; padding: 6px 0 0 122px; font-size: 12px; color: var(--faint); }
 .inst-meta .mono { font-family: var(--font-mono); }
 .inst-error {
   margin: 8px 0 0 70px;
