@@ -125,6 +125,8 @@ POST    /api/apps/{app_id}/cron/run
 POST    /api/apps/{app_id}/deploy-blue-green
 POST    /api/apps/{app_id}/deploy-rolling
 POST    /api/apps/{app_id}/deploy/stream
+POST    /api/apps/{app_id}/instances/remove
+POST    /api/apps/{app_id}/instances/restart
 POST    /api/apps/{app_id}/instances/{instance_id}/restart
 POST    /api/apps/{app_id}/maintenance-mode/toggle
 POST    /api/apps/{app_id}/maintenance-pages/render

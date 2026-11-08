@@ -416,6 +416,21 @@ def test_new_instances_go_to_the_emptiest_node_and_unhealthy_ones_are_removed_fi
     assert [x.id for x in pick_removals([r(1, 1), r(2, 2), r(3, 1), r(4, 2)], 2, 1)] == [4, 3]
 
 
+def test_several_instances_can_be_removed_or_restarted_in_one_request(admin, setup):
+    node, app = setup
+    node_id, _ = node("c-bulk")
+    app_id = app("c-bulk-app")
+    ids = [_replica(app_id, node_id, 9310 + i, status="running") for i in range(3)]
+    for rid in ids:
+        _start(node_id, rid)
+    assert admin.post(f"/api/apps/{app_id}/instances/restart", json={"ids": ids[:2]}).status_code == 200
+    assert admin.post(f"/api/apps/{app_id}/instances/remove", json={"ids": ids[:2]}).status_code == 200
+    assert _row(ids[0]) is None and _row(ids[1]) is None and _row(ids[2]) is not None
+    # An id that is not this app's instance changes nothing at all
+    assert admin.post(f"/api/apps/{app_id}/instances/remove", json={"ids": [ids[2], 999999]}).status_code == 404
+    assert _row(ids[2]) is not None
+
+
 def test_no_command_for_starting_or_stopping_is_left_in_the_code():
     from pathlib import Path
     backend = Path(__file__).resolve().parent.parent / "backend"

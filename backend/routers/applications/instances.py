@@ -1,6 +1,8 @@
 import asyncio
 import json
+from typing import List
 from fastapi import Depends, APIRouter, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal, get_db
@@ -136,6 +138,54 @@ async def _restart_replica(app, replica, db, actor):
     if _has_public_nginx_domain(app):
         await _write_app_nginx_config(app, db, local_node)
 
+
+
+class InstanceIdsRequest(BaseModel):
+    ids: List[int] = Field(..., min_length=1, max_length=50)
+
+
+async def _replicas_of_app(app_id, ids, db):
+    result = await db.execute(
+        select(ApplicationReplica).where(ApplicationReplica.id.in_(ids), ApplicationReplica.app_id == app_id)
+    )
+    replicas = result.scalars().all()
+    if len(replicas) != len(set(ids)):
+        raise HTTPException(404, "One or more instances were not found")
+    return replicas
+
+
+@router.post("/{app_id}/instances/restart")
+@activity.tracked("restarting")
+async def restart_instances(
+    app_id: int,
+    req: InstanceIdsRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("apps.restart")),
+    actor: str = Depends(_auth.get_current_actor),
+):
+    """Restart several instances of an app in one go."""
+    app = await _get_or_404(app_id, db)
+    replicas = await _replicas_of_app(app_id, req.ids, db)
+    for replica in replicas:
+        await _restart_replica(app, replica, db, actor)
+    await db.commit()
+    return {"status": "restarting", "instance_ids": sorted(r.id for r in replicas)}
+
+
+@router.post("/{app_id}/instances/remove")
+async def remove_instances(
+    app_id: int,
+    req: InstanceIdsRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("apps.scale")),
+    actor: str = Depends(_auth.get_current_actor),
+):
+    """Stop and remove several instances of an app in one go."""
+    app = await _get_or_404(app_id, db)
+    replicas = await _replicas_of_app(app_id, req.ids, db)
+    await _remove_replicas(app, replicas, db, actor)
+    await db.commit()
+    return {"status": "deleted", "instance_ids": sorted(r.id for r in replicas)}
 
 
 @router.delete("/{app_id}/instances/{instance_id}")
