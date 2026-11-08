@@ -13,6 +13,7 @@ from apps.runtime import _start_replica_runtime
 from apps.serializers import _replica_to_dict, _get_or_404
 from apps.validation import _assign_external_port
 from routers.applications.schemas import ScaleRequest
+from routers.applications.instances import _remove_replicas
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
@@ -27,6 +28,20 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
         raise HTTPException(400, "A cron job has no instances: each run starts its own container")
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
+
+    if req.target is not None:
+        current = (await db.execute(
+            select(ApplicationReplica).where(ApplicationReplica.app_id == app_id).order_by(ApplicationReplica.id)
+        )).scalars().all()
+        if req.target < len(current):
+            # Fewer wanted: the newest instances go first
+            gone = current[req.target:]
+            await _remove_replicas(app, gone, db, actor)
+            await db.commit()
+            return {"instances": [], "removed": [r.id for r in gone], "requested": req.target, "error": None}
+        if req.target == len(current):
+            return {"instances": [], "removed": [], "requested": req.target, "error": None}
+        req.count = req.target - len(current)
 
     instance_count_result = await db.execute(select(func.count()).select_from(ApplicationReplica))
     existing = instance_count_result.scalar()
@@ -59,7 +74,7 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
             log.warning("Scaling %s stopped after %d of %d: %s", app_id, len(started), req.count, error)
             break
 
-    if req.count == 1:
+    if req.count == 1 and req.target is None:
         return started[0]
     return {"instances": started, "requested": req.count, "error": error}
 

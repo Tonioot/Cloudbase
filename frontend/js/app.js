@@ -2376,6 +2376,32 @@ async function initInstances() {
   if (!wrap) return;
   const pendingRemovals = new Set();
   let pendingCreate = false;
+  const selected = new Set();
+  const removeSelBtn = document.getElementById('btn-remove-selected');
+
+  const restartSelBtn = document.getElementById('btn-restart-selected');
+  const targetInput = document.getElementById('inst-target');
+  const applyTargetBtn = document.getElementById('btn-apply-target');
+  let currentCount = 0;
+
+  function updateSelectionBtn() {
+    if (removeSelBtn) {
+      removeSelBtn.hidden = selected.size === 0;
+      removeSelBtn.textContent = `Remove selected (${selected.size})`;
+    }
+    if (restartSelBtn) {
+      restartSelBtn.hidden = selected.size === 0;
+      restartSelBtn.textContent = `Restart selected (${selected.size})`;
+    }
+  }
+
+  function updateTargetControl() {
+    if (!targetInput) return;
+    // Do not overwrite what the user is typing
+    if (document.activeElement !== targetInput && !targetInput.dataset.dirty) targetInput.value = currentCount || '';
+    const wanted = parseInt(targetInput.value, 10);
+    applyTargetBtn.hidden = !(Number.isInteger(wanted) && wanted >= 1 && wanted !== currentCount);
+  }
 
   async function renderInstances() {
     let instances = [], instStats = {};
@@ -2388,6 +2414,13 @@ async function initInstances() {
       wrap.innerHTML = `<div style="color:var(--red);padding:12px;font-size:13px">Failed to load instances: ${escHtml(e.message)}</div>`;
       return;
     }
+
+    // Forget selected instances that are gone
+    const liveIds = new Set(instances.map(i => i.id));
+    for (const id of [...selected]) if (!liveIds.has(id)) selected.delete(id);
+    updateSelectionBtn();
+    currentCount = instances.length;
+    updateTargetControl();
 
     if (!instances.length) {
       wrap.innerHTML = '<div style="color:var(--text-muted);padding:12px;font-size:13px">No instances found.</div>';
@@ -2494,7 +2527,7 @@ async function initInstances() {
       return `
       <div class="inst-row"${isStarting ? ' data-starting="1"' : ''}>
         <div class="inst-main">
-          <span class="inst-id">#${inst.id}</span>
+          <span class="inst-id"><input type="checkbox" class="inst-select" data-perm="apps.scale" data-id="${inst.id}" aria-label="Select instance ${inst.id}" ${selected.has(inst.id) ? 'checked' : ''} ${removePending ? 'disabled' : ''} />#${inst.id}</span>
           <span class="inst-status" style="color:${statusColor}"><span class="dot" style="background:${statusDot}"></span>${inst.status}</span>
           <span class="inst-node">${escHtml(nodeName)}</span>
           <span class="inst-port">:${inst.external_port || '—'}</span>
@@ -2521,6 +2554,14 @@ async function initInstances() {
       </div>`;
     if (window._applyPermVisibility) window._applyPermVisibility(wrap);
     _rescheduleInstancesTimer();
+
+    wrap.querySelectorAll('.inst-select').forEach(box => {
+      box.addEventListener('change', () => {
+        const id = parseInt(box.dataset.id, 10);
+        if (box.checked) selected.add(id); else selected.delete(id);
+        updateSelectionBtn();
+      });
+    });
 
     wrap.querySelectorAll('.inst-restart-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -2580,12 +2621,41 @@ async function initInstances() {
 
   await renderInstances();
 
+  if (removeSelBtn) {
+    removeSelBtn.onclick = async () => {
+      const ids = [...selected];
+      if (!ids.length) return;
+      const ok = await confirm(
+        ids.length === 1 ? 'Remove instance?' : `Remove ${ids.length} instances?`,
+        'The selected containers will be stopped and removed.');
+      if (!ok) return;
+      ids.forEach(id => pendingRemovals.add(id));
+      selected.clear();
+      updateSelectionBtn();
+      clearInterval(_instancesRefreshTimer);
+      await renderInstances();
+      try {
+        await api.removeInstances(APP_ID, ids);
+        await _waitForInstanceSync(instances => !instances.some(i => ids.includes(i.id)));
+        app = await api.getApp(APP_ID);
+        updateHeaderStatus();
+        renderHeader();
+        toast(ids.length === 1 ? 'Instance removed' : `${ids.length} instances removed`);
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        ids.forEach(id => pendingRemovals.delete(id));
+        await renderInstances();
+      }
+    };
+  }
+
   const refreshBtn = document.getElementById('btn-instances-refresh');
   if (refreshBtn) refreshBtn.onclick = renderInstances;
 
   const addBtn = document.getElementById('btn-add-instance');
   if (addBtn) {
-    addBtn.onclick = async () => {
+    const openAddDialog = async (presetCount = 1) => {
       let nodes = [];
       try {
         nodes = await api.listNodes();
@@ -2627,7 +2697,7 @@ async function initInstances() {
               <fieldset class="form-block">
                 <legend>Amount <small>how many instances to start with these settings</small></legend>
                 <label class="unit-input"><span class="sr-only">Number of instances</span>
-                  <input id="inst-count" class="input" type="number" min="1" max="20" step="1" value="1" />
+                  <input id="inst-count" class="input" type="number" min="1" max="20" step="1" value="${presetCount}" />
                   <span class="unit">instances</span>
                 </label>
               </fieldset>
@@ -2741,6 +2811,66 @@ async function initInstances() {
         pendingCreate = false;
         addBtn.disabled = false;
         addBtn.textContent = 'Add Instance';
+      }
+    };
+    addBtn.onclick = () => openAddDialog();
+
+    if (targetInput) {
+      targetInput.addEventListener('input', () => { targetInput.dataset.dirty = '1'; updateTargetControl(); });
+      targetInput.addEventListener('keydown', e => { if (e.key === 'Enter') applyTargetBtn.click(); });
+      applyTargetBtn.onclick = async () => {
+        const wanted = parseInt(targetInput.value, 10);
+        if (!Number.isInteger(wanted) || wanted < 1 || wanted === currentCount) return;
+        const done = () => { delete targetInput.dataset.dirty; };
+        if (wanted > currentCount) {
+          // More: pick node and limits in the same dialog as Add instance
+          await openAddDialog(wanted - currentCount);
+          done();
+          await renderInstances();
+          return;
+        }
+        const n = currentCount - wanted;
+        const ok = await confirm(`Scale down to ${wanted}?`, `The newest ${n === 1 ? 'instance' : n + ' instances'} will be stopped and removed.`);
+        if (!ok) return;
+        applyTargetBtn.disabled = true;
+        clearInterval(_instancesRefreshTimer);
+        try {
+          await api.scaleApp(APP_ID, { target: wanted });
+          await _waitForInstanceSync(instances => instances.length <= wanted);
+          app = await api.getApp(APP_ID);
+          updateHeaderStatus();
+          renderHeader();
+          toast(`Scaled down to ${wanted}`);
+        } catch (e) {
+          toast(e.message, 'error');
+        } finally {
+          applyTargetBtn.disabled = false;
+          done();
+          await renderInstances();
+        }
+      };
+    }
+  }
+
+  if (restartSelBtn) {
+    restartSelBtn.onclick = async () => {
+      const ids = [...selected];
+      if (!ids.length) return;
+      const ok = await confirm(
+        ids.length === 1 ? 'Restart instance?' : `Restart ${ids.length} instances?`,
+        'The selected containers will be stopped and started again.');
+      if (!ok) return;
+      restartSelBtn.disabled = true;
+      try {
+        await api.restartInstances(APP_ID, ids);
+        selected.clear();
+        updateSelectionBtn();
+        toast(ids.length === 1 ? 'Instance restarting…' : `${ids.length} instances restarting…`);
+        await renderInstances();
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        restartSelBtn.disabled = false;
       }
     };
   }

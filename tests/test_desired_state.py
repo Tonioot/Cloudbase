@@ -386,6 +386,44 @@ def test_deleting_an_instance_needs_no_message_to_the_node(admin, setup):
     assert _run(commands()) == []
 
 
+def test_several_instances_can_be_removed_in_one_request(admin, setup):
+    node, app = setup
+    node_id, _ = node("c-bulk")
+    app_id = app("c-bulk-app")
+    ids = [_replica(app_id, node_id, 9310 + i, status="running") for i in range(3)]
+    for rid in ids:
+        _start(node_id, rid)
+    assert admin.post(f"/api/apps/{app_id}/instances/remove", json={"ids": [ids[0], ids[1]]}).status_code == 200
+    assert _row(ids[0]) is None and _row(ids[1]) is None and _row(ids[2]) is not None
+    # An id that is not this app's instance removes nothing at all
+    assert admin.post(f"/api/apps/{app_id}/instances/remove", json={"ids": [ids[2], 999999]}).status_code == 404
+    assert _row(ids[2]) is not None
+
+
+def test_scaling_to_a_wanted_number_removes_the_newest_instances(admin, setup):
+    node, app = setup
+    node_id, _ = node("c-target")
+    app_id = app("c-target-app")
+    ids = [_replica(app_id, node_id, 9320 + i, status="running") for i in range(4)]
+    for rid in ids:
+        _start(node_id, rid)
+    assert admin.post(f"/api/apps/{app_id}/scale", json={"target": 4}).json()["removed"] == []
+    body = admin.post(f"/api/apps/{app_id}/scale", json={"target": 2}).json()
+    assert body["removed"] == ids[2:]
+    assert _row(ids[0]) is not None and _row(ids[1]) is not None and _row(ids[2]) is None and _row(ids[3]) is None
+
+
+def test_several_instances_can_be_restarted_in_one_request(admin, setup):
+    node, app = setup
+    node_id, _ = node("c-restart-many")
+    app_id = app("c-restart-many-app")
+    ids = [_replica(app_id, node_id, 9330 + i, status="running") for i in range(2)]
+    for rid in ids:
+        _start(node_id, rid)
+    assert admin.post(f"/api/apps/{app_id}/instances/restart", json={"ids": ids}).status_code == 200
+    assert admin.post(f"/api/apps/{app_id}/instances/restart", json={"ids": [999999]}).status_code == 404
+
+
 def test_no_command_for_starting_or_stopping_is_left_in_the_code():
     from pathlib import Path
     backend = Path(__file__).resolve().parent.parent / "backend"

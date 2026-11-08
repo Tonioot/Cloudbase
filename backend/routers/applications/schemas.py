@@ -104,7 +104,8 @@ class AppCheckRepoRequest(BaseModel):
 
 
 class ScaleRequest(BaseModel):
-    count: int = Field(1, ge=1, le=20)
+    count: int = Field(1, ge=1, le=20)  # this many more
+    target: Optional[int] = Field(None, ge=1, le=20)  # or: this many in total (adds or removes the difference)
     node_id: Optional[int] = None
     docker_cpu_limit: Optional[float] = None
     docker_memory_limit_mb: Optional[int] = None
