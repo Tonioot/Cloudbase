@@ -67,37 +67,6 @@ async def stream_app_cloudbase_logs(app_id: int, websocket: WebSocket):
         pump.cancel()
 
 
-@router.get("/api/apps/{app_id}/logs/tail")
-async def logs_tail(app_id: int, limit: int = Query(200, ge=1, le=2000), db: AsyncSession = Depends(get_db), _user: dict = Depends(auth.require_permission("apps.view"))):
-    app = await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
-    node = await _get_app_node(app, db, local_node)
-
-    if node.is_local:
-        lines = pm.get_recent_docker_logs(app_id, limit)
-        return {"lines": lines, "remote": False}
-
-    if node.status != "online":
-        return {"lines": [], "remote": True, "error": "Node is offline"}
-
-    cmd = await queue_node_command(
-        db,
-        node_id=node.id,
-        app_id=app.id,
-        command_type="get_logs_tail",
-        payload={"app_id": app.id, "app_name": app.name, "limit": limit},
-    )
-    done = await wait_for_node_command(db, cmd.id, timeout_seconds=20)
-    if done.status != "done":
-        return {"lines": [], "remote": True, "error": done.error_message}
-
-    result = json.loads(done.result or "{}") if done.result else {}
-    return {
-        "lines": result.get("lines", []) or [],
-        "remote": True,
-    }
-
-
 @router.websocket("/ws/apps/{app_id}/logs")
 async def stream_logs(app_id: int, websocket: WebSocket):
     if not await auth.authorize_websocket(websocket, "apps.view"):

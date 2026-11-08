@@ -56,28 +56,6 @@ async def list_roles(_user: dict = Depends(auth.require_auth), db: AsyncSession 
     return out
 
 
-@router.get("/{role_id}")
-async def get_role(role_id: int, _user: dict = Depends(auth.require_auth), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Role).where(Role.id == role_id))
-    role = result.scalar_one_or_none()
-    if not role:
-        raise HTTPException(status_code=404, detail="Role not found")
-    perm_res = await db.execute(
-        select(Permission)
-        .join(role_permissions, Permission.id == role_permissions.c.permission_id)
-        .where(role_permissions.c.role_id == role.id)
-        .order_by(Permission.name)
-    )
-    perms = perm_res.scalars().all()
-    return {
-        "id": role.id,
-        "name": role.name,
-        "description": role.description,
-        "created_at": role.created_at.isoformat() if role.created_at else None,
-        "permissions": [{"id": p.id, "name": p.name, "description": p.description} for p in perms],
-    }
-
-
 # ── Write endpoints (superadmin only) ─────────────────────────────────────────
 
 class CreateRoleRequest(BaseModel):

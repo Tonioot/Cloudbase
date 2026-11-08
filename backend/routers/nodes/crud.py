@@ -4,7 +4,7 @@ import secrets
 import time
 from datetime import timedelta
 from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy import delete, select, and_, func
+from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal, get_db
 from core.models import Node, NodeInvite, NodeCommand
@@ -202,31 +202,6 @@ async def ping_node(node_id: int, _user: dict = Depends(_auth.require_permission
             return {"reachable": False, "latency_ms": None, "transport": "http", "error": str(exc)}
 
     return {"reachable": False, "latency_ms": None, "transport": "none", "error": "No active connection"}
-
-
-@router.get("/{node_id}/connection-status")
-async def get_node_connection_status(node_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("nodes.view"))):
-    node = await get_node_or_404(node_id, db)
-    pending_count_result = await db.execute(
-        select(func.count()).where(
-            and_(NodeCommand.node_id == node_id, NodeCommand.status.in_(["queued", "in_progress"]))
-        )
-    )
-    pending_count = pending_count_result.scalar() or 0
-    ws_connected = node_id in _node_ws_connections
-    return {
-        "node_id": node_id,
-        "websocket_connected": ws_connected,
-        "connection_type": node.connection_type or ("websocket" if ws_connected else "http_polling"),
-        "agent_version": node.agent_version,
-        "last_seen": node.last_seen.isoformat() + "Z" if node.last_seen else None,
-        "node_metrics": {
-            "cpu_percent": node.node_cpu_percent,
-            "memory_percent": node.node_memory_percent,
-            "disk_percent": node.node_disk_percent,
-        } if node.node_cpu_percent is not None else None,
-        "pending_commands": pending_count,
-    }
 
 
 @router.get("/{node_id}/workloads")

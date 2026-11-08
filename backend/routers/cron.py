@@ -42,11 +42,6 @@ async def preview(req: PreviewRequest, _user: dict = Depends(_auth.require_permi
     return cron.preview(req.schedule, req.timezone)
 
 
-@router.get("/cron/options")
-async def options(_user: dict = Depends(_auth.require_permission("apps.view"))):
-    return {"timeouts": cron.TIMEOUT_CHOICES}
-
-
 @router.get("/{app_id}/cron/runs")
 async def list_runs(
     app_id: int,

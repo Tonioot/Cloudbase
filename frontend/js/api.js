@@ -50,7 +50,6 @@ export const api = {
   updateUser:    (id, data)  => request('PUT',    `/users/${id}`, data),
   deleteUser:    (id)        => request('DELETE', `/users/${id}`),
   listRoles:     ()          => request('GET',    '/roles'),
-  getRole:       (id)        => request('GET',    `/roles/${id}`),
   createRole:    (data)      => request('POST',   '/roles', data),
   updateRole:    (id, data)  => request('PUT',    `/roles/${id}`, data),
   deleteRole:    (id)        => request('DELETE', `/roles/${id}`),
@@ -69,7 +68,6 @@ export const api = {
   pingNode:(nodeId) => request('POST', `/nodes/${nodeId}/ping`),
   getNodeWorkloads:(nodeId) => request('GET', `/nodes/${nodeId}/workloads`),
   cleanupNodeDocker:(nodeId) => request('POST', `/nodes/${nodeId}/docker-cleanup`),
-  getNodeConnectionStatus:(nodeId) => request('GET', `/nodes/${nodeId}/connection-status`),
   getNodeMetricsHistory:(nodeId, hours = 1) => request('GET', `/nodes/${nodeId}/metrics/history?hours=${hours}`),
   getNodeAgentLogs:(nodeId, limit) => request('GET', `/nodes/${nodeId}/agent-logs?limit=${limit || 200}`),
   listDatabaseEngines: ()          => request('GET',    '/databases/engines'),
@@ -214,7 +212,6 @@ export const api = {
   fileContent:(id, p)  => request('GET',    `/apps/${id}/files/content?path=${encodeURIComponent(p)}`),
   serviceFile:()       => request('GET',    '/apps/system/service-file'),
   discoverCerts:()     => request('GET',    '/apps/system/certs'),
-  discoverAppCerts:(id)=> request('GET',    `/apps/${id}/certs`),
   uploadSystemCert: (file) => {
     const fd = new FormData(); fd.append('file', file);
     return fetch(BASE + '/system/certs/upload', { method: 'POST', body: fd, credentials: 'same-origin' })
@@ -225,8 +222,6 @@ export const api = {
     return fetch(BASE + `/apps/${id}/certs/upload`, { method: 'POST', body: fd, credentials: 'same-origin' })
       .then(r => { if (r.status === 401) { redirectToLogin(); return; } return r.json().then(d => { if (r.status === 403) throw new PermissionError(d.detail); if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`); return d; }); });
   },
-  nginxRefresh:   (id)       => request('POST',  `/apps/${id}/nginx-refresh`),
-  getMaintenancePages:   (id)       => request('GET',  `/apps/${id}/maintenance-pages`),
   getDomainServer:       ()         => request('GET',  '/domains/server'),
   checkRepo:             (data)     => request('POST', '/apps/check-repo', data),
   listDeployments:       (id, limit = 50) => request('GET', `/apps/${id}/deployments?limit=${limit}`),
@@ -261,7 +256,6 @@ export const api = {
   removeInstances:(id, ids)        => request('POST',   `/apps/${id}/instances/remove`, { ids }),
   restartInstances:(id, ids)       => request('POST',   `/apps/${id}/instances/restart`, { ids }),
   restartInstance:(id, instanceId) => request('POST',   `/apps/${id}/instances/${instanceId}/restart`),
-  getAppLogsTail: (id, lines)      => request('GET',    `/apps/${id}/logs/tail?limit=${lines || 200}`),
   getAppCloudbaseLogs: (id, { limit = 1000, component = '', level = '', q = '' } = {}) => {
     const p = new URLSearchParams({ limit });
     if (component) p.set('component', component);
@@ -280,7 +274,6 @@ export const api = {
   getNginxConfig: () => request('GET',  '/system/nginx-config'),
   setPanelDomain:    (data) => request('POST', '/system/panel-domain', data),
   setBaseDomain:     (baseDomain) => request('POST', '/system/base-domain', { base_domain: baseDomain }),
-  applyNginxConfig:(data)    => request('POST', '/system/nginx-config', data),
   getSystemSettings:  ()        => request('GET',  '/system/settings'),
   saveSystemSettings: (data)    => request('POST', '/system/settings', data),
   listGitHubTokens:  ()         => request('GET',    '/system/github-tokens'),

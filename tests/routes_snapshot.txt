@@ -11,11 +11,9 @@ DELETE  /api/system/github-tokens/{token_id}
 DELETE  /api/users/{user_id}
 GET     /
 GET     /api/apps
-GET     /api/apps/cron/options
 GET     /api/apps/system/certs
 GET     /api/apps/{app_id}
 GET     /api/apps/{app_id}/branches
-GET     /api/apps/{app_id}/certs
 GET     /api/apps/{app_id}/cloudbase-logs
 GET     /api/apps/{app_id}/commits
 GET     /api/apps/{app_id}/cron/runs
@@ -26,9 +24,6 @@ GET     /api/apps/{app_id}/files
 GET     /api/apps/{app_id}/files/content
 GET     /api/apps/{app_id}/instances
 GET     /api/apps/{app_id}/instances/stats
-GET     /api/apps/{app_id}/logs/tail
-GET     /api/apps/{app_id}/maintenance-pages
-GET     /api/apps/{app_id}/maintenance-pages/preview/{page_type}
 GET     /api/apps/{app_id}/nginx-debug
 GET     /api/apps/{app_id}/source-archive
 GET     /api/apps/{app_id}/stats/history
@@ -57,7 +52,6 @@ GET     /api/nodes/mesh
 GET     /api/nodes/{node_id}/agent-logs
 GET     /api/nodes/{node_id}/commands
 GET     /api/nodes/{node_id}/commands/{command_id}
-GET     /api/nodes/{node_id}/connection-status
 GET     /api/nodes/{node_id}/metrics/history
 GET     /api/nodes/{node_id}/workloads
 GET     /api/notifications
@@ -70,7 +64,6 @@ GET     /api/notifications/summary
 GET     /api/overview/history
 GET     /api/roles
 GET     /api/roles/permissions
-GET     /api/roles/{role_id}
 GET     /api/system/backup-storage
 GET     /api/system/github-tokens
 GET     /api/system/log-sources
@@ -125,7 +118,6 @@ POST    /api/apps/{app_id}/instances/restart
 POST    /api/apps/{app_id}/instances/{instance_id}/restart
 POST    /api/apps/{app_id}/maintenance-mode/toggle
 POST    /api/apps/{app_id}/maintenance-pages/render
-POST    /api/apps/{app_id}/nginx-refresh
 POST    /api/apps/{app_id}/pull
 POST    /api/apps/{app_id}/pull/stream
 POST    /api/apps/{app_id}/rebuild
@@ -172,8 +164,6 @@ POST    /api/system/backup-storage/test
 POST    /api/system/base-domain
 POST    /api/system/certs/upload
 POST    /api/system/github-tokens
-POST    /api/system/nginx-config
-POST    /api/system/nginx-default-catchall
 POST    /api/system/panel-domain
 POST    /api/system/settings
 POST    /api/transfer/export

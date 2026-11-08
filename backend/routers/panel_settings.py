@@ -4,18 +4,14 @@ import os
 from typing import Optional
 from fastapi import UploadFile, Depends, Body, HTTPException, File, APIRouter
 from pydantic import BaseModel
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from core.database import get_db, AsyncSessionLocal
-from core.models import Application
+from core.database import get_db
 from core import auth, token_vault, config as _cfg, system_config as _syscfg
 from nginx import certificates as nginx_certificates
 from nginx import paths as nginx_paths
 from nginx import pages as nginx_pages
 from nginx import files as nginx_files
 from nginx import config as nginx_config
-from nodes.registry import ensure_local_node as _eln
-from apps.nginx_sync import _write_app_nginx_config as _wanc
 from core.runtime import PORT
 from mesh import addressing
 from nginx.panel import _load_panel_https_domain, _refresh_all_app_nginx
@@ -27,15 +23,6 @@ router = APIRouter()
 
 
 # ── System endpoints ──────────────────────────────────────────────────────────
-class CloudbaseNginxRequest(BaseModel):
-    domain: str
-    ssl_cert_path: Optional[str] = None
-    ssl_key_path: Optional[str] = None
-    base_domain: Optional[str] = None
-    base_ssl_cert_path: Optional[str] = None
-    base_ssl_key_path: Optional[str] = None
-
-
 @router.get("/api/system/nginx-config")
 async def get_cloudbase_nginx(db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_permission("system.manage"))):
     config_path = os.path.join(nginx_paths.NGINX_SITES_DIR, "cloudbase")
@@ -52,81 +39,6 @@ async def get_cloudbase_nginx(db: AsyncSession = Depends(get_db), _: dict = Depe
         "base_domain": settings["base_domain"],
         "base_ssl_cert_path": settings["base_ssl_cert_path"],
         "base_ssl_key_path": settings["base_ssl_key_path"],
-    }
-
-
-@router.post("/api/system/nginx-config")
-async def apply_cloudbase_nginx(
-    req: CloudbaseNginxRequest,
-    db: AsyncSession = Depends(get_db),
-    _: dict = Depends(auth.require_permission("system.manage")),
-):
-    import re as _re2
-    # --- Cloudbase panel nginx ---
-    unavailable_html = nginx_pages.generate_cloudbase_unavailable_html(req.domain)
-    page_ok, page_msg = await asyncio.to_thread(nginx_files.write_cloudbase_unavailable_page, unavailable_html)
-    if not page_ok:
-        raise HTTPException(status_code=500, detail=f"Failed to write Cloudbase unavailable page: {page_msg}")
-
-    unknown_host_html = nginx_pages.generate_cloudbase_unknown_host_html(req.domain)
-    host_ok, host_msg = await asyncio.to_thread(nginx_files.write_cloudbase_unknown_host_page, unknown_host_html)
-    if not host_ok:
-        raise HTTPException(status_code=500, detail=f"Failed to write Cloudbase unknown-host page: {host_msg}")
-
-    config = nginx_config.generate_config(
-        "cloudbase",
-        req.domain,
-        PORT,
-        req.ssl_cert_path,
-        req.ssl_key_path,
-        strict_hostnames=True,
-    )
-    ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, "cloudbase", config)
-    if not ok:
-        raise HTTPException(status_code=500, detail=f"Failed to apply nginx config: {msg}")
-
-    catchall_ok, catchall_msg = await asyncio.to_thread(nginx_files.write_default_catch_all, req.ssl_cert_path, req.ssl_key_path)
-    if not catchall_ok:
-        raise HTTPException(status_code=500, detail=f"Cloudbase config applied, but failed to enforce nginx default catch-all: {catchall_msg}")
-
-    # --- Base domain for app subdomains ---
-    base_domain = str(req.base_domain or "").strip().strip(".")
-    if base_domain and not _re2.match(r'^[a-zA-Z0-9._-]+$', base_domain):
-        raise HTTPException(400, "Invalid base_domain")
-    base_ssl_cert = str(req.base_ssl_cert_path or "").strip() or None
-    base_ssl_key  = str(req.base_ssl_key_path  or "").strip() or None
-    await _syscfg.set_base_settings(
-        db,
-        base_domain=base_domain,
-        base_ssl_cert=base_ssl_cert or "",
-        base_ssl_key=base_ssl_key or "",
-    )
-
-    # Regenerate nginx for all apps in background
-    async def _refresh_apps():
-        try:
-            async with AsyncSessionLocal() as _db:
-                _apps = (await _db.execute(select(Application))).scalars().all()
-                _local = await _eln(_db)
-                _bdom  = _syscfg.get_base_domain_cached()
-                for _a in _apps:
-                    _has_c = bool(_a.nginx_enabled and _a.domain)
-                    if not _has_c and not _bdom:
-                        continue
-                    try:
-                        await _wanc(_a, _db, _local)
-                    except Exception as _e:
-                        log.warning("nginx refresh failed for app %s: %s", _a.name, _e)
-        except Exception as _e:
-            log.warning("nginx refresh batch failed: %s", _e)
-
-    asyncio.create_task(_refresh_apps())
-    _load_panel_https_domain()
-    return {
-        "ok": ok,
-        "message": msg,
-        "preview": config,
-        "default_catchall": {"ok": catchall_ok, "message": catchall_msg},
     }
 
 
@@ -244,12 +156,6 @@ async def save_system_settings(
     if sections:
         _cfg.save_config_sections(sections)
     return {"ok": True}
-
-
-@router.post("/api/system/nginx-default-catchall")
-async def apply_nginx_default_catchall(_: dict = Depends(auth.require_permission("system.manage"))):
-    ok, msg = await asyncio.to_thread(nginx_files.write_default_catch_all)
-    return {"ok": ok, "message": msg}
 
 
 @router.post("/api/system/certs/upload")

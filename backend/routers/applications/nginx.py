@@ -4,25 +4,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from nginx import paths as nginx_paths
 from nginx import config as nginx_config
-from nodes.registry import ensure_local_node
 from core import auth as _auth
-from apps.nginx_sync import _get_nginx_backends, _get_nginx_mode, _has_public_nginx_domain, _write_app_nginx_config
+from apps.nginx_sync import _get_nginx_backends, _get_nginx_mode
 from apps.serializers import _get_or_404
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
-
-
-@router.post("/{app_id}/nginx-refresh")
-async def nginx_refresh(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.configure"))):
-    """Regenerate the nginx config from the current set of running replicas."""
-    app = await _get_or_404(app_id, db)
-    if not _has_public_nginx_domain(app):
-        return {"ok": False, "message": "Nginx not configured for this app"}
-    local_node = await ensure_local_node(db)
-    await _write_app_nginx_config(app, db, local_node, mode=_get_nginx_mode(app))
-    backends = await _get_nginx_backends(app, db, local_node)
-    ok, msg = True, "ok"
-    return {"ok": ok, "message": msg, "backends": backends}
 
 
 @router.get("/{app_id}/nginx-debug")

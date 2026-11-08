@@ -20,19 +20,6 @@ log = logging.getLogger("cloudbase.apps")
 
 # ── Maintenance page endpoints ─────────────────────────────────────────────
 
-@router.get("/{app_id}/maintenance-pages")
-async def get_maintenance_pages(app_id: int, _user: dict = Depends(_auth.require_permission("apps.view")), db: AsyncSession = Depends(get_db)):
-    app = await _get_or_404(app_id, db)
-    return {
-        "maintenance_mode": app.maintenance_mode or False,
-        "update_mode":      app.update_mode or False,
-        "downtime_page":    json.loads(app.downtime_page  or "{}"),
-        "update_page":      json.loads(app.update_page    or "{}"),
-        "restart_page":     json.loads(app.restart_page   or "{}"),
-        "starting_page":    json.loads(app.starting_page  or "{}"),
-    }
-
-
 @router.put("/{app_id}/maintenance-pages")
 async def save_maintenance_pages(
     app_id: int,
@@ -142,37 +129,3 @@ async def render_maintenance_page(
     await _get_or_404(app_id, db)
     return HTMLResponse(content=nginx_pages.render_app_page(req.page_type, req.page.model_dump(), preview=True))
 
-
-@router.get("/{app_id}/maintenance-pages/preview/{page_type}")
-async def preview_maintenance_page(
-    app_id: int,
-    page_type: str,
-    _user: dict = Depends(_auth.require_permission("apps.view")),
-    db: AsyncSession = Depends(get_db),
-):
-    """Return the rendered HTML for a maintenance page — opens directly in the browser."""
-    from fastapi.responses import HTMLResponse
-
-    if page_type not in ("downtime", "update", "restart", "starting"):
-        raise HTTPException(400, "page_type must be 'downtime', 'update', 'restart', or 'starting'")
-
-    app = await _get_or_404(app_id, db)
-    if page_type == "downtime":
-        raw = app.downtime_page
-    elif page_type == "update":
-        raw = app.update_page
-    elif page_type == "restart":
-        raw = app.restart_page
-    else:
-        raw = app.starting_page
-    cfg = json.loads(raw or "{}")
-
-    if page_type == "downtime":
-        html = nginx_pages.render_app_page("downtime", cfg, preview=True)
-    elif page_type == "restart":
-        html = nginx_pages.render_app_page("restart", cfg, preview=True)
-    elif page_type == "starting":
-        html = nginx_pages.render_app_page("starting", cfg, preview=True)
-    else:
-        html = nginx_pages.render_app_page("update", cfg, preview=True)
-    return HTMLResponse(content=html)
