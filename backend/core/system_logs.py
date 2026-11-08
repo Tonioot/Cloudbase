@@ -70,7 +70,7 @@ def component_of(logger_name: Optional[str]) -> str:
     """'cloudbase.autoscaler' → 'autoscaler'; lines without a logger name → 'other'."""
     if not logger_name:
         return "other"
-    for prefix in ("cloudbase.", "pdm."):
+    for prefix in ("cloudbase.",):
         if logger_name.startswith(prefix):
             return logger_name[len(prefix):]
     return logger_name

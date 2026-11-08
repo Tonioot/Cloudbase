@@ -47,7 +47,7 @@ def _github_token_label(app) -> Optional[str]:
 def _decrypt_github_token(stored: Optional[str]) -> Optional[str]:
     if not stored:
         return None
-    plain = decrypt_text(stored, fallback_plaintext=True)
+    plain = decrypt_text(stored)
     return plain or None
 
 

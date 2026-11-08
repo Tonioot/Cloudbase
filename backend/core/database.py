@@ -9,7 +9,6 @@ DATABASE_URL = f"sqlite+aiosqlite:///{DATA_DIR}/cloudbase.db"
 
 from sqlalchemy import event as _sa_event
 from sqlalchemy.pool import NullPool
-from core.env_crypto import decrypt_text, encrypt_text
 
 engine = create_async_engine(
     DATABASE_URL,
@@ -91,22 +90,6 @@ async def init_db():
             await conn.exec_driver_sql(
                 f"ALTER TABLE applications ADD COLUMN {col} {definition}"
             )
-
-        # Migrate legacy plaintext GitHub tokens to encrypted values at rest.
-        token_rows = await conn.exec_driver_sql(
-            "SELECT id, github_token FROM applications WHERE github_token IS NOT NULL AND github_token != ''"
-        )
-        for app_id, stored_token in token_rows.fetchall():
-            if not stored_token:
-                continue
-            plain = decrypt_text(stored_token, fallback_plaintext=True)
-            # If decrypting returns the same value, this is legacy plaintext.
-            if plain == stored_token:
-                encrypted = encrypt_text(plain)
-                await conn.exec_driver_sql(
-                    "UPDATE applications SET github_token = ? WHERE id = ?",
-                    (encrypted, app_id),
-                )
 
         result = await conn.exec_driver_sql("PRAGMA table_info(nodes)")
         existing_node_cols = {row[1] for row in result.fetchall()}
@@ -417,7 +400,7 @@ async def init_db():
         res = await session.execute(_select(Role).where(Role.name == "Viewer"))
         viewer_role = res.scalar_one_or_none()
 
-        # Seed root user from legacy credentials file if no users exist yet
+        # First run: seed the root user from the credentials file written at startup
         existing = await session.execute(_select(User).limit(1))
         if existing.scalar_one_or_none() is None and _os.path.exists(_CREDENTIALS_FILE):
             with open(_CREDENTIALS_FILE) as _f:
@@ -430,19 +413,6 @@ async def init_db():
                     role_id=None,  # Root has no role — full access is inherent
                 ))
                 await session.commit()
-        else:
-            # Migrate existing users that have no role_id yet
-            res = await session.execute(_select(User).where(User.role_id == None))  # noqa: E711
-            for u in res.scalars().all():
-                if u.username == "admin":
-                    continue  # root has no role
-                if u.role in ("admin", "Administrator"):
-                    u.role_id = admin_role.id if admin_role else None
-                    u.role = "Administrator"
-                else:
-                    u.role_id = viewer_role.id if viewer_role else None
-                    u.role = "Viewer"
-            await session.commit()
 
         # Always strip any role assignment from the root account — it always has full access
         res = await session.execute(_select(User).where(User.username == "admin"))

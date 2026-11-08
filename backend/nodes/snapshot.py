@@ -44,7 +44,7 @@ async def snapshot(db: AsyncSession, node_id: int) -> dict:
     entries = []
     for replica in replicas:
         wanted = replica.desired or "stopped"
-        spec = json.loads(decrypt_text(replica.spec_json, fallback_plaintext=False)) if wanted == "running" and replica.spec_json else None
+        spec = json.loads(decrypt_text(replica.spec_json)) if wanted == "running" and replica.spec_json else None
         if wanted == "running" and spec is None:
             wanted = "stopped"                     # its app is gone; there is nothing to run
         entries.append({"replica_id": replica.id, "app_id": replica.app_id, "desired": wanted,

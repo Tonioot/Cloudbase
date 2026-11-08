@@ -1,6 +1,4 @@
 """An app is known by its id (source folder, Docker image, nginx config); its name can change (rename).
-
-Also the one-off move of an existing server to those names (containers/legacy_names.py, apps/legacy_names.py).
 """
 import asyncio
 import os
@@ -94,78 +92,3 @@ def test_a_rename_does_not_touch_the_folder_or_the_image(admin, monkeypatch):
 
 
 # ── the one-off move of an existing server ───────────────────────────────────────
-class FakeImages:
-    def __init__(self, names):
-        self.names, self.removed = set(names), []
-
-    def get(self, name):
-        if name not in self.names:
-            raise KeyError(name)
-        images = self
-
-        class Image:
-            def tag(self, new):
-                images.names.add(new)
-        return Image()
-
-    def remove(self, name):
-        self.removed.append(name)
-        self.names.discard(name)
-
-
-class FakeClient:
-    def __init__(self, names):
-        self.images = FakeImages(names)
-
-
-@pytest.fixture
-def old_server(tmp_path, monkeypatch):
-    from containers import legacy_names, processes as pm
-    monkeypatch.setattr(pm, "APPS_BASE_DIR", str(tmp_path))
-    monkeypatch.setattr(legacy_names, "APPS_BASE_DIR", str(tmp_path))
-    client = FakeClient({"cloudbase/my-app-7:latest"})
-    monkeypatch.setattr(legacy_names, "_get_client", lambda: client)
-    (tmp_path / "My_App").mkdir()
-    (tmp_path / "My_App" / "app.py").write_text("print('hi')")
-    return tmp_path, client
-
-
-def test_the_source_folder_and_the_image_get_their_new_names(old_server):
-    from containers import legacy_names
-    tmp_path, client = old_server
-    done = legacy_names.adopt(7, "My App")
-    assert not (tmp_path / "My_App").exists() and (tmp_path / "app-7" / "app.py").exists()
-    assert client.images.names == {"cloudbase/app-7:latest"} and client.images.removed == ["cloudbase/my-app-7:latest"]
-    assert len(done) == 2
-    assert legacy_names.adopt(7, "My App") == []                          # nothing left to do the second time
-
-
-def test_a_server_that_was_moved_keeps_working_when_it_runs_again(old_server):
-    from containers import legacy_names
-    tmp_path, client = old_server
-    legacy_names.adopt(7, "My App")
-    (tmp_path / "app-7" / "new.txt").write_text("x")
-    legacy_names.adopt(7, "My App")
-    assert (tmp_path / "app-7" / "new.txt").exists()                      # never moved over or removed
-
-
-def test_the_stored_paths_of_an_app_follow_the_move(old_server):
-    from apps import legacy_names as migrate
-    from containers import processes as pm
-    from core.database import AsyncSessionLocal
-    from core.models import Application
-    tmp_path, client = old_server
-    app_id = _app("Stored Paths", working_dir=str(tmp_path / "Stored_Paths"))
-    (tmp_path / "Stored_Paths").mkdir()
-    client.images.names = {f"cloudbase/stored-paths-{app_id}:latest"}
-
-    async def set_image():
-        async with AsyncSessionLocal() as db:
-            (await db.get(Application, app_id)).docker_image = f"cloudbase/stored-paths-{app_id}:latest"
-            await db.commit()
-    _run(set_image())
-
-    _run(migrate.run())
-    row = _row(app_id)
-    assert row.working_dir == pm.get_app_dir(app_id) and row.docker_image == f"cloudbase/app-{app_id}:latest"
-    assert os.path.isdir(pm.get_app_dir(app_id)) and not (tmp_path / "Stored_Paths").exists()

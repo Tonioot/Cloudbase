@@ -8,7 +8,7 @@ from core.models import NotificationChannel
 
 def load_config(channel: NotificationChannel) -> dict:
     try:
-        return json.loads(decrypt_text(channel.config, fallback_plaintext=False) or "{}")
+        return json.loads(decrypt_text(channel.config) or "{}")
     except ValueError:
         return {}
 

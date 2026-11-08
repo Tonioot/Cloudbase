@@ -34,9 +34,6 @@ def get_token_expire_seconds() -> int:
     return _cfg.get_auth("token_expire_seconds")
 
 
-# Legacy constant kept for cookie max_age references; resolved at call time via get_token_expire_seconds().
-TOKEN_EXPIRE_SECONDS = 3600
-
 # ── Secret key (generated once, stored alongside credentials) ─────────────────
 _SECRET_KEY_FILE = os.path.expanduser("~/.cloudbase/secret_key")
 
@@ -104,15 +101,14 @@ def _decode_payload(token: str) -> Optional[dict]:
 
 
 def decode_token(token: str) -> Optional[dict]:
-    """Return {"username": str, "role": str} if valid, else None.
-    Legacy tokens with sub=="admin" and no role field are treated as admin."""
+    """Return {"username": str, "role": str, "sv": int} if valid, else None."""
     payload = _decode_payload(token)
     if payload is None:
         return None
     username = payload.get("sub")
     if not username:
         return None
-    role = payload.get("role", "admin" if username == "admin" else "viewer")
+    role = payload.get("role", "viewer")
     return {"username": username, "role": role, "sv": int(payload.get("sv", 0) or 0)}
 
 
@@ -208,12 +204,12 @@ def origin_allowed(origin: Optional[str], headers) -> bool:
 
 
 # ── FastAPI dependencies ──────────────────────────────────────────────────────
-_COOKIE_NAME = "pdm_token"
+_COOKIE_NAME = "cloudbase_token"
 
 
-async def require_auth(pdm_token: Optional[str] = Cookie(default=None)) -> dict:
+async def require_auth(cloudbase_token: Optional[str] = Cookie(default=None)) -> dict:
     """Require a valid session. Returns {"username": str, "role": str}."""
-    user = await session_user(pdm_token)
+    user = await session_user(cloudbase_token)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     return {"username": user["username"], "role": user["role"]}
@@ -230,9 +226,9 @@ async def _get_db_user(username: str):
         return None
 
 
-async def require_superadmin(pdm_token: Optional[str] = Cookie(default=None)) -> dict:
+async def require_superadmin(cloudbase_token: Optional[str] = Cookie(default=None)) -> dict:
     """Require the built-in 'admin' superuser account. Only this account may manage users and roles."""
-    user = await session_user(pdm_token)
+    user = await session_user(cloudbase_token)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     db_user = user.pop("db_user")
@@ -243,8 +239,8 @@ async def require_superadmin(pdm_token: Optional[str] = Cookie(default=None)) ->
 
 def require_permission(permission: str):
     """Return a FastAPI dependency that requires the user to have a specific permission."""
-    async def _dep(pdm_token: Optional[str] = Cookie(default=None)) -> dict:
-        user = await session_user(pdm_token)
+    async def _dep(cloudbase_token: Optional[str] = Cookie(default=None)) -> dict:
+        user = await session_user(cloudbase_token)
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
         db_user = user.pop("db_user")
@@ -261,18 +257,18 @@ def require_permission(permission: str):
     return _dep
 
 
-def get_current_actor(pdm_token: Optional[str] = Cookie(default=None)) -> str:
+def get_current_actor(cloudbase_token: Optional[str] = Cookie(default=None)) -> str:
     """Return the username of the current session, or 'system' for agent/unauthenticated calls."""
-    if not pdm_token:
+    if not cloudbase_token:
         return "system"
-    user = decode_token(pdm_token)
+    user = decode_token(cloudbase_token)
     return user["username"] if user else "system"
 
 
 async def authorize_websocket(websocket, required_permission: str | None = None) -> bool:
     """
     Validate a WebSocket connection. Accepts either:
-    - Browser session: pdm_token cookie (user JWT) with optional permission check.
+    - Browser session: cloudbase_token cookie (user JWT) with optional permission check.
     - Node agent: X-Node-Token header (stored in Node.auth_token) — bypasses permission checks.
 
     Returns True if allowed, False if rejected (connection closed with 1008).

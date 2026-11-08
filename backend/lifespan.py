@@ -19,7 +19,6 @@ from notify import dispatch as notify_dispatch
 from notify import watch as notify_watch
 from dbs import backup_scheduler as dbs_backup_scheduler
 from dbs import workers as dbs_workers
-from apps import legacy_names
 from workers.autoscaler import _autoscaler
 from workers.cleanup import _docker_cleanup_loop, _node_command_cleanup
 from nodes import local as nodes_local
@@ -53,7 +52,6 @@ def _ensure_first_run_password() -> None:
 async def _start_panel_tasks() -> list[asyncio.Task]:
     """Everything a primary runs in the background."""
     await _startup_recovery()
-    await legacy_names.run()          # ONE-OFF: apps were known by their name, now by their id (delete with apps/legacy_names.py)
     _load_panel_https_domain()
     tasks = [
         asyncio.create_task(nodes_local.run_forever()),

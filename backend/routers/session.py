@@ -128,7 +128,7 @@ async def change_password(req: ChangePasswordRequest, request: Request, response
     user.password_hash = auth.hash_password(req.password)
     # Sign out every other session; this one gets a fresh token below
     user.session_version = (user.session_version or 0) + 1
-    # Keep legacy credentials file in sync for the admin user
+    # The first-run credentials file holds the admin's password hash: keep it in step
     if user.username == "admin":
         auth.save_hashed_password(user.password_hash)
     await log_audit(db, "auth.change_password", actor=user.username, detail={"username": user.username})

@@ -2,7 +2,7 @@
 //
 // Rendered as a side effect of importing this module (sidebar.js imports it),
 // so the elements below exist before page scripts wire them up by id:
-//   btn-pdm-nginx, btn-system-settings, btn-github-tokens, btn-export-import,
+//   btn-domain-ssl, btn-system-settings, btn-github-tokens, btn-export-import,
 //   btn-manage-users, btn-change-password, btn-logout, session-timer-bar.
 
 import { api } from './api.js';
@@ -102,7 +102,7 @@ function railHTML(active) {
       <div class="sb-list" id="rail-nodes-list"><div class="flyout-empty">Loading…</div></div>
 
       <div class="sb-section"><span>Settings</span></div>
-      ${setting('btn-pdm-nginx', 'domain', 'globe', 'Domain &amp; SSL', 'data-perm="system.manage"')}
+      ${setting('btn-domain-ssl', 'domain', 'globe', 'Domain &amp; SSL', 'data-perm="system.manage"')}
       ${setting('btn-system-settings', 'system', 'sliders', 'System settings', 'data-perm="system.manage"')}
       ${setting('btn-manage-users', 'users', 'users', 'Users &amp; roles', 'style="display:none"')}
       ${setting('btn-backup-storage', 'backups', 'database', 'Backup storage', 'data-perm="system.manage"')}
@@ -298,7 +298,7 @@ function paletteCommands() {
     cmds.push({ group: 'Nodes', label: n.is_local ? 'primary' : n.name, dot: statusColor(n.status), meta: n.status || '', run: go(`/node?id=${n.id}`), keywords: n.public_host || '' });
   }
   const tail = [
-    ['btn-pdm-nginx', 'Domain & SSL', ICONS.globe, 'nginx ssl certificate subdomain'],
+    ['btn-domain-ssl', 'Domain & SSL', ICONS.globe, 'nginx ssl certificate subdomain'],
     ['btn-system-settings', 'System settings', ICONS.sliders, 'ports limits session'],
     ['btn-manage-users', 'Users & roles', ICONS.users, 'permissions accounts'],
     ['btn-backup-storage', 'Backup storage', ICONS.database, 's3 r2 backblaze offsite off-site bucket'],

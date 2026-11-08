@@ -9,7 +9,7 @@ import platform
 import subprocess
 from typing import Awaitable, Callable
 
-from containers import legacy_names, naming as containers_naming, build as containers_build, processes as pm
+from containers import naming as containers_naming, build as containers_build, processes as pm
 
 _logger = logging.getLogger("cloudbase.agent")
 
@@ -86,8 +86,6 @@ async def ensure_image(spec: dict, progress: Callable[[str], None],
     `progress` is told what is happening ("building_image"; `fetch` reports "downloading" itself).
     `fetch(app_id)` gives the directory with the source. `push(app_id, line)` also gets the build output."""
     main_id = int(spec["app_id"])
-    if spec.get("app_name"):
-        await asyncio.to_thread(legacy_names.adopt, main_id, spec["app_name"])      # ONE-OFF (delete with legacy_names.py)
     app_type, start_cmd, port, build_command, build_env, revision = build_arguments(spec)
     key = containers_build.build_key(app_type, start_cmd, port, build_command, build_env, revision)
 

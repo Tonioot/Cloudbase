@@ -12,7 +12,7 @@ IS_NODE = os.path.exists(paths.AGENT_STATE_FILE)
 FRONTEND_DIR = paths.FRONTEND_DIR
 
 
-_COOKIE_NAME = "pdm_token"
+_COOKIE_NAME = "cloudbase_token"
 
 
 _COOKIE_OPTS = dict(httponly=True, samesite="strict", path="/")

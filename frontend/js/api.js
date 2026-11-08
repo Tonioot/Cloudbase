@@ -277,10 +277,10 @@ export const api = {
     if (q) p.set('q', q);
     return request('GET', `/system/logs?${p}`);
   },
-  getPDManagerNginx: () => request('GET',  '/system/nginx-config'),
+  getNginxConfig: () => request('GET',  '/system/nginx-config'),
   setPanelDomain:    (data) => request('POST', '/system/panel-domain', data),
   setBaseDomain:     (baseDomain) => request('POST', '/system/base-domain', { base_domain: baseDomain }),
-  applyPDManagerNginx:(data)    => request('POST', '/system/nginx-config', data),
+  applyNginxConfig:(data)    => request('POST', '/system/nginx-config', data),
   getSystemSettings:  ()        => request('GET',  '/system/settings'),
   saveSystemSettings: (data)    => request('POST', '/system/settings', data),
   listGitHubTokens:  ()         => request('GET',    '/system/github-tokens'),

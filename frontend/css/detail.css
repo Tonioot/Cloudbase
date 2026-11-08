@@ -396,7 +396,7 @@
 .inst-list { overflow-x: auto; }
 .inst-main {
   display: grid;
-  grid-template-columns: 108px 110px minmax(100px, 1fr) 80px 120px 130px 72px 150px;
+  grid-template-columns: 108px 110px minmax(100px, 1fr) 80px 120px 130px 72px 176px;
   gap: 14px;
   align-items: center;
   min-width: 860px;

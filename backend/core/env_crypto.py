@@ -44,33 +44,21 @@ def encrypt_text(value: str) -> str:
 
 
 def decrypt_env(ciphertext: str) -> dict:
-    """
-    Decrypt env vars back to dict.
-    Falls back to plain json.loads for existing unencrypted records (backward compat).
-    """
+    """Decrypt env vars back to a dict."""
     if not ciphertext:
         return {}
     try:
         return json.loads(_get_fernet().decrypt(ciphertext.encode()))
     except Exception:
-        pass
-    try:
-        return json.loads(ciphertext)
-    except Exception:
-        log.warning("env_vars could not be decrypted or parsed, returning empty dict")
+        log.warning("env_vars could not be decrypted, returning empty dict")
         return {}
 
 
-def decrypt_text(ciphertext: str, fallback_plaintext: bool = True) -> str:
-    """
-    Decrypt text encrypted by encrypt_text.
-    If fallback_plaintext is True, legacy plaintext values are returned as-is.
-    """
+def decrypt_text(ciphertext: str) -> str:
+    """Decrypt text encrypted by encrypt_text. Anything else (empty, damaged, another key) gives ""."""
     if not ciphertext:
         return ""
     try:
         return _get_fernet().decrypt(ciphertext.encode()).decode()
     except Exception:
-        if fallback_plaintext:
-            return ciphertext
         return ""

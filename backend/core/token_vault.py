@@ -11,19 +11,9 @@ from typing import Optional
 from core.env_crypto import encrypt_text, decrypt_text
 
 _TOKENS_FILE = os.path.expanduser("~/.cloudbase/github_tokens.json")
-_LEGACY_FILE = os.path.expanduser("~/.pdmanager/github_tokens.json")
 
 
 def load() -> list[dict]:
-    if not os.path.exists(_TOKENS_FILE) and os.path.exists(_LEGACY_FILE):
-        try:
-            with open(_LEGACY_FILE) as f:
-                tokens = json.load(f)
-            save(tokens)  # write to new location
-            os.remove(_LEGACY_FILE)
-            return tokens
-        except Exception:
-            pass
     try:
         with open(_TOKENS_FILE) as f:
             tokens = json.load(f)
@@ -31,29 +21,16 @@ def load() -> list[dict]:
         return []
 
     normalized: list[dict] = []
-    migrated = False
     for entry in tokens:
         if not isinstance(entry, dict):
             continue
 
         token_id = entry.get("id") or str(uuid.uuid4())
         label = str(entry.get("label") or "")
-        raw_or_encrypted = str(entry.get("token") or "")
-        if not raw_or_encrypted:
+        encrypted = str(entry.get("token") or "")
+        if not encrypted:
             continue
-
-        decrypted = decrypt_text(raw_or_encrypted, fallback_plaintext=True)
-        encrypted = raw_or_encrypted
-
-        # Legacy records were stored as plaintext; re-save them encrypted.
-        if decrypted == raw_or_encrypted:
-            encrypted = encrypt_text(decrypted)
-            migrated = True
-
         normalized.append({"id": token_id, "label": label, "token": encrypted})
-
-    if migrated:
-        save(normalized)
 
     return normalized
 
@@ -72,7 +49,7 @@ def resolve(token_id: str) -> Optional[str]:
             token = t.get("token")
             if not token:
                 return None
-            return decrypt_text(token, fallback_plaintext=True)
+            return decrypt_text(token)
     return None
 
 

@@ -236,8 +236,7 @@ window._applyPermVisibility = _applyPermVisibility;
 async function initRoleBasedUI() {
   try {
     const data = await api.checkAuth();
-    // Accept both new (is_root) and legacy (is_superadmin) backend response shapes
-    const isRoot = !!(data.is_root || data.is_superadmin);
+    const isRoot = !!data.is_root;
     document.body.dataset.role = data.role;
     document.body.dataset.permissions = JSON.stringify(data.permissions || []);
     window.dispatchEvent(new CustomEvent('cloudbase-role-ready', { detail: { role: data.role, username: data.username, permissions: data.permissions || [] } }));
@@ -272,14 +271,6 @@ async function initRoleBasedUI() {
         const s = document.createElement('style');
         s.id = 'perm-hide-rules';
         s.textContent = `${selectors}{display:none!important}`;
-        document.head.appendChild(s);
-      }
-
-      // Legacy: hide [data-admin] for users without system.manage
-      if (!perms.has('system.manage')) {
-        document.querySelectorAll('[data-admin]').forEach(el => { el.style.display = 'none'; });
-        const s = document.createElement('style');
-        s.textContent = '[data-admin]{display:none!important}';
         document.head.appendChild(s);
       }
     }

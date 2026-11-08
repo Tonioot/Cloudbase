@@ -281,64 +281,6 @@ function _syncZeroDowntimeButton() {
   }
 }
 
-function _updateHeaderStatus_legacy() {
-  document.getElementById('app-badge').innerHTML = badge(app.status);
-
-  const s = app.status;
-  const busy = (s === 'deploying');
-
-  const btnStart   = document.getElementById('btn-start');
-  const btnStop    = document.getElementById('btn-stop');
-  const btnRestart = document.getElementById('btn-restart');
-
-  btnStart.disabled   = (s === 'running') || busy;
-  btnStop.disabled    = (s === 'stopped') || busy;
-  btnRestart.disabled = busy;
-
-  // Visual: dim the non-applicable button slightly
-  btnStart.style.opacity   = (s === 'running') ? '0.4' : '1';
-  btnStop.style.opacity    = (s === 'stopped') ? '0.4' : '1';
-
-  // Maintenance / update mode toggle buttons
-  const btnMaint  = document.getElementById('btn-maintenance-mode');
-  const btnUpdate = document.getElementById('btn-update-mode');
-  if (btnMaint && btnUpdate) {
-    const canToggle = canToggleMaintenanceMode();
-    btnMaint.disabled  = !canToggle;
-    btnUpdate.disabled = !canToggle;
-    btnMaint.title  = canToggle ? 'Toggle maintenance mode — serves the custom downtime page via nginx'
-                                : getMaintenanceToggleDisabledReason();
-    btnUpdate.title = canToggle ? 'Toggle update mode — serves the custom update page via nginx'
-                                : getMaintenanceToggleDisabledReason();
-    btnMaint.classList.toggle('active-maintenance', !!app.maintenance_mode);
-    btnUpdate.classList.toggle('active-update',      !!app.update_mode);
-  }
-}
-
-async function _toggleMode_legacy(type) {
-  const btnId = type === 'maintenance' ? 'btn-maintenance-mode' : 'btn-update-mode';
-  const btn = document.getElementById(btnId);
-  const prev = btn.innerHTML;
-  btn.disabled = true;
-  btn.innerHTML = `${spinner} …`;
-
-  try {
-    const fn = type === 'maintenance' ? api.toggleMaintenanceMode : api.toggleUpdateMode;
-    app = await fn(APP_ID);
-    updateHeaderStatus();
-    _updateMaintBadges();
-    const isOn = type === 'maintenance' ? app.maintenance_mode : app.update_mode;
-    toast(isOn ? `${type === 'maintenance' ? 'Maintenance' : 'Update'} mode enabled`
-               : `${type === 'maintenance' ? 'Maintenance' : 'Update'} mode disabled`);
-  } catch (e) {
-    toast(e.message, 'error');
-    try { app = await api.getApp(APP_ID); updateHeaderStatus(); } catch {}
-  } finally {
-    btn.innerHTML = prev;
-    btn.disabled = !app.nginx_enabled;
-  }
-}
-
 let _activityTimer = null;
 
 /** "Health checking remote instance 12 on 10.77.0.2:9101… · 1:24": the step without its [Tag], and how long it takes. */
@@ -2523,6 +2465,7 @@ async function initInstances() {
           <span class="inst-uptime">${uptimeStr}</span>
           <span class="inst-actions">
             <button class="btn btn-sm inst-restart-btn" data-perm="apps.restart" data-id="${inst.id}">Restart</button>
+            <button class="btn btn-sm btn-danger inst-remove-btn" data-perm="apps.scale" data-id="${inst.id}" ${pendingRemovals.has(inst.id) ? 'disabled' : ''}>${pendingRemovals.has(inst.id) ? `${spinner} Removing…` : 'Remove'}</button>
           </span>
         </div>
         ${limitsText || containerShort ? `<div class="inst-meta">${limitsText ? `<span>${limitsText}</span>` : ''}${containerShort ? `<span class="mono" title="${escHtml(inst.container_id || '')}">${containerShort}</span>` : ''}</div>` : ''}
@@ -2582,6 +2525,25 @@ async function initInstances() {
           btn.disabled = false;
           btn.innerHTML = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> Restart`;
         }
+      });
+    });
+
+    wrap.querySelectorAll('.inst-remove-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const instanceId = parseInt(btn.dataset.id, 10);
+        if (pendingRemovals.has(instanceId)) return;
+        const ok = await confirm('Remove instance?', 'The instance container will be stopped and removed.');
+        if (!ok) return;
+        pendingRemovals.add(instanceId);
+        selected.delete(instanceId);
+        updateSelectionBtn();
+        await renderInstances();
+        await applyChange(
+          () => api.deleteInstance(APP_ID, instanceId),
+          instances => !instances.some(i => i.id === instanceId),
+          'Instance removed');
+        pendingRemovals.delete(instanceId);
+        await renderInstances();
       });
     });
 

@@ -36,7 +36,7 @@ class User(Base):
     id           = Column(Integer, primary_key=True, index=True)
     username     = Column(String(50), unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
-    role         = Column(String(10), nullable=False, default="viewer")  # legacy, kept for JWT compat
+    role         = Column(String(10), nullable=False, default="viewer")  # name of the role, also in the session token
     role_id      = Column(Integer, ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True)
     # Bumped on logout and password change: sessions issued before stop working
     session_version = Column(Integer, nullable=False, default=0)

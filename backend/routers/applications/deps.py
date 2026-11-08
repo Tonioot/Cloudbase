@@ -7,7 +7,7 @@ from core import auth as _auth
 
 async def _request_can_manage_apps(request: Request) -> bool:
     """Return True if the requester has apps.configure (or is superadmin)."""
-    token = request.cookies.get("pdm_token")
+    token = request.cookies.get("cloudbase_token")
     user = await _auth.session_user(token)
     if not user:
         return False

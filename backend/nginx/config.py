@@ -150,8 +150,8 @@ def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str
     server_content = f"""\
   {unknown_host_block}
     # Auto-serve downtime page when upstream returns 502/503/504.
-    error_page 502 503 504 =503 /_pdm_maintenance;
-    location = /_pdm_maintenance {{
+    error_page 502 503 504 =503 /_cloudbase_maintenance;
+    location = /_cloudbase_maintenance {{
         internal;
         root {maint_root};
         try_files /{fallback_filename} =503;
@@ -174,7 +174,7 @@ def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str
         # Declaring error_page here stops the server-level ones from being inherited,
         # so only upstream outages are intercepted. The app's own 404s pass through
         # instead of turning into the unknown-host page meant for the host guard.
-        error_page 502 503 504 =503 /_pdm_maintenance;
+        error_page 502 503 504 =503 /_cloudbase_maintenance;
     }}"""
 
     # Build server_name lists
@@ -237,8 +237,8 @@ def _static_page_config(domain: str, maint_root: str, filename: str, ssl_cert: s
   {unknown_host_block}
     root {maint_root};
 
-    error_page 503 /_pdm_static;
-    location = /_pdm_static {{
+    error_page 503 /_cloudbase_static;
+    location = /_cloudbase_static {{
         internal;
         try_files /{filename} =503;
         default_type text/html;

@@ -23,14 +23,13 @@ def test_env_empty_and_garbage():
     assert env_crypto.decrypt_env("not json and not encrypted") == {}
 
 
-def test_legacy_plaintext_env_still_readable():
-    assert env_crypto.decrypt_env('{"A": "1"}') == {"A": "1"}
+def test_env_that_is_not_encrypted_is_not_read():
+    assert env_crypto.decrypt_env('{"A": "1"}') == {}
 
 
-def test_text_round_trip_and_legacy_fallback():
+def test_text_round_trip_and_unreadable_text_gives_nothing():
     assert env_crypto.decrypt_text(env_crypto.encrypt_text("ghp_token")) == "ghp_token"
-    assert env_crypto.decrypt_text("plain-legacy") == "plain-legacy"
-    assert env_crypto.decrypt_text("plain-legacy", fallback_plaintext=False) == ""
+    assert env_crypto.decrypt_text("not-encrypted") == ""
     assert env_crypto.encrypt_text(None) == ""
 
 

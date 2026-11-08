@@ -20,7 +20,6 @@ DEFAULT_DIR="/opt/cloudbase"
 SERVICE_NAME="cloudbase"
 SERVICE_FILE="/etc/systemd/system/cloudbase.service"
 CLI_NAME="cloudbase"
-LEGACY_CLI_NAME="pdmanager"
 LOG_FILE="/var/log/cloudbase-install.log"
 
 if [[ -t 1 ]]; then
@@ -270,7 +269,7 @@ step_stop() {
   systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
   rm -f "$SERVICE_FILE"
   systemctl daemon-reload
-  rm -f "/usr/local/bin/$CLI_NAME" "/usr/local/bin/$LEGACY_CLI_NAME"
+  rm -f "/usr/local/bin/$CLI_NAME"
 }
 
 step_remove_containers() {
@@ -604,13 +603,6 @@ step_python() {
   fi
   as_user mkdir -p "$DATA_DIR/apps" "$DATA_DIR/logs" "$DATA_DIR/certs"
 
-  # Data from the old name of the project
-  if [[ -d "$RUN_HOME/.pdmanager" && ! -f "$DATA_DIR/cloudbase.db" ]]; then
-    for f in pdmanager.db:cloudbase.db credentials:credentials secret_key:secret_key; do
-      [[ -f "$RUN_HOME/.pdmanager/${f%%:*}" ]] && as_user cp "$RUN_HOME/.pdmanager/${f%%:*}" "$DATA_DIR/${f##*:}"
-    done
-  fi
-
   cd "$INSTALL_DIR/backend"
   if [[ ! -x venv/bin/pip ]]; then
     rm -rf venv
@@ -683,8 +675,7 @@ step_register() {
 
 step_service() {
   printf '#!/usr/bin/env bash\nexec /bin/bash "%s/start.sh" "$@"\n' "$INSTALL_DIR" > "/usr/local/bin/$CLI_NAME"
-  printf '#!/usr/bin/env bash\nexec /usr/local/bin/%s "$@"\n' "$CLI_NAME" > "/usr/local/bin/$LEGACY_CLI_NAME"
-  chmod 755 "/usr/local/bin/$CLI_NAME" "/usr/local/bin/$LEGACY_CLI_NAME"
+  chmod 755 "/usr/local/bin/$CLI_NAME"
 
   cat > "$SERVICE_FILE" <<EOF
 [Unit]

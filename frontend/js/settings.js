@@ -102,7 +102,7 @@ function renderDomain(root) {
 
   const live = { domain: null, cert: null, base: null, baseCert: null };
 
-  const load = () => api.getPDManagerNginx().then(data => {
+  const load = () => api.getNginxConfig().then(data => {
     const pick = re => ((data.content || '').match(re)?.[1] || '').replace(/^["']|["']$/g, '') || null;
     live.domain = data.exists ? pick(/server_name\s+([^\s;]+)/) : null;
     live.cert = data.exists ? pick(/ssl_certificate\s+([^\s;]+)/) : null;
@@ -1488,7 +1488,7 @@ function renderAccount(root) {
 
   api.checkAuth().then(d => {
     document.getElementById('acc-user').textContent = d.username || '—';
-    document.getElementById('acc-role').textContent = d.is_root || d.is_superadmin ? 'Root' : (d.role || '—');
+    document.getElementById('acc-role').textContent = d.is_root ? 'Root' : (d.role || '—');
   }).catch(() => {});
   api.getSession().then(s => {
     const m = Math.round((s.expires_in || 0) / 60);

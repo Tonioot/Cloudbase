@@ -50,7 +50,7 @@ def app_entry(app: Application, replicas: list[ApplicationReplica], include_secr
     env = decrypt_env(app.env_vars or "")
     if include_secrets:
         entry["env_vars"] = env
-        entry["git_token"] = (decrypt_text(app.github_token, fallback_plaintext=True) or None) if app.github_token else None
+        entry["git_token"] = (decrypt_text(app.github_token) or None) if app.github_token else None
     else:
         # Names only, so the import can tell you what to fill in. Never the values.
         entry["env_vars"] = {}
