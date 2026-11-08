@@ -72,6 +72,6 @@ def list_hints() -> list[dict]:
     """Return token list with only id, label, and last-4-char hint. Never raw values."""
     hints: list[dict] = []
     for t in load():
-        decrypted = decrypt_text(t.get("token", ""), fallback_plaintext=True)
+        decrypted = decrypt_text(t.get("token", ""))
         hints.append({"id": t["id"], "label": t["label"], "token_hint": decrypted[-4:] if decrypted else ""})
     return hints

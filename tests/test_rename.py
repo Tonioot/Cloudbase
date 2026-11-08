@@ -1,7 +1,6 @@
 """An app is known by its id (source folder, Docker image, nginx config); its name can change (rename).
 """
 import asyncio
-import os
 
 import pytest
 

@@ -394,12 +394,6 @@ async def init_db():
 
         await session.commit()
 
-        # Re-fetch role IDs after commit
-        res = await session.execute(_select(Role).where(Role.name == "Administrator"))
-        admin_role = res.scalar_one_or_none()
-        res = await session.execute(_select(Role).where(Role.name == "Viewer"))
-        viewer_role = res.scalar_one_or_none()
-
         # First run: seed the root user from the credentials file written at startup
         existing = await session.execute(_select(User).limit(1))
         if existing.scalar_one_or_none() is None and _os.path.exists(_CREDENTIALS_FILE):

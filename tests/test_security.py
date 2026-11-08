@@ -27,6 +27,17 @@ def test_env_that_is_not_encrypted_is_not_read():
     assert env_crypto.decrypt_env('{"A": "1"}') == {}
 
 
+def test_saved_github_tokens_can_be_listed_resolved_and_removed(tmp_path, monkeypatch):
+    from core import token_vault
+    monkeypatch.setattr(token_vault, "_TOKENS_FILE", str(tmp_path / "github_tokens.json"))
+    token_vault.add("work", "ghp_abcdefgh1234")
+    [entry] = token_vault.list_hints()
+    assert entry["label"] == "work" and entry["token_hint"] == "1234" and "ghp_abcdefgh1234" not in str(entry)
+    assert token_vault.resolve(entry["id"]) == "ghp_abcdefgh1234"
+    token_vault.remove(entry["id"])
+    assert token_vault.list_hints() == []
+
+
 def test_text_round_trip_and_unreadable_text_gives_nothing():
     assert env_crypto.decrypt_text(env_crypto.encrypt_text("ghp_token")) == "ghp_token"
     assert env_crypto.decrypt_text("not-encrypted") == ""
