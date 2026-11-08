@@ -331,7 +331,7 @@ SESSION_SECRET=change-me</pre>
   lead: 'Every instance is one container. More instances means more capacity and no single point of failure — nginx spreads traffic over all healthy ones.',
   body: `
 <h2>Adding and removing instances</h2>
-<p>On the app’s <strong>Instances</strong> tab, click <strong>Add instance</strong> and pick the node it should run on. The new instance gets a free host port from the instance range and is added to nginx as soon as it runs. <strong>Remove</strong> stops the container and takes it out of the load balancer.</p>
+<p>On the app’s <strong>Instances</strong> tab, set how many instances you want with the <strong>− / +</strong> control or by typing a number. New instances are spread over the nodes that are online (the node with the fewest instances of the app gets the next one) and are added to nginx as soon as they run. When you ask for fewer, instances that are not running go first, then the ones on the busiest node, then the newest; their containers are stopped and taken out of the load balancer.</p>
 <p>The instance list shows per instance: status, node, host port, whether a remote node is on the node network, CPU and memory, uptime and the container ID. The container ID matches what <code>docker ps</code> shows on that server.</p>
 
 <h2>Statuses</h2>

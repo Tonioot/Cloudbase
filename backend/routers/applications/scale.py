@@ -29,16 +29,15 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
 
+    current = (await db.execute(
+        select(ApplicationReplica).where(ApplicationReplica.app_id == app_id).order_by(ApplicationReplica.id)
+    )).scalars().all()
     if req.target is not None:
-        current = (await db.execute(
-            select(ApplicationReplica).where(ApplicationReplica.app_id == app_id).order_by(ApplicationReplica.id)
-        )).scalars().all()
         if req.target < len(current):
-            # Fewer wanted: the newest instances go first
-            gone = current[req.target:]
+            gone = pick_removals(current, len(current) - req.target, local_node.id)
             await _remove_replicas(app, gone, db, actor)
             await db.commit()
-            return {"instances": [], "removed": [r.id for r in gone], "requested": req.target, "error": None}
+            return {"instances": [], "removed": sorted(r.id for r in gone), "requested": req.target, "error": None}
         if req.target == len(current):
             return {"instances": [], "removed": [], "requested": req.target, "error": None}
         req.count = req.target - len(current)
@@ -48,23 +47,29 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
     if existing + req.count > _cfg.get_limit("max_instances"):
         raise HTTPException(400, f"Instance limit reached ({_cfg.get_limit('max_instances')} instances maximum, {existing} in use). Adjust limits.max_instances in config.yaml to increase.")
 
-    # Resolve target node for the new replica
+    # A node picked by the caller is used as is; otherwise the new ones are spread over the nodes that can take them
     if req.node_id is not None:
         target_node_result = await db.execute(select(Node).where(Node.id == req.node_id, Node.enabled == True))
-        target_node = target_node_result.scalar_one_or_none()
-        if not target_node:
+        pinned = target_node_result.scalar_one_or_none()
+        if not pinned:
             raise HTTPException(400, "Target node not found or not enabled")
+        if not pinned.is_local and pinned.status != "online":
+            raise HTTPException(400, f"Node '{pinned.name}' is not online")
+        candidates = [pinned]
     else:
-        target_node = local_node
-
-    if not target_node.is_local and target_node.status != "online":
-        raise HTTPException(400, f"Node '{target_node.name}' is not online")
+        nodes = (await db.execute(select(Node).where(Node.enabled == True))).scalars().all()
+        candidates = [n for n in nodes if n.is_local or n.status == "online"] or [local_node]
+    counts = {}
+    for r in current:
+        counts[r.node_id or local_node.id] = counts.get(r.node_id or local_node.id, 0) + 1
 
     started = []
     error = None
     for _ in range(req.count):
+        target_node = pick_node_for_new(candidates, counts)
         try:
             started.append(await _add_one(app, app_id, req, target_node, db, actor))
+            counts[target_node.id] = counts.get(target_node.id, 0) + 1
         except Exception as e:
             # Every instance is committed on its own, so the ones that did start stay
             await db.rollback()
@@ -77,6 +82,27 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
     if req.count == 1 and req.target is None:
         return started[0]
     return {"instances": started, "requested": req.count, "error": error}
+
+
+def pick_node_for_new(candidates, counts):
+    """The node with the fewest instances of this app; on a tie the primary, then the oldest node."""
+    return min(candidates, key=lambda n: (counts.get(n.id, 0), 0 if n.is_local else 1, n.id))
+
+
+def pick_removals(replicas, n, local_node_id):
+    """Which instances go when there are too many: not-running ones first, then from the node
+    holding the most instances of this app (keeps the spread), then the newest."""
+    left = list(replicas)
+    gone = []
+    for _ in range(n):
+        counts = {}
+        for r in left:
+            counts[r.node_id or local_node_id] = counts.get(r.node_id or local_node_id, 0) + 1
+        health = lambda r: {"running": 2, "starting": 1}.get(r.status, 0)
+        victim = min(left, key=lambda r: (health(r), -counts[r.node_id or local_node_id], -r.id))
+        left.remove(victim)
+        gone.append(victim)
+    return gone
 
 
 async def _add_one(app, app_id, req, target_node, db, actor):
@@ -94,8 +120,9 @@ async def _add_one(app, app_id, req, target_node, db, actor):
     # The instance's own limits stay on its row, so every later start uses them too
     replica.docker_cpu_limit = req.docker_cpu_limit
     replica.docker_memory_limit_mb = req.docker_memory_limit_mb
-    replica.docker_read_only_root = bool(req.docker_read_only_root) if req.docker_read_only_root is not None else False
-    replica.docker_tmpfs_enabled = bool(req.docker_tmpfs_enabled) if req.docker_tmpfs_enabled is not None else False
+    # Whatever the caller leaves out is the app's own setting
+    replica.docker_read_only_root = bool(app.docker_read_only_root if req.docker_read_only_root is None else req.docker_read_only_root)
+    replica.docker_tmpfs_enabled = bool(app.docker_tmpfs_enabled if req.docker_tmpfs_enabled is None else req.docker_tmpfs_enabled)
     replica.docker_tmpfs_size_mb = req.docker_tmpfs_size_mb
     await _start_replica_runtime(app, replica, target_node, decrypt_env(app.env_vars or ""), db)
 

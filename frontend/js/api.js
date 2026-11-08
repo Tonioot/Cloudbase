@@ -261,8 +261,6 @@ export const api = {
   scaleApp:       (id, body)       => request('POST',   `/apps/${id}/scale`, body),
   removeReplica:  (id, replicaId)  => request('DELETE', `/apps/${id}/replicas/${replicaId}`),
   deleteInstance: (id, instanceId) => request('DELETE', `/apps/${id}/instances/${instanceId}`),
-  removeInstances:(id, ids)        => request('POST',   `/apps/${id}/instances/remove`, { ids }),
-  restartInstances:(id, ids)       => request('POST',   `/apps/${id}/instances/restart`, { ids }),
   restartInstance:(id, instanceId) => request('POST',   `/apps/${id}/instances/${instanceId}/restart`),
   getInstanceLogs:(id, repId, lines) => request('GET',  `/apps/${id}/replicas/${repId}/logs?lines=${lines || 200}`),
   getAppLogsTail: (id, lines)      => request('GET',    `/apps/${id}/logs/tail?limit=${lines || 200}`),

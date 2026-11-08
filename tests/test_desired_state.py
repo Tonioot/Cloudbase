@@ -386,20 +386,6 @@ def test_deleting_an_instance_needs_no_message_to_the_node(admin, setup):
     assert _run(commands()) == []
 
 
-def test_several_instances_can_be_removed_in_one_request(admin, setup):
-    node, app = setup
-    node_id, _ = node("c-bulk")
-    app_id = app("c-bulk-app")
-    ids = [_replica(app_id, node_id, 9310 + i, status="running") for i in range(3)]
-    for rid in ids:
-        _start(node_id, rid)
-    assert admin.post(f"/api/apps/{app_id}/instances/remove", json={"ids": [ids[0], ids[1]]}).status_code == 200
-    assert _row(ids[0]) is None and _row(ids[1]) is None and _row(ids[2]) is not None
-    # An id that is not this app's instance removes nothing at all
-    assert admin.post(f"/api/apps/{app_id}/instances/remove", json={"ids": [ids[2], 999999]}).status_code == 404
-    assert _row(ids[2]) is not None
-
-
 def test_scaling_to_a_wanted_number_removes_the_newest_instances(admin, setup):
     node, app = setup
     node_id, _ = node("c-target")
@@ -413,15 +399,21 @@ def test_scaling_to_a_wanted_number_removes_the_newest_instances(admin, setup):
     assert _row(ids[0]) is not None and _row(ids[1]) is not None and _row(ids[2]) is None and _row(ids[3]) is None
 
 
-def test_several_instances_can_be_restarted_in_one_request(admin, setup):
-    node, app = setup
-    node_id, _ = node("c-restart-many")
-    app_id = app("c-restart-many-app")
-    ids = [_replica(app_id, node_id, 9330 + i, status="running") for i in range(2)]
-    for rid in ids:
-        _start(node_id, rid)
-    assert admin.post(f"/api/apps/{app_id}/instances/restart", json={"ids": ids}).status_code == 200
-    assert admin.post(f"/api/apps/{app_id}/instances/restart", json={"ids": [999999]}).status_code == 404
+def test_new_instances_go_to_the_emptiest_node_and_unhealthy_ones_are_removed_first():
+    from types import SimpleNamespace as N
+    from routers.applications.scale import pick_node_for_new, pick_removals
+    primary, other = N(id=1, is_local=True), N(id=2, is_local=False)
+    assert pick_node_for_new([other, primary], {}) is primary                 # tie: primary
+    assert pick_node_for_new([primary, other], {1: 2, 2: 1}) is other         # fewest first
+
+    def r(i, node, status="running"):
+        return N(id=i, node_id=node, status=status)
+    # an instance in error goes before healthy ones, even older ones
+    assert [x.id for x in pick_removals([r(1, 1), r(2, 1, "error"), r(3, 1)], 1, 1)] == [2]
+    # all healthy: from the node with the most instances, so the spread stays
+    assert [x.id for x in pick_removals([r(1, 1), r(2, 1), r(3, 2)], 1, 1)] == [2]
+    # nothing else to tell them apart: the newest
+    assert [x.id for x in pick_removals([r(1, 1), r(2, 2), r(3, 1), r(4, 2)], 2, 1)] == [4, 3]
 
 
 def test_no_command_for_starting_or_stopping_is_left_in_the_code():

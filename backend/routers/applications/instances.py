@@ -1,8 +1,6 @@
 import asyncio
 import json
-from typing import List
 from fastapi import Depends, APIRouter, HTTPException
-from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal, get_db
@@ -120,36 +118,6 @@ async def restart_instance(
     return {"status": replica.status, "instance_id": instance_id}
 
 
-class InstanceIdsRequest(BaseModel):
-    ids: List[int] = Field(..., min_length=1, max_length=50)
-
-
-@router.post("/{app_id}/instances/restart")
-@activity.tracked("restarting")
-async def restart_instances(
-    app_id: int,
-    req: InstanceIdsRequest,
-    db: AsyncSession = Depends(get_db),
-    _user: dict = Depends(_auth.require_permission("apps.restart")),
-    actor: str = Depends(_auth.get_current_actor),
-):
-    """Restart several instances of an app in one go."""
-    app = await _get_or_404(app_id, db)
-    rep_result = await db.execute(
-        select(ApplicationReplica).where(
-            ApplicationReplica.id.in_(req.ids),
-            ApplicationReplica.app_id == app_id,
-        )
-    )
-    replicas = rep_result.scalars().all()
-    if len(replicas) != len(set(req.ids)):
-        raise HTTPException(404, "One or more instances were not found")
-    for replica in replicas:
-        await _restart_replica(app, replica, db, actor)
-    await db.commit()
-    return {"status": "restarting", "instance_ids": sorted(r.id for r in replicas)}
-
-
 async def _restart_replica(app, replica, db, actor):
     node_result = await db.execute(select(Node).where(Node.id == replica.node_id)) if replica.node_id else None
     replica_node = node_result.scalar_one_or_none() if node_result else None
@@ -193,30 +161,6 @@ async def delete_instance(
     await _remove_replicas(app, [replica], db, actor)
     await db.commit()
     return {"status": "deleted", "instance_id": instance_id}
-
-
-@router.post("/{app_id}/instances/remove")
-async def remove_instances(
-    app_id: int,
-    req: InstanceIdsRequest,
-    db: AsyncSession = Depends(get_db),
-    _user: dict = Depends(_auth.require_permission("apps.scale")),
-    actor: str = Depends(_auth.get_current_actor),
-):
-    """Stop and remove several instances of an app in one go."""
-    app = await _get_or_404(app_id, db)
-    rep_result = await db.execute(
-        select(ApplicationReplica).where(
-            ApplicationReplica.id.in_(req.ids),
-            ApplicationReplica.app_id == app_id,
-        )
-    )
-    replicas = rep_result.scalars().all()
-    if len(replicas) != len(set(req.ids)):
-        raise HTTPException(404, "One or more instances were not found")
-    await _remove_replicas(app, replicas, db, actor)
-    await db.commit()
-    return {"status": "deleted", "instance_ids": sorted(r.id for r in replicas)}
 
 
 async def _remove_replicas(app, replicas, db, actor):

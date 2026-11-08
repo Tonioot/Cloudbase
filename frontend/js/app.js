@@ -2374,33 +2374,15 @@ async function _waitForInstanceSync(predicate, timeoutMs = 15000, intervalMs = 7
 async function initInstances() {
   const wrap = document.getElementById('instances-table-wrap');
   if (!wrap) return;
-  const pendingRemovals = new Set();
-  let pendingCreate = false;
-  const selected = new Set();
-  const removeSelBtn = document.getElementById('btn-remove-selected');
-
-  const restartSelBtn = document.getElementById('btn-restart-selected');
   const targetInput = document.getElementById('inst-target');
-  const applyTargetBtn = document.getElementById('btn-apply-target');
+  const minusBtn = document.getElementById('btn-inst-minus');
+  const plusBtn = document.getElementById('btn-inst-plus');
   let currentCount = 0;
+  let scaling = false;      // a change is being applied: leave the number alone
+  let scaleTimer = null;
 
-  function updateSelectionBtn() {
-    if (removeSelBtn) {
-      removeSelBtn.hidden = selected.size === 0;
-      removeSelBtn.textContent = `Remove selected (${selected.size})`;
-    }
-    if (restartSelBtn) {
-      restartSelBtn.hidden = selected.size === 0;
-      restartSelBtn.textContent = `Restart selected (${selected.size})`;
-    }
-  }
-
-  function updateTargetControl() {
-    if (!targetInput) return;
-    // Do not overwrite what the user is typing
-    if (document.activeElement !== targetInput && !targetInput.dataset.dirty) targetInput.value = currentCount || '';
-    const wanted = parseInt(targetInput.value, 10);
-    applyTargetBtn.hidden = !(Number.isInteger(wanted) && wanted >= 1 && wanted !== currentCount);
+  function showCount() {
+    if (targetInput && !scaling && document.activeElement !== targetInput) targetInput.value = currentCount || '';
   }
 
   async function renderInstances() {
@@ -2415,12 +2397,8 @@ async function initInstances() {
       return;
     }
 
-    // Forget selected instances that are gone
-    const liveIds = new Set(instances.map(i => i.id));
-    for (const id of [...selected]) if (!liveIds.has(id)) selected.delete(id);
-    updateSelectionBtn();
     currentCount = instances.length;
-    updateTargetControl();
+    showCount();
 
     if (!instances.length) {
       wrap.innerHTML = '<div style="color:var(--text-muted);padding:12px;font-size:13px">No instances found.</div>';
@@ -2428,7 +2406,6 @@ async function initInstances() {
     }
 
     const cards = instances.map((inst, idx) => {
-      const removePending = pendingRemovals.has(inst.id);
       const isRunning  = inst.status === 'running';
       const isStarting = inst.status === 'starting';
       const isError    = inst.status === 'error';
@@ -2527,7 +2504,7 @@ async function initInstances() {
       return `
       <div class="inst-row"${isStarting ? ' data-starting="1"' : ''}>
         <div class="inst-main">
-          <span class="inst-id"><input type="checkbox" class="inst-select" data-perm="apps.scale" data-id="${inst.id}" aria-label="Select instance ${inst.id}" ${selected.has(inst.id) ? 'checked' : ''} ${removePending ? 'disabled' : ''} />#${inst.id}</span>
+          <span class="inst-id">#${inst.id}</span>
           <span class="inst-status" style="color:${statusColor}"><span class="dot" style="background:${statusDot}"></span>${inst.status}</span>
           <span class="inst-node">${escHtml(nodeName)}</span>
           <span class="inst-port">:${inst.external_port || '—'}</span>
@@ -2535,8 +2512,7 @@ async function initInstances() {
           <span class="inst-usage">${usageText}</span>
           <span class="inst-uptime">${uptimeStr}</span>
           <span class="inst-actions">
-            <button class="btn btn-sm inst-restart-btn" data-perm="apps.restart" data-id="${inst.id}" ${removePending ? 'disabled' : ''}>Restart</button>
-            <button class="btn btn-sm btn-danger inst-remove-btn" data-perm="apps.scale" data-id="${inst.id}" ${removePending ? 'disabled' : ''}>${removePending ? `${spinner} Removing…` : 'Remove'}</button>
+            <button class="btn btn-sm inst-restart-btn" data-perm="apps.restart" data-id="${inst.id}">Restart</button>
           </span>
         </div>
         ${limitsText || containerShort ? `<div class="inst-meta">${limitsText ? `<span>${limitsText}</span>` : ''}${containerShort ? `<span class="mono" title="${escHtml(inst.container_id || '')}">${containerShort}</span>` : ''}</div>` : ''}
@@ -2554,14 +2530,6 @@ async function initInstances() {
       </div>`;
     if (window._applyPermVisibility) window._applyPermVisibility(wrap);
     _rescheduleInstancesTimer();
-
-    wrap.querySelectorAll('.inst-select').forEach(box => {
-      box.addEventListener('change', () => {
-        const id = parseInt(box.dataset.id, 10);
-        if (box.checked) selected.add(id); else selected.delete(id);
-        updateSelectionBtn();
-      });
-    });
 
     wrap.querySelectorAll('.inst-restart-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -2582,32 +2550,6 @@ async function initInstances() {
       });
     });
 
-    wrap.querySelectorAll('.inst-remove-btn').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const instanceId = parseInt(btn.dataset.id, 10);
-        if (pendingRemovals.has(instanceId)) return;
-        const ok = await confirm('Remove instance?', 'The instance container will be stopped and removed.');
-        if (!ok) return;
-        pendingRemovals.add(instanceId);
-        clearInterval(_instancesRefreshTimer);
-        await renderInstances();
-        try {
-          await api.deleteInstance(APP_ID, instanceId);
-          await _waitForInstanceSync(instances => !instances.some(i => i.id === instanceId));
-          pendingRemovals.delete(instanceId);
-          app = await api.getApp(APP_ID);
-          updateHeaderStatus();
-          renderHeader();
-          await renderInstances();
-          toast('Instance removed');
-        } catch (e) {
-          pendingRemovals.delete(instanceId);
-          await renderInstances();
-          toast(e.message, 'error');
-        }
-      });
-    });
-
   }
 
   // After each render, check instance states and reschedule the timer accordingly.
@@ -2621,262 +2563,54 @@ async function initInstances() {
 
   await renderInstances();
 
-  if (removeSelBtn) {
-    removeSelBtn.onclick = async () => {
-      const ids = [...selected];
-      if (!ids.length) return;
-      const ok = await confirm(
-        ids.length === 1 ? 'Remove instance?' : `Remove ${ids.length} instances?`,
-        'The selected containers will be stopped and removed.');
-      if (!ok) return;
-      ids.forEach(id => pendingRemovals.add(id));
-      selected.clear();
-      updateSelectionBtn();
-      clearInterval(_instancesRefreshTimer);
-      await renderInstances();
-      try {
-        await api.removeInstances(APP_ID, ids);
-        await _waitForInstanceSync(instances => !instances.some(i => ids.includes(i.id)));
-        app = await api.getApp(APP_ID);
-        updateHeaderStatus();
-        renderHeader();
-        toast(ids.length === 1 ? 'Instance removed' : `${ids.length} instances removed`);
-      } catch (e) {
-        toast(e.message, 'error');
-      } finally {
-        ids.forEach(id => pendingRemovals.delete(id));
-        await renderInstances();
-      }
-    };
-  }
-
   const refreshBtn = document.getElementById('btn-instances-refresh');
   if (refreshBtn) refreshBtn.onclick = renderInstances;
 
-  const addBtn = document.getElementById('btn-add-instance');
-  if (addBtn) {
-    const openAddDialog = async (presetCount = 1) => {
-      let nodes = [];
-      try {
-        nodes = await api.listNodes();
-      } catch {
-        toast('Failed to load nodes', 'error');
-        return;
-      }
-      const available = nodes.filter(n => n.enabled && n.status === 'online');
-
-      const isStaticApp = app.app_type === 'static';
-      const nodeOptions = [
-        { value: '', name: 'primary', meta: 'This server' },
-        ...available.filter(n => !n.is_local).map(n => ({
-          value: String(n.id), name: n.name, meta: [n.metadata?.arch, n.public_host].filter(Boolean).join(' · ') || 'online',
-        })),
-      ];
-
-      const result = await new Promise(resolve => {
-        const backdrop = document.createElement('div');
-        backdrop.className = 'dialog-backdrop';
-        backdrop.innerHTML = `
-          <div class="dialog dialog-modern form-dialog" role="dialog" aria-modal="true" aria-labelledby="inst-dlg-title">
-            <div class="dialog-title" id="inst-dlg-title">Add instance</div>
-            <div class="dialog-body">
-              <p class="form-dialog-intro">Start one more copy of <strong>${escHtml(app.name)}</strong>. Traffic is spread over all running instances.</p>
-
-              <fieldset class="form-block">
-                <legend>Node</legend>
-                <div class="choice-list" role="radiogroup">
-                  ${nodeOptions.map((n, i) => `
-                    <label class="choice">
-                      <input type="radio" name="inst-node" value="${escHtml(n.value)}" ${i === 0 ? 'checked' : ''} />
-                      <span class="choice-dot" aria-hidden="true"></span>
-                      <span class="choice-text"><span>${escHtml(n.name)}</span><small>${escHtml(n.meta)}</small></span>
-                    </label>`).join('')}
-                </div>
-              </fieldset>
-
-              <fieldset class="form-block">
-                <legend>Amount <small>how many instances to start with these settings</small></legend>
-                <label class="unit-input"><span class="sr-only">Number of instances</span>
-                  <input id="inst-count" class="input" type="number" min="1" max="20" step="1" value="${presetCount}" />
-                  <span class="unit">instances</span>
-                </label>
-              </fieldset>
-
-              <fieldset class="form-block">
-                <legend>Resources <small>leave empty for the app defaults</small></legend>
-                <div class="form-pair">
-                  <label class="unit-input"><span class="sr-only">CPU limit</span>
-                    <input id="inst-cpu" class="input" type="number" min="0.1" step="0.1" placeholder="${app.docker_cpu_limit || '1.0'}" />
-                    <span class="unit">CPU</span>
-                  </label>
-                  <label class="unit-input"><span class="sr-only">Memory limit</span>
-                    <input id="inst-mem" class="input" type="number" min="16" step="16" placeholder="${app.docker_memory_limit_mb || '512'}" />
-                    <span class="unit">MB</span>
-                  </label>
-                </div>
-              </fieldset>
-
-              <details class="form-advanced">
-                <summary>Advanced</summary>
-                ${isStaticApp ? '' : `
-                <label class="toggle-row form-toggle">
-                  <span><span class="field-label">Read-only root filesystem</span><span class="field-hint">Only mounted paths are writable</span></span>
-                  <span class="toggle"><input type="checkbox" id="inst-readonly" ${app.docker_read_only_root ? 'checked' : ''} /><span class="toggle-slider"></span></span>
-                </label>`}
-                <label class="toggle-row form-toggle">
-                  <span><span class="field-label">Tmpfs at /tmp</span><span class="field-hint">In-memory scratch space</span></span>
-                  <span class="toggle"><input type="checkbox" id="inst-tmpfs" ${app.docker_tmpfs_enabled ? 'checked' : ''} /><span class="toggle-slider"></span></span>
-                </label>
-                <label class="unit-input form-tmpfs-size"><span class="sr-only">Tmpfs size</span>
-                  <input id="inst-tmpfs-size" class="input" type="number" min="1" placeholder="${app.docker_tmpfs_size_mb || 64}" />
-                  <span class="unit">MB</span>
-                </label>
-              </details>
-            </div>
-            <div class="dialog-actions">
-              <button class="btn" id="inst-dlg-cancel">Cancel</button>
-              <button class="btn btn-primary" id="inst-dlg-ok">Start</button>
-            </div>
-          </div>`;
-        document.body.appendChild(backdrop);
-        const ok = () => {
-          const nodeVal = backdrop.querySelector('input[name="inst-node"]:checked')?.value || '';
-          const cpu = parseFloat(backdrop.querySelector('#inst-cpu').value);
-          const mem = parseInt(backdrop.querySelector('#inst-mem').value, 10);
-          const readonly = !!backdrop.querySelector('#inst-readonly')?.checked;
-          const tmpfs = backdrop.querySelector('#inst-tmpfs').checked;
-          const tmpfsSz = parseInt(backdrop.querySelector('#inst-tmpfs-size').value, 10);
-          const count = Math.min(20, Math.max(1, parseInt(backdrop.querySelector('#inst-count').value, 10) || 1));
-          backdrop.remove();
-          resolve({
-            count,
-            nodeId: nodeVal ? parseInt(nodeVal, 10) : null,
-            cpu: Number.isFinite(cpu) ? cpu : null,
-            mem: Number.isInteger(mem) ? mem : null,
-            readonly,
-            tmpfs,
-            tmpfsSz: Number.isInteger(tmpfsSz) ? tmpfsSz : null,
-          });
-        };
-        backdrop.querySelector('#inst-dlg-ok').onclick = ok;
-        backdrop.querySelector('#inst-dlg-cancel').onclick = () => {
-          backdrop.remove();
-          resolve(undefined);
-        };
-        backdrop.addEventListener('click', e => {
-          if (e.target === backdrop) {
-            backdrop.remove();
-            resolve(undefined);
-          }
-        });
-      });
-
-      if (result === undefined) return;
-
-      if (pendingCreate) return;
-      pendingCreate = true;
-      addBtn.disabled = true;
-      addBtn.textContent = 'Starting...';
-      try {
-        const beforeInstances = await api.listInstances(APP_ID).catch(() => []);
-        const beforeIds = new Set((beforeInstances || []).map(i => i.id));
-        const res = await api.scaleApp(APP_ID, {
-          count: result.count,
-          node_id: result.nodeId,
-          docker_cpu_limit: result.cpu,
-          docker_memory_limit_mb: result.mem,
-          docker_read_only_root: result.readonly,
-          docker_tmpfs_enabled: result.tmpfs,
-          docker_tmpfs_size_mb: result.tmpfsSz,
-        });
-        const made = result.count > 1 ? (res.instances || []).length : 1;
-        if (res?.error) toast(`Only ${made} of ${result.count} started: ${res.error}`, 'error');
-        const started = await _waitForInstanceSync(
-          instances => instances.filter(i => !beforeIds.has(i.id)).length >= made);
-        app = await api.getApp(APP_ID);
-        updateHeaderStatus();
-        renderHeader();
-        await renderInstances();
-        const many = made > 1;
-        if (res?.error) {
-          // already reported above
-        } else if (started) {
-          toast(many ? `${made} instances started` : 'Instance started');
-        } else {
-          toast(many ? 'Instances are still provisioning' : 'Instance is still provisioning');
-        }
-      } catch (e) {
-        toast(e.message, 'error');
-      } finally {
-        pendingCreate = false;
-        addBtn.disabled = false;
-        addBtn.textContent = 'Add Instance';
-      }
-    };
-    addBtn.onclick = () => openAddDialog();
-
-    if (targetInput) {
-      targetInput.addEventListener('input', () => { targetInput.dataset.dirty = '1'; updateTargetControl(); });
-      targetInput.addEventListener('keydown', e => { if (e.key === 'Enter') applyTargetBtn.click(); });
-      applyTargetBtn.onclick = async () => {
-        const wanted = parseInt(targetInput.value, 10);
-        if (!Number.isInteger(wanted) || wanted < 1 || wanted === currentCount) return;
-        const done = () => { delete targetInput.dataset.dirty; };
-        if (wanted > currentCount) {
-          // More: pick node and limits in the same dialog as Add instance
-          await openAddDialog(wanted - currentCount);
-          done();
-          await renderInstances();
-          return;
-        }
-        const n = currentCount - wanted;
-        const ok = await confirm(`Scale down to ${wanted}?`, `The newest ${n === 1 ? 'instance' : n + ' instances'} will be stopped and removed.`);
-        if (!ok) return;
-        applyTargetBtn.disabled = true;
-        clearInterval(_instancesRefreshTimer);
-        try {
-          await api.scaleApp(APP_ID, { target: wanted });
-          await _waitForInstanceSync(instances => instances.length <= wanted);
-          app = await api.getApp(APP_ID);
-          updateHeaderStatus();
-          renderHeader();
-          toast(`Scaled down to ${wanted}`);
-        } catch (e) {
-          toast(e.message, 'error');
-        } finally {
-          applyTargetBtn.disabled = false;
-          done();
-          await renderInstances();
-        }
-      };
+  // Say how many you want; the server adds (spread over the nodes) or removes (unhealthy first, newest last)
+  async function applyWanted(wanted) {
+    if (!Number.isInteger(wanted) || wanted < 1 || wanted > 20 || wanted === currentCount) { showCount(); return; }
+    if (wanted < currentCount) {
+      const n = currentCount - wanted;
+      const ok = await confirm(`Scale down to ${wanted}?`, `${n === 1 ? 'One instance' : n + ' instances'} will be stopped and removed.`);
+      if (!ok) { targetInput.value = currentCount; return; }
+    }
+    scaling = true;
+    [targetInput, minusBtn, plusBtn].forEach(el => el && (el.disabled = true));
+    clearInterval(_instancesRefreshTimer);
+    try {
+      const res = await api.scaleApp(APP_ID, { target: wanted });
+      if (res?.error) toast(res.error, 'error');
+      await _waitForInstanceSync(instances => wanted > currentCount
+        ? instances.length >= wanted - (res?.error ? 1 : 0)
+        : instances.length <= wanted);
+      app = await api.getApp(APP_ID);
+      updateHeaderStatus();
+      renderHeader();
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      scaling = false;
+      [targetInput, minusBtn, plusBtn].forEach(el => el && (el.disabled = false));
+      await renderInstances();
     }
   }
 
-  if (restartSelBtn) {
-    restartSelBtn.onclick = async () => {
-      const ids = [...selected];
-      if (!ids.length) return;
-      const ok = await confirm(
-        ids.length === 1 ? 'Restart instance?' : `Restart ${ids.length} instances?`,
-        'The selected containers will be stopped and started again.');
-      if (!ok) return;
-      restartSelBtn.disabled = true;
-      try {
-        await api.restartInstances(APP_ID, ids);
-        selected.clear();
-        updateSelectionBtn();
-        toast(ids.length === 1 ? 'Instance restarting…' : `${ids.length} instances restarting…`);
-        await renderInstances();
-      } catch (e) {
-        toast(e.message, 'error');
-      } finally {
-        restartSelBtn.disabled = false;
-      }
-    };
+  // Typing or clicking +/- waits a moment, so 3 → 12 is one change and not nine
+  function wantedSoon(value) {
+    targetInput.value = Math.min(20, Math.max(1, value || 1));
+    clearTimeout(scaleTimer);
+    scaleTimer = setTimeout(() => applyWanted(parseInt(targetInput.value, 10)), 700);
+  }
+  if (targetInput) {
+    targetInput.addEventListener('input', () => {
+      const v = parseInt(targetInput.value, 10);
+      if (Number.isInteger(v)) { clearTimeout(scaleTimer); scaleTimer = setTimeout(() => applyWanted(Math.min(20, Math.max(1, v))), 900); }
+    });
+    targetInput.addEventListener('keydown', e => { if (e.key === 'Enter') { clearTimeout(scaleTimer); applyWanted(parseInt(targetInput.value, 10)); } });
+    minusBtn.onclick = () => wantedSoon((parseInt(targetInput.value, 10) || currentCount) - 1);
+    plusBtn.onclick = () => wantedSoon((parseInt(targetInput.value, 10) || currentCount) + 1);
   }
 }
-
-
 
 async function saveSettings() {
   const btn = document.getElementById('btn-save');
