@@ -107,7 +107,7 @@ def test_dangerous_git_refs_are_rejected(apps, ref):
         apps._check_git_ref(ref)
 
 
-@pytest.mark.parametrize("url", ["https://github.com/a/b.git", "git@github.com:a/b.git", "ssh://git@host/a/b", "local://primary"])
+@pytest.mark.parametrize("url", ["https://github.com/a/b.git", "git@github.com:a/b.git", "ssh://git@host/a/b"])
 def test_valid_repo_urls(apps, url):
     assert apps._check_repo_url(url) == url
 

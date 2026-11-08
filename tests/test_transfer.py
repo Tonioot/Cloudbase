@@ -37,7 +37,7 @@ def _make_app(name: str, instances: int = 2, status: str = "running", port: int 
             node = await ensure_local_node(db)
             app = Application(
                 name=name, repo_url=f"https://github.com/acme/{name}", start_command="npm start", build_command="npm run build",
-                port=3000, external_port=port, status=status, restart_policy="always", auto_start=True,
+                port=3000, status=status, restart_policy="always", auto_start=True,
                 env_vars=encrypt_env({"SECRET_KEY": SECRET_ENV, "NODE_ENV": "production"}),
                 github_token=encrypt_text(SECRET_TOKEN), docker_memory_limit_mb=256,
                 domain=None, extra_domains=json.dumps(["www.example.test"]), **extra)

@@ -3,24 +3,12 @@ import contextlib
 from fastapi import HTTPException
 from core.database import AsyncSessionLocal
 from core.models import ApplicationReplica
-from containers import processes as pm, replicas as containers_replicas
+from containers import processes as pm
 from apps.nginx_sync import _http_service_ready
 from mesh import routing
 from apps.state import DEPLOY_HEALTH_PROGRESS_SECONDS, _deploys_in_progress, _scaling_in_progress, DEPLOY_HEALTH_TIMEOUT_SECONDS
 
-async def _mark_stopping(replica_id: int) -> None:
-    """Take an instance out of "running" before its container is stopped on purpose.
-
-    The crash monitor watches the running ones: it would take the stop for a crash and, with a restart
-    policy, start the container again just before the deploy deletes the instance."""
-    async with AsyncSessionLocal() as db:
-        replica = await db.get(ApplicationReplica, replica_id)
-        if replica:
-            replica.status = "stopping"
-            await db.commit()
-
-
-# A new instance on another node may first have to download the source and build the image
+# A new instance may first have to download the source and build the image
 REMOTE_START_TIMEOUT_SECONDS = 900
 
 
@@ -42,11 +30,10 @@ def _single_deploy(app_id: int):
         _deploys_in_progress.discard(app_id)
 
 
-async def _wait_new_instance_healthy(app_id: int, replica_id: int, backend: str, is_local: bool) -> tuple[bool, str]:
+async def _wait_new_instance_healthy(app_id: int, replica_id: int, backend: str) -> tuple[bool, str]:
     """Poll a freshly started deploy instance until it serves HTTP.
 
-    Returns (healthy, reason). Gives up early when the container has exited
-    (local) or the node reported the replica as failed (remote).
+    Returns (healthy, reason). Gives up early when its node reported the instance as failed.
     """
     host, port = routing.split(backend)
     loop = asyncio.get_running_loop()
@@ -56,16 +43,12 @@ async def _wait_new_instance_healthy(app_id: int, replica_id: int, backend: str,
     while loop.time() < deadline:
         if await asyncio.to_thread(_http_service_ready, host, port):
             return True, ""
-        if is_local:
-            if not await asyncio.to_thread(containers_replicas.is_replica_container_running, app_id, replica_id):
-                return False, "container is no longer running (check the instance logs)"
-        else:
-            async with AsyncSessionLocal() as _poll_db:
-                r = await _poll_db.get(ApplicationReplica, replica_id)
-            if r is None:
-                return False, "instance was removed"
-            if r.status == "error":
-                return False, f"node reported an error: {r.last_error or 'unknown'}"
+        async with AsyncSessionLocal() as _poll_db:
+            r = await _poll_db.get(ApplicationReplica, replica_id)
+        if r is None:
+            return False, "instance was removed"
+        if r.status == "error":
+            return False, f"node reported an error: {r.last_error or 'unknown'}"
         if loop.time() >= next_progress:
             pm._push_line(app_id, f"[Deploy] Instance {replica_id} not responding yet after {int(loop.time() - started)}s — still waiting (max {DEPLOY_HEALTH_TIMEOUT_SECONDS}s)…")
             next_progress += DEPLOY_HEALTH_PROGRESS_SECONDS

@@ -1,4 +1,3 @@
-import asyncio
 import json
 from fastapi import Query, Depends, APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,9 +65,6 @@ async def get_stats(app_id: int, _user: dict = Depends(_auth.require_permission(
     if replica_stats.get("status") == "running":
         return replica_stats
 
-    if pm.is_docker_app_running(app_id):
-        stats = await asyncio.to_thread(pm.get_docker_stats, app_id)
-        return {"status": "running", "docker": True, **stats}
     return {"status": "stopped", "docker": True}
 
 

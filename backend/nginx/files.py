@@ -72,10 +72,6 @@ def write_default_catch_all(ssl_cert: str | None = None, ssl_key: str | None = N
     return False, str(e)
 
 
-def config_uses_restart_page(content: str) -> bool:
-    return "try_files /restart.html" in (content or "")
-
-
 def write_maintenance_files(app_id: int, downtime_html: str, update_html: str, restart_html: str = None, starting_html: str = None) -> tuple[bool, str]:
     """Write downtime.html, update.html (and optionally restart.html, starting.html) to /var/www/cloudbase/maintenance/{app_id}/."""
     app_dir = os.path.join(MAINTENANCE_DIR, str(app_id))

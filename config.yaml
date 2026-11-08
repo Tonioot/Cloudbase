@@ -19,10 +19,6 @@ ports:
   instance_min: 10000
   instance_max: 19999
 
-  # Port range for reverse tunnels (remote node → primary)
-  tunnel_min: 20000
-  tunnel_max: 29999
-
   # Database proxies: let app instances reach a database on another node.
   # Port = db_proxy_min + database id; only reachable from containers on the server.
   db_proxy_min: 30000

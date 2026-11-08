@@ -14,7 +14,6 @@ class DeployRequest(BaseModel):
     start_command: Optional[str] = None
     build_command: Optional[str] = None      # runs once during the image build
     port: Optional[int] = None               # internal port (inside container)
-    external_port: Optional[int] = None      # host port — auto-assigned if omitted
     docker_cpu_limit: Optional[float] = None
     docker_memory_limit_mb: Optional[int] = None
     docker_read_only_root: Optional[bool] = None
@@ -42,7 +41,6 @@ class UpdateRequest(BaseModel):
     start_command: Optional[str] = None
     build_command: Optional[str] = None      # "" clears it
     port: Optional[int] = None               # internal port
-    external_port: Optional[int] = None      # host port
     docker_cpu_limit: Optional[float] = None
     docker_memory_limit_mb: Optional[int] = None
     docker_read_only_root: Optional[bool] = None

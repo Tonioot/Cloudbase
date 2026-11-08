@@ -14,7 +14,7 @@ from core.env_crypto import decrypt_env
 from core.audit import log_audit
 from core import auth as _auth
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
-from apps.runtime import _start_instance_local, _remote_replica_command_payload, _load_node_map, _derive_app_status_from_instances
+from apps.runtime import _start_replica_runtime, _load_node_map, _derive_app_status_from_instances
 from apps.serializers import _replica_to_dict, _get_or_404
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
@@ -116,35 +116,18 @@ async def restart_instance(
     node_result = await db.execute(select(Node).where(Node.id == replica.node_id)) if replica.node_id else None
     replica_node = node_result.scalar_one_or_none() if node_result else None
 
-    env_vars = decrypt_env(app.env_vars or "")
-
-    if replica_node is None or replica_node.is_local:
-        if replica.status == "running":
-            await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
-        await asyncio.sleep(1)
-        try:
-            cid = await _start_instance_local(app, replica, env_vars, app_id)
-            replica.status = "running"
-            replica.container_id = cid
-            replica.last_error = None
-        except HTTPException:
-            raise
-        except Exception as e:
-            replica.status = "error"
-            replica.last_error = str(e)
-    elif replica_node.status == "online":
-        remote_payload = _remote_replica_command_payload(
-            app, env_vars, replica.external_port or app.port or 8000
-        )
-        await desired.start(db, node_id=replica_node.id, replica_id=replica.id, payload=remote_payload)
-        replica.status = "starting"
-    else:
+    local_node = await ensure_local_node(db)
+    if replica_node is None:
+        replica_node = local_node
+    if not replica_node.is_local and replica_node.status != "online":
         raise HTTPException(400, f"Node '{replica_node.name}' is offline")
+
+    # A new spec makes the node recreate the container: that is the restart
+    await _start_replica_runtime(app, replica, replica_node, decrypt_env(app.env_vars or ""), db)
 
     await log_audit(db, "instance.restart", actor=actor, app_id=app_id,
                     detail={"name": app.name, "instance_id": instance_id})
     if _has_public_nginx_domain(app):
-        local_node = await ensure_local_node(db)
         await _write_app_nginx_config(app, db, local_node)
     await db.commit()
     return {"status": replica.status, "instance_id": instance_id}
@@ -173,18 +156,10 @@ async def delete_instance(
     node_result = await db.execute(select(Node).where(Node.id == replica.node_id)) if replica.node_id else None
     replica_node = node_result.scalar_one_or_none() if node_result else None
 
-    if replica_node is None or replica_node.is_local:
-        # Always attempt stop for any non-terminal status — ignore errors if container
-        # doesn't exist (deploying failed, already stopped, etc.)
-        if replica.status not in ("stopped", "error"):
-            try:
-                await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
-            except Exception:
-                pass
-    else:
-        # Nothing to send: the node removes any container whose instance is no longer on its list,
-        # also when it was offline just now and only hears about it when it is back.
-        desired.nudge(replica_node.id)
+    # Nothing to send: the node (this server too) removes any container whose instance is no longer on its list,
+    # also when it was offline just now and only hears about it when it is back.
+    local_node = await ensure_local_node(db)
+    desired.nudge((replica_node or local_node).id)
     # Always delete the DB row regardless of container state or node availability
 
     await db.delete(replica)
@@ -198,7 +173,6 @@ async def delete_instance(
 
     # Regenerate nginx config without the removed backend.
     if _has_public_nginx_domain(app):
-        local_node = await ensure_local_node(db)
         await _write_app_nginx_config(app, db, local_node)
 
     await log_audit(db, "instance.delete", actor=actor, app_id=app_id,

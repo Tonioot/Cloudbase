@@ -13,7 +13,7 @@ from core import config as _cfg, auth as _auth
 from apps.git import _normalize_repo_url, _encrypt_github_token, _deploy_app, _resolve_token
 from apps.nginx_sync import _write_app_nginx_config
 from apps.serializers import _app_to_dict
-from apps.validation import _check_new_app_name, _validate_docker_runtime_settings, _check_domain_conflicts, _assign_external_port, _check_repo_url
+from apps.validation import _check_new_app_name, _validate_docker_runtime_settings, _check_domain_conflicts, _check_repo_url
 from routers.applications.schemas import DeployRequest
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
@@ -68,8 +68,6 @@ async def deploy_app(
 
     # no_web apps (discord bots, background workers, etc.) don't need a port or nginx
     is_no_web = (bool(req.no_web) or is_cron) and not is_static
-    node_id_for_port = target_node.id if target_node else local_node.id
-    external_port = None if is_no_web else await _assign_external_port(req.external_port, node_id_for_port, None, db)
 
     app = Application(
         name=req.name,
@@ -85,7 +83,6 @@ async def deploy_app(
         build_command=(req.build_command or "").strip() or None,
         port=containers_dockerfiles.STATIC_INTERNAL_PORT if is_static else req.port,
         app_type="static" if is_static else None,
-        external_port=external_port,
         env_vars=encrypt_env(req.env_vars or {}),
         auto_start=bool(req.auto_start) if req.auto_start is not None else False,
         restart_policy=req.restart_policy or "no",

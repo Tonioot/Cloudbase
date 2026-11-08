@@ -12,7 +12,7 @@ from core.audit import log_audit
 from containers import processes as pm
 from core import applog
 from apps.validation import _assign_external_port
-from apps.runtime import _remote_replica_command_payload, _start_instance_local
+from apps.runtime import _start_replica_runtime
 from apps.deploy_common import _wait_new_instance_healthy
 from mesh import routing
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
@@ -107,13 +107,7 @@ async def _autoscaler():
         return False
 
     async def _remove_failed_replica(app_id: int, replica_id: int, node: Node) -> None:
-        try:
-            if node.is_local:
-                await asyncio.to_thread(pm.stop_docker_replica, app_id, replica_id)
-            else:
-                desired.nudge(node.id)         # the row is deleted below; the node removes the container
-        except Exception as e:
-            alog.warning("[autoscaler] app_id=%d cleanup of replica %d failed: %s", app_id, replica_id, e)
+        desired.nudge(node.id)         # the row is deleted below; the node (this server too) removes the container
         async with AsyncSessionLocal() as s:
             r = await s.get(ApplicationReplica, replica_id)
             if r:
@@ -127,7 +121,7 @@ async def _autoscaler():
             local_node = await ensure_local_node(s)
             node = await _pick_scale_up_node(s, local_node)
             env_vars = decrypt_env(app.env_vars or "")
-            new_port = await _assign_external_port(None, node.id, None, s)
+            new_port = await _assign_external_port(None, node.id, s)
             replica = ApplicationReplica(
                 app_id=app_id,
                 node_id=node.id,
@@ -136,28 +130,20 @@ async def _autoscaler():
             )
             s.add(replica)
             await s.commit()
-            if not node.is_local:
-                await desired.start(s, node_id=node.id, replica_id=replica.id,
-                                    payload=_remote_replica_command_payload(app, env_vars, new_port))
-                await s.commit()
+            await _start_replica_runtime(app, replica, node, env_vars, s)
+            await s.commit()
 
         _say(app_id, f"CPU {avg_cpu:.1f}% > {target:.0f}% over the last {UP_WINDOW}s — adding instance {replica.id} on '{node.name}' ({count} → {count + 1})…")
 
-        # Docker work and the health check run with no DB session open. A local
-        # replica stays "starting" (so not in nginx) until it serves traffic.
+        # The health check runs with no DB session open. The node may need to build first; once the container
+        # runs the primary can connect to it (and puts it in nginx).
         try:
-            if node.is_local:
-                cid = await _start_instance_local(app, replica, env_vars, app_id)
-                check_backend = f"127.0.0.1:{replica.external_port}"
-            else:
-                # The agent may need to clone + build first; once the container runs the
-                # primary can connect to it over the node network (and puts it in nginx).
-                try:
-                    check_backend = await routing.wait_reachable(replica.id, DEPLOY_HEALTH_TIMEOUT_SECONDS)
-                except routing.Unreachable as exc:
-                    raise RuntimeError(str(exc))
+            try:
+                check_backend = await routing.wait_reachable(replica.id, DEPLOY_HEALTH_TIMEOUT_SECONDS)
+            except routing.Unreachable as exc:
+                raise RuntimeError(str(exc))
             if not app.no_web:
-                healthy, reason = await _wait_new_instance_healthy(app_id, replica.id, check_backend, is_local=node.is_local)
+                healthy, reason = await _wait_new_instance_healthy(app_id, replica.id, check_backend)
                 if not healthy:
                     raise RuntimeError(f"health check failed: {reason}")
         except Exception as e:
@@ -166,18 +152,6 @@ async def _autoscaler():
             await _audit(app_id, "app.autoscale_failed", {"direction": "up", "node": node.name, "error": str(e)})
             return
 
-        if node.is_local:
-            async with AsyncSessionLocal() as s:
-                r = await s.get(ApplicationReplica, replica.id)
-                if r is None:
-                    return
-                r.status = "running"
-                r.substatus = None
-                r.container_id = cid
-                r.last_error = None
-                # _start_instance_local may have reassigned the port on conflict
-                r.external_port = replica.external_port
-                await s.commit()
         await _rewrite_nginx(app_id)
         _say(app_id, f"Scaled UP to {count + 1} instances (new instance {replica.id} on '{node.name}').")
         await _audit(app_id, "app.autoscale_up", {
@@ -199,15 +173,12 @@ async def _autoscaler():
         await _rewrite_nginx(app_id)
 
         try:
-            if node.is_local:
-                stopped = await asyncio.to_thread(pm.stop_docker_replica, app_id, victim_id)
-            else:
-                async with AsyncSessionLocal() as s:
-                    await desired.stop(s, node_id=node.id, replica_id=victim_id)
-                    await s.commit()
-                stopped = await _wait_until_stopped(victim_id, timeout=120)
-                if not stopped:
-                    alog.warning("[autoscaler] app_id=%d instance %d on '%s' did not stop in time", app_id, victim_id, node.name)
+            async with AsyncSessionLocal() as s:
+                await desired.stop(s, node_id=node.id, replica_id=victim_id)
+                await s.commit()
+            stopped = await _wait_until_stopped(victim_id, timeout=120)
+            if not stopped:
+                alog.warning("[autoscaler] app_id=%d instance %d on '%s' did not stop in time", app_id, victim_id, node.name)
         except Exception as e:
             stopped = False
             alog.warning("[autoscaler] app_id=%d scale down: stop replica %d raised: %s", app_id, victim_id, e)

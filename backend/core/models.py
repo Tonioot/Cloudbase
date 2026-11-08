@@ -67,9 +67,7 @@ class Application(Base):
     deploy_strategy      = Column(String(20), default="rolling", nullable=False)  # rolling | blue_green
     auto_deploy_interval = Column(Integer, default=60, nullable=False)  # seconds between checks
     port          = Column(Integer, nullable=True)   # internal port (inside container)
-    external_port = Column(Integer, nullable=True)   # host port (auto-assigned 8000–8999)
     status = Column(String(20), default="stopped")
-    pid = Column(Integer, nullable=True)
     node_id = Column(Integer, ForeignKey("nodes.id"), nullable=True, index=True)
     working_dir = Column(String(500), nullable=True)
     last_error = Column(Text, nullable=True)

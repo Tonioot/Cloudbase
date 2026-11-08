@@ -7,7 +7,7 @@ import asyncio
 import socket
 
 from core.database import AsyncSessionLocal
-from core.models import ApplicationReplica, Node
+from core.models import Application, ApplicationReplica, Node
 
 POLL_SECONDS = 2
 
@@ -40,6 +40,13 @@ def port_open(host: str, port: int, timeout: float = 1.0) -> bool:
         return False
 
 
+async def _publishes_no_port(replica: ApplicationReplica) -> bool:
+    """A worker or bot has no web server: there is no port to connect to, it is live once it runs."""
+    async with AsyncSessionLocal() as db:
+        app = await db.get(Application, replica.app_id)
+    return bool(app and app.no_web)
+
+
 async def wait_reachable(replica_id: int, timeout: float) -> str:
     """Wait until the instance accepts connections; returns its backend.
 
@@ -55,7 +62,12 @@ async def wait_reachable(replica_id: int, timeout: float) -> str:
             raise Unreachable("instance was removed")
         if replica.status == "error":
             raise Unreachable(f"node reported an error: {replica.last_error or 'unknown'}")
-        backend = backend_for(replica, node)
+        if await _publishes_no_port(replica):
+            if replica.status == "running":
+                return ""
+            backend = None
+        else:
+            backend = backend_for(replica, node)
         if backend and await asyncio.to_thread(port_open, *split(backend)):
             return backend
         if loop.time() >= deadline:

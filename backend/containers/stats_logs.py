@@ -6,7 +6,6 @@ import time
 from collections import deque
 from typing import Optional
 from containers.client import _get_client
-from containers.naming import container_name
 
 log = logging.getLogger("cloudbase.docker")
 
@@ -33,86 +32,18 @@ def _is_loopback_bind_log(line: str, internal_port: Optional[int]) -> bool:
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
 
-def get_container_stats(app_id: int) -> dict:
-    try:
-        client = _get_client()
-        c = client.containers.get(container_name(app_id))
-        raw = c.stats(stream=False)
-
-        # CPU %
-        cpu_delta = raw["cpu_stats"]["cpu_usage"]["total_usage"] - raw["precpu_stats"]["cpu_usage"]["total_usage"]
-        system_delta = raw["cpu_stats"].get("system_cpu_usage", 0) - raw["precpu_stats"].get("system_cpu_usage", 0)
-        num_cpus = raw["cpu_stats"].get("online_cpus") or len(raw["cpu_stats"]["cpu_usage"].get("percpu_usage") or [1])
-        cpu_percent = (cpu_delta / system_delta * num_cpus * 100.0) if system_delta > 0 else 0.0
-
-        # Memory — cgroups v2: usage may be 0; fall back to anon+file from stats dict
-        mem_stats = raw.get("memory_stats", {})
-        mem_usage = mem_stats.get("usage", 0)
-        mem_inner = mem_stats.get("stats", {})
-        if mem_usage == 0 and mem_inner:
-            # cgroups v2: anon = anonymous pages (true RSS), file = page cache
-            rss = mem_inner.get("anon", 0)
-            mem_usage = rss + mem_inner.get("file", 0)
-            log.info("app_id=%d cgroups-v2 fallback: anon=%d file=%d rss=%d",
-                     app_id, rss, mem_inner.get("file", 0), rss)
-        else:
-            mem_cache = mem_inner.get("inactive_file", mem_inner.get("cache", 0))
-            rss = max(mem_usage - mem_cache, 0)
-
-        c.reload()
-        started_at = c.attrs.get("State", {}).get("StartedAt", "")
-        uptime = 0
-        if started_at:
-            import datetime
-            try:
-                started = datetime.datetime.fromisoformat(started_at.replace("Z", "+00:00"))
-                uptime = int((datetime.datetime.now(datetime.timezone.utc) - started).total_seconds())
-            except Exception:
-                pass
-
-        # Network I/O (cumulative since container start)
-        networks = raw.get("networks") or {}
-        net_rx = sum(v.get("rx_bytes", 0) for v in networks.values())
-        net_tx = sum(v.get("tx_bytes", 0) for v in networks.values())
-
-        # Disk I/O (cumulative block bytes)
-        blkio = raw.get("blkio_stats", {})
-        io_list = blkio.get("io_service_bytes_recursive") or []
-        disk_read  = sum(e.get("value", 0) for e in io_list if e.get("op", "").lower() == "read")
-        disk_write = sum(e.get("value", 0) for e in io_list if e.get("op", "").lower() == "write")
-
-        return {
-            "cpu_percent": round(cpu_percent, 2),
-            "memory_mb": round(rss / 1024 / 1024, 2),
-            "memory_vms_mb": round(mem_usage / 1024 / 1024, 2),
-            "uptime_seconds": uptime,
-            "status": c.status,
-            "num_threads": 0,
-            "num_connections": 0,
-            "net_rx_mb": round(net_rx / 1024 / 1024, 2),
-            "net_tx_mb": round(net_tx / 1024 / 1024, 2),
-            "disk_read_mb": round(disk_read / 1024 / 1024, 2),
-            "disk_write_mb": round(disk_write / 1024 / 1024, 2),
-        }
-    except Exception:
-        log.warning("get_container_stats failed for app_id=%d", app_id, exc_info=True)
-        return {}
-
-
-# ── Log streaming ─────────────────────────────────────────────────────────────
-
 def attach_container_log_tailer(
     app_id: int,
     log_buffers: dict,
     push_line_fn,
     main_loop,
-    cname: Optional[str] = None,
+    cname: str,
 ) -> None:
     """Stream container logs to the in-memory buffer in a background thread."""
     if app_id not in log_buffers:
         log_buffers[app_id] = deque(maxlen=5000)
 
-    resolved_cname = cname or container_name(app_id)
+    resolved_cname = cname
 
     def _reader():
         try:
@@ -155,16 +86,6 @@ def attach_container_log_tailer(
     threading.Thread(target=_reader, daemon=True).start()
 
 
-def get_recent_container_logs(app_id: int, lines: int = 300) -> list[str]:
-    try:
-        client = _get_client()
-        c = client.containers.get(container_name(app_id))
-        raw = c.logs(tail=lines, timestamps=False)
-        return [l.decode("utf-8", errors="replace").rstrip() for l in raw.splitlines()]
-    except Exception:
-        return []
-
-
 def get_recent_container_logs_by_name(container_name_str: str, lines: int = 300) -> list[str]:
     try:
         client = _get_client()
@@ -176,7 +97,7 @@ def get_recent_container_logs_by_name(container_name_str: str, lines: int = 300)
 
 
 def get_container_stats_by_name(container_name_str: str) -> dict:
-    """Like get_container_stats but accepts an explicit container name instead of app_id."""
+    """Resource use of one container, by name."""
     try:
         client = _get_client()
         c = client.containers.get(container_name_str)

@@ -81,14 +81,10 @@ async def _stats_collector():
                             "uptime_seconds": max((s.get("uptime_seconds", 0) for s in stats_list), default=0),
                         }
                     else:
-                        # Legacy single-container model
-                        s = await asyncio.to_thread(pm.get_docker_stats, a.id)
-                        if not s:
-                            return
+                        return  # no running local instance: nothing to measure
                     mem = psutil.virtual_memory()
                     data = {
                         "status": "running",
-                        "pid": None,
                         "docker": True,
                         "timestamp": timestamp,
                         **s,

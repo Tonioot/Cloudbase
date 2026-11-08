@@ -20,8 +20,8 @@ from notify import watch as notify_watch
 from dbs import backup_scheduler as dbs_backup_scheduler
 from dbs import workers as dbs_workers
 from workers.autoscaler import _autoscaler
-from workers.cleanup import _docker_cleanup_loop, _node_command_cleanup, _orphan_replica_cleanup
-from workers.crash import _crash_monitor
+from workers.cleanup import _docker_cleanup_loop, _node_command_cleanup
+from nodes import local as nodes_local
 from workers.demo import _dev_demo_logs
 from workers.health import _node_health_monitor
 from workers.mesh import _mesh_monitor
@@ -54,7 +54,7 @@ async def _start_panel_tasks() -> list[asyncio.Task]:
     await _startup_recovery()
     _load_panel_https_domain()
     tasks = [
-        asyncio.create_task(_crash_monitor()),
+        asyncio.create_task(nodes_local.run_forever()),
         asyncio.create_task(_stats_collector()),
         asyncio.create_task(_node_health_monitor()),
         asyncio.create_task(_mesh_monitor()),
@@ -62,7 +62,6 @@ async def _start_panel_tasks() -> list[asyncio.Task]:
         asyncio.create_task(_remote_replica_stats_poller()),
         asyncio.create_task(_node_command_cleanup()),
         asyncio.create_task(_autoscaler()),
-        asyncio.create_task(_orphan_replica_cleanup()),
         asyncio.create_task(_docker_cleanup_loop()),
         asyncio.create_task(_overview_sampler()),
         asyncio.create_task(workers_autodeploy.auto_deploy_loop()),

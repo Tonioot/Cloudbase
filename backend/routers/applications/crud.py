@@ -7,7 +7,7 @@ import datetime as _dt
 from core.models import StatsHistory, Application, ApplicationReplica
 from nodes.registry import ensure_local_node
 from core import auth as _auth
-from apps.runtime import _sync_process_status, _derive_app_status_from_instances, _load_node_map
+from apps.runtime import _derive_app_status_from_instances, _load_node_map
 from apps.serializers import _get_or_404, _replica_to_dict, _app_to_dict
 from routers.applications.deps import _request_can_manage_apps
 
@@ -32,18 +32,17 @@ async def list_apps(request: Request, db: AsyncSession = Depends(get_db), _viewe
     async def _check(app):
         app_replicas = replica_map.get(app.id)
         if app_replicas:
-            return app.id, _derive_app_status_from_instances(app_replicas), None
-        return app.id, app.status, app.pid
+            return app.id, _derive_app_status_from_instances(app_replicas)
+        return app.id, app.status
 
     checks = await asyncio.gather(*[_check(a) for a in apps])
 
     id_map = {a.id: a for a in apps}
     dirty = False
-    for app_id, new_status, new_pid in checks:
+    for app_id, new_status in checks:
         a = id_map[app_id]
-        if a.status != new_status or a.pid != new_pid:
+        if a.status != new_status:
             a.status = new_status
-            a.pid = new_pid
             dirty = True
     if dirty:
         await db.commit()
@@ -68,12 +67,14 @@ async def list_apps(request: Request, db: AsyncSession = Depends(get_db), _viewe
 async def get_app(app_id: int, request: Request, _user: dict = Depends(_auth.require_permission("apps.view")), db: AsyncSession = Depends(get_db)):
     await ensure_local_node(db)
     app = await _get_or_404(app_id, db)
-    await _sync_process_status(app, db)
     node_map = await _load_node_map(db)
     replica_result = await db.execute(
         select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
     )
     replicas = replica_result.scalars().all()
+    if replicas and not app.cron_schedule and app.status != _derive_app_status_from_instances(replicas):
+        app.status = _derive_app_status_from_instances(replicas)      # the status follows the instances
+        await db.commit()
     replicas_dicts = [_replica_to_dict(r, node_map.get(r.node_id)) for r in replicas]
     return _app_to_dict(app, include_sensitive=await _request_can_manage_apps(request), replicas=replicas_dicts)
 

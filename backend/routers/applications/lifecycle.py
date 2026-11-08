@@ -8,7 +8,7 @@ from core.audit import log_audit
 from core import auth as _auth
 from apps.lifecycle import restart_app_now, start_app_now
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
-from apps.runtime import _best_effort_stop_legacy_app_container, _derive_app_status_from_instances, _load_app_replicas, _load_node_map, _resolve_replica_node, _stop_replica_runtime
+from apps.runtime import _derive_app_status_from_instances, _load_app_replicas, _load_node_map, _resolve_replica_node, _stop_replica_runtime
 from apps.serializers import _get_or_404
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
@@ -28,11 +28,8 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict 
     local_node = await ensure_local_node(db)
     replicas = await _load_app_replicas(app_id, db)
 
-    await _best_effort_stop_legacy_app_container(app_id)
-
     if not replicas:
         app.status = "stopped"
-        app.pid = None
         if _has_public_nginx_domain(app):
             await _write_app_nginx_config(app, db, local_node)
         await log_audit(db, "app.stop", actor=actor, app_id=app_id, detail={"name": app.name})
@@ -47,7 +44,6 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict 
         await _stop_replica_runtime(app, replica, replica_node, db)
 
     app.status = _derive_app_status_from_instances(replicas)
-    app.pid = None
     if _has_public_nginx_domain(app):
         await _write_app_nginx_config(app, db, local_node)
 

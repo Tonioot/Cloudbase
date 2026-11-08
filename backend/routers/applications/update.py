@@ -15,7 +15,7 @@ from apps.git import _encrypt_github_token, _resolve_token
 from apps.images import _image_port, _dockerfile_build_kwargs
 from apps.nginx_sync import _resolve_ssl_paths, _write_app_nginx_config, _get_nginx_backends, _get_nginx_mode, _best_effort_remove_app_nginx, _ensure_maintenance_files
 from apps.serializers import _app_to_dict, _get_or_404
-from apps.validation import _validate_docker_runtime_settings, _check_domain_conflicts, _assign_external_port
+from apps.validation import _validate_docker_runtime_settings, _check_domain_conflicts
 from routers.applications.schemas import UpdateRequest
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
@@ -66,8 +66,6 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         if req.port != app.port:
             dockerfile_changed = True
         app.port = req.port
-    if req.external_port is not None:
-        app.external_port = await _assign_external_port(req.external_port, app.node_id, app.id, db)
     if req.docker_cpu_limit is not None:
         app.docker_cpu_limit = req.docker_cpu_limit
     if req.docker_memory_limit_mb is not None:

@@ -5,7 +5,6 @@ from collections import deque
 from typing import Optional
 
 from core import activity, applog
-from containers import apps as containers_apps
 from containers import naming as containers_naming
 from containers import replicas as containers_replicas
 from containers import stats_logs as containers_stats_logs
@@ -151,15 +150,6 @@ def detect_app_type_from_command(cmd: str) -> str:
     return "unknown"
 
 
-def stop_docker_app(app_id: int) -> bool:
-    """Stop and remove a Docker container."""
-    def _push(aid, line):
-        log_buffers.setdefault(aid, deque(maxlen=5000)).append(str(line))
-        _push_line(aid, line)
-
-    return containers_apps.stop_container(app_id, push_line_fn=_push)
-
-
 def start_docker_replica(
     app_id: int,
     replica_id: int,
@@ -204,16 +194,6 @@ def stop_docker_replica(app_id: int, replica_id: int) -> bool:
     return containers_replicas.stop_replica_container(app_id, replica_id, push_line_fn=_push)
 
 
-def is_docker_app_running(app_id: int) -> bool:
-    return containers_apps.is_container_running(app_id)
-
-
-def get_docker_stats(app_id: int) -> dict:
-    return containers_stats_logs.get_container_stats(app_id)
-
-
 def get_recent_docker_logs(app_id: int, lines: int = 300) -> list[str]:
-    buf = log_buffers.get(app_id)
-    if buf:
-        return list(buf)[-lines:]
-    return containers_stats_logs.get_recent_container_logs(app_id, lines)
+    """The last lines of the app's live log (kept in memory by the log tailers)."""
+    return list(log_buffers.get(app_id) or [])[-lines:]

@@ -9,12 +9,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.git import _refresh_app_source_revision
 from apps.nginx_sync import _has_public_nginx_domain, _restore_nginx_after_transition, _write_app_nginx_config
 from apps.runtime import (
-    _best_effort_stop_legacy_app_container,
     _derive_app_status_from_instances,
     _has_live_replicas,
     _load_app_replicas,
     _load_node_map,
-    _remote_replica_command_payload,
     _resolve_replica_node,
     _start_replica_runtime,
 )
@@ -25,7 +23,6 @@ from containers import processes as pm
 from core.audit import log_audit
 from core.env_crypto import decrypt_env
 from cron import scheduler as _cron
-from nodes import desired
 from nodes.registry import ensure_local_node
 
 
@@ -53,41 +50,13 @@ async def restart_app_now(app_id: int, db: AsyncSession, actor: str):
         await _write_app_nginx_config(app, db, local_node, mode="restart")
         pm._push_line(app_id, "Restarting instances...")
 
-    await _best_effort_stop_legacy_app_container(app_id)
-
+    source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
     for replica in replicas:
-        replica_node = _resolve_replica_node(replica, node_map, local_node)
-        if replica_node is None:
-            replica.status = "error"
-            replica.last_error = "Replica node not found"
-            continue
-
-        is_live = replica.status in ("running", "starting", "restarting", "stopping", "node_offline")
-        if replica_node.is_local:
-            if is_live:
-                await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
-            replica.status = "stopped"
-            replica.container_id = None
-            await _start_replica_runtime(app, replica, replica_node, env_vars, db)
-            continue
-
-        if replica_node.status != "online" or not replica_node.enabled:
-            replica.status = "error"
-            replica.last_error = f"Node '{replica_node.name}' is offline"
-            continue
-
-        remote_payload = _remote_replica_command_payload(
-            app,
-            env_vars,
-            replica.external_port or app.port or 8000,
-        )
         # A new spec makes the node recreate the container: that is the restart
-        await desired.start(db, node_id=replica_node.id, replica_id=replica.id, payload=remote_payload)
-        replica.status = "starting"
-        replica.last_error = None
+        await _start_replica_runtime(app, replica, _resolve_replica_node(replica, node_map, local_node),
+                                     env_vars, db, source_revision)
 
     app.status = _derive_app_status_from_instances(replicas)
-    app.pid = None
     if _has_public_nginx_domain(app) and not show_restart_page:
         await _write_app_nginx_config(app, db, local_node)
 
@@ -128,10 +97,8 @@ async def start_app_now(app_id: int, db: AsyncSession, actor: str):
         await _write_app_nginx_config(app, db, local_node, mode="starting")
         pm._push_line(app_id, "Starting instances...")
 
-    await _best_effort_stop_legacy_app_container(app_id)
-
     env_vars = decrypt_env(app.env_vars or "")
-    await asyncio.to_thread(_refresh_app_source_revision, app)  # also updates app.source_revision
+    source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)  # also updates app.source_revision
     node_map = await _load_node_map(db)
     for replica in replicas:
         if replica.status in ("running", "starting", "restarting"):
@@ -139,10 +106,9 @@ async def start_app_now(app_id: int, db: AsyncSession, actor: str):
         if replica.status not in ("stopped", "error", "pending", "node_offline"):
             continue
         replica_node = _resolve_replica_node(replica, node_map, local_node)
-        await _start_replica_runtime(app, replica, replica_node, env_vars, db)
+        await _start_replica_runtime(app, replica, replica_node, env_vars, db, source_revision)
 
     app.status = _derive_app_status_from_instances(replicas)
-    app.pid = None
     if _has_public_nginx_domain(app) and not show_start_page:
         await _write_app_nginx_config(app, db, local_node)
 

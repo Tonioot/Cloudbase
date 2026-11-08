@@ -45,7 +45,8 @@ def runtime_options(spec: dict, bind_host: str) -> dict:
     for source, target in _OPTION_OVERRIDES:
         if spec.get(source) is not None:
             options[target] = spec[source]
-    options["bind_host"] = bind_host
+    if bind_host:
+        options["bind_host"] = bind_host      # without one the spec decides (the primary: localhost when nginx is in front)
     return options
 
 
@@ -67,17 +68,40 @@ class Reconciler:
         self.reconcile_now = asyncio.Event()
         self.report_now = asyncio.Event()
 
+    # ── how this reconciler talks to the primary ─────────────────────────────
+    # A node asks over HTTP. The primary's own reconciler (nodes/local.py) reads and writes the database
+    # instead; everything else below is the same for both.
+    async def _fetch_list(self) -> dict:
+        resp = await self.client.get(
+            f"{self.state.main_url}/api/nodes/agent/desired", params={"have": self.list_hash},
+            headers={"X-Node-Token": self.state.auth_token}, timeout=30)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def _send_report(self, body: dict) -> None:
+        resp = await self.client.post(
+            f"{self.state.main_url}/api/nodes/agent/observed", json={"replicas": body},
+            headers={"X-Node-Token": self.state.auth_token}, timeout=30)
+        resp.raise_for_status()
+
+    def _network_ready(self) -> bool:
+        return bool(self.state.wg_ip)
+
+    def _bind_host(self) -> str | None:
+        """Instances publish their port on the node-network address only."""
+        return self.state.wg_ip
+
+    async def _prepare(self, spec: dict, progress) -> None:
+        """Get the image for the spec onto this machine."""
+        await ensure_image(self.client, self.state, spec, progress)
+
     # ── what the primary wants ───────────────────────────────────────────────
     def nudge(self) -> None:
         """The primary says its list changed."""
         self.pull_now.set()
 
     async def pull(self) -> None:
-        resp = await self.client.get(
-            f"{self.state.main_url}/api/nodes/agent/desired", params={"have": self.list_hash},
-            headers={"X-Node-Token": self.state.auth_token}, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
+        data = await self._fetch_list()
         if data.get("unchanged"):
             return
         self.entries = {int(e["replica_id"]): e for e in data.get("replicas", [])}
@@ -98,11 +122,7 @@ class Reconciler:
             self.report_now.set()
 
     async def report(self) -> None:
-        body = {str(rid): obs for rid, obs in self.observed.items()}
-        resp = await self.client.post(
-            f"{self.state.main_url}/api/nodes/agent/observed", json={"replicas": body},
-            headers={"X-Node-Token": self.state.auth_token}, timeout=30)
-        resp.raise_for_status()
+        await self._send_report({str(rid): obs for rid, obs in self.observed.items()})
 
     # ── making them equal ────────────────────────────────────────────────────
     async def reconcile_once(self) -> None:
@@ -199,7 +219,7 @@ class Reconciler:
     async def _start(self, entry: dict, container: dict | None) -> None:
         replica_id, wanted, spec = entry["replica_id"], entry["spec_hash"], entry["spec"]
         try:
-            if not self.state.wg_ip:
+            if not self._network_ready():
                 # Not a failure of the app: the node network is still being set up
                 self._set(replica_id, "starting", spec_hash=wanted, substatus="waiting_for_network")
                 _agent_log(f"[reconcile] instance {replica_id}: waiting for the node network")
@@ -210,14 +230,14 @@ class Reconciler:
             def progress(substatus: str) -> None:
                 self._set(replica_id, "building", spec_hash=wanted, substatus=substatus)
 
-            await ensure_image(self.client, self.state, spec, progress)
+            await self._prepare(spec, progress)
             self._set(replica_id, "starting", spec_hash=wanted, substatus="creating_container")
             if container is not None:
                 await asyncio.to_thread(pm.stop_docker_replica, app_id, replica_id)      # another spec, or exited
             container_id = await asyncio.to_thread(
                 pm.start_docker_replica, app_id, replica_id, spec.get("app_name") or "",
                 spec.get("internal_port", 8000), spec["external_port"], spec.get("env_vars") or {},
-                {**runtime_options(spec, self.state.wg_ip), "spec_hash": wanted}, app_id)
+                {**runtime_options(spec, self._bind_host()), "spec_hash": wanted}, app_id)
             self.started_at[replica_id] = time.monotonic()
             self.attempts.pop(replica_id, None)
             self._set(replica_id, "running", container_id=container_id, spec_hash=wanted)

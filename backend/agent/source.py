@@ -106,14 +106,18 @@ def _build_arguments(spec: dict) -> tuple:
     return app_type, start_cmd, port, spec.get("build_command") or "", spec.get("env_vars") or {}, spec.get("source_revision") or None
 
 
-async def _build_image_local(local_id: int, app_name: str, app_dir: str, spec: dict) -> str:
-    """Build the Docker image on this node (build_image generates the Dockerfile). Returns the image name."""
+async def _build_image_local(local_id: int, app_name: str, app_dir: str, spec: dict, push=None) -> str:
+    """Build the Docker image on this node (build_image generates the Dockerfile). Returns the image name.
+
+    `push(app_id, line)` also gets the build output; it always goes to the agent log."""
     app_type, start_cmd, port, build_command, build_env, revision = _build_arguments(spec)
     img = containers_naming.image_name(local_id, app_name)
     _agent_log(f"[build] Building image {img} for {platform.machine()} in {app_dir}")
 
     def _push(aid, line):
         _agent_log(f"[build] {line}")
+        if push:
+            push(aid, line)
 
     await asyncio.to_thread(
         containers_build.build_image,
@@ -126,10 +130,12 @@ async def _build_image_local(local_id: int, app_name: str, app_dir: str, spec: d
     return img
 
 
-async def ensure_image(client: httpx.AsyncClient, state, spec: dict, progress: Callable[[str], None]) -> None:
+async def ensure_image(client: httpx.AsyncClient, state, spec: dict, progress: Callable[[str], None],
+                       source=None, push=None) -> None:
     """Make sure this node has an image for the spec: only downloads and builds when it is missing or at another revision.
 
-    `progress` is told what is happening ("downloading", "building_image")."""
+    `progress` is told what is happening ("downloading", "building_image"). The primary builds from the source it
+    already has: `source(app_id, app_name)` then gives the directory, and `push` gets the build output."""
     main_id = int(spec["app_id"])
     app_name = spec.get("app_name") or spec.get("name") or ""
     if not app_name:
@@ -149,9 +155,12 @@ async def ensure_image(client: httpx.AsyncClient, state, spec: dict, progress: C
         _agent_log(f"[deploy] Image {img} is not current, rebuilding")
 
     async with _build_lock:     # one build at a time: a Raspberry Pi cannot do two
-        progress("downloading")
-        app_dir = await _download_and_extract_source(client, state, main_id, app_name)
+        if source is None:
+            progress("downloading")
+            app_dir = await _download_and_extract_source(client, state, main_id, app_name)
+        else:
+            app_dir = source(main_id, app_name)
         progress("building_image")
-        await _build_image_local(main_id, app_name, app_dir, spec)
+        await _build_image_local(main_id, app_name, app_dir, spec, push)
     if key:
         _built.add((main_id, key))

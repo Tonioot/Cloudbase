@@ -13,7 +13,7 @@ from nodes import desired
 from core.audit import log_audit
 from core import auth as _auth
 from apps.nginx_sync import _best_effort_remove_app_nginx, _best_effort_delete_app_certificate
-from apps.runtime import _get_app_node, _cleanup_app_dependencies, _load_node_map, _best_effort_stop_legacy_app_container
+from apps.runtime import _get_app_node, _cleanup_app_dependencies, _load_node_map
 from apps.serializers import _get_or_404
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
@@ -50,11 +50,11 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dic
     for replica in replica_result.scalars().all():
         r_node = node_map.get(replica.node_id)
         if r_node and r_node.is_local:
+            # Stopped here too, not only through the list: the image is removed right below and must be free
             await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
         elif r_node and not r_node.is_local:
             desired.nudge(r_node.id)     # the replica's row goes with the app; its node removes the container
 
-    await _best_effort_stop_legacy_app_container(app_id)
     await asyncio.to_thread(containers_cleanup.remove_image, app_id, app.name)
 
     _best_effort_remove_app_nginx(app.name)

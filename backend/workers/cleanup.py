@@ -3,8 +3,7 @@ import logging
 import time as _time
 from sqlalchemy import select
 from core.database import AsyncSessionLocal
-from core.models import Node as _Node, ApplicationReplica, NodeCommand as _NC
-from containers import replicas as containers_replicas
+from core.models import Node as _Node, NodeCommand as _NC
 from containers import cleanup as containers_cleanup
 from containers import client as containers_client
 from nodes.liveness import run_node_docker_cleanup
@@ -36,53 +35,6 @@ async def _node_command_cleanup():
         except Exception:
             pass
         await asyncio.sleep(3600)
-
-
-# ── Orphan replica cleanup ────────────────────────────────────────────────────
-async def _orphan_replica_cleanup():
-    """Every 30 min reconcile local replica containers against the DB and remove
-    leaks: dead/exited replica containers, and running replica containers that no
-    longer have a corresponding ApplicationReplica row. Prevents replicas from
-    piling up on the host (which starves memory and destabilises container DNS).
-    """
-
-    await asyncio.sleep(120)
-    while True:
-        try:
-            containers = await asyncio.to_thread(containers_replicas.list_replica_containers)
-            if containers:
-                async with AsyncSessionLocal() as db:
-                    # Local node id — we only manage local containers here.
-                    nr = await db.execute(select(_Node).where(_Node.is_local == True))
-                    local_node = nr.scalar_one_or_none()
-                    local_node_id = local_node.id if local_node else None
-
-                    # Live replica ids that are expected to be running locally.
-                    rep_result = await db.execute(
-                        select(ApplicationReplica).where(
-                            ApplicationReplica.status.in_(["pending", "starting", "running", "stopping"])
-                        )
-                    )
-                    live = rep_result.scalars().all()
-                    live_ids = {
-                        r.id for r in live
-                        if local_node_id is None or r.node_id is None or r.node_id == local_node_id
-                    }
-
-                    for c in containers:
-                        rid = c["replica_id"]
-                        is_dead = c["status"] in ("exited", "dead", "created")
-                        is_orphan = rid not in live_ids
-                        if is_dead or is_orphan:
-                            removed = await asyncio.to_thread(containers_replicas.remove_container_by_name, c["name"])
-                            if removed:
-                                reason = "dead" if is_dead else "no DB row"
-                                log.info("[orphan-cleanup] removed replica container %s (%s)", c["name"], reason)
-        except asyncio.CancelledError:
-            return
-        except Exception as e:
-            log.warning("[orphan-cleanup] error: %s", e)
-        await asyncio.sleep(1800)
 
 
 # ── Docker disk cleanup ───────────────────────────────────────────────────────

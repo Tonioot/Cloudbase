@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal
 from core.models import Node, ApplicationReplica
-from containers import processes as pm, naming as containers_naming, replicas as containers_replicas, build as containers_build
+from containers import processes as pm, naming as containers_naming, build as containers_build
 from nginx import config as nginx_config, files as nginx_files
 from nodes import desired
 from core.env_crypto import decrypt_env
@@ -14,10 +14,10 @@ from core.audit import log_audit
 from apps.git import _refresh_app_source_revision
 from apps.images import _image_build_kwargs, _image_port
 from apps.nginx_sync import _resolve_ssl_paths, _has_public_nginx_domain
-from apps.runtime import _get_app_node, _remote_replica_command_payload, _start_instance_local
+from apps.runtime import _get_app_node, _start_replica_runtime
 from apps.serializers import _get_or_404
 from apps.validation import _assign_external_port
-from apps.deploy_common import REMOTE_START_TIMEOUT_SECONDS, _mark_stopping, _wait_new_instance_healthy
+from apps.deploy_common import REMOTE_START_TIMEOUT_SECONDS, _wait_new_instance_healthy
 from core import activity
 from mesh import routing
 
@@ -95,7 +95,7 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
     new_entries: list[tuple[Node, int]] = []
 
     for tnode in target_slots:
-        new_ext_port = await _assign_external_port(None, tnode.id, None, db)
+        new_ext_port = await _assign_external_port(None, tnode.id, db)
         new_replica = ApplicationReplica(
             app_id=app_id,
             node_id=tnode.id,
@@ -107,39 +107,22 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
         await db.commit()
         new_entries.append((tnode, new_replica.id))
 
-        if tnode.is_local:
-            pm._push_line(app_id, f"[ZD] Starting new local instance (id={new_replica.id}) on port {new_ext_port}…")
-            try:
-                cid = await _start_instance_local(app, new_replica, env_vars, app_id)
-                new_replica.container_id = cid
-                await db.commit()
-            except Exception as e:
-                await _zd_rollback(app_id, local_node.id, new_entries, db)
-                raise HTTPException(500, f"Failed to start new local instance: {e}")
-        else:
-            pm._push_line(app_id, f"[ZD] Queuing start on node '{tnode.name}' for instance {new_replica.id}…")
-            remote_payload = _remote_replica_command_payload(app, env_vars, new_ext_port)
-            await desired.start(db, node_id=tnode.id, replica_id=new_replica.id, payload=remote_payload)
-            await db.commit()
+        pm._push_line(app_id, f"[ZD] Starting instance {new_replica.id} on '{tnode.name}'…")
+        await _start_replica_runtime(app, new_replica, tnode, env_vars, db, source_revision)
+        await db.commit()
 
     # ── Step 3: Health-check every new replica ────────────────────────────────
     for tnode, new_rid in new_entries:
-        if tnode.is_local:
-            async with AsyncSessionLocal() as _poll_db:
-                r = await _poll_db.get(ApplicationReplica, new_rid)
-                check_backend = f"127.0.0.1:{r.external_port}" if r else None
-            label = f"local backend {check_backend}"
-        else:
-            pm._push_line(app_id, f"[ZD] Waiting for instance {new_rid} on '{tnode.name}' to be built and reachable (max {REMOTE_START_TIMEOUT_SECONDS // 60} min)…")
-            try:
-                check_backend = await routing.wait_reachable(new_rid, REMOTE_START_TIMEOUT_SECONDS)
-            except routing.Unreachable as exc:
-                await _zd_rollback(app_id, local_node.id, new_entries, db)
-                raise HTTPException(502, f"Instance {new_rid} on '{tnode.name}': {exc} — rolled back")
-            label = f"{check_backend} (node '{tnode.name}')"
+        pm._push_line(app_id, f"[ZD] Waiting for instance {new_rid} on '{tnode.name}' to be built and reachable (max {REMOTE_START_TIMEOUT_SECONDS // 60} min)…")
+        try:
+            check_backend = await routing.wait_reachable(new_rid, REMOTE_START_TIMEOUT_SECONDS)
+        except routing.Unreachable as exc:
+            await _zd_rollback(app_id, local_node.id, new_entries, db)
+            raise HTTPException(502, f"Instance {new_rid} on '{tnode.name}': {exc} — rolled back")
+        label = f"{check_backend} (node '{tnode.name}')"
 
         pm._push_line(app_id, f"[ZD] Health checking instance {new_rid} on {label}…")
-        healthy, reason = await _wait_new_instance_healthy(app_id, new_rid, check_backend, is_local=tnode.is_local)
+        healthy, reason = await _wait_new_instance_healthy(app_id, new_rid, check_backend)
 
         if not healthy:
             pm._push_line(app_id, f"[ZD] Instance {new_rid} failed health check ({reason}) — rolling back.")
@@ -199,15 +182,9 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
         )
     )
     for old_r in old_res.scalars().all():
-        if old_r.node_id is None or old_r.node_id == local_node.id:
-            await _mark_stopping(old_r.id)
-            await asyncio.to_thread(containers_replicas.stop_replica_container, app_id, old_r.id)
-            await db.delete(old_r)
-            pm._push_line(app_id, f"[ZD] Stopped old local instance {old_r.id}.")
-        else:
-            desired.nudge(old_r.node_id)    # leaves the list with its row; the node removes the container
-            await db.delete(old_r)
-            pm._push_line(app_id, f"[ZD] Old remote instance {old_r.id} released; its node removes it.")
+        desired.nudge(old_r.node_id or local_node.id)    # leaves the list with its row; its node removes the container
+        await db.delete(old_r)
+        pm._push_line(app_id, f"[ZD] Old instance {old_r.id} released; its node removes it.")
 
     first_new_id = new_entries[0][1] if new_entries else None
     await log_audit(db, "app.zero_downtime_deploy", actor=actor, app_id=app_id, detail={"name": app.name})
@@ -224,10 +201,7 @@ async def _zd_rollback(app_id: int, local_node_id: int, new_entries: list[tuple[
             async with AsyncSessionLocal() as _rb_db:
                 victim = await _rb_db.get(ApplicationReplica, new_rid)
                 if victim:
-                    if tnode.is_local:
-                        await asyncio.to_thread(containers_replicas.stop_replica_container, app_id, new_rid)
-                    else:
-                        desired.nudge(tnode.id)
+                    desired.nudge(tnode.id)
                     await _rb_db.delete(victim)
                     await _rb_db.commit()
         except Exception as _e:

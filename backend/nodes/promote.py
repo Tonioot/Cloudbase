@@ -24,7 +24,7 @@ async def promote_when_reachable(replica_id: int) -> None:
     _promoting.add(replica_id)
     try:
         try:
-            await routing.wait_reachable(replica_id, REACHABLE_TIMEOUT)
+            await routing.wait_reachable(replica_id, REACHABLE_TIMEOUT)      # returns at once for a worker (no port)
         except routing.Unreachable as exc:
             await _give_up(replica_id, str(exc))
             return

@@ -1,21 +1,14 @@
-import asyncio
 from typing import Optional
-from fastapi import HTTPException
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
-from core.database import AsyncSessionLocal
-import datetime as _dt
 from core.models import Deployment, NodeCommand, StatsHistory, ApplicationReplica, Node, Application, AuditLog
 from containers import processes as pm
-from containers import naming as containers_naming
-from containers import build as containers_build
-from containers import replicas as containers_replicas
 from core import applog
 from dbs import links as db_links
 from nodes.registry import ensure_local_node
 from nodes import desired
 from apps.git import _decrypt_github_token, _refresh_app_source_revision
-from apps.images import _image_build_kwargs, _image_port
+from apps.images import _image_port
 from apps.nginx_sync import _has_public_nginx_domain
 
 async def _cleanup_app_dependencies(db: AsyncSession, app_id: int) -> None:
@@ -72,11 +65,6 @@ def _resolve_replica_node(
     return node_map.get(replica.node_id)
 
 
-async def _best_effort_stop_legacy_app_container(app_id: int) -> None:
-    if await asyncio.to_thread(pm.is_docker_app_running, app_id):
-        await asyncio.to_thread(pm.stop_docker_app, app_id)
-
-
 def _remote_replica_command_payload(app: Application, env_vars: dict, external_port: int, source_revision: Optional[str] = None) -> dict:
     if source_revision is None:
         source_revision = _refresh_app_source_revision(app)
@@ -103,180 +91,6 @@ def _remote_replica_command_payload(app: Application, env_vars: dict, external_p
     }
 
 
-async def _sync_process_status(app, db) -> None:
-    """Reconcile DB status with actual OS state. Uses port recovery as fallback."""
-    if app.cron_schedule:
-        return  # no instances: the scheduler keeps a cron job's status
-    local_node = await ensure_local_node(db)
-    node = await _get_app_node(app, db, local_node)
-    if not node.is_local:
-        return
-
-    # Instance-based model: sync each local replica's container status
-    replica_result = await db.execute(
-        select(ApplicationReplica).where(ApplicationReplica.app_id == app.id)
-    )
-    replicas = replica_result.scalars().all()
-    if replicas:
-        changed = False
-        for replica in replicas:
-            # Skip non-local replicas (their status is managed by the remote node)
-            if replica.node_id:
-                rn_result = await db.execute(select(Node).where(Node.id == replica.node_id))
-                r_node = rn_result.scalar_one_or_none()
-                if r_node is not None and not r_node.is_local:
-                    continue
-            # Timeout stuck deploying/starting instances (> 10 min = something went wrong)
-            if replica.status in ("deploying", "starting"):
-                age = (_dt.datetime.utcnow() - (replica.updated_at or replica.created_at)).total_seconds()
-                if age > 600:
-                    replica.status = "error"
-                    replica.substatus = None
-                    replica.last_error = f"Timed out after {int(age)}s in '{replica.status}' state"
-                    changed = True
-                continue
-            if replica.status == "stopping":
-                continue
-            # Grace period: skip container check for replicas that just became "running"
-            # to avoid a false "stopped" flash while Docker transitions from "created" to "running".
-            if replica.status == "running":
-                age = (_dt.datetime.utcnow() - (replica.updated_at or replica.created_at)).total_seconds()
-                if age < 15:
-                    continue
-            alive = await asyncio.to_thread(containers_replicas.is_replica_container_running, app.id, replica.id)
-            new_status = "running" if alive else "stopped"
-            if replica.status != new_status:
-                replica.status = new_status
-                if new_status in ("running", "stopped"):
-                    replica.substatus = None
-                changed = True
-        new_app_status = _derive_app_status_from_instances(replicas)
-        if app.status != new_app_status:
-            app.status = new_app_status
-            changed = True
-        if changed:
-            await db.commit()
-        return
-
-    # Legacy single-container model
-    alive = await asyncio.to_thread(pm.is_docker_app_running, app.id)
-    new_status = "running" if alive else "stopped"
-    if app.status != new_status:
-        app.status = new_status
-        await db.commit()
-
-
-async def _set_replica_substatus(replica_id: int, substatus: Optional[str]) -> None:
-    """Write substatus to DB for a replica — fire and forget, never raises."""
-    try:
-        async with AsyncSessionLocal() as _db:
-            await _db.execute(
-                update(ApplicationReplica)
-                .where(ApplicationReplica.id == replica_id)
-                .values(substatus=substatus)
-            )
-            await _db.commit()
-    except Exception:
-        pass
-
-
-async def _start_instance_local(app: "Application", replica: "ApplicationReplica", env_vars: dict, app_id: int) -> str:
-    """Start a local replica container, building the Docker image first if needed."""
-    desired_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
-    docker_opts = _docker_runtime_options(app)
-    # Per-instance overrides
-    if replica.docker_cpu_limit is not None:
-        docker_opts["cpu_limit"] = replica.docker_cpu_limit
-    if replica.docker_memory_limit_mb is not None:
-        docker_opts["memory_limit_mb"] = replica.docker_memory_limit_mb
-    if replica.docker_read_only_root:
-        docker_opts["read_only_root"] = True
-    if replica.docker_tmpfs_enabled:
-        docker_opts["tmpfs_enabled"] = True
-    if replica.docker_tmpfs_size_mb is not None:
-        docker_opts["tmpfs_size_mb"] = replica.docker_tmpfs_size_mb
-
-    async def _run_replica(ext_port: int) -> str:
-        await _set_replica_substatus(replica.id, "creating_container")
-        return await asyncio.to_thread(
-            pm.start_docker_replica,
-            app_id, replica.id, app.name,
-            _image_port(app),
-            ext_port,
-            env_vars, docker_opts,
-            app_id,  # image_app_id
-        )
-
-    async def _build_image() -> None:
-        if not app.working_dir:
-            raise HTTPException(400, "No working directory — deploy the app first")
-        def _push(_aid, line):
-            pm._push_line(app_id, str(line))
-        await _set_replica_substatus(replica.id, "building_image")
-        await asyncio.to_thread(
-            containers_build.build_image,
-            app_id, app.name, app.working_dir, _push,
-            app.app_type or "unknown", app.start_command or "", _image_port(app),
-            **_image_build_kwargs(app),
-        )
-        app.docker_image = containers_naming.image_name(app_id, app.name)
-        built_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
-        if built_revision:
-            app.image_revision = built_revision
-
-    ext_port = replica.external_port or app.port or 8000
-    await _set_replica_substatus(replica.id, "creating_container")
-    if desired_revision and app.image_revision != desired_revision:
-        await _build_image()
-    try:
-        return await _run_replica(ext_port)
-    except Exception as first_exc:
-        msg = str(first_exc)
-        bind_conflict = (
-            "bind for " in msg.lower()
-            or "port is already allocated" in msg.lower()
-            or "failed to set up container networking" in msg.lower()
-        )
-        if bind_conflict:
-            # Port taken — grab a free one via socket scan and retry (no build needed)
-            import socket as _sock
-            new_port = ext_port + 1
-            while True:
-                with _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM) as _s:
-                    if _s.connect_ex(('127.0.0.1', new_port)) != 0:
-                        break
-                new_port += 1
-            replica.external_port = new_port
-            pm._push_line(app_id, f"[Docker] Port conflict on :{ext_port}; retrying replica on :{new_port}")
-            try:
-                return await _run_replica(new_port)
-            except Exception as retry_exc:
-                raise HTTPException(500, f"Failed to start instance: {retry_exc}") from retry_exc
-        # Not a port conflict — image may not exist yet (first start after deploy)
-        await _build_image()
-        try:
-            return await _run_replica(ext_port)
-        except Exception as build_retry_exc:
-            msg2 = str(build_retry_exc)
-            bind2 = (
-                "bind for " in msg2.lower()
-                or "port is already allocated" in msg2.lower()
-                or "failed to set up container networking" in msg2.lower()
-            )
-            if not bind2:
-                raise HTTPException(500, f"Failed to start instance: {build_retry_exc}") from build_retry_exc
-            import socket as _sock2
-            new_port2 = ext_port + 1
-            while True:
-                with _sock2.socket(_sock2.AF_INET, _sock2.SOCK_STREAM) as s:
-                    if s.connect_ex(('127.0.0.1', new_port2)) != 0:
-                        break
-                new_port2 += 1
-            replica.external_port = new_port2
-            pm._push_line(app_id, f"[Docker] Port conflict after build on :{ext_port}; retrying on :{new_port2}")
-            return await _run_replica(new_port2)
-
-
 def _derive_app_status_from_instances(replicas: list) -> str:
     """Derive the overall app status from its instance statuses."""
     statuses = {r.status for r in replicas}
@@ -296,40 +110,43 @@ def _derive_app_status_from_instances(replicas: list) -> str:
     return "stopped"
 
 
+def _instance_payload(app: Application, replica: ApplicationReplica, env_vars: dict,
+                      source_revision: Optional[str] = None) -> dict:
+    """The spec of one instance: the app's settings, with the instance's own limits on top."""
+    payload = _remote_replica_command_payload(app, env_vars, replica.external_port or app.port or 8000, source_revision)
+    for key in ("docker_cpu_limit", "docker_memory_limit_mb", "docker_tmpfs_size_mb"):
+        if getattr(replica, key) is not None:
+            payload[key] = getattr(replica, key)
+    for key in ("docker_read_only_root", "docker_tmpfs_enabled"):
+        if getattr(replica, key):
+            payload[key] = True
+    return payload
+
+
 async def _start_replica_runtime(
     app: Application,
     replica: ApplicationReplica,
     replica_node: Optional[Node],
     env_vars: dict,
     db: AsyncSession,
+    source_revision: Optional[str] = None,
 ) -> None:
+    """Start (or, for a running one, restart) an instance: write its spec on the list of its node.
+
+    The node's reconciler does the rest, and that includes this server's own (nodes/local.py). A new spec makes
+    it recreate the container, which is what a restart is."""
     if replica_node is None:
         replica.status = "error"
         replica.last_error = "Replica node not found"
         return
-
-    if replica_node.is_local:
-        await _set_replica_substatus(replica.id, "creating_container")
-        cid = await _start_instance_local(app, replica, env_vars, app.id)
-        await _set_replica_substatus(replica.id, "waiting")
-        replica.status = "running"
-        replica.substatus = None
-        replica.container_id = cid
-        replica.last_error = None
-        return
-
-    if replica_node.status != "online" or not replica_node.enabled:
+    if not replica_node.is_local and (replica_node.status != "online" or not replica_node.enabled):
         replica.status = "error"
         replica.last_error = f"Node '{replica_node.name}' is offline"
         return
-
-    remote_payload = _remote_replica_command_payload(
-        app,
-        env_vars,
-        replica.external_port or app.port or 8000,
-    )
-    await desired.start(db, node_id=replica_node.id, replica_id=replica.id, payload=remote_payload)
+    await desired.start(db, node_id=replica_node.id, replica_id=replica.id,
+                        payload=_instance_payload(app, replica, env_vars, source_revision))
     replica.status = "starting"
+    replica.substatus = None
     replica.last_error = None
 
 
@@ -339,15 +156,15 @@ async def _stop_replica_runtime(
     replica_node: Optional[Node],
     db: AsyncSession,
 ) -> None:
-    if replica_node is None or replica_node.is_local:
-        await asyncio.to_thread(pm.stop_docker_replica, app.id, replica.id)
+    """Stop an instance: it should not run any more; its row stays so it can be started again."""
+    if replica_node is None:
         replica.status = "stopped"
         replica.container_id = None
         replica.last_error = None
         return
 
     await desired.stop(db, node_id=replica_node.id, replica_id=replica.id)
-    if replica_node.status == "online" and replica_node.enabled:
+    if replica_node.is_local or (replica_node.status == "online" and replica_node.enabled):
         replica.status = "stopping"                 # "stopped" once the node reports the container gone
         replica.last_error = None
         return

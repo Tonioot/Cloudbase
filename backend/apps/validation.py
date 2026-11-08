@@ -9,24 +9,15 @@ from core.models import Application, ApplicationReplica
 from nginx import paths as nginx_paths
 from containers import apps as containers_apps
 
-async def _assign_external_port(requested: Optional[int], node_id: int, exclude_app_id: Optional[int], db: AsyncSession) -> int:
-    """Return requested port if free, else auto-pick the next free port in [8000, 8999]."""
-    result = await db.execute(
-        select(Application.external_port).where(
-            or_(Application.node_id == node_id, Application.node_id.is_(None)),
-            Application.external_port.isnot(None),
-            Application.id != exclude_app_id if exclude_app_id else True,
-        )
-    )
-    used: set[int] = {row[0] for row in result.all()}
-
+async def _assign_external_port(requested: Optional[int], node_id: int, db: AsyncSession) -> int:
+    """Return requested port if free, else the next free port of the instance range, for an instance on this node."""
     replica_result = await db.execute(
         select(ApplicationReplica.external_port).where(
             or_(ApplicationReplica.node_id == node_id, ApplicationReplica.node_id.is_(None)),
             ApplicationReplica.external_port.isnot(None),
         )
     )
-    used |= {row[0] for row in replica_result.all()}
+    used: set[int] = {row[0] for row in replica_result.all()}
 
     if requested:
         if requested in used:
@@ -111,7 +102,7 @@ async def _check_new_app_name(name: Optional[str], db: AsyncSession) -> str:
 
 def _check_repo_url(url: Optional[str]) -> str:
     url = (url or "").strip()
-    if url != "local://primary" and not _REPO_URL_RE.match(url):
+    if not _REPO_URL_RE.match(url):
         raise HTTPException(400, "Repository URL must start with https://, http://, ssh:// or git@")
     return url
 

@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal
 from core.models import Node, ApplicationReplica
-from containers import processes as pm, naming as containers_naming, replicas as containers_replicas, build as containers_build
+from containers import processes as pm, naming as containers_naming, build as containers_build
 from nginx import config as nginx_config, files as nginx_files
 from nodes.registry import ensure_local_node
 from nodes import desired
@@ -15,11 +15,11 @@ from core.audit import log_audit
 from apps.git import _refresh_app_source_revision
 from apps.images import _image_build_kwargs, _image_port
 from apps.nginx_sync import _resolve_ssl_paths, _has_public_nginx_domain
-from apps.runtime import _remote_replica_command_payload, _start_instance_local
+from apps.runtime import _start_replica_runtime
 from apps.serializers import _get_or_404
 from apps.validation import _assign_external_port
 from apps.bluegreen import _do_zero_downtime_deploy, _zd_rollback
-from apps.deploy_common import REMOTE_START_TIMEOUT_SECONDS, _mark_stopping, _wait_new_instance_healthy
+from apps.deploy_common import REMOTE_START_TIMEOUT_SECONDS, _wait_new_instance_healthy
 from core import activity
 from mesh import routing
 
@@ -127,8 +127,12 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
 
         pm._push_line(app_id, f"[Rolling] Replacing replica {idx}/{len(running_replicas)} (id={old_replica.id})…")
 
+        if not tnode.is_local and (tnode.status != "online" or not tnode.enabled):
+            pm._push_line(app_id, f"[Rolling] Node '{tnode.name}' offline — skipping replica {old_replica.id}.")
+            continue
+
         # Start new replacement replica
-        new_ext_port = await _assign_external_port(None, tnode.id, None, db)
+        new_ext_port = await _assign_external_port(None, tnode.id, db)
         new_replica = ApplicationReplica(
             app_id=app_id,
             node_id=tnode.id,
@@ -139,68 +143,33 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
         await db.flush()
         await db.commit()
 
-        if tnode.is_local:
-            pm._push_line(app_id, f"[Rolling] Starting new instance (id={new_replica.id}) on port {new_ext_port}…")
-            try:
-                cid = await _start_instance_local(app, new_replica, env_vars, app_id)
-                new_replica.container_id = cid
-                await db.commit()
-            except Exception as e:
-                pm._push_line(app_id, f"[Rolling] Failed to start new instance: {e} — aborting roll.")
-                await _zd_rollback(app_id, local_node.id, [(tnode, new_replica.id)], db)
-                raise HTTPException(500, f"Rolling deploy aborted: {e}")
+        pm._push_line(app_id, f"[Rolling] Starting new instance {new_replica.id} on '{tnode.name}' (port {new_ext_port})…")
+        await _start_replica_runtime(app, new_replica, tnode, env_vars, db, source_revision)
+        await db.commit()
 
-            # Health check new instance
-            pm._push_line(app_id, f"[Rolling] Health checking new instance {new_replica.id} on port {new_ext_port}…")
-            healthy, reason = await _wait_new_instance_healthy(app_id, new_replica.id, f"127.0.0.1:{new_ext_port}", is_local=True)
+        pm._push_line(app_id, f"[Rolling] Waiting for instance {new_replica.id} to be built and reachable (max {REMOTE_START_TIMEOUT_SECONDS // 60} min)…")
+        try:
+            new_backend = await routing.wait_reachable(new_replica.id, REMOTE_START_TIMEOUT_SECONDS)
+        except routing.Unreachable as exc:
+            pm._push_line(app_id, f"[Rolling] Instance {new_replica.id}: {exc} — aborting roll.")
+            await _zd_rollback(app_id, local_node.id, [(tnode, new_replica.id)], db)
+            raise HTTPException(502, f"Rolling deploy aborted: instance {new_replica.id} on '{tnode.name}': {exc}")
 
-            if not healthy:
-                pm._push_line(app_id, f"[Rolling] New instance {new_replica.id} failed health check ({reason}) — aborting roll.")
-                await _zd_rollback(app_id, local_node.id, [(tnode, new_replica.id)], db)
-                raise HTTPException(502, f"Rolling deploy aborted: instance {new_replica.id} failed health check: {reason}")
+        pm._push_line(app_id, f"[Rolling] Health checking instance {new_replica.id} on {new_backend}…")
+        healthy, reason = await _wait_new_instance_healthy(app_id, new_replica.id, new_backend)
 
-            async with AsyncSessionLocal() as _upd:
-                r = await _upd.get(ApplicationReplica, new_replica.id)
-                if r:
-                    r.status = "running"
-                    await _upd.commit()
+        if not healthy:
+            pm._push_line(app_id, f"[Rolling] Instance {new_replica.id} failed health check ({reason}) — aborting roll.")
+            await _zd_rollback(app_id, local_node.id, [(tnode, new_replica.id)], db)
+            raise HTTPException(502, f"Rolling deploy aborted: instance {new_replica.id} failed health check: {reason}")
 
-            new_backend = f"127.0.0.1:{new_ext_port}"
-            old_backend = f"127.0.0.1:{old_replica.external_port}" if old_replica.external_port else None
+        async with AsyncSessionLocal() as _upd:
+            r = await _upd.get(ApplicationReplica, new_replica.id)
+            if r:
+                r.status = "running"
+                await _upd.commit()
 
-        else:
-            if tnode.status != "online" or not tnode.enabled:
-                pm._push_line(app_id, f"[Rolling] Node '{tnode.name}' offline — skipping replica {old_replica.id}.")
-                continue
-
-            remote_payload = _remote_replica_command_payload(app, env_vars, new_ext_port, source_revision)
-            await desired.start(db, node_id=tnode.id, replica_id=new_replica.id, payload=remote_payload)
-            await db.commit()
-
-            pm._push_line(app_id, f"[Rolling] Waiting for instance {new_replica.id} on '{tnode.name}' to be built and reachable (max {REMOTE_START_TIMEOUT_SECONDS // 60} min)…")
-            try:
-                remote_backend = await routing.wait_reachable(new_replica.id, REMOTE_START_TIMEOUT_SECONDS)
-            except routing.Unreachable as exc:
-                pm._push_line(app_id, f"[Rolling] Remote instance {new_replica.id}: {exc} — aborting roll.")
-                await _zd_rollback(app_id, local_node.id, [(tnode, new_replica.id)], db)
-                raise HTTPException(502, f"Rolling deploy aborted: instance {new_replica.id} on '{tnode.name}': {exc}")
-
-            pm._push_line(app_id, f"[Rolling] Health checking remote instance {new_replica.id} on {remote_backend}…")
-            healthy, reason = await _wait_new_instance_healthy(app_id, new_replica.id, remote_backend, is_local=False)
-
-            if not healthy:
-                pm._push_line(app_id, f"[Rolling] Remote instance {new_replica.id} failed health check ({reason}) — aborting roll.")
-                await _zd_rollback(app_id, local_node.id, [(tnode, new_replica.id)], db)
-                raise HTTPException(502, f"Rolling deploy aborted: remote instance {new_replica.id} failed health check: {reason}")
-
-            async with AsyncSessionLocal() as _upd:
-                r = await _upd.get(ApplicationReplica, new_replica.id)
-                if r:
-                    r.status = "running"
-                    await _upd.commit()
-
-            new_backend = remote_backend
-            old_backend = routing.backend_for(old_replica, tnode)
+        old_backend = routing.backend_for(old_replica, tnode)
 
         # Swap nginx: add new, remove old
         if old_backend and old_backend in current_backends:
@@ -209,12 +178,8 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
         _write_nginx_backends(current_backends)
         pm._push_line(app_id, f"[Rolling] Instance {new_replica.id} live — nginx updated.")
 
-        # Stop old replica
-        if tnode.is_local:
-            await _mark_stopping(old_replica.id)
-            await asyncio.to_thread(containers_replicas.stop_replica_container, app_id, old_replica.id)
-        else:
-            desired.nudge(tnode.id)         # the old instance leaves the list below; the node removes its container
+        # Stop old replica: it leaves the list below and its node (this server too) removes the container
+        desired.nudge(tnode.id)
         async with AsyncSessionLocal() as _del_db:
             victim = await _del_db.get(ApplicationReplica, old_replica.id)
             if victim:

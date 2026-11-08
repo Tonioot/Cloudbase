@@ -156,7 +156,6 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
         "autoscale_cpu_target": _opt(entry, "autoscale_cpu_target", int),
     }.items() if v is not None}
 
-    external_port = None if no_web else await _assign_external_port(None, target_id, None, db)
     app = Application(
         name=name,
         repo_url=repo_url,
@@ -168,7 +167,6 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
         build_command=(entry.get("build_command") or "").strip() or None,
         port=containers_dockerfiles.STATIC_INTERNAL_PORT if is_static else _opt(entry, "port", int),
         app_type="static" if is_static else None,
-        external_port=external_port,
         env_vars=encrypt_env(env),
         auto_start=bool(entry.get("auto_start")),
         restart_policy=entry.get("restart_policy") or "no",
@@ -206,7 +204,7 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
         wanted = room
     for _ in range(wanted):
         db.add(ApplicationReplica(app_id=app.id, node_id=target_id, status="stopped",
-                                  external_port=await _assign_external_port(None, target_id, None, db)))
+                                  external_port=await _assign_external_port(None, target_id, db)))
         await db.flush()
         instances += 1
     await log_audit(db, "app.import", actor=actor, app_id=app.id, detail={"name": app.name, "instances": instances})

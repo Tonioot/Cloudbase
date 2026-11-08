@@ -17,7 +17,6 @@ from nodes.registry import _as_node_dict, get_node_by_token_or_401
 from nodes.state import _get_node_event, _node_event_subscribers, _node_ws_connections, _pending_pings, _push_node_event, push_node_stream_data
 from routers.nodes.schemas import CommandResultRequest, ObservedRequest, RegisterNodeRequest, WireguardEnrollRequest
 from core.models import ApplicationReplica
-from core.models import Application
 
 log = logging.getLogger("cloudbase.nodes")
 
@@ -328,21 +327,6 @@ async def agent_ws(websocket: WebSocket):
                             "disk_percent": incoming.get("node_metrics", {}).get("disk_percent"),
                             "connection_type": "websocket",
                         })
-                    elif msg_type == "status_update":
-                        app_id = (incoming or {}).get("app_id")
-                        new_status = (incoming or {}).get("status")
-                        if app_id and new_status:
-                            async with AsyncSessionLocal() as db:
-                                res = await db.execute(select(Application).where(Application.id == int(app_id)))
-                                target_app = res.scalar_one_or_none()
-                                if target_app and target_app.node_id == node_id:
-                                    target_app.status = new_status
-                                    if new_status != "running":
-                                        target_app.pid = None
-                                    await _commit_with_sqlite_lock_retry(
-                                        db,
-                                        context=f"agent_ws/status_update node_id={node_id} app_id={app_id}",
-                                    )
                     elif msg_type == "command_result":
                         command_id = int(incoming.get("command_id") or -1)
                         if command_id == -1:
