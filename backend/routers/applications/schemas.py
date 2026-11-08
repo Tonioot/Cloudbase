@@ -30,6 +30,9 @@ class DeployRequest(BaseModel):
     cron_schedule: Optional[str] = None    # set = a cron job: runs start_command on this schedule
     cron_timezone: Optional[str] = None
     cron_timeout_seconds: Optional[int] = None
+    health_path: Optional[str] = None             # "" = only check that the port is open
+    health_expect: Optional[str] = None           # "" = any answer below 500; "2xx,301"
+    health_timeout_seconds: Optional[int] = None
 
 
 class UpdateRequest(BaseModel):
@@ -62,6 +65,9 @@ class UpdateRequest(BaseModel):
     deploy_branch:          Optional[str]   = None   # "" = the checked-out branch
     deploy_strategy:        Optional[str]   = None   # rolling | blue_green
     auto_deploy_interval:   Optional[int]   = None   # seconds
+    health_path:            Optional[str]   = None   # "" = only check that the port is open
+    health_expect:          Optional[str]   = None   # "" = any answer below 500; "2xx,301"
+    health_timeout_seconds: Optional[int]   = None
 
 
 class MaintenancePageConfig(BaseModel):

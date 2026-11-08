@@ -63,7 +63,7 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
         target_slots = [fallback]
 
     env_vars = decrypt_env(app.env_vars or "")
-    source_revision = _refresh_app_source_revision(app)
+    source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
 
     # ── Step 1: Refresh / build image on every target node ───────────────────
     new_img: str | None = None
@@ -159,7 +159,7 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
     has_custom = bool(app.nginx_enabled and app.domain)
     ssl_cert = ssl_key = None
     if has_custom:
-        ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+        ssl_cert, ssl_key = await asyncio.to_thread(_resolve_ssl_paths, app.ssl_cert_path, app.ssl_key_path)
     cfg = nginx_config.generate_config(
         app.name, app.domain if has_custom else None, new_backends,
         ssl_cert, ssl_key,
@@ -167,7 +167,7 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
         extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
         redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
     )
-    ok, msg = nginx_files.write_nginx_config(app.name, cfg)
+    ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, app.name, cfg)
     if not ok:
         pm._push_line(app_id, f"[ZD] Warning: nginx config update failed: {msg}")
     else:

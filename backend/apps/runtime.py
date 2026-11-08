@@ -1,3 +1,4 @@
+import asyncio
 from typing import Optional
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -143,6 +144,8 @@ async def _start_replica_runtime(
         replica.status = "error"
         replica.last_error = f"Node '{replica_node.name}' is offline"
         return
+    if source_revision is None:
+        source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
     await desired.start(db, node_id=replica_node.id, replica_id=replica.id,
                         payload=_instance_payload(app, replica, env_vars, source_revision))
     replica.status = "starting"

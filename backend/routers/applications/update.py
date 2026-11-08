@@ -15,6 +15,7 @@ from apps.git import _encrypt_github_token, _resolve_token
 from apps.images import _image_port, _dockerfile_build_kwargs
 from apps.nginx_sync import _resolve_ssl_paths, _write_app_nginx_config, _get_nginx_backends, _get_nginx_mode, _best_effort_remove_app_nginx, _ensure_maintenance_files
 from apps.serializers import _app_to_dict, _get_or_404
+from apps import health as health_app
 from apps.validation import _validate_docker_runtime_settings, _check_domain_conflicts
 from routers.applications.schemas import UpdateRequest
 
@@ -113,6 +114,12 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         if req.deploy_strategy not in ("rolling", "blue_green"):
             raise HTTPException(400, "deploy_strategy must be rolling or blue_green")
         app.deploy_strategy = req.deploy_strategy
+    if req.health_path is not None:
+        app.health_path = health_app.clean_path(req.health_path)
+    if req.health_expect is not None:
+        app.health_expect = health_app.clean_expect(req.health_expect)
+    if req.health_timeout_seconds is not None:
+        app.health_timeout_seconds = health_app.clean_timeout(req.health_timeout_seconds)
     if req.auto_deploy_interval is not None:
         app.auto_deploy_interval = max(30, min(int(req.auto_deploy_interval), 3600))
     if req.autoscale_enabled is not None:
@@ -138,10 +145,10 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.image_revision = None
 
     if app.domain and not app.no_web:
-        maint_ok, maint_msg = _ensure_maintenance_files(app, app.id)
+        maint_ok, maint_msg = await asyncio.to_thread(_ensure_maintenance_files, app, app.id)
         if not maint_ok:
             raise HTTPException(500, f"Maintenance files failed: {maint_msg}")
-        ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+        ssl_cert, ssl_key = await asyncio.to_thread(_resolve_ssl_paths, app.ssl_cert_path, app.ssl_key_path)
         backends = await _get_nginx_backends(app, db)
         config = nginx_config.generate_config(
             app.name, app.domain, backends,
@@ -150,7 +157,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
             extra_domains=json.loads(app.extra_domains or "[]"),
             redirect_domains=json.loads(app.redirect_domains or "[]"),
         )
-        ok, msg = nginx_files.write_nginx_config(app.name, config)
+        ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, app.name, config)
         app.nginx_enabled = ok
         if not ok:
             raise HTTPException(500, f"Nginx config failed: {msg}")

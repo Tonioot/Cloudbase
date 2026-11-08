@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps import health
 from apps.git import _deploy_app, _encrypt_github_token, _normalize_repo_url
 from apps.lifecycle import start_app_now
 from apps.nginx_sync import _write_app_nginx_config
@@ -67,6 +68,16 @@ def _clean_env(raw, name: str, warnings: list[str]) -> dict[str, str]:
         else:
             warnings.append(f"{name}: environment variable {key!r} was left out (invalid name or value)")
     return env
+
+
+def _health(clean, value):
+    """A health check setting from a file: valid ones are kept, anything else falls back to the default."""
+    if value is None:
+        return None
+    try:
+        return clean(value)
+    except HTTPException:
+        return None
 
 
 def _opt(entry: dict, key: str, kind=None):
@@ -154,6 +165,9 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
         "autoscale_min_replicas": _opt(entry, "autoscale_min_replicas", int),
         "autoscale_max_replicas": _opt(entry, "autoscale_max_replicas", int),
         "autoscale_cpu_target": _opt(entry, "autoscale_cpu_target", int),
+        "health_path": _health(health.clean_path, entry.get("health_path")),
+        "health_expect": _health(health.clean_expect, entry.get("health_expect")),
+        "health_timeout_seconds": _health(health.clean_timeout, entry.get("health_timeout_seconds")),
     }.items() if v is not None}
 
     app = Application(

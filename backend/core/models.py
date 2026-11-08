@@ -61,6 +61,10 @@ class Application(Base):
     app_type = Column(String(50), nullable=True)
     start_command = Column(String(500), nullable=True)
     build_command = Column(String(500), nullable=True)  # runs once during `docker build` (e.g. npm run build)
+    # Health check: a new instance only gets traffic once it answers like this (see apps/health.py)
+    health_path            = Column(String(200), default="/", nullable=False)   # "" = only check that the port is open
+    health_expect          = Column(String(60), default="", nullable=False)    # "" = any answer below 500; "2xx,301"
+    health_timeout_seconds = Column(Integer, default=600, nullable=False)
     # Auto-deploy: poll the branch and roll out new commits
     auto_deploy          = Column(Boolean, default=False, nullable=False)
     deploy_branch        = Column(String(200), nullable=True)   # None = the branch that is checked out

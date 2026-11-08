@@ -4,6 +4,7 @@ import logging
 
 from sqlalchemy import and_, select
 
+from apps import health as app_health
 from apps.nginx_sync import _write_app_nginx_config
 from core import system_config as _syscfg
 from core.database import AsyncSessionLocal
@@ -24,9 +25,11 @@ async def promote_when_reachable(replica_id: int) -> None:
     _promoting.add(replica_id)
     try:
         try:
-            await routing.wait_reachable(replica_id, REACHABLE_TIMEOUT)      # returns at once for a worker (no port)
+            backend = await routing.wait_reachable(replica_id, REACHABLE_TIMEOUT)      # "" for a worker (no port)
         except routing.Unreachable as exc:
             await _give_up(replica_id, str(exc))
+            return
+        if backend and not await _passes_health_check(replica_id, backend):
             return
         async with AsyncSessionLocal() as db:
             replica = await db.get(ApplicationReplica, replica_id)
@@ -44,6 +47,32 @@ async def promote_when_reachable(replica_id: int) -> None:
         _promoting.discard(replica_id)
 
 
+async def _passes_health_check(replica_id: int, backend: str) -> bool:
+    """Wait until the instance answers like the app's health check wants. False when it never does, or when
+    someone else (a deploy, a stop) took over the instance meanwhile."""
+    async with AsyncSessionLocal() as db:
+        replica = await db.get(ApplicationReplica, replica_id)
+        app = await db.get(Application, replica.app_id) if replica else None
+        if replica is None or app is None or replica.status != "starting":
+            return False
+        replica.substatus = "health_check"
+        await db.commit()
+
+    async def taken_over() -> str:
+        async with AsyncSessionLocal() as db:
+            current = await db.get(ApplicationReplica, replica_id)
+        if current is None or current.status != "starting":
+            return "taken over"
+        return ""
+
+    healthy, detail = await app_health.wait_until_healthy(backend, app, taken_over)
+    if healthy:
+        return True
+    if detail != "taken over":
+        await _give_up(replica_id, f"health check failed: {detail}")
+    return False
+
+
 async def _give_up(replica_id: int, reason: str) -> None:
     async with AsyncSessionLocal() as db:
         replica = await db.get(ApplicationReplica, replica_id)
@@ -51,7 +80,7 @@ async def _give_up(replica_id: int, reason: str) -> None:
             return
         node = await db.get(Node, replica.node_id) if replica.node_id else None
         # With the link down the node may simply be unreachable for a while: recovery retries later
-        link_is_down = node is not None and node.wg_state != "up"
+        link_is_down = node is not None and not node.is_local and node.wg_state != "up"
         replica.status = "node_offline" if link_is_down else "error"
         replica.substatus = None
         replica.last_error = reason

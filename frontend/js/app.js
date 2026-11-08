@@ -1640,6 +1640,11 @@ function initSettings() {
   document.getElementById('cfg-autoscale-min').value = app.autoscale_min_replicas || 1;
   document.getElementById('cfg-autoscale-max').value = app.autoscale_max_replicas || 4;
   document.getElementById('cfg-autoscale-cpu').value = app.autoscale_cpu_target || 70;
+
+  // Health check
+  document.getElementById('cfg-health-path').value = app.health_path ?? '/';
+  document.getElementById('cfg-health-expect').value = app.health_expect || '';
+  document.getElementById('cfg-health-timeout').value = app.health_timeout_seconds || 600;
   document.getElementById('autoscale-options').style.display = autoscaleEnabled ? '' : 'none';
   document.getElementById('cfg-autoscale-enabled').onchange = function() {
     document.getElementById('autoscale-options').style.display = this.checked ? '' : 'none';
@@ -2412,6 +2417,7 @@ async function initInstances() {
               { key: 'building_image',     label: 'Building image' },
               { key: 'creating_container', label: 'Creating container' },
               { key: 'waiting',            label: 'Starting app' },
+              { key: 'health_check',       label: 'Health check' },
             ];
         // Determine which step is active and which are done
         const foundIdx = sub ? steps.findIndex(s => s.key === sub) : -1;
@@ -2741,6 +2747,9 @@ async function saveSettings() {
     deploy_branch:          document.getElementById('cfg-deploy-branch').value,
     deploy_strategy:        document.querySelector('#cfg-deploy-strategy button.active')?.dataset.value || 'rolling',
     auto_deploy_interval:   parseInt(document.getElementById('cfg-deploy-interval').value, 10) || 60,
+    health_path:            document.getElementById('cfg-health-path').value.trim(),
+    health_expect:          document.getElementById('cfg-health-expect').value.trim(),
+    health_timeout_seconds: parseInt(document.getElementById('cfg-health-timeout').value, 10) || 600,
     env_vars,
     env_var_keys,
     ...(tokenId ? { github_token_id: tokenId } : token ? { github_token: token } : {}),

@@ -62,7 +62,7 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dic
 
     app_dir = pm.get_app_dir(app.name)
     if os.path.exists(app_dir):
-        shutil.rmtree(app_dir)
+        await asyncio.to_thread(shutil.rmtree, app_dir)
 
     app_name = app.name
     app_id_val = app.id

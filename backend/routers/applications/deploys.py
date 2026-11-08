@@ -255,8 +255,9 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
             else:
                 _q("[Docker] Image rebuilt. Start the app to apply changes.")
 
+            branch_now = target_commit or await asyncio.to_thread(_current_branch, app_dir)
             result_holder["result"] = {
-                "message": f"Updated and rebuilt Docker image from {target_commit or _current_branch(app_dir)}",
+                "message": f"Updated and rebuilt Docker image from {branch_now}",
                 "commit": commit_info,
                 "source_revision": source_revision,
                 "output": (
@@ -324,7 +325,7 @@ async def rebuild_docker_image_stream(app_id: int, _user: dict = Depends(_auth.r
                 app.app_type or "unknown", app.start_command or "", _image_port(app),
                 **_image_build_kwargs(app),
             )
-            source_revision = _refresh_app_source_revision(app)
+            source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
             app.status = "running" if was_running else "stopped"
             app.docker_image = img
             if source_revision:

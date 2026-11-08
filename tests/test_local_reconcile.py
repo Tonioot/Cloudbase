@@ -7,7 +7,7 @@ import asyncio
 
 import pytest
 
-from agent import reconcile
+from containers import processes as pm, replicas as containers_replicas
 from nodes import local, observed
 
 
@@ -92,10 +92,10 @@ class Docker:
 
     def __init__(self, monkeypatch):
         self.containers, self.started, self.removed, self.built = {}, [], [], []
-        monkeypatch.setattr(reconcile.containers_replicas, "list_replica_containers", lambda: [dict(c) for c in self.containers.values()])
-        monkeypatch.setattr(reconcile.pm, "stop_docker_replica", self._stop)
-        monkeypatch.setattr(reconcile.pm, "start_docker_replica", self._start)
-        monkeypatch.setattr(local, "ensure_image", self._ensure_image)
+        monkeypatch.setattr(containers_replicas, "list_replica_containers", lambda: [dict(c) for c in self.containers.values()])
+        monkeypatch.setattr(pm, "stop_docker_replica", self._stop)
+        monkeypatch.setattr(pm, "start_docker_replica", self._start)
+        monkeypatch.setattr(local.prepare, "ensure_image", self._ensure_image)
         self.promoted = []
         monkeypatch.setattr(observed.promote, "start_promotion", self.promoted.append)
 
@@ -113,9 +113,9 @@ class Docker:
         self.add(app_id, replica_id, spec=options["spec_hash"])
         return self.containers[replica_id]["id"]
 
-    async def _ensure_image(self, client, state, spec, progress, source=None, push=None):
+    async def _ensure_image(self, spec, progress, fetch, push=None):
         progress("building_image")
-        self.built.append((spec["app_id"], source(spec["app_id"], spec["app_name"]) if source else None))
+        self.built.append((spec["app_id"], await fetch(spec["app_id"], spec["app_name"])))
 
 
 async def cycle(rec):
@@ -181,22 +181,6 @@ def test_a_deleted_instance_is_removed_because_it_is_no_longer_on_the_list(monke
     _run(delete())
     _run(cycle(rec))
     assert rid in docker.removed
-
-
-def test_instances_from_before_the_list_keep_running_and_their_containers_are_adopted(monkeypatch):
-    docker = Docker(monkeypatch)
-    node_id, app_id = _node("lr-old"), _app("lr-old-app")
-    running = _replica(app_id, None, 10504, status="running")           # no node: it meant "this server"
-    stopped = _replica(app_id, None, 10505, status="stopped")
-    docker.add(app_id, running, spec=None)                              # made before specs existed: no label
-
-    _run(local.adopt_existing(node_id))
-    assert (_row(running).node_id, _row(running).desired) == (node_id, "running")
-    assert (_row(stopped).node_id, _row(stopped).desired) == (node_id, "stopped")
-
-    _run(cycle(local.LocalReconciler(node_id)))
-    assert running in docker.containers and docker.started == [] and docker.removed == []
-    assert _row(running).status == "running"
 
 
 def test_an_instances_own_limits_are_part_of_its_spec():

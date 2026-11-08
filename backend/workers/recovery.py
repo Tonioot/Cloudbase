@@ -3,13 +3,12 @@ import logging
 from sqlalchemy import select
 from core.database import AsyncSessionLocal
 from core.models import Application, ApplicationReplica
-from nodes import local as nodes_local, registry as nodes_registry
+from nodes import registry as nodes_registry
 from apps import runtime as apps_runtime
 from core.env_crypto import decrypt_env
 from containers import processes as pm
 from containers import replicas as containers_replicas
 from containers import stats_logs as containers_stats_logs
-from containers import naming as containers_naming
 from core import system_config as _syscfg
 from apps.runtime import _derive_app_status_from_instances
 from apps.nginx_sync import _write_app_nginx_config as _startup_nginx
@@ -26,7 +25,6 @@ async def _startup_recovery() -> None:
     (nodes/local.py); here is only what has to happen once, as the panel starts."""
     async with AsyncSessionLocal() as db:
         local_node = await nodes_registry.ensure_local_node(db)
-    await nodes_local.adopt_existing(local_node.id)
 
     # Live logs of the containers that kept running while the panel was down
     try:
@@ -44,11 +42,6 @@ async def _startup_recovery() -> None:
         replica_map: dict[int, list] = {}
         for r in replicas:
             replica_map.setdefault(r.app_id, []).append(r)
-
-        # Apps used to run as one container named cloudbase-app-<id>; an instance has its own container.
-        # Remove such a container where the app has instances, so it cannot keep the port busy.
-        for app_id in replica_map:
-            containers_replicas.remove_container_by_name(containers_naming.container_name(app_id))
 
         for a in (await db.execute(select(Application))).scalars().all():
             app_replicas = replica_map.get(a.id)

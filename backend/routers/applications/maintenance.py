@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from fastapi import HTTPException, Depends, APIRouter
@@ -50,7 +51,7 @@ async def save_maintenance_pages(
     update_html = nginx_pages.render_app_page("update", req.update_page.model_dump())
     restart_html = nginx_pages.render_app_page("restart", req.restart_page.model_dump())
     starting_html = nginx_pages.render_app_page("starting", req.starting_page.model_dump())
-    ok, msg = nginx_files.write_maintenance_files(app_id, downtime_html, update_html, restart_html, starting_html)
+    ok, msg = await asyncio.to_thread(nginx_files.write_maintenance_files, app_id, downtime_html, update_html, restart_html, starting_html)
     if not ok:
         await db.commit()
         return {"ok": False, "message": msg}

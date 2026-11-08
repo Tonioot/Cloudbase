@@ -1,3 +1,4 @@
+from apps import health
 import json
 from typing import Optional
 from fastapi import HTTPException
@@ -94,6 +95,9 @@ def _app_to_dict(
         "deploy_branch": getattr(app, "deploy_branch", None),
         "deploy_strategy": getattr(app, "deploy_strategy", None) or "rolling",
         "auto_deploy_interval": getattr(app, "auto_deploy_interval", None) or 60,
+        "health_path": health.settings_of(app)[0],
+        "health_expect": health.settings_of(app)[1],
+        "health_timeout_seconds": health.settings_of(app)[2],
         "replicas": replicas if replicas is not None else [],
         "replica_count": len(replicas) if replicas is not None else 0,
         "node_id": app.node_id,

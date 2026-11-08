@@ -2,11 +2,10 @@ import asyncio
 import contextlib
 from fastapi import HTTPException
 from core.database import AsyncSessionLocal
-from core.models import ApplicationReplica
+from core.models import Application, ApplicationReplica
 from containers import processes as pm
-from apps.nginx_sync import _http_service_ready
-from mesh import routing
-from apps.state import DEPLOY_HEALTH_PROGRESS_SECONDS, _deploys_in_progress, _scaling_in_progress, DEPLOY_HEALTH_TIMEOUT_SECONDS
+from apps import health as app_health
+from apps.state import DEPLOY_HEALTH_PROGRESS_SECONDS, _deploys_in_progress, _scaling_in_progress
 
 # A new instance may first have to download the source and build the image
 REMOTE_START_TIMEOUT_SECONDS = 900
@@ -31,26 +30,28 @@ def _single_deploy(app_id: int):
 
 
 async def _wait_new_instance_healthy(app_id: int, replica_id: int, backend: str) -> tuple[bool, str]:
-    """Poll a freshly started deploy instance until it serves HTTP.
+    """Poll a freshly started deploy instance until it passes the app's health check.
 
     Returns (healthy, reason). Gives up early when its node reported the instance as failed.
     """
-    host, port = routing.split(backend)
+    async with AsyncSessionLocal() as _db:
+        app = await _db.get(Application, app_id)
     loop = asyncio.get_running_loop()
     started = loop.time()
-    deadline = started + DEPLOY_HEALTH_TIMEOUT_SECONDS
     next_progress = started + DEPLOY_HEALTH_PROGRESS_SECONDS
-    while loop.time() < deadline:
-        if await asyncio.to_thread(_http_service_ready, host, port):
-            return True, ""
+    timeout = app_health.settings_of(app)[2]
+
+    async def stop_when() -> str:
+        nonlocal next_progress
         async with AsyncSessionLocal() as _poll_db:
             r = await _poll_db.get(ApplicationReplica, replica_id)
         if r is None:
-            return False, "instance was removed"
+            return "instance was removed"
         if r.status == "error":
-            return False, f"node reported an error: {r.last_error or 'unknown'}"
+            return f"node reported an error: {r.last_error or 'unknown'}"
         if loop.time() >= next_progress:
-            pm._push_line(app_id, f"[Deploy] Instance {replica_id} not responding yet after {int(loop.time() - started)}s — still waiting (max {DEPLOY_HEALTH_TIMEOUT_SECONDS}s)…")
+            pm._push_line(app_id, f"[Deploy] Instance {replica_id} is not healthy yet after {int(loop.time() - started)}s — still waiting (max {timeout}s)…")
             next_progress += DEPLOY_HEALTH_PROGRESS_SECONDS
-        await asyncio.sleep(2)
-    return False, f"no healthy HTTP response within {DEPLOY_HEALTH_TIMEOUT_SECONDS}s"
+        return ""
+
+    return await app_health.wait_until_healthy(backend, app, stop_when)

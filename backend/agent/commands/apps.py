@@ -14,23 +14,28 @@ from agent.source import ensure_image
 async def cmd_get_logs_tail(_client, _state, main_id, payload):
     """Get recent logs from all replica containers for this app."""
     limit = payload.get("limit") or 200
-    lines: list[str] = []
-    try:
-        result = subprocess.run(
-            ["docker", "ps", "-a", "--format", "{{.Names}}", "--filter", f"name=cloudbase-app-{main_id}-replica-"],
-            capture_output=True, text=True, timeout=10,
-        )
-        for cname in result.stdout.splitlines():
-            cname = cname.strip()
-            if not cname:
-                continue
-            r = subprocess.run(
-                ["docker", "logs", "--tail", str(limit), cname],
+
+    def collect() -> list[str]:
+        lines: list[str] = []
+        try:
+            result = subprocess.run(
+                ["docker", "ps", "-a", "--format", "{{.Names}}", "--filter", f"name=cloudbase-app-{main_id}-replica-"],
                 capture_output=True, text=True, timeout=10,
             )
-            lines.extend((r.stdout + r.stderr).splitlines())
-    except Exception as e:
-        _agent_log(f"[get_logs_tail] Error: {e}")
+            for cname in result.stdout.splitlines():
+                cname = cname.strip()
+                if not cname:
+                    continue
+                r = subprocess.run(
+                    ["docker", "logs", "--tail", str(limit), cname],
+                    capture_output=True, text=True, timeout=10,
+                )
+                lines.extend((r.stdout + r.stderr).splitlines())
+        except Exception as e:
+            _agent_log(f"[get_logs_tail] Error: {e}")
+        return lines
+
+    lines = await asyncio.to_thread(collect)
     return {"lines": lines[-limit:]}
 
 

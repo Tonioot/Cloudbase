@@ -235,7 +235,7 @@ async def check_domain(req: CheckRequest, _user: dict = Depends(_auth.require_pe
 
     token = "cloudbase-check-" + secrets.token_hex(8)
     value = secrets.token_hex(16)
-    wrote, msg = nginx_files.write_acme_probe(token, value)
+    wrote, msg = await asyncio.to_thread(nginx_files.write_acme_probe, token, value)
     if not wrote:
         result["detail"] = result["detail"] or "Couldn’t run the reachability test on this server (run cloudbase nginx permissions)."
         return result
@@ -275,7 +275,7 @@ async def check_domain(req: CheckRequest, _user: dict = Depends(_auth.require_pe
                     "Check that nginx is running and port 80 is open."
                 )
     finally:
-        nginx_files.remove_acme_probe(token)
+        await asyncio.to_thread(nginx_files.remove_acme_probe, token)
     return result
 
 

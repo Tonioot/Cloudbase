@@ -24,7 +24,7 @@ agent/                      the node agent (runs on remote servers, talks to the
 | `apps/` | application logic: `git`, `images`, `validation`, `nginx_sync`, `runtime` (starting/stopping replicas), `replica_stats`, `deployments` (run a deploy), `deploy_common`/`rolling`/`bluegreen`, `lifecycle`, `serializers`, `state` |
 | `nodes/` | `state` (live connections), `desired` (what each node should run: written by start/stop), `snapshot` (the list a node asks for), `observed` (a node's report becomes a status), `local` (the primary's own instances run from the same list), `promote` (an instance goes live once reachable; leaves nginx when the link breaks), `commands` (one-off questions and jobs: logs, stats, backups, cron), `registry` (local node, lookups), `liveness` (silent nodes go offline) |
 | `mesh/` | the node network (WireGuard, hub and spoke with the primary as hub): `addressing`, `helper` (client for the root helper `scripts/cloudbase-wireguard`, via sudo), `hub` (interface, peers, enrolment, handshake health), `routing` (`backend_for`, `wait_reachable`) |
-| `containers/` | Docker on one host: `client`, `naming`, `buildkit`, `dockerfiles`, `build`, `cleanup`, `apps`, `replicas`, `jobs`, `stats_logs`, `processes` |
+| `containers/` | Docker on one host: `client`, `naming`, `buildkit`, `dockerfiles`, `build`, `prepare` (get an image onto this machine), `reconciler` (make Docker equal to the list), `cleanup`, `apps`, `replicas`, `jobs`, `stats_logs`, `processes` |
 | `nginx/` | `paths`, `pages` (HTML), `config` (nginx config text), `files` (writers), `certbot` (read-only lookups), `certificates` (issuing), `panel` |
 | `dbs/` | managed databases: `docker`, `lifecycle`, `backup_restore`, `updates`, `ops`, `provision`, `view`, `relay`, `proxy`, `workers`, `backups`, `backup_scheduler`, … |
 | `transfer/` | export and import of apps and databases as one file (a tar): `archive` (manifest + dumps), `manifest`/`databases` (what goes in), `jobs`/`exporter` (export runs in the background), `importer`/`db_import` (what comes out) |
@@ -59,14 +59,14 @@ Plain HTML pages with their own CSS and ES modules, no build step. `core/fronten
 
 ## How the primary drives a node
 
-The primary is a node too, and its own instances work exactly the same way: starting, restarting, deploying, scaling and stopping only write the list. `nodes/local.py` runs the same reconciler as the agent (`agent/reconcile.py`) inside the panel, reading the list from the database and handing its report straight to `nodes/observed.py`; the source is already on the primary, so it builds from there and nothing is downloaded. There is no separate crash monitor or startup repair: a container that exits, or that is left over, is handled by the next pass. Instances from before this (no node, no `desired`) are adopted at startup (`adopt_existing`) and keep running.
+The primary is a node too, and its own instances work exactly the same way: starting, restarting, deploying, scaling and stopping only write the list. `nodes/local.py` runs the same reconciler as the agent (the engine in `containers/reconciler.py`) inside the panel, reading the list from the database and handing its report straight to `nodes/observed.py`; the source is already on the primary, so it builds from there and nothing is downloaded. There is no separate crash monitor or startup repair: a container that exits, or that is left over, is handled by the next pass.
 
 Instances on another node are **not** started with commands. The primary keeps, per instance, whether it
 should run and a *spec* (revision, port, environment, limits): `desired`, `spec_json`, `spec_hash` on the
 replica row (`nodes/desired.py`). Starting, restarting or deploying writes a new spec (a new `spec_hash`);
 stopping sets `desired = stopped`; deleting the row removes it from the list.
 
-The node's agent (`agent/reconcile.py`) asks for its list (`GET /api/nodes/agent/desired?have=<hash>`, also
+The node's agent (`agent/reconcile.py`, the HTTP side of the engine in `containers/reconciler.py`) asks for its list (`GET /api/nodes/agent/desired?have=<hash>`, also
 when the primary nudges it over the websocket), compares it with the containers Docker really has, and repairs
 the difference: start what is missing (downloading the source and building the image first), recreate what was
 started with another spec, remove what is not on the list. It reports what it sees

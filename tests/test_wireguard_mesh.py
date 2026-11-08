@@ -215,7 +215,7 @@ def test_a_helper_that_fails_means_every_node_is_down(client, fake_hub, nodes):
 
 
 # ── routing ───────────────────────────────────────────────────────────────────
-def _replica(node_id, port, status="starting", app_id=None):
+def _replica(node_id, port, status="starting", app_id=None, health_path=""):
     from core.database import AsyncSessionLocal
     from core.models import Application, ApplicationReplica
 
@@ -224,7 +224,7 @@ def _replica(node_id, port, status="starting", app_id=None):
             aid = app_id
             if aid is None:
                 app = Application(name=f"mesh-app-{port}", repo_url="https://example.test/x", start_command="x", port=3000,
-                                  status="running")
+                                  status="running", health_path=health_path)
                 db.add(app)
                 await db.flush()
                 aid = app.id
@@ -321,6 +321,53 @@ def test_a_started_instance_goes_live_when_it_can_be_reached(client, nodes, list
     _run(promote.promote_when_reachable(rid))
     row = _replica_row(rid)
     assert row.status == "running" and row.last_error is None
+
+
+def test_an_instance_only_goes_live_once_it_is_healthy(client, nodes):
+    """Reachable is not enough: the port can be open long before the app can answer."""
+    import http.server
+    import threading
+    import time
+    from nodes import promote
+    answers = {"/up": 503}
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(answers.get(self.path, 404))
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        node_id, _ = nodes("wg-health", ip="127.0.0.1", wg_state="up")
+        rid, _ = _replica(node_id, httpd.server_address[1], health_path="/up")
+
+        async def go():
+            task = asyncio.get_running_loop().create_task(promote.promote_when_reachable(rid))
+            await asyncio.sleep(2.5)
+            before = _replica_row_async_status(rid)
+            answers["/up"] = 200
+            await task
+            return before
+        before = _run(go())
+        assert before == ("starting", "health_check")          # open port, no healthy answer yet: not in nginx
+        assert _replica_row(rid).status == "running"
+    finally:
+        httpd.shutdown()
+
+
+def _replica_row_async_status(replica_id):
+    """The row as stored now, from inside a running loop."""
+    import sqlite3
+    from core.database import DATA_DIR
+    conn = sqlite3.connect(f"{DATA_DIR}/cloudbase.db")
+    try:
+        return conn.execute("SELECT status, substatus FROM application_replicas WHERE id = ?", (replica_id,)).fetchone()
+    finally:
+        conn.close()
 
 
 def test_an_instance_that_a_deploy_already_handled_is_left_alone(client, nodes, listener):

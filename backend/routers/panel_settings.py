@@ -64,12 +64,12 @@ async def apply_cloudbase_nginx(
     import re as _re2
     # --- Cloudbase panel nginx ---
     unavailable_html = nginx_pages.generate_cloudbase_unavailable_html(req.domain)
-    page_ok, page_msg = nginx_files.write_cloudbase_unavailable_page(unavailable_html)
+    page_ok, page_msg = await asyncio.to_thread(nginx_files.write_cloudbase_unavailable_page, unavailable_html)
     if not page_ok:
         raise HTTPException(status_code=500, detail=f"Failed to write Cloudbase unavailable page: {page_msg}")
 
     unknown_host_html = nginx_pages.generate_cloudbase_unknown_host_html(req.domain)
-    host_ok, host_msg = nginx_files.write_cloudbase_unknown_host_page(unknown_host_html)
+    host_ok, host_msg = await asyncio.to_thread(nginx_files.write_cloudbase_unknown_host_page, unknown_host_html)
     if not host_ok:
         raise HTTPException(status_code=500, detail=f"Failed to write Cloudbase unknown-host page: {host_msg}")
 
@@ -81,11 +81,11 @@ async def apply_cloudbase_nginx(
         req.ssl_key_path,
         strict_hostnames=True,
     )
-    ok, msg = nginx_files.write_nginx_config("cloudbase", config)
+    ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, "cloudbase", config)
     if not ok:
         raise HTTPException(status_code=500, detail=f"Failed to apply nginx config: {msg}")
 
-    catchall_ok, catchall_msg = nginx_files.write_default_catch_all(req.ssl_cert_path, req.ssl_key_path)
+    catchall_ok, catchall_msg = await asyncio.to_thread(nginx_files.write_default_catch_all, req.ssl_cert_path, req.ssl_key_path)
     if not catchall_ok:
         raise HTTPException(status_code=500, detail=f"Cloudbase config applied, but failed to enforce nginx default catch-all: {catchall_msg}")
 
@@ -148,14 +148,14 @@ async def set_panel_domain(req: PanelDomainRequest, _: dict = Depends(auth.requi
         (nginx_files.write_cloudbase_unavailable_page, nginx_pages.generate_cloudbase_unavailable_html(domain)),
         (nginx_files.write_cloudbase_unknown_host_page, nginx_pages.generate_cloudbase_unknown_host_html(domain)),
     ):
-        ok, msg = writer(html)
+        ok, msg = await asyncio.to_thread(writer, html)
         if not ok:
             raise HTTPException(500, f"Failed to write status page: {msg}")
     config = nginx_config.generate_config("cloudbase", domain, PORT, cert, key, strict_hostnames=True)
-    ok, msg = nginx_files.write_nginx_config("cloudbase", config)
+    ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, "cloudbase", config)
     if not ok:
         raise HTTPException(500, f"Failed to apply nginx config: {msg}")
-    nginx_files.write_default_catch_all(cert, key)
+    await asyncio.to_thread(nginx_files.write_default_catch_all, cert, key)
     _load_panel_https_domain()
     await nginx_certificates.forget_pending([domain])
     return {"ok": True, "domain": domain, "https": bool(cert and key)}
@@ -248,7 +248,7 @@ async def save_system_settings(
 
 @router.post("/api/system/nginx-default-catchall")
 async def apply_nginx_default_catchall(_: dict = Depends(auth.require_permission("system.manage"))):
-    ok, msg = nginx_files.write_default_catch_all()
+    ok, msg = await asyncio.to_thread(nginx_files.write_default_catch_all)
     return {"ok": ok, "message": msg}
 
 

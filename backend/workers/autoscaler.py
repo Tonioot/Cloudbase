@@ -185,8 +185,8 @@ async def _autoscaler():
 
         async with AsyncSessionLocal() as s:
             victim = await s.get(ApplicationReplica, victim_id)
-            # The agent reports "stopped" when an intentional stop completes.
-            if victim and victim.status == "stopped":
+            # The node reports "stopped" when an intentional stop completes; an instance deleted by hand is gone too
+            if victim is None or victim.status == "stopped":
                 stopped = True
             if stopped:
                 if victim:

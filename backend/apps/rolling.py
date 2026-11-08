@@ -53,7 +53,7 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
     pm._push_line(app_id, f"[Rolling] Starting rolling deploy across {len(running_replicas)} replica(s)…")
 
     env_vars = decrypt_env(app.env_vars or "")
-    source_revision = _refresh_app_source_revision(app)
+    source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
 
     unique_nids = list({r.node_id for r in running_replicas if r.node_id})
     nodes_res = await db.execute(select(Node).where(Node.id.in_(unique_nids)))
@@ -93,7 +93,7 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
     has_custom = bool(app.nginx_enabled and app.domain)
     ssl_cert = ssl_key = None
     if has_custom:
-        ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+        ssl_cert, ssl_key = await asyncio.to_thread(_resolve_ssl_paths, app.ssl_cert_path, app.ssl_key_path)
 
     def _write_nginx_backends(backends: list[str]) -> None:
         cfg = nginx_config.generate_config(
@@ -175,7 +175,7 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
         if old_backend and old_backend in current_backends:
             current_backends.remove(old_backend)
         current_backends.append(new_backend)
-        _write_nginx_backends(current_backends)
+        await asyncio.to_thread(_write_nginx_backends, list(current_backends))
         pm._push_line(app_id, f"[Rolling] Instance {new_replica.id} live — nginx updated.")
 
         # Stop old replica: it leaves the list below and its node (this server too) removes the container

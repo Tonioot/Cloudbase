@@ -240,7 +240,7 @@ async def _deploy_app(app: Application):
     if os.path.exists(app_dir):
         if not os.path.exists(os.path.join(app_dir, ".git")):
             log.warning("[deploy] Directory %s exists but is not a git repo, cleaning up for fresh clone", app_dir)
-            shutil.rmtree(app_dir)
+            await asyncio.to_thread(shutil.rmtree, app_dir)
             os.makedirs(app_dir, exist_ok=True)
     else:
         os.makedirs(app_dir, exist_ok=True)
@@ -261,7 +261,7 @@ async def _deploy_app(app: Application):
         raise HTTPException(400, _friendly_git_clone_error(result.stderr))
 
     app.working_dir = app_dir
-    app.source_revision = _resolve_source_revision(app_dir)
+    app.source_revision = await asyncio.to_thread(_resolve_source_revision, app_dir)
     app.image_revision = None
     if app.app_type != "static":
         app.app_type = pm.detect_app_type_from_command(app.start_command) if app.start_command else "unknown"
@@ -285,7 +285,7 @@ async def _sync_app_source(app: Application, app_dir: str, target_commit: Option
         url = _build_clone_url(app.repo_url, github_token)
         await asyncio.to_thread(subprocess.run, ["git", "remote", "set-url", "origin", url], cwd=app_dir, capture_output=True)
 
-    current = _current_branch(app_dir)
+    current = await asyncio.to_thread(_current_branch, app_dir)
     branch = branch or current
     log(f"[Git] Fetching from origin ({branch})…")
     await asyncio.to_thread(_fetch_origin, app_dir, branch)
@@ -314,7 +314,7 @@ async def _sync_app_source(app: Application, app_dir: str, target_commit: Option
     )
     commit_info = log_res.stdout.strip() if log_res.returncode == 0 else "Unknown"
     log(f"[Git] Updated to: {commit_info}")
-    source_revision = _resolve_source_revision(app_dir)
+    source_revision = await asyncio.to_thread(_resolve_source_revision, app_dir)
     if source_revision:
         app.source_revision = source_revision
     return commit_info, source_revision

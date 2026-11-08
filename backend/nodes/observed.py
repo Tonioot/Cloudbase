@@ -1,6 +1,6 @@
 """What a node reports about its instances, turned into the status the panel shows.
 
-The report says what Docker on the node really does (agent/reconcile.py). This module decides what
+The report says what Docker on the node really does (containers/reconciler.py). This module decides what
 that means for the instance: an instance only counts as running (and only gets traffic) once the
 primary can also reach it over the node network (nodes/promote.py).
 """

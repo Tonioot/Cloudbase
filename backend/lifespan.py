@@ -8,7 +8,7 @@ from fastapi import FastAPI
 
 from workers import autodeploy as workers_autodeploy
 from containers import processes as pm
-from core import auth
+from core import auth, loopwatch
 from core import system_config as _syscfg
 from core.database import AsyncSessionLocal, init_db
 from core.runtime import IS_NODE
@@ -92,6 +92,7 @@ async def lifespan(app: FastAPI):
     await init_db()
     jobs.sweep()      # export files left behind by a crash or restart
     pm.set_main_loop(asyncio.get_event_loop())
+    loopwatch.start(asyncio.get_running_loop())     # logs where the event loop is stuck, should something ever hold it up
 
     # Keep DB-backed global system settings in memory (with one-time config.yaml bootstrap).
     async with AsyncSessionLocal() as _db:

@@ -3,7 +3,7 @@
 Instances on another node are not started with commands. The primary writes down, per instance,
 whether it should run and how (a *spec*: image revision, port, environment, limits). The node's
 agent asks for that list, compares it with what Docker really runs, and makes them equal
-(agent/reconcile.py); it reports what it sees (nodes/observed.py). Because the list is state, not
+(containers/reconciler.py); it reports what it sees (nodes/observed.py). Because the list is state, not
 a one-off command, nothing can get lost: a restart, a dropped connection or a crash in the middle
 of a build simply means the node looks at the list again.
 

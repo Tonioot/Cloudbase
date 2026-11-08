@@ -17,6 +17,7 @@ from nginx import certbot as nginx_certbot
 from nginx import config as nginx_config
 from nginx import files as nginx_files
 from nginx import pages as nginx_pages
+from apps import health as app_health
 from mesh import routing
 from nodes.registry import ensure_local_node
 from core import system_config as _syscfg
@@ -65,13 +66,13 @@ async def _write_app_nginx_config(
     if not has_custom and not _base:
         return
 
-    maint_ok, maint_msg = _ensure_maintenance_files(app, app.id)
+    maint_ok, maint_msg = await asyncio.to_thread(_ensure_maintenance_files, app, app.id)
     if not maint_ok:
         raise HTTPException(500, f"Maintenance files failed: {maint_msg}")
 
     ssl_cert = ssl_key = None
     if has_custom:
-        ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+        ssl_cert, ssl_key = await asyncio.to_thread(_resolve_ssl_paths, app.ssl_cert_path, app.ssl_key_path)
     backends = await _get_nginx_backends(app, db, local_node)
     effective_mode = mode or _get_nginx_mode(app)
     if mode is None and effective_mode == "normal":
@@ -104,7 +105,7 @@ async def _write_app_nginx_config(
         extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
         redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
     )
-    ok, msg = nginx_files.write_nginx_config(app.name, config)
+    ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, app.name, config)
     if not ok:
         raise HTTPException(500, f"Nginx config failed: {msg}")
 
@@ -151,13 +152,14 @@ async def _wait_for_app_backends_ready(
 
         ready = 0
         checked = 0
+        health_path, health_expect, _ = app_health.settings_of(app)
         for backend in backends:
             try:
                 host, port = routing.split(str(backend))
             except ValueError:
                 continue
             checked += 1
-            if await asyncio.to_thread(_http_service_ready, host, port):
+            if await asyncio.to_thread(_http_service_ready, host, port, health_path, health_expect):
                 ready += 1
 
         # Require a healthy quorum for two consecutive polls so restart pages
@@ -240,7 +242,7 @@ async def _restore_nginx_after_transition(
 
         ssl_cert = ssl_key = None
         if has_custom:
-            ssl_cert, ssl_key = _resolve_ssl_paths(app.ssl_cert_path, app.ssl_key_path)
+            ssl_cert, ssl_key = await asyncio.to_thread(_resolve_ssl_paths, app.ssl_cert_path, app.ssl_key_path)
         effective_mode = _get_nginx_mode(app)
         log.info(
             "[nginx-transition-debug] app_id=%s label=%s restoring mode=%s backends=%d values=%s",
@@ -261,7 +263,7 @@ async def _restore_nginx_after_transition(
             extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
             redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
         )
-        ok, msg = nginx_files.write_nginx_config(app.name, config)
+        ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, app.name, config)
 
     log.info(
         "[nginx-transition] app_id=%d label=%s ready=%s elapsed=%.1fs reason=%r nginx_ok=%s msg=%r",
@@ -362,22 +364,11 @@ def _local_port_accepts_connections(port: int) -> bool:
         return False
 
 
-def _http_service_ready(host: str, port: int) -> bool:
-    """Return True when host:port accepts TCP and returns a non-5xx HTTP status."""
+def _http_service_ready(host: str, port: int, path: str = "/", expect: str = "") -> bool:
+    """Return True when host:port answers the way the app's health check says is healthy."""
     if host == "127.0.0.1" and not _local_port_accepts_connections(port):
         return False
-
-    try:
-        import http.client
-
-        conn = http.client.HTTPConnection(host, int(port), timeout=0.8)
-        conn.request("GET", "/")
-        res = conn.getresponse()
-        status = int(res.status or 0)
-        conn.close()
-        return 100 <= status < 500
-    except Exception:
-        return False
+    return app_health.answer(host, int(port), path, expect)[0]
 
 
 async def _get_nginx_backends(app: Application, db: AsyncSession, local_node: "Node" = None) -> "list[str]":

@@ -1,13 +1,29 @@
+import functools
 import logging
 import os
 import subprocess
 import hashlib
+import threading
 from nginx.config import _build_default_catch_all_config
 from nginx.paths import ACME_CONFIG_NAME, ACME_WEBROOT, MAINTENANCE_DIR, NGINX_ENABLED_DIR, NGINX_SITES_DIR, _ACME_LOCATION, _normalize_domain, _safe_name
 
 log = logging.getLogger("cloudbase.nginx")
 
+# Writing a config means: write, `nginx -t`, reload. Two of those at once would test each other's half-written
+# files, so they take turns. They run in threads (asyncio.to_thread), never on the event loop: a reload can
+# take seconds and would hold up every other request.
+_LOCK = threading.RLock()
 
+
+def _serialized(fn):
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _LOCK:
+            return fn(*args, **kwargs)
+    return wrapper
+
+
+@_serialized
 def write_cloudbase_unavailable_page(html: str) -> tuple[bool, str]:
   """Write /var/www/cloudbase/maintenance/cloudbase/unavailable.html."""
   cloudbase_dir = os.path.join(MAINTENANCE_DIR, "cloudbase")
@@ -30,6 +46,7 @@ def write_cloudbase_unavailable_page(html: str) -> tuple[bool, str]:
     return False, str(exc)
 
 
+@_serialized
 def write_cloudbase_unknown_host_page(html: str) -> tuple[bool, str]:
   """Write /var/www/cloudbase/maintenance/cloudbase/app-not-found.html."""
   cloudbase_dir = os.path.join(MAINTENANCE_DIR, "cloudbase")
@@ -52,6 +69,7 @@ def write_cloudbase_unknown_host_page(html: str) -> tuple[bool, str]:
     return False, str(exc)
 
 
+@_serialized
 def write_default_catch_all(ssl_cert: str | None = None, ssl_key: str | None = None) -> tuple[bool, str]:
   """Write a default_server block for unmatched requests with a branded 404 page.
   Includes HTTPS default_server when a valid cert/key pair is provided."""
@@ -72,6 +90,7 @@ def write_default_catch_all(ssl_cert: str | None = None, ssl_key: str | None = N
     return False, str(e)
 
 
+@_serialized
 def write_maintenance_files(app_id: int, downtime_html: str, update_html: str, restart_html: str = None, starting_html: str = None) -> tuple[bool, str]:
     """Write downtime.html, update.html (and optionally restart.html, starting.html) to /var/www/cloudbase/maintenance/{app_id}/."""
     app_dir = os.path.join(MAINTENANCE_DIR, str(app_id))
@@ -139,6 +158,7 @@ def _disable_broken_configs(current_safe: str, nginx_stderr: str) -> bool:
     return disabled_any
 
 
+@_serialized
 def write_nginx_config(app_name: str, config: str) -> tuple[bool, str]:
     safe = _safe_name(app_name)
     config_path = os.path.join(NGINX_SITES_DIR, safe)
@@ -207,6 +227,7 @@ def write_nginx_config(app_name: str, config: str) -> tuple[bool, str]:
         return False, str(e)
 
 
+@_serialized
 def write_acme_server(domains: list[str]) -> tuple[bool, str]:
     """Temporary port-80 server that answers Let's Encrypt challenges for
     domains that aren't linked to an app yet. Removed again after issuing."""
@@ -224,11 +245,13 @@ server {{
     return write_nginx_config(ACME_CONFIG_NAME, config)
 
 
+@_serialized
 def remove_acme_server() -> None:
     remove_nginx_config(ACME_CONFIG_NAME)
     remove_nginx_config("cloudbase-acme")  # name used by earlier versions
 
 
+@_serialized
 def write_acme_probe(token: str, content: str) -> tuple[bool, str]:
     """Place a file in the challenge webroot (owned by the Cloudbase user)."""
     path = os.path.join(ACME_WEBROOT, ".well-known", "acme-challenge", token)
@@ -240,6 +263,7 @@ def write_acme_probe(token: str, content: str) -> tuple[bool, str]:
         return False, str(e)
 
 
+@_serialized
 def remove_acme_probe(token: str) -> None:
     try:
         os.remove(os.path.join(ACME_WEBROOT, ".well-known", "acme-challenge", token))
@@ -247,6 +271,7 @@ def remove_acme_probe(token: str) -> None:
         pass
 
 
+@_serialized
 def remove_nginx_config(app_name: str) -> bool:
     safe = _safe_name(app_name)
     config_path = os.path.join(NGINX_SITES_DIR, safe)

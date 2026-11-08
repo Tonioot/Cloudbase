@@ -1,4 +1,4 @@
-"""The node's side of desired state: make Docker equal to the primary's list (agent/reconcile.py)."""
+"""The node's side of desired state: make Docker equal to the primary's list (containers/reconciler.py; agent/reconcile.py is its HTTP side)."""
 import asyncio
 
 import pytest
@@ -6,6 +6,7 @@ import pytest
 from agent import reconcile
 from agent.reconcile import Reconciler
 from agent.state import AgentState
+from containers import processes as pm, reconciler as engine, replicas as containers_replicas
 
 
 def _run(coro):
@@ -61,9 +62,9 @@ class Docker:
     def __init__(self, monkeypatch, containers=()):
         self.containers = {c["replica_id"]: dict(c) for c in containers}
         self.removed, self.started, self.built = [], [], []
-        monkeypatch.setattr(reconcile.containers_replicas, "list_replica_containers", lambda: [dict(c) for c in self.containers.values()])
-        monkeypatch.setattr(reconcile.pm, "stop_docker_replica", self._stop)
-        monkeypatch.setattr(reconcile.pm, "start_docker_replica", self._start)
+        monkeypatch.setattr(containers_replicas, "list_replica_containers", lambda: [dict(c) for c in self.containers.values()])
+        monkeypatch.setattr(pm, "stop_docker_replica", self._stop)
+        monkeypatch.setattr(pm, "start_docker_replica", self._start)
         monkeypatch.setattr(reconcile, "ensure_image", self._ensure_image)
         self.fail_start = None
 
@@ -280,12 +281,12 @@ def test_the_retry_comes_when_the_delay_is_over_and_stops_after_a_few_attempts(m
 
     async def go():
         await rec.pull()
-        for _ in range(reconcile.MAX_ATTEMPTS + 3):
+        for _ in range(engine.MAX_ATTEMPTS + 3):
             await converge(rec)
             if 1 in rec.attempts:
                 rec.attempts[1]["next"] = 0                                 # the delay has passed
     _run(go())
-    assert rec.attempts[1]["count"] == reconcile.MAX_ATTEMPTS and len(docker.built) == reconcile.MAX_ATTEMPTS
+    assert rec.attempts[1]["count"] == engine.MAX_ATTEMPTS and len(docker.built) == engine.MAX_ATTEMPTS
     assert "gave up" in rec.observed[1]["error"]
 
 
@@ -296,7 +297,7 @@ def test_a_new_spec_gets_a_fresh_start_after_giving_up(monkeypatch):
     async def go():
         await rec.pull()
         await converge(rec)
-        rec.attempts[1]["count"] = reconcile.MAX_ATTEMPTS
+        rec.attempts[1]["count"] = engine.MAX_ATTEMPTS
         docker.fail_start = None
         client.replicas, client.hash = [entry(1, spec_hash="bbbb")], "h2"
         await rec.pull()
@@ -306,13 +307,13 @@ def test_a_new_spec_gets_a_fresh_start_after_giving_up(monkeypatch):
 
 
 def test_backoff_grows_and_has_a_ceiling():
-    delays = [reconcile.backoff_seconds(n) for n in range(1, 10)]
-    assert delays[0] == reconcile.RETRY_BASE_SECONDS and delays == sorted(delays) and delays[-1] == reconcile.RETRY_MAX_SECONDS
+    delays = [engine.backoff_seconds(n) for n in range(1, 10)]
+    assert delays[0] == engine.RETRY_BASE_SECONDS and delays == sorted(delays) and delays[-1] == engine.RETRY_MAX_SECONDS
 
 
 def test_without_a_node_network_address_nothing_is_started_and_nothing_counts_as_failed(monkeypatch):
     rec, _, docker = make(monkeypatch, [entry(1)], wg_ip="")
-    monkeypatch.setattr(reconcile, "RECONCILE_SECONDS", 0)
+    monkeypatch.setattr(engine, "RECONCILE_SECONDS", 0)
 
     async def go():
         await rec.pull()
@@ -352,7 +353,7 @@ def test_the_primary_can_make_the_agent_look_at_its_list_at_once(monkeypatch):
 
 # ── the options ───────────────────────────────────────────────────────────────────
 def test_runtime_options_publish_on_the_node_network_address_and_honour_instance_limits():
-    options = reconcile.runtime_options({"docker_options": {"bind_host": "127.0.0.1", "cpu_limit": 2}, "docker_cpu_limit": 0.5,
+    options = engine.runtime_options({"docker_options": {"bind_host": "127.0.0.1", "cpu_limit": 2}, "docker_cpu_limit": 0.5,
                                          "docker_read_only_root": True, "docker_memory_limit_mb": None}, "10.77.0.9")
     assert options["bind_host"] == "10.77.0.9" and options["cpu_limit"] == 0.5 and options["read_only_root"] is True
     assert "memory_limit_mb" not in options
@@ -387,3 +388,36 @@ def test_an_exited_container_is_started_again_whatever_the_uptime_of_the_machine
         await converge(rec)
     _run(go())
     assert docker.removed == [1] and len(docker.started) == 1 and state_of(rec, 1) == "running"
+
+
+# ── removing what should not run ──────────────────────────────────────────────
+def test_containers_are_removed_at_the_same_time(monkeypatch):
+    """One slow stop must not make the other instances (and their "stopped" report) wait for it."""
+    import time
+    rec, _, docker = make(monkeypatch, [entry(1, desired="stopped"), entry(2, desired="stopped")], [container(1), container(2)])
+    stop = docker._stop
+
+    def slow(app_id, replica_id):
+        time.sleep(0.4)
+        return stop(app_id, replica_id)
+    monkeypatch.setattr(pm, "stop_docker_replica", slow)
+
+    async def go():
+        await rec.pull()
+        began = time.monotonic()
+        await rec.reconcile_once()
+        return time.monotonic() - began
+    took = _run(go())
+    assert took < 0.7 and sorted(docker.removed) == [1, 2]
+    assert state_of(rec, 1) == "stopped" and state_of(rec, 2) == "stopped"
+
+
+def test_a_container_that_could_not_be_stopped_is_not_reported_as_stopped(monkeypatch):
+    rec, _, docker = make(monkeypatch, [entry(1, desired="stopped")], [container(1)])
+    monkeypatch.setattr(pm, "stop_docker_replica", lambda app_id, replica_id: False)
+
+    async def go():
+        await rec.pull()
+        await rec.reconcile_once()
+    _run(go())
+    assert 1 not in rec.observed          # the next pass tries again; the primary is not told something untrue

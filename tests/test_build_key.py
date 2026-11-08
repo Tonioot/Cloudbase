@@ -135,6 +135,7 @@ def test_changed_files_are_always_built(builder):
 # ── the node uses the same check ─────────────────────────────────────────────────
 def _node(monkeypatch, label):
     from agent import source
+    from containers import prepare
     log = {"downloads": 0, "builds": 0}
 
     async def download(*a, **k):
@@ -144,11 +145,11 @@ def _node(monkeypatch, label):
     async def build_local(*a, **k):
         log["builds"] += 1
 
-    monkeypatch.setattr(source, "_local_image_ok", lambda img: True)
+    monkeypatch.setattr(prepare, "local_image_ok", lambda img: True)
     monkeypatch.setattr(source, "_download_and_extract_source", download)
-    monkeypatch.setattr(source, "_build_image_local", build_local)
-    monkeypatch.setattr(source.containers_build, "image_key", lambda app_id, name: label)
-    monkeypatch.setattr(source, "_built", set())
+    monkeypatch.setattr(prepare, "build_image_local", build_local)
+    monkeypatch.setattr(prepare.containers_build, "image_key", lambda app_id, name: label)
+    monkeypatch.setattr(prepare, "_built", set())
     return source, log
 
 
@@ -157,8 +158,8 @@ SPEC = {"app_id": 1, "app_name": "shop", "app_type": "python", "start_command": 
 
 
 def _key(spec):
-    from agent import source
-    return build.build_key(*source._build_arguments(spec))
+    from containers import prepare
+    return build.build_key(*prepare.build_arguments(spec))
 
 
 def test_the_node_skips_the_build_when_the_key_matches(monkeypatch):

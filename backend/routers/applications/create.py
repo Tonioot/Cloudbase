@@ -10,6 +10,7 @@ from nodes.registry import ensure_local_node
 from core.env_crypto import encrypt_env
 from core.audit import log_audit
 from core import config as _cfg, auth as _auth
+from apps import health as health_app
 from apps.git import _normalize_repo_url, _encrypt_github_token, _deploy_app, _resolve_token
 from apps.nginx_sync import _write_app_nginx_config
 from apps.serializers import _app_to_dict
@@ -100,6 +101,9 @@ async def deploy_app(
         cron_timezone=(req.cron_timezone or None) if is_cron else None,
         cron_timeout_seconds=req.cron_timeout_seconds or 3600,
         cron_enabled=True,
+        health_path=health_app.clean_path(req.health_path) if req.health_path is not None else health_app.DEFAULT_PATH,
+        health_expect=health_app.clean_expect(req.health_expect),
+        health_timeout_seconds=health_app.clean_timeout(req.health_timeout_seconds or health_app.DEFAULT_TIMEOUT_SECONDS),
     )
     db.add(app)
     await db.commit()
