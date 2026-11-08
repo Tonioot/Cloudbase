@@ -21,106 +21,115 @@ log = logging.getLogger("cloudbase.main")
 
 
 # ── Background stats collector ────────────────────────────────────────────────
+# Every Docker stats call takes about a second and runs in a thread. They used to run for every instance every 2 s,
+# twice (once for the instance, once for the app), whether anyone looked or not.
+IDLE_SAMPLE_SECONDS = 15      # nobody is looking at the app: this often is enough for history and the instances table
+STATS_CONCURRENCY = 12        # at most this many Docker stats calls at once, so other threaded work is not starved
+_last_sample: dict[int, float] = {}
+
+
+def _wants_sample(app_id: int, now: float, last_sample: dict) -> bool:
+    """Every tick while someone watches the app (stats tab, instances tab); otherwise every IDLE_SAMPLE_SECONDS."""
+    return pm.is_watched(app_id, now) or now - last_sample.get(app_id, float("-inf")) >= IDLE_SAMPLE_SECONDS - 0.5
+
+
+def _aggregate(stats_list: list[dict]) -> dict:
+    n = len(stats_list)
+    return {
+        "cpu_percent":    round(sum(s.get("cpu_percent",    0) for s in stats_list) / n, 2),
+        "memory_mb":      round(sum(s.get("memory_mb",      0) for s in stats_list), 2),
+        "memory_vms_mb":  round(sum(s.get("memory_vms_mb",  0) for s in stats_list), 2),
+        "net_rx_mb":      round(sum(s.get("net_rx_mb",      0) for s in stats_list), 2),
+        "net_tx_mb":      round(sum(s.get("net_tx_mb",      0) for s in stats_list), 2),
+        "disk_read_mb":   round(sum(s.get("disk_read_mb",   0) for s in stats_list), 2),
+        "disk_write_mb":  round(sum(s.get("disk_write_mb",  0) for s in stats_list), 2),
+        "uptime_seconds": max((s.get("uptime_seconds", 0) for s in stats_list), default=0),
+    }
+
+
+async def collect_local_stats_once(now: float | None = None) -> int:
+    """One round: sample the running local instances of every app that is due, once each. Returns the number of
+    Docker stats calls made."""
+    now = _time.monotonic() if now is None else now
+    async with AsyncSessionLocal() as db:
+        apps = (await db.execute(select(Application).where(Application.status == "running"))).scalars().all()
+        local_node = (await db.execute(select(_Node).where(_Node.is_local == True))).scalar_one_or_none()  # noqa: E712
+        local_node_id = local_node.id if local_node else None
+        running_replicas = (await db.execute(
+            select(_AppReplica).where(
+                _AppReplica.status == "running",
+                (_AppReplica.node_id == local_node_id) | (_AppReplica.node_id.is_(None)),
+            )
+        )).scalars().all()
+    # The session is closed here: Docker is asked with no database lock held.
+
+    replicas_by_app: dict[int, list] = {}
+    for r in running_replicas:
+        replicas_by_app.setdefault(r.app_id, []).append(r)
+    return await sample_due_apps(apps, replicas_by_app, local_node_id, now)
+
+
+async def sample_due_apps(apps, replicas_by_app: dict[int, list], local_node_id, now: float, last_sample: dict | None = None) -> int:
+    """Ask Docker about the running instances of the apps that are due. Returns the number of calls made."""
+    last_sample = _last_sample if last_sample is None else last_sample
+    due = [a for a in apps
+           if not (a.node_id and a.node_id != local_node_id)          # apps on other nodes stream their own stats
+           and replicas_by_app.get(a.id) and _wants_sample(a.id, now, last_sample)]
+    gate = asyncio.Semaphore(STATS_CONCURRENCY)
+    calls = 0
+
+    async def sample(replica):
+        nonlocal calls
+        async with gate:
+            calls += 1
+            return await asyncio.to_thread(
+                containers_stats_logs.get_container_stats_by_name,
+                containers_naming.replica_container_name(replica.app_id, replica.id))
+
+    async def one_app(a):
+        try:
+            replicas = replicas_by_app[a.id]
+            results = await asyncio.gather(*[sample(r) for r in replicas])
+            last_sample[a.id] = now
+            stats_list = []
+            stamp = int(_time.time() * 1000)
+            for replica, s in zip(replicas, results):
+                if not s:
+                    continue
+                stats_list.append(s)
+                frame = {"replica_id": replica.id, "timestamp": stamp, **s}
+                pm.set_replica_stats(replica.id, frame)
+                pm._push_stat(a.id, frame)
+            if not stats_list:
+                return
+            mem = psutil.virtual_memory()
+            data = {
+                "status": "running",
+                "docker": True,
+                "timestamp": stamp,
+                **_aggregate(stats_list),
+                "system_cpu_percent": psutil.cpu_percent(interval=None),
+                "system_memory_total_mb": round(mem.total / 1024 / 1024),
+                "system_memory_used_mb":  round(mem.used  / 1024 / 1024),
+                "system_memory_percent":  mem.percent,
+            }
+            pm._stats_history.setdefault(a.id, deque(maxlen=60)).append(data)
+            pm._push_stat(a.id, data)
+        except Exception:
+            pass
+
+    await asyncio.gather(*[one_app(a) for a in due])
+    for app_id in [i for i in last_sample if i not in replicas_by_app]:
+        del last_sample[app_id]                                    # apps that no longer run here
+    return calls
+
+
 async def _stats_collector():
-    """Collect process stats for all running apps every 2 s, push to subscribers."""
+    """Sample the instances on this server: every 2 s for apps someone is watching, every 15 s for the rest."""
     await asyncio.sleep(4)
     while True:
         try:
-            # Short read — session closed before any Docker/thread work begins.
-            async with AsyncSessionLocal() as db:
-                result = await db.execute(
-                    select(Application).where(Application.status == "running")
-                )
-                apps = result.scalars().all()
-                local_node_result = await db.execute(
-                    select(_Node).where(_Node.is_local == True)
-                )
-                local_node_obj = local_node_result.scalar_one_or_none()
-                local_node_id = local_node_obj.id if local_node_obj else None
-                rep_result = await db.execute(
-                    select(_AppReplica).where(
-                        _AppReplica.status == "running",
-                        (_AppReplica.node_id == local_node_id) | (_AppReplica.node_id.is_(None)),
-                    )
-                )
-                running_replicas = rep_result.scalars().all()
-            # Session is now closed — Docker stats collection happens below with no lock held.
-
-            replicas_by_app: dict[int, list] = {}
-            for _r in running_replicas:
-                replicas_by_app.setdefault(_r.app_id, []).append(_r)
-
-            async def _one(a):
-                try:
-                    if a.node_id and a.node_id != local_node_id:
-                        return  # remote node apps stream their own stats via the agent
-                    import time as _time
-                    timestamp = int(_time.time() * 1000)  # milliseconds
-                    app_replicas = replicas_by_app.get(a.id, [])
-                    if app_replicas:
-                        # Instance-based: aggregate stats from all running replicas
-                        stats_list = await asyncio.gather(*[
-                            asyncio.to_thread(
-                                containers_stats_logs.get_container_stats_by_name,
-                                containers_naming.replica_container_name(a.id, r.id),
-                            )
-                            for r in app_replicas
-                        ])
-                        stats_list = [s for s in stats_list if s]
-                        if not stats_list:
-                            return
-                        n = len(stats_list)
-                        s = {
-                            "cpu_percent":    round(sum(s.get("cpu_percent",    0) for s in stats_list) / n, 2),
-                            "memory_mb":      round(sum(s.get("memory_mb",      0) for s in stats_list), 2),
-                            "memory_vms_mb":  round(sum(s.get("memory_vms_mb",  0) for s in stats_list), 2),
-                            "net_rx_mb":      round(sum(s.get("net_rx_mb",      0) for s in stats_list), 2),
-                            "net_tx_mb":      round(sum(s.get("net_tx_mb",      0) for s in stats_list), 2),
-                            "disk_read_mb":   round(sum(s.get("disk_read_mb",   0) for s in stats_list), 2),
-                            "disk_write_mb":  round(sum(s.get("disk_write_mb",  0) for s in stats_list), 2),
-                            "uptime_seconds": max((s.get("uptime_seconds", 0) for s in stats_list), default=0),
-                        }
-                    else:
-                        return  # no running local instance: nothing to measure
-                    mem = psutil.virtual_memory()
-                    data = {
-                        "status": "running",
-                        "docker": True,
-                        "timestamp": timestamp,
-                        **s,
-                        "system_cpu_percent": psutil.cpu_percent(interval=None),
-                        "system_memory_total_mb": round(mem.total / 1024 / 1024),
-                        "system_memory_used_mb":  round(mem.used  / 1024 / 1024),
-                        "system_memory_percent":  mem.percent,
-                    }
-                    pm._stats_history.setdefault(a.id, deque(maxlen=60)).append(data)
-                    pm._push_stat(a.id, data)
-                except Exception:
-                    pass
-
-            # Collect all apps concurrently — cpu_percent(interval=0.5) runs in threads
-            await asyncio.gather(*[_one(a) for a in apps])
-
-            # Per-replica stats: store latest snapshot for local replicas
-            async def _one_replica(replica):
-                try:
-                    cname = containers_naming.replica_container_name(replica.app_id, replica.id)
-                    s = await asyncio.to_thread(containers_stats_logs.get_container_stats_by_name, cname)
-                    if not s:
-                        return
-                    timestamp = int(_time.time() * 1000)
-                    data = {
-                        "replica_id": replica.id,
-                        "timestamp": timestamp,
-                        **s,
-                    }
-                    pm.set_replica_stats(replica.id, data)
-                    pm._push_stat(replica.app_id, data)
-                except Exception:
-                    pass
-
-            await asyncio.gather(*[_one_replica(r) for r in running_replicas])
-
+            await collect_local_stats_once()
         except asyncio.CancelledError:
             return
         except Exception:
@@ -154,23 +163,6 @@ async def _remote_replica_stats_poller():
                 all_running_replicas = rep_result.scalars().all()
 
             remote_replicas = [r for r in all_running_replicas if r.node_id != local_node_id]
-            local_replicas  = [r for r in all_running_replicas if r.node_id == local_node_id]
-
-            # Poll local replica stats in-process (no command queue needed)
-            if local_replicas:
-                import time as _time
-
-                async def _poll_local_replica(r):
-                    try:
-                        cname = containers_naming.replica_container_name(r.app_id, r.id)
-                        snap = await asyncio.to_thread(containers_stats_logs.get_container_stats_by_name, cname)
-                        if snap and snap.get("cpu_percent") is not None:
-                            snap["timestamp"] = int(_time.time() * 1000)
-                            pm.set_replica_stats(r.id, {"replica_id": r.id, **snap})
-                    except Exception:
-                        pass
-
-                await asyncio.gather(*[_poll_local_replica(r) for r in local_replicas])
 
             if not remote_replicas:
                 await asyncio.sleep(15)

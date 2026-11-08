@@ -60,6 +60,7 @@ def _refresh_panel_nginx() -> None:
 async def _refresh_all_app_nginx() -> None:
     """Rewrite every app's nginx config (after base domain changes). This also
     schedules automatic certificates for apps on the base domain."""
+    await asyncio.to_thread(nginx_files.begin_batch)       # one test and one reload for all of them
     try:
         async with AsyncSessionLocal() as _db:
             _apps = (await _db.execute(select(Application))).scalars().all()
@@ -77,3 +78,7 @@ async def _refresh_all_app_nginx() -> None:
                     log.warning("nginx refresh failed for app %s: %s", _a.name, _e)
     except Exception as _e:
         log.warning("nginx refresh batch failed: %s", _e)
+    finally:
+        ok, msg = await asyncio.to_thread(nginx_files.end_batch)
+        if not ok:
+            log.warning("nginx refresh: the new configs were not accepted: %s", msg)

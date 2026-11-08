@@ -15,12 +15,68 @@ log = logging.getLogger("cloudbase.nginx")
 _LOCK = threading.RLock()
 
 
+# Configs that were written but that nginx did not accept: these are never skipped as "unchanged"
+_failed: set[str] = set()
+
+# While a batch is open, writes and removals only touch files. One `nginx -t` and one reload follow when it
+# ends, instead of one pair per app (each of which parses every config on the server).
+_batch_depth = 0
+_batch_pending: set[str] = set()
+
+
+def _same_on_disk(path: str, content: str) -> bool:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read() == content
+    except OSError:
+        return False
+
+
+def _test_and_reload(current_safe: str) -> tuple[bool, str]:
+    """`nginx -t`, then reload. A different app's broken config (missing certificate) is switched off and tested once more."""
+    result = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True)
+    log.log(logging.WARNING if result.returncode else logging.DEBUG, "[nginx-cfg] nginx -t rc=%d stdout=%r stderr=%r", result.returncode, result.stdout, result.stderr)
+    if result.returncode != 0:
+        disabled = _disable_broken_configs(current_safe, result.stderr)
+        if disabled:
+            result = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True)
+            log.log(logging.WARNING if result.returncode else logging.DEBUG, "[nginx-cfg] nginx -t retry rc=%d stderr=%r", result.returncode, result.stderr)
+        if result.returncode != 0:
+            return False, result.stderr
+    r = subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True, text=True)
+    log.log(logging.WARNING if r.returncode else logging.DEBUG, "[nginx-cfg] reload rc=%d stderr=%r", r.returncode, r.stderr)
+    return True, "OK"
+
+
 def _serialized(fn):
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         with _LOCK:
             return fn(*args, **kwargs)
     return wrapper
+
+
+@_serialized
+def begin_batch() -> None:
+    """From here on writes only touch files; `end_batch()` tests and reloads once."""
+    global _batch_depth
+    _batch_depth += 1
+
+
+@_serialized
+def end_batch() -> tuple[bool, str]:
+    global _batch_depth
+    _batch_depth = max(0, _batch_depth - 1)
+    if _batch_depth > 0 or not _batch_pending:
+        return True, "OK"
+    pending = set(_batch_pending)
+    _batch_pending.clear()
+    ok, msg = _test_and_reload("")
+    if ok:
+        _failed.difference_update(pending)
+    else:
+        _failed.update(pending)
+    return ok, msg
 
 
 @_serialized
@@ -77,15 +133,18 @@ def write_default_catch_all(ssl_cert: str | None = None, ssl_key: str | None = N
   enabled_path = os.path.join(NGINX_ENABLED_DIR, "cloudbase-default")
   try:
     catch_all_cfg = _build_default_catch_all_config(ssl_cert, ssl_key)
+    if "cloudbase-default" not in _failed and os.path.exists(enabled_path) and _same_on_disk(config_path, catch_all_cfg):
+      return True, "unchanged"
     r = subprocess.run(["sudo", "tee", config_path], input=catch_all_cfg, text=True, capture_output=True)
     if r.returncode != 0:
       return False, r.stderr or "Failed to write default catch-all"
     subprocess.run(["sudo", "ln", "-sf", config_path, enabled_path], capture_output=True)
-    result = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True)
-    if result.returncode != 0:
-      return False, result.stderr
-    subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True)
-    return True, "OK"
+    if _batch_depth > 0:
+      _batch_pending.add("cloudbase-default")
+      return True, "queued"
+    ok, msg = _test_and_reload("cloudbase-default")
+    (_failed.discard if ok else _failed.add)("cloudbase-default")
+    return ok, msg
   except Exception as e:
     return False, str(e)
 
@@ -96,16 +155,20 @@ def write_maintenance_files(app_id: int, downtime_html: str, update_html: str, r
     app_dir = os.path.join(MAINTENANCE_DIR, str(app_id))
     log.debug("[maint-files] writing to %s", app_dir)
     try:
-        r = subprocess.run(["sudo", "mkdir", "-p", app_dir], capture_output=True, text=True)
-        log.log(logging.WARNING if r.returncode else logging.DEBUG, "[maint-files] mkdir rc=%d stderr=%r", r.returncode, r.stderr)
-        if r.returncode != 0:
-            return False, r.stderr or "Failed to create maintenance directory"
-
         files = [("downtime.html", downtime_html), ("update.html", update_html)]
         if restart_html is not None:
             files.append(("restart.html", restart_html))
         if starting_html is not None:
             files.append(("starting.html", starting_html))
+        # Pages that are already there as they should be need no write: most saves change none of them
+        files = [(f, c) for f, c in files if not _same_on_disk(os.path.join(app_dir, f), c)]
+        if not files:
+            return True, "unchanged"
+
+        r = subprocess.run(["sudo", "mkdir", "-p", app_dir], capture_output=True, text=True)
+        log.log(logging.WARNING if r.returncode else logging.DEBUG, "[maint-files] mkdir rc=%d stderr=%r", r.returncode, r.stderr)
+        if r.returncode != 0:
+            return False, r.stderr or "Failed to create maintenance directory"
 
         for filename, content in files:
             path = os.path.join(app_dir, filename)
@@ -181,6 +244,11 @@ def write_nginx_config(app_name: str, config: str) -> tuple[bool, str]:
     )
 
     try:
+        # The same config, already live: nothing to write, test or reload
+        if safe not in _failed and os.path.exists(enabled_path) and _same_on_disk(config_path, cfg):
+            log.debug("[nginx-cfg] config for %r is unchanged", safe)
+            return True, "unchanged"
+
         # Write via sudo tee (works without direct write permission)
         result = subprocess.run(
             ["sudo", "tee", config_path],
@@ -188,6 +256,7 @@ def write_nginx_config(app_name: str, config: str) -> tuple[bool, str]:
         )
         log.log(logging.WARNING if result.returncode else logging.DEBUG, "[nginx-cfg] tee config rc=%d stderr=%r", result.returncode, result.stderr)
         if result.returncode != 0:
+            _failed.add(safe)
             return False, result.stderr or "Failed to write nginx config"
 
         # Symlink into sites-enabled
@@ -198,27 +267,21 @@ def write_nginx_config(app_name: str, config: str) -> tuple[bool, str]:
             )
             log.log(logging.WARNING if r.returncode else logging.DEBUG, "[nginx-cfg] symlink rc=%d stderr=%r", r.returncode, r.stderr)
             if r.returncode != 0:
+                _failed.add(safe)
                 return False, r.stderr or "Failed to enable nginx site"
         else:
             log.debug("[nginx-cfg] symlink already exists at %s", enabled_path)
             # Always re-create symlink to ensure it points to current config
             subprocess.run(["sudo", "ln", "-sf", config_path, enabled_path], capture_output=True)
 
-        # Validate config — if a *different* app's broken config causes the failure,
-        # disable it automatically and retry once.
-        result = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True)
-        log.log(logging.WARNING if result.returncode else logging.DEBUG, "[nginx-cfg] nginx -t rc=%d stdout=%r stderr=%r", result.returncode, result.stdout, result.stderr)
-        if result.returncode != 0:
-            disabled = _disable_broken_configs(safe, result.stderr)
-            if disabled:
-                result = subprocess.run(["sudo", "nginx", "-t"], capture_output=True, text=True)
-                log.log(logging.WARNING if result.returncode else logging.DEBUG, "[nginx-cfg] nginx -t retry rc=%d stderr=%r", result.returncode, result.stderr)
-            if result.returncode != 0:
-                return False, result.stderr
+        if _batch_depth > 0:
+            _batch_pending.add(safe)
+            return True, "queued"
 
-        r = subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True, text=True)
-        log.log(logging.WARNING if r.returncode else logging.DEBUG, "[nginx-cfg] reload rc=%d stderr=%r", r.returncode, r.stderr)
-        return True, "OK"
+        # Validate the config (a different app's broken one is switched off), then reload
+        ok, msg = _test_and_reload(safe)
+        (_failed.discard if ok else _failed.add)(safe)
+        return ok, msg
     except FileNotFoundError:
         log.error("[nginx-cfg] nginx not found")
         return False, "nginx not found  -  install nginx first (sudo apt install nginx)"
@@ -277,12 +340,19 @@ def remove_nginx_config(app_name: str) -> bool:
     config_path = os.path.join(NGINX_SITES_DIR, safe)
     enabled_path = os.path.join(NGINX_ENABLED_DIR, safe)
 
+    if not any(os.path.lexists(p) for p in (enabled_path, config_path)):
+        return False                                  # nothing there: no reload either
+
     removed = False
     for path in [enabled_path, config_path]:
         r = subprocess.run(["sudo", "rm", "-f", path], capture_output=True)
         if r.returncode == 0:
             removed = True
+    _failed.discard(safe)
 
     if removed:
-        subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True)
+        if _batch_depth > 0:
+            _batch_pending.add(safe)
+        else:
+            subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True)
     return removed

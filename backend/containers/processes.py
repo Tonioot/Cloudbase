@@ -1,6 +1,7 @@
 import asyncio
 import os
 import threading
+import time
 from collections import deque
 from typing import Optional
 
@@ -62,6 +63,23 @@ def _push_stat(app_id: int, data: dict) -> None:
 
 def get_recent_stats(app_id: int) -> list[dict]:
     return list(_stats_history.get(app_id, []))
+
+
+# Apps somebody is looking at right now (the instances tab asks for stats every few seconds)
+_watched_until: dict[int, float] = {}
+
+
+def mark_watched(app_id: int, seconds: float = 10.0) -> None:
+    _watched_until[app_id] = time.monotonic() + seconds
+
+
+def is_watched(app_id: int, now: Optional[float] = None) -> bool:
+    """A stats tab is open for the app, or the instances tab asked for its stats a moment ago."""
+    now = time.monotonic() if now is None else now
+    with _stats_queues_lock:
+        if _stats_queues.get(app_id):
+            return True
+    return _watched_until.get(app_id, 0.0) > now
 
 
 def set_replica_stats(replica_id: int, data: dict) -> None:
