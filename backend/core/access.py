@@ -94,7 +94,7 @@ _PERMISSION_PREFIX_OVERRIDES: tuple[tuple[str, str, str | None], ...] = (
 # (logs.view, stats.view) for specific app sub-resources.
 def _resolve_apps_get_permission(path: str) -> str:
     """For GET /api/apps/* paths, return the required permission."""
-    # /logs, /logs/tail, /replicas/*/logs → apps.view
+    # /logs, /logs/tail → apps.view
     if "/logs" in path:
         return "apps.view"
     # /stats, /stats-remote, /aggregate-stats, /stats/history → apps.view

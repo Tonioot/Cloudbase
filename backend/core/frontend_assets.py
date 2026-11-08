@@ -105,10 +105,6 @@ def _graph(root: str, ver: str, entries: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(seen)
 
 
-def module_graph(root: str, entries: set[str]) -> list[str]:
-    return list(_graph(root, version(root), tuple(sorted(entries))))
-
-
 def font_preloads(root: str) -> list[str]:
     """The regular (latin) faces: nearly every page needs them straight away."""
     try:

@@ -210,7 +210,6 @@ export const api = {
     }
     return result;
   },
-  getStats: (id)       => request('GET',    `/apps/${id}/stats`),
   listFiles:(id, path) => request('GET',    `/apps/${id}/files?path=${encodeURIComponent(path || '')}`),
   fileContent:(id, p)  => request('GET',    `/apps/${id}/files/content?path=${encodeURIComponent(p)}`),
   serviceFile:()       => request('GET',    '/apps/system/service-file'),
@@ -255,16 +254,13 @@ export const api = {
   getStatsHistory:(id, hours) => request('GET', `/apps/${id}/stats/history?hours=${hours || 24}`),
   deployBlueGreen: (id) => request('POST', `/apps/${id}/deploy-blue-green`),
   deployRolling:   (id) => request('POST', `/apps/${id}/deploy-rolling`),
-  listReplicas:   (id)             => request('GET',    `/apps/${id}/replicas`),
   listInstances:  (id)             => request('GET',    `/apps/${id}/instances`),
   getInstanceStats:(id)            => request('GET',    `/apps/${id}/instances/stats`),
   scaleApp:       (id, body)       => request('POST',   `/apps/${id}/scale`, body),
-  removeReplica:  (id, replicaId)  => request('DELETE', `/apps/${id}/replicas/${replicaId}`),
   deleteInstance: (id, instanceId) => request('DELETE', `/apps/${id}/instances/${instanceId}`),
   removeInstances:(id, ids)        => request('POST',   `/apps/${id}/instances/remove`, { ids }),
   restartInstances:(id, ids)       => request('POST',   `/apps/${id}/instances/restart`, { ids }),
   restartInstance:(id, instanceId) => request('POST',   `/apps/${id}/instances/${instanceId}/restart`),
-  getInstanceLogs:(id, repId, lines) => request('GET',  `/apps/${id}/replicas/${repId}/logs?lines=${lines || 200}`),
   getAppLogsTail: (id, lines)      => request('GET',    `/apps/${id}/logs/tail?limit=${lines || 200}`),
   getAppCloudbaseLogs: (id, { limit = 1000, component = '', level = '', q = '' } = {}) => {
     const p = new URLSearchParams({ limit });

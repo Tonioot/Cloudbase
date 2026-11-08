@@ -10,7 +10,7 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.env_crypto import decrypt_env, decrypt_text
@@ -103,6 +103,3 @@ def databases_of(manifest: dict) -> list[dict]:
         raise ValueError("The export file has a damaged list of databases")
     return entries
 
-
-async def count_apps(db: AsyncSession) -> int:
-    return (await db.execute(select(func.count()).select_from(Application))).scalar() or 0

@@ -22,7 +22,7 @@ async def _maybe_upgrade_to_https(client: httpx.AsyncClient, state: AgentState, 
         return False
     new_url = _normalize_url(panel_url)
     try:
-        r = await client.get(f"{new_url}/api/nodes/agent/my-replicas",
+        r = await client.get(f"{new_url}/api/nodes/agent/desired",
                              headers={"X-Node-Token": state.auth_token}, timeout=15)
         if r.status_code != 200:
             raise RuntimeError(f"HTTP {r.status_code}")

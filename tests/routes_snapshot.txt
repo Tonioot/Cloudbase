@@ -1,6 +1,5 @@
 DELETE  /api/apps/{app_id}
 DELETE  /api/apps/{app_id}/instances/{instance_id}
-DELETE  /api/apps/{app_id}/replicas/{replica_id}
 DELETE  /api/databases/{database_id}
 DELETE  /api/databases/{database_id}/backups/{backup_id}
 DELETE  /api/databases/{database_id}/links/{link_id}
@@ -31,10 +30,7 @@ GET     /api/apps/{app_id}/logs/tail
 GET     /api/apps/{app_id}/maintenance-pages
 GET     /api/apps/{app_id}/maintenance-pages/preview/{page_type}
 GET     /api/apps/{app_id}/nginx-debug
-GET     /api/apps/{app_id}/replicas
-GET     /api/apps/{app_id}/replicas/{replica_id}/logs
 GET     /api/apps/{app_id}/source-archive
-GET     /api/apps/{app_id}/stats
 GET     /api/apps/{app_id}/stats/history
 GET     /api/audit-log
 GET     /api/auth/check
@@ -57,7 +53,6 @@ GET     /api/nodes
 GET     /api/nodes/agent/commands
 GET     /api/nodes/agent/databases/{database_id}/backups/{backup_id}/download
 GET     /api/nodes/agent/desired
-GET     /api/nodes/agent/my-replicas
 GET     /api/nodes/mesh
 GET     /api/nodes/{node_id}/agent-logs
 GET     /api/nodes/{node_id}/commands

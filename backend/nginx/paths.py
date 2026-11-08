@@ -1,5 +1,3 @@
-import os
-
 NGINX_SITES_DIR = "/etc/nginx/sites-available"
 
 
@@ -87,10 +85,6 @@ def subdomain_slug(name: str) -> str:
     """The part of <slug>.<base domain> that an app's name gives it."""
     import re
     return re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
-
-
-def get_config_path(key: str) -> str:
-    return os.path.join(NGINX_SITES_DIR, _safe_name(key))
 
 
 # nginx loads sites-enabled alphabetically and the first server_name wins, so

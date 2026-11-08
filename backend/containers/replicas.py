@@ -141,16 +141,6 @@ def stop_replica_container(app_id: int, replica_id: int, push_line_fn=None) -> b
         return False
 
 
-def is_replica_container_running(app_id: int, replica_id: int) -> bool:
-    try:
-        client = _get_client()
-        c = client.containers.get(replica_container_name(app_id, replica_id))
-        c.reload()
-        return c.status == "running"
-    except Exception:
-        return False
-
-
 # ── Orphan cleanup ─────────────────────────────────────────────────────────────
 
 def list_replica_containers() -> list[dict]:

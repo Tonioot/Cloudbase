@@ -5,7 +5,7 @@
     deploy steps, image builds, scaling, restarts, crash recovery, autoscaler…
     (not the app's own container output — that is the app's log, not ours);
   * server log records that concern the app, recognised by an `app_id` extra
-    or by "app_id=N" / "app N" in the message (nginx, scale, tunnels, …).
+    or by "app_id=N" / "app N" in the message (nginx, scale, …).
 
 Lines use the server log format, so system_logs can read and tail them.
 """

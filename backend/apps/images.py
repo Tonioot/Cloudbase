@@ -21,13 +21,3 @@ def _dockerfile_build_kwargs(app: Application) -> dict:
         "build_env_keys": list(decrypt_env(app.env_vars or "").keys()),
     }
 
-
-def _node_build_payload(app: Application) -> dict:
-    """Fields a node agent needs to generate the Dockerfile and build the image."""
-    return {
-        "app_type": app.app_type or "unknown",
-        "start_command": app.start_command or "",
-        "build_command": app.build_command or "",
-        "internal_port": _image_port(app),
-        "env_vars": decrypt_env(app.env_vars or ""),
-    }

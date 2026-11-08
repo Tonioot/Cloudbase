@@ -50,10 +50,6 @@ def _is_cloudflare(ip: str) -> bool:
 _server_ip_cache: dict = {"ip": None, "at": 0.0}
 
 
-# Kept for callers that import it from here
-forget_pending = nginx_certificates.forget_pending
-
-
 def _clean_domain(value: str) -> str:
     d = (value or "").strip().lower()
     d = re.sub(r"^[a-z]+://", "", d).split("/")[0].split(":")[0].strip(".")

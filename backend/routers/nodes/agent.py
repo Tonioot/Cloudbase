@@ -163,25 +163,6 @@ async def report_command_result(
     return {"ok": True}
 
 
-@router.get("/agent/my-replicas")
-async def get_node_replicas(
-    x_node_token: Optional[str] = Header(default=None),
-    db: AsyncSession = Depends(get_db),
-):
-    """Return all live replica IDs assigned to this node so the agent can detect orphan containers."""
-    if not x_node_token:
-        raise HTTPException(401, "Missing node token")
-    node = await get_node_by_token_or_401(x_node_token, db)
-    result = await db.execute(
-        select(ApplicationReplica.id, ApplicationReplica.app_id).where(
-            ApplicationReplica.node_id == node.id,
-            ApplicationReplica.status.not_in(["stopped", "error"]),
-        )
-    )
-    replicas = [{"id": row[0], "app_id": row[1]} for row in result.all()]
-    return {"replicas": replicas}
-
-
 @router.websocket("/ws/agent")
 async def agent_ws(websocket: WebSocket):
     await websocket.accept()

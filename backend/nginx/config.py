@@ -18,7 +18,7 @@ def generate_config(
 ) -> str:
     """Generate an nginx server block.
 
-    port: single int for legacy single-instance proxy, or list[str] of "host:port" backends
+    port: single int (the panel itself), or list[str] of "host:port" backends
           for multi-replica load balancing (nginx upstream block).
 
     mode:
@@ -110,7 +110,7 @@ def generate_config(
         upstream_block += "}\n\n"
         return _proxy_config(domain, f"http://{upstream_name}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, upstream_block=upstream_block, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames)
 
-    # Legacy single int port
+    # One port: the panel itself
     return _proxy_config(domain, f"http://127.0.0.1:{port}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames)
 
 
