@@ -2625,6 +2625,14 @@ async function initInstances() {
               </fieldset>
 
               <fieldset class="form-block">
+                <legend>Amount <small>how many instances to start with these settings</small></legend>
+                <label class="unit-input"><span class="sr-only">Number of instances</span>
+                  <input id="inst-count" class="input" type="number" min="1" max="20" step="1" value="1" />
+                  <span class="unit">instances</span>
+                </label>
+              </fieldset>
+
+              <fieldset class="form-block">
                 <legend>Resources <small>leave empty for the app defaults</small></legend>
                 <div class="form-pair">
                   <label class="unit-input"><span class="sr-only">CPU limit</span>
@@ -2657,7 +2665,7 @@ async function initInstances() {
             </div>
             <div class="dialog-actions">
               <button class="btn" id="inst-dlg-cancel">Cancel</button>
-              <button class="btn btn-primary" id="inst-dlg-ok">Start instance</button>
+              <button class="btn btn-primary" id="inst-dlg-ok">Start</button>
             </div>
           </div>`;
         document.body.appendChild(backdrop);
@@ -2668,8 +2676,10 @@ async function initInstances() {
           const readonly = !!backdrop.querySelector('#inst-readonly')?.checked;
           const tmpfs = backdrop.querySelector('#inst-tmpfs').checked;
           const tmpfsSz = parseInt(backdrop.querySelector('#inst-tmpfs-size').value, 10);
+          const count = Math.min(20, Math.max(1, parseInt(backdrop.querySelector('#inst-count').value, 10) || 1));
           backdrop.remove();
           resolve({
+            count,
             nodeId: nodeVal ? parseInt(nodeVal, 10) : null,
             cpu: Number.isFinite(cpu) ? cpu : null,
             mem: Number.isInteger(mem) ? mem : null,
@@ -2700,7 +2710,8 @@ async function initInstances() {
       try {
         const beforeInstances = await api.listInstances(APP_ID).catch(() => []);
         const beforeIds = new Set((beforeInstances || []).map(i => i.id));
-        await api.scaleApp(APP_ID, {
+        const res = await api.scaleApp(APP_ID, {
+          count: result.count,
           node_id: result.nodeId,
           docker_cpu_limit: result.cpu,
           docker_memory_limit_mb: result.mem,
@@ -2708,15 +2719,21 @@ async function initInstances() {
           docker_tmpfs_enabled: result.tmpfs,
           docker_tmpfs_size_mb: result.tmpfsSz,
         });
-        const started = await _waitForInstanceSync(instances => instances.some(i => !beforeIds.has(i.id)));
+        const made = result.count > 1 ? (res.instances || []).length : 1;
+        if (res?.error) toast(`Only ${made} of ${result.count} started: ${res.error}`, 'error');
+        const started = await _waitForInstanceSync(
+          instances => instances.filter(i => !beforeIds.has(i.id)).length >= made);
         app = await api.getApp(APP_ID);
         updateHeaderStatus();
         renderHeader();
         await renderInstances();
-        if (started) {
-          toast('Instance started');
+        const many = made > 1;
+        if (res?.error) {
+          // already reported above
+        } else if (started) {
+          toast(many ? `${made} instances started` : 'Instance started');
         } else {
-          toast('Instance is still provisioning');
+          toast(many ? 'Instances are still provisioning' : 'Instance is still provisioning');
         }
       } catch (e) {
         toast(e.message, 'error');

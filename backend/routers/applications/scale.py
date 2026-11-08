@@ -29,8 +29,9 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
     local_node = await ensure_local_node(db)
 
     instance_count_result = await db.execute(select(func.count()).select_from(ApplicationReplica))
-    if instance_count_result.scalar() >= _cfg.get_limit("max_instances"):
-        raise HTTPException(400, f"Instance limit reached ({_cfg.get_limit('max_instances')} instances maximum). Adjust limits.max_instances in config.yaml to increase.")
+    existing = instance_count_result.scalar()
+    if existing + req.count > _cfg.get_limit("max_instances"):
+        raise HTTPException(400, f"Instance limit reached ({_cfg.get_limit('max_instances')} instances maximum, {existing} in use). Adjust limits.max_instances in config.yaml to increase.")
 
     # Resolve target node for the new replica
     if req.node_id is not None:
@@ -41,6 +42,29 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
     else:
         target_node = local_node
 
+    if not target_node.is_local and target_node.status != "online":
+        raise HTTPException(400, f"Node '{target_node.name}' is not online")
+
+    started = []
+    error = None
+    for _ in range(req.count):
+        try:
+            started.append(await _add_one(app, app_id, req, target_node, db, actor))
+        except Exception as e:
+            # Every instance is committed on its own, so the ones that did start stay
+            await db.rollback()
+            if not started:
+                raise
+            error = e.detail if isinstance(e, HTTPException) else str(e)
+            log.warning("Scaling %s stopped after %d of %d: %s", app_id, len(started), req.count, error)
+            break
+
+    if req.count == 1:
+        return started[0]
+    return {"instances": started, "requested": req.count, "error": error}
+
+
+async def _add_one(app, app_id, req, target_node, db, actor):
     external_port = await _assign_external_port(None, target_node.id, db)
 
     replica = ApplicationReplica(
@@ -51,9 +75,6 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
     )
     db.add(replica)
     await db.flush()  # get replica.id before starting container
-
-    if not target_node.is_local and target_node.status != "online":
-        raise HTTPException(400, f"Node '{target_node.name}' is not online")
 
     # The instance's own limits stay on its row, so every later start uses them too
     replica.docker_cpu_limit = req.docker_cpu_limit

@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 class DeployRequest(BaseModel):
     name: str
@@ -104,6 +104,7 @@ class AppCheckRepoRequest(BaseModel):
 
 
 class ScaleRequest(BaseModel):
+    count: int = Field(1, ge=1, le=20)
     node_id: Optional[int] = None
     docker_cpu_limit: Optional[float] = None
     docker_memory_limit_mb: Optional[int] = None
