@@ -186,7 +186,7 @@ async def start_run(app_id: int, trigger: str, actor: str, slot: Optional[dateti
 
 
 async def _ensure_local_image(app: Application, push) -> str:
-    img = containers_naming.image_name(app.id, app.name)
+    img = containers_naming.image_name(app.id)
     desired = await asyncio.to_thread(apps_git._refresh_app_source_revision, app)
     if containers_jobs.image_exists(img) and (not desired or app.image_revision == desired):
         return img
@@ -194,7 +194,7 @@ async def _ensure_local_image(app: Application, push) -> str:
         raise RuntimeError("No source yet — deploy the job first")
     push("[Cron] Building image…")
     await asyncio.to_thread(
-        containers_build.build_image, app.id, app.name, app.working_dir, lambda _aid, line: push(line),
+        containers_build.build_image, app.id, app.working_dir, lambda _aid, line: push(line),
         app.app_type or "unknown", app.start_command or "", apps_images._image_port(app),
         **apps_images._image_build_kwargs(app),
     )
@@ -211,7 +211,7 @@ async def _run_local(app: Application, run_id: int, push) -> dict:
     img = await _ensure_local_image(app, push)
     options = apps_runtime._docker_runtime_options(app)
     return await asyncio.to_thread(
-        containers_jobs.run_job_container, app.id, run_id, app.name, img, app.start_command or "",
+        containers_jobs.run_job_container, app.id, run_id, img, app.start_command or "",
         decrypt_env(app.env_vars or ""), options, app.cron_timeout_seconds or 3600,
         lambda line: pm._push_line(app.id, line),
     )

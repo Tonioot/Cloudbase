@@ -100,8 +100,8 @@ async def cmd_cron_run(client, state, main_id, payload):
     run_id = int(payload["run_id"])
     _agent_log(f"[cron] app={main_id} run={run_id} starting")
     result = await asyncio.to_thread(
-        containers_jobs.run_job_container, app_id, run_id, payload.get("app_name") or "",
-        containers_naming.image_name(app_id, payload.get("app_name") or ""), payload.get("command") or "",
+        containers_jobs.run_job_container, app_id, run_id,
+        containers_naming.image_name(app_id), payload.get("command") or "",
         payload.get("env_vars") or {}, payload.get("docker_options"), int(payload.get("timeout_seconds") or 3600),
     )
     _agent_log(f"[cron] app={main_id} run={run_id} exit={result.get('exit_code')} timed_out={result.get('timed_out')}")

@@ -149,10 +149,10 @@ def build_key(app_type: str, start_command: str, port: int, build_command: str, 
     return hashlib.sha256(blob.encode()).hexdigest()[:20]
 
 
-def image_key(app_id: int, app_name: str) -> str | None:
+def image_key(app_id: int) -> str | None:
     """The key the image of this app was built with, or None when there is no such image (or no key on it)."""
     try:
-        return (_get_client().images.get(image_name(app_id, app_name)).labels or {}).get(KEY_LABEL)
+        return (_get_client().images.get(image_name(app_id)).labels or {}).get(KEY_LABEL)
     except Exception:
         return None
 
@@ -247,7 +247,6 @@ def _run_build(
 
 def build_image(
     app_id: int,
-    app_name: str,
     app_dir: str,
     push_line_fn,
     app_type: str = "unknown",
@@ -271,7 +270,7 @@ def build_image(
         push_line_fn(app_id, f"[Docker] {msg}.")
         raise RuntimeError(msg)
 
-    img = image_name(app_id, app_name)
+    img = image_name(app_id)
     build_env = {k: str(v) for k, v in (build_env or {}).items() if _ARG_NAME_RE.match(str(k))}
     try:
         ensure_dockerfile(
@@ -325,7 +324,6 @@ def build_image(
 
 def build_image_unless_current(
     app_id: int,
-    app_name: str,
     app_dir: str,
     push_line_fn,
     app_type: str = "unknown",
@@ -342,10 +340,10 @@ def build_image_unless_current(
     as a first build. Deploys use this; the Rebuild button uses build_image, which always builds."""
     revision = source_revision or source_revision_of(app_dir)
     key = build_key(app_type, start_command, port, build_command, build_env, revision)
-    img = image_name(app_id, app_name)
-    if key and image_key(app_id, app_name) == key:
+    img = image_name(app_id)
+    if key and image_key(app_id) == key:
         push_line_fn(app_id, f"[Docker] {img} is current (revision {revision[:8]}, same settings): not rebuilding.")
         return img, False
-    build_image(app_id, app_name, app_dir, push_line_fn, app_type, start_command, port,
+    build_image(app_id, app_dir, push_line_fn, app_type, start_command, port,
                 build_command=build_command, build_env=build_env, source_revision=revision)
     return img, True

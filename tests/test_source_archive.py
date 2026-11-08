@@ -83,7 +83,7 @@ def _setup(tmp_path):
     from containers import processes as pm
     from core.database import AsyncSessionLocal
     from core.models import Application, ApplicationReplica, Node
-    source = Path(pm.get_app_dir("src-app"))          # the source must lie in the apps directory: anything else is never served
+    source = Path(pm.APPS_BASE_DIR) / "src-app"          # the source must lie in the apps directory: anything else is never served
     source.mkdir(parents=True, exist_ok=True)
     _tree(source)
 
@@ -108,7 +108,7 @@ def served(client, tmp_path):
     yield app_id
     import shutil
     from containers import processes as pm
-    shutil.rmtree(pm.get_app_dir("src-app"), ignore_errors=True)
+    shutil.rmtree(os.path.join(pm.APPS_BASE_DIR, "src-app"), ignore_errors=True)
     from sqlalchemy import delete
     from core.database import AsyncSessionLocal
     from core.models import Application, ApplicationReplica, Node
@@ -161,6 +161,6 @@ def test_the_node_reports_the_reason_not_just_a_status(monkeypatch):
         main_url = "https://primary"
         auth_token = "t"
 
-    monkeypatch.setattr(source, "_local_app_dir", lambda name: "/nonexistent")
+    monkeypatch.setattr(source, "_local_app_dir", lambda app_id: "/nonexistent")
     with pytest.raises(RuntimeError, match="No space left on device"):
-        asyncio.run(source._download_and_extract_source(Client(), State(), 1, "Vexora"))
+        asyncio.run(source._download_and_extract_source(Client(), State(), 1))

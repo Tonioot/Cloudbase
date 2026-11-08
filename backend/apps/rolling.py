@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal
 from core.models import Node, ApplicationReplica
 from containers import processes as pm, naming as containers_naming, build as containers_build
-from nginx import config as nginx_config, files as nginx_files
+from nginx import config as nginx_config, files as nginx_files, paths as nginx_paths
 from nodes.registry import ensure_local_node
 from nodes import desired
 from core.env_crypto import decrypt_env
@@ -76,7 +76,7 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
                     pm._push_line(app_id, str(line))
                 new_img, _built = await asyncio.to_thread(
                     containers_build.build_image_unless_current,
-                    app_id, app.name, app.working_dir, _push,
+                    app_id, app.working_dir, _push,
                     app.app_type or "unknown", app.start_command or "", _image_port(app),
                     **_image_build_kwargs(app),
                 )
@@ -103,7 +103,7 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
             extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
             redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
         )
-        ok, msg = nginx_files.write_nginx_config(app.name, cfg)
+        ok, msg = nginx_files.write_nginx_config(nginx_paths.app_key(app.id), cfg)
         if not ok:
             log.warning("[Rolling] nginx write failed: %s", msg)
 
@@ -193,7 +193,7 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
     if new_img:
         app.docker_image = new_img
     else:
-        app.docker_image = containers_naming.image_name(app_id, app.name)
+        app.docker_image = containers_naming.image_name(app_id)
     if source_revision:
         app.image_revision = source_revision
 

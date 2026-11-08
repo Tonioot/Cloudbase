@@ -75,7 +75,7 @@ def _validate_docker_runtime_settings(
         raise HTTPException(400, "docker_tmpfs_size_mb must be greater than 0")
 
 
-# nginx site files the panel itself uses; an app whose name maps onto one would overwrite it
+# names the panel itself uses (its own nginx site and automatic subdomain)
 _RESERVED_APP_NAMES = {"cloudbase", "cloudbase-default", "zz-cloudbase-acme", "default"}
 
 
@@ -86,16 +86,19 @@ _REPO_URL_RE = re.compile(r"^(https?://|ssh://|git@)[^\s]+$")
 _GIT_REF_RE = re.compile(r"^[A-Za-z0-9._/~^@{}-]{1,200}$")
 
 
-async def _check_new_app_name(name: Optional[str], db: AsyncSession) -> str:
+async def _check_new_app_name(name: Optional[str], db: AsyncSession, exclude_id: Optional[int] = None) -> str:
     name = (name or "").strip()
     if not name or len(name) > 100:
         raise HTTPException(400, "App name must be 1–100 characters")
     safe = nginx_paths._safe_name(name)
     if safe in _RESERVED_APP_NAMES:
         raise HTTPException(400, f"The name '{name}' is reserved by Cloudbase")
-    # Two apps whose names map to the same file would overwrite each other's nginx config and folder
-    for (other,) in (await db.execute(select(Application.name))).all():
-        if nginx_paths._safe_name(other) == safe:
+    # Two apps whose names give the same automatic subdomain would answer on the same address
+    slug = nginx_paths.subdomain_slug(name)
+    for other_id, other in (await db.execute(select(Application.id, Application.name))).all():
+        if other_id == exclude_id:
+            continue
+        if other == name or (slug and nginx_paths.subdomain_slug(other) == slug):
             raise HTTPException(400, f"App '{other}' already uses this name")
     return name
 

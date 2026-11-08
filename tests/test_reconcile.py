@@ -73,7 +73,7 @@ class Docker:
         self.containers.pop(replica_id, None)
         return True
 
-    def _start(self, app_id, replica_id, app_name, internal_port, external_port, env, options, image_app_id):
+    def _start(self, app_id, replica_id, internal_port, external_port, env, options):
         if self.fail_start:
             raise RuntimeError(self.fail_start)
         self.started.append({"replica_id": replica_id, "port": external_port, "env": env, "options": options, "internal": internal_port})

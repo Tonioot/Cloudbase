@@ -108,14 +108,14 @@ class Docker:
         self.containers.pop(replica_id, None)
         return True
 
-    def _start(self, app_id, replica_id, app_name, internal_port, external_port, env, options, image_app_id):
+    def _start(self, app_id, replica_id, internal_port, external_port, env, options):
         self.started.append({"replica_id": replica_id, "port": external_port, "env": env, "options": options})
         self.add(app_id, replica_id, spec=options["spec_hash"])
         return self.containers[replica_id]["id"]
 
     async def _ensure_image(self, spec, progress, fetch, push=None):
         progress("building_image")
-        self.built.append((spec["app_id"], await fetch(spec["app_id"], spec["app_name"])))
+        self.built.append((spec["app_id"], await fetch(spec["app_id"])))
 
 
 async def cycle(rec):

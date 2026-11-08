@@ -1,5 +1,5 @@
 from core import system_config as _scfg
-from nginx.paths import MAINTENANCE_DIR, _ACME_LOCATION, _normalize_domain, _sanitize_ssl_path
+from nginx.paths import MAINTENANCE_DIR, _ACME_LOCATION, _normalize_domain, _sanitize_ssl_path, subdomain_slug
 from nginx import certbot as nginx_certbot
 
 # â"€â"€ Nginx config generation â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -48,7 +48,7 @@ def generate_config(
     _using_auto_sub = False
     _base = _scfg.get_base_domain_cached()
     if _base and (app_name or "").strip().lower() != "cloudbase":
-        _slug = _re.sub(r"[^a-z0-9]+", "-", (app_name or "").lower()).strip("-")
+        _slug = subdomain_slug(app_name)
         if _slug:
             _auto_sub = f"{_slug}.{_base}"
             if not domain:
@@ -103,8 +103,7 @@ def generate_config(
           return _static_page_config(domain, maint_root, "downtime.html", ssl_cert, ssl_key, extra_domains, redirect_domains, strict_hostnames=strict_hostnames)
         if len(port) == 1:
           return _proxy_config(domain, f"http://{port[0]}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames)
-        safe_name = _re.sub(r"[^a-z0-9_]", "_", app_name.lower())
-        upstream_name = f"cloudbase_{safe_name}"
+        upstream_name = f"cloudbase_app_{app_id}" if app_id else "cloudbase_" + _re.sub(r"[^a-z0-9_]", "_", app_name.lower())
         upstream_block = f"upstream {upstream_name} {{\n"
         for backend in port:
             upstream_block += f"    server {backend};\n"

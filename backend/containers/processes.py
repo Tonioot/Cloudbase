@@ -109,20 +109,15 @@ def _push_container_line(app_id: int, line: str) -> None:
         _main_loop.call_soon_threadsafe(q.put_nowait, line)
 
 
-def _safe_dir_name(name: str) -> str:
-    import re
-    return re.sub(r'[^a-zA-Z0-9_-]', '_', name)
-
-
-def get_app_dir(app_name: str) -> str:
-    return os.path.join(APPS_BASE_DIR, _safe_dir_name(app_name))
+def get_app_dir(app_id: int) -> str:
+    return os.path.join(APPS_BASE_DIR, containers_naming.app_dir_name(app_id))
 
 
 def app_source_dir(app) -> str | None:
     """The app's source directory, but only when it lies inside APPS_BASE_DIR.
     Anything else (an old or tampered working_dir) is never read, served or written."""
     base = os.path.realpath(APPS_BASE_DIR)
-    path = os.path.realpath(app.working_dir or get_app_dir(app.name))
+    path = os.path.realpath(app.working_dir or get_app_dir(app.id))
     if path == base or os.path.commonpath([base, path]) != base:
         return None
     return path
@@ -153,22 +148,20 @@ def detect_app_type_from_command(cmd: str) -> str:
 def start_docker_replica(
     app_id: int,
     replica_id: int,
-    app_name: str,
     internal_port: int,
     external_port: int,
     env_vars: dict,
     docker_options: dict | None = None,
-    image_app_id: int | None = None,
 ) -> str:
     """Start a replica container using the existing image (no rebuild). Returns container ID."""
     def _push(aid, line):
         log_buffers.setdefault(aid, deque(maxlen=5000)).append(str(line))
         _push_line(aid, line)
 
-    img = containers_naming.image_name(image_app_id if image_app_id is not None else app_id, app_name)
+    img = containers_naming.image_name(app_id)
     try:
         container_id = containers_replicas.run_replica_container(
-            app_id, replica_id, app_name, img,
+            app_id, replica_id, img,
             internal_port, external_port, env_vars or {}, docker_options, _push,
         )
     except Exception as e:

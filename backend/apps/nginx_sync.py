@@ -3,7 +3,6 @@ import json
 import logging
 import math
 import os
-import re
 import socket
 from typing import Optional
 from fastapi import HTTPException
@@ -13,6 +12,7 @@ from core.database import AsyncSessionLocal
 from core.models import ApplicationReplica, Node, Application
 from containers import processes as pm
 from nginx import certificates as nginx_certificates
+from nginx import paths as nginx_paths
 from nginx import certbot as nginx_certbot
 from nginx import config as nginx_config
 from nginx import files as nginx_files
@@ -26,10 +26,10 @@ from apps.state import RESTART_READY_MIN_HEALTHY_RATIO, RESTART_READY_POLL_SECON
 log = logging.getLogger("cloudbase.apps")
 
 
-def _best_effort_remove_app_nginx(app_name: str) -> None:
+def _best_effort_remove_app_nginx(app_id: int) -> None:
     """Remove app nginx config even when DB flags are stale, to avoid ghost routes."""
     try:
-        nginx_files.remove_nginx_config(app_name)
+        nginx_files.remove_nginx_config(nginx_paths.app_key(app_id))
     except Exception:
         pass
 
@@ -58,7 +58,7 @@ async def _write_app_nginx_config(
 ) -> None:
     if app.no_web:
         app.nginx_enabled = False
-        _best_effort_remove_app_nginx(app.name)
+        _best_effort_remove_app_nginx(app.id)
         return
 
     _base = _syscfg.get_base_domain_cached()
@@ -105,7 +105,7 @@ async def _write_app_nginx_config(
         extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
         redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
     )
-    ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, app.name, config)
+    ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, nginx_paths.app_key(app.id), config)
     if not ok:
         raise HTTPException(500, f"Nginx config failed: {msg}")
 
@@ -263,7 +263,7 @@ async def _restore_nginx_after_transition(
             extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
             redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
         )
-        ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, app.name, config)
+        ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, nginx_paths.app_key(app.id), config)
 
     log.info(
         "[nginx-transition] app_id=%d label=%s ready=%s elapsed=%.1fs reason=%r nginx_ok=%s msg=%r",
@@ -297,7 +297,7 @@ def _best_effort_delete_app_certificate(app: Application) -> None:
 def _auto_subdomain(app: Application) -> Optional[str]:
     """<app>.<base domain> — mirrors nginx_manager.generate_config."""
     base = _syscfg.get_base_domain_cached()
-    slug = re.sub(r"[^a-z0-9]+", "-", (app.name or "").lower()).strip("-")
+    slug = nginx_paths.subdomain_slug(app.name)
     return f"{slug}.{base}" if base and slug else None
 
 

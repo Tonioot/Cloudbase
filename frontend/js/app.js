@@ -1612,7 +1612,7 @@ function initSettings() {
   _settingsInitialized = true;
 
   // Info rows
-  document.getElementById('si-name').textContent  = app.name;
+  document.getElementById('cfg-name').value       = app.name;
   document.getElementById('si-repo').textContent  = app.repo_url;
   document.getElementById('si-type').textContent  = app.app_type || '—';
   document.getElementById('si-date').textContent  = fmtDate(app.created_at);
@@ -2729,6 +2729,7 @@ async function saveSettings() {
   const dockerTmpfsSize = parseInt(document.getElementById('cfg-docker-tmpfs-size').value, 10);
 
   const payload = {
+    name:           document.getElementById('cfg-name').value.trim() || app.name,
     start_command:  document.getElementById('cfg-cmd').value.trim()    || null,
     build_command:  document.getElementById('cfg-build').value.trim(),  // "" clears it
     port:           parseInt(document.getElementById('cfg-port').value) || null,
@@ -2757,7 +2758,14 @@ async function saveSettings() {
   };
 
   try {
+    const oldName = app.name;
     app = await api.updateApp(APP_ID, payload);
+    if (app?.name !== oldName) {
+      // The name is in the header, the crumbs, the sidebar and the address: start the page again with the new one
+      try { sessionStorage.removeItem('cb-index'); } catch { /* ignore */ }
+      location.reload();
+      return;
+    }
     if (app?.pending_sync) {
       toast(app.message || 'Settings saved and queued for node sync');
     } else {

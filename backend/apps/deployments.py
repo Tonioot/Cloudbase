@@ -148,11 +148,11 @@ async def _rebuild(app: Application, db, source_revision, push, *, restart: bool
     push("[Docker] Checking the image…")
     await asyncio.to_thread(
         containers_build.build_image_unless_current,
-        app.id, app.name, app.working_dir, lambda _aid, line: push(line),
+        app.id, app.working_dir, lambda _aid, line: push(line),
         app.app_type or "unknown", app.start_command or "", apps_images._image_port(app),
         **apps_images._image_build_kwargs(app),
     )
-    app.docker_image = containers_naming.image_name(app.id, app.name)
+    app.docker_image = containers_naming.image_name(app.id)
     if source_revision:
         app.image_revision = source_revision
     await db.commit()

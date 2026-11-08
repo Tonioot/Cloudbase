@@ -6,17 +6,17 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from containers import processes as pm, dockerfiles as containers_dockerfiles
-from nginx import certificates as nginx_certificates, config as nginx_config, files as nginx_files
+from nginx import certbot as nginx_certbot, certificates as nginx_certificates, config as nginx_config, files as nginx_files, paths as nginx_paths
 from nodes.registry import ensure_local_node
 from core.env_crypto import decrypt_env, encrypt_env
 from core.audit import log_audit
 from core import auth as _auth, system_config as _syscfg
 from apps.git import _encrypt_github_token, _resolve_token
 from apps.images import _image_port, _dockerfile_build_kwargs
-from apps.nginx_sync import _resolve_ssl_paths, _write_app_nginx_config, _get_nginx_backends, _get_nginx_mode, _best_effort_remove_app_nginx, _ensure_maintenance_files
+from apps.nginx_sync import _auto_subdomain, _resolve_ssl_paths, _write_app_nginx_config, _get_nginx_backends, _get_nginx_mode, _best_effort_remove_app_nginx, _ensure_maintenance_files
 from apps.serializers import _app_to_dict, _get_or_404
 from apps import health as health_app
-from apps.validation import _validate_docker_runtime_settings, _check_domain_conflicts
+from apps.validation import _validate_docker_runtime_settings, _check_domain_conflicts, _check_new_app_name
 from routers.applications.schemas import UpdateRequest
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
@@ -28,6 +28,12 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
     await ensure_local_node(db)
     _validate_docker_runtime_settings(req.docker_cpu_limit, req.docker_memory_limit_mb, req.docker_tmpfs_size_mb)
     dockerfile_changed = False
+
+    renamed_from = None          # (old name, its automatic subdomain) when the app is renamed
+    if req.name is not None and req.name.strip() != app.name:
+        new_name = await _check_new_app_name(req.name, db, exclude_id=app.id)
+        renamed_from = (app.name, _auto_subdomain(app))
+        app.name = new_name
 
     if req.domain is not None or req.extra_domains is not None or req.redirect_domains is not None:
         new_primary   = req.domain        if req.domain        is not None else app.domain
@@ -157,7 +163,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
             extra_domains=json.loads(app.extra_domains or "[]"),
             redirect_domains=json.loads(app.redirect_domains or "[]"),
         )
-        ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, app.name, config)
+        ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, nginx_paths.app_key(app.id), config)
         app.nginx_enabled = ok
         if not ok:
             raise HTTPException(500, f"Nginx config failed: {msg}")
@@ -173,7 +179,16 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         if _syscfg.get_base_domain_cached():
             await _write_app_nginx_config(app, db, await ensure_local_node(db))
         else:
-            _best_effort_remove_app_nginx(app.name)
+            _best_effort_remove_app_nginx(app.id)
+    elif renamed_from and not app.no_web and _syscfg.get_base_domain_cached():
+        await _write_app_nginx_config(app, db, await ensure_local_node(db))      # the new subdomain
+
+    if renamed_from:
+        # The old automatic subdomain is gone from nginx now; its certificate would only fail to renew
+        old_name, old_subdomain = renamed_from
+        if old_subdomain and old_subdomain != _auto_subdomain(app):
+            await asyncio.to_thread(nginx_certbot.delete, old_subdomain)
+        await log_audit(db, "app.rename", actor=actor, app_id=app.id, detail={"from": old_name, "to": app.name})
 
     await log_audit(db, "app.config_update", actor=actor, app_id=app.id, detail={"name": app.name})
     await db.commit()

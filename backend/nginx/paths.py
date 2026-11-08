@@ -78,8 +78,19 @@ def _safe_name(app_name: str) -> str:
     return re.sub(r'[^a-zA-Z0-9_-]', '_', app_name).lower()
 
 
-def get_config_path(app_name: str) -> str:
-    return os.path.join(NGINX_SITES_DIR, _safe_name(app_name))
+def app_key(app_id: int) -> str:
+    """The name of an app's nginx config file: from its id, so renaming the app leaves it alone."""
+    return f"app-{app_id}"
+
+
+def subdomain_slug(name: str) -> str:
+    """The part of <slug>.<base domain> that an app's name gives it."""
+    import re
+    return re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+
+
+def get_config_path(key: str) -> str:
+    return os.path.join(NGINX_SITES_DIR, _safe_name(key))
 
 
 # nginx loads sites-enabled alphabetically and the first server_name wins, so

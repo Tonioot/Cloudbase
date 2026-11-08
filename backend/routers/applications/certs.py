@@ -2,7 +2,7 @@ import os
 from fastapi import HTTPException, File, UploadFile, Depends, APIRouter
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
-from containers import processes as pm
+from containers import naming as containers_naming, processes as pm
 from core import auth as _auth
 from apps.serializers import _get_or_404
 
@@ -105,7 +105,7 @@ async def upload_app_cert(app_id: int, file: UploadFile = File(...), _user: dict
     safe_name = os.path.basename(file.filename).replace("..", "").lstrip("/")
     if not safe_name or safe_name.startswith("."):
         raise HTTPException(400, "Invalid file name")
-    base = pm.app_source_dir(app) if app.working_dir else os.path.expanduser(f"~/.cloudbase/certs/{pm._safe_dir_name(app.name)}")
+    base = pm.app_source_dir(app) if app.working_dir else os.path.expanduser(f"~/.cloudbase/certs/{containers_naming.app_dir_name(app.id)}")
     if not base:
         raise HTTPException(400, "App source directory is outside the Cloudbase apps folder")
     dest_dir = os.path.join(base, "certs")

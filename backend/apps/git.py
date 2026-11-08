@@ -133,8 +133,8 @@ def _friendly_git_clone_error(stderr: str) -> str:
     return "Git clone failed for an unknown reason."
 
 
-def _git_app_dir_or_404(app_name: str) -> str:
-    app_dir = pm.get_app_dir(app_name)
+def _git_app_dir_or_404(app_id: int) -> str:
+    app_dir = pm.get_app_dir(app_id)
     if not os.path.exists(app_dir):
         raise HTTPException(404, "App directory does not exist on disk")
     if not os.path.exists(os.path.join(app_dir, ".git")):
@@ -233,7 +233,7 @@ def _recent_git_commits(app_dir: str, limit: int = 20, ref: Optional[str] = None
 
 
 async def _deploy_app(app: Application):
-    app_dir = pm.get_app_dir(app.name)
+    app_dir = pm.get_app_dir(app.id)
     log.info("[deploy] Starting deployment for app=%s in dir=%s", app.name, app_dir)
 
     # If directory exists but is broken or empty, clean it up

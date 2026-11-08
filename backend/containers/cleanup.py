@@ -107,9 +107,9 @@ def _cleanup_before_build(app_id: int, push_line_fn) -> None:
         log.warning("[docker] Pre-build cleanup failed: %s", e)
 
 
-def remove_image(app_id: int, app_name: str) -> None:
+def remove_image(app_id: int) -> None:
     client = _get_client()
-    img = image_name(app_id, app_name)
+    img = image_name(app_id)
     try:
         client.images.remove(img, force=True)
         log.info("[docker] Removed image %s", img)

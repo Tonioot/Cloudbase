@@ -89,7 +89,7 @@ Cloudbase has four building blocks.
 
 ### From repository to container
 
-The primary clones the repository to `~/.cloudbase/apps/<name>` and builds a Docker image. Remote nodes download the source from the primary and build the same image locally, so they don't need access to your Git host. A build is skipped when the image is already current (same commit and settings), on the primary and on nodes alike.
+The primary clones the repository to `~/.cloudbase/apps/app-<id>` and builds a Docker image. Remote nodes download the source from the primary and build the same image locally, so they don't need access to your Git host. A build is skipped when the image is already current (same commit and settings), on the primary and on nodes alike.
 
 ### How nodes are controlled
 

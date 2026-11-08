@@ -31,7 +31,7 @@ async def nginx_debug(app_id: int, db: AsyncSession = Depends(get_db), _user: di
     import subprocess as sp
     app = await _get_or_404(app_id, db)
 
-    safe_name = nginx_paths._safe_name(app.name)
+    safe_name = nginx_paths.app_key(app.id)
     config_path   = f"{nginx_paths.NGINX_SITES_DIR}/{safe_name}"
     enabled_path  = f"{nginx_paths.NGINX_ENABLED_DIR}/{safe_name}"
     maint_dir     = f"{nginx_paths.MAINTENANCE_DIR}/{app_id}"

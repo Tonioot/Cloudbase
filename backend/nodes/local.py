@@ -41,8 +41,8 @@ class LocalReconciler(Reconciler):
         return None
 
     async def _prepare(self, spec: dict, progress) -> None:
-        async def fetch(_app_id: int, app_name: str) -> str:
-            return pm.get_app_dir(app_name)             # the source is already here
+        async def fetch(app_id: int) -> str:
+            return pm.get_app_dir(app_id)             # the source is already here
         await prepare.ensure_image(spec, progress, fetch, push=pm._push_line)
 
     async def _watch_nudges(self) -> None:

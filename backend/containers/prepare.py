@@ -9,7 +9,7 @@ import platform
 import subprocess
 from typing import Awaitable, Callable
 
-from containers import naming as containers_naming, build as containers_build, processes as pm
+from containers import legacy_names, naming as containers_naming, build as containers_build, processes as pm
 
 _logger = logging.getLogger("cloudbase.agent")
 
@@ -55,12 +55,12 @@ def build_arguments(spec: dict) -> tuple:
     return app_type, start_cmd, port, spec.get("build_command") or "", spec.get("env_vars") or {}, spec.get("source_revision") or None
 
 
-async def build_image_local(local_id: int, app_name: str, app_dir: str, spec: dict, push=None) -> str:
+async def build_image_local(local_id: int, app_dir: str, spec: dict, push=None) -> str:
     """Build the Docker image on this node (build_image generates the Dockerfile). Returns the image name.
 
     `push(app_id, line)` also gets the build output; it always goes to the agent log."""
     app_type, start_cmd, port, build_command, build_env, revision = build_arguments(spec)
-    img = containers_naming.image_name(local_id, app_name)
+    img = containers_naming.image_name(local_id)
     _log(f"[build] Building image {img} for {platform.machine()} in {app_dir}")
 
     def _push(aid, line):
@@ -70,7 +70,7 @@ async def build_image_local(local_id: int, app_name: str, app_dir: str, spec: di
 
     await asyncio.to_thread(
         containers_build.build_image,
-        local_id, app_name, app_dir, _push,
+        local_id, app_dir, _push,
         app_type, start_cmd, port,
         build_command=build_command, build_env=build_env,
         source_revision=revision,
@@ -80,23 +80,22 @@ async def build_image_local(local_id: int, app_name: str, app_dir: str, spec: di
 
 
 async def ensure_image(spec: dict, progress: Callable[[str], None],
-                       fetch: Callable[[int, str], Awaitable[str]], push=None) -> None:
+                       fetch: Callable[[int], Awaitable[str]], push=None) -> None:
     """Make sure this machine has an image for the spec.
 
     `progress` is told what is happening ("building_image"; `fetch` reports "downloading" itself).
-    `fetch(app_id, app_name)` gives the directory with the source. `push(app_id, line)` also gets the build output."""
+    `fetch(app_id)` gives the directory with the source. `push(app_id, line)` also gets the build output."""
     main_id = int(spec["app_id"])
-    app_name = spec.get("app_name") or spec.get("name") or ""
-    if not app_name:
-        raise RuntimeError("Missing app_name")
+    if spec.get("app_name"):
+        await asyncio.to_thread(legacy_names.adopt, main_id, spec["app_name"])      # ONE-OFF (delete with legacy_names.py)
     app_type, start_cmd, port, build_command, build_env, revision = build_arguments(spec)
     key = containers_build.build_key(app_type, start_cmd, port, build_command, build_env, revision)
 
-    img = containers_naming.image_name(main_id, app_name)
+    img = containers_naming.image_name(main_id)
     if await asyncio.to_thread(local_image_ok, img):
         if not revision:
             return                  # nothing says what the image was made from: use it, as before
-        if containers_build.image_key(main_id, app_name) == key:
+        if containers_build.image_key(main_id) == key:
             _log(f"[deploy] Image {img} is current (revision {revision[:8]}, same settings), skipping build")
             return
         if (main_id, key) in _built:
@@ -104,8 +103,8 @@ async def ensure_image(spec: dict, progress: Callable[[str], None],
         _log(f"[deploy] Image {img} is not current, rebuilding")
 
     async with _build_lock:     # one build at a time: a Raspberry Pi cannot do two
-        app_dir = await fetch(main_id, app_name)
+        app_dir = await fetch(main_id)
         progress("building_image")
-        await build_image_local(main_id, app_name, app_dir, spec, push)
+        await build_image_local(main_id, app_dir, spec, push)
     if key:
         _built.add((main_id, key))

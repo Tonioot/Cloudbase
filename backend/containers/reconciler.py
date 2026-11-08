@@ -243,9 +243,9 @@ class Reconciler:
             if container is not None:
                 await asyncio.to_thread(pm.stop_docker_replica, app_id, replica_id)      # another spec, or exited
             container_id = await asyncio.to_thread(
-                pm.start_docker_replica, app_id, replica_id, spec.get("app_name") or "",
+                pm.start_docker_replica, app_id, replica_id,
                 spec.get("internal_port", 8000), spec["external_port"], spec.get("env_vars") or {},
-                {**runtime_options(spec, self._bind_host()), "spec_hash": wanted}, app_id)
+                {**runtime_options(spec, self._bind_host()), "spec_hash": wanted})
             self.started_at[replica_id] = time.monotonic()
             self.attempts.pop(replica_id, None)
             self._set(replica_id, "running", container_id=container_id, spec_hash=wanted)

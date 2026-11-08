@@ -18,7 +18,6 @@ def _replica_restart_policy_config(docker_options: dict) -> dict:
 def run_replica_container(
     app_id: int,
     replica_id: int,
-    app_name: str,
     img: str,
     internal_port: int,
     external_port: int,
@@ -67,7 +66,6 @@ def run_replica_container(
         "labels": {
             "cloudbase.app_id": str(app_id),
             "cloudbase.replica_id": str(replica_id),
-            "cloudbase.app_name": app_name,
             "cloudbase.internal_port": str(internal_port),
             "cloudbase.external_port": str(external_port),
             # which start of this instance it is (nodes compare it with what the primary wants)

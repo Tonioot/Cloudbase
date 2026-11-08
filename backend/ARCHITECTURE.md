@@ -53,6 +53,10 @@ ruff check backend tests scripts
 - Added or removed an endpoint on purpose? Regenerate the snapshot: `UPDATE_SNAPSHOTS=1 pytest tests/test_app_structure.py`, and review the diff of `tests/routes_snapshot.txt`.
 - Tests run against a throwaway home directory (`tests/conftest.py`); they never touch `~/.cloudbase`.
 
+## Names
+
+An app is known by its **id** on disk, in Docker and in nginx: the source lives in `~/.cloudbase/apps/app-<id>`, the image is `cloudbase/app-<id>:latest`, the nginx config is `app-<id>` with the upstream `cloudbase_app_<id>` (`containers/naming.py`, `nginx/paths.py`). Its name is only what people read, and it decides the automatic subdomain `<name>.<base domain>`. Renaming an app (`PUT /api/apps/{id}` with `name`) therefore rewrites its nginx config for the new subdomain and removes the certificate of the old one, and leaves everything else alone.
+
 ## The frontend
 
 Plain HTML pages with their own CSS and ES modules, no build step. `core/frontend_assets.py` makes switching between pages quick when a page leaves the server: `?v=<content hash>` on every css/js URL (cached for a year, see `routers/frontend.py`), an import map so `import './x.js'` hits the same cache, `modulepreload` for the whole module graph (one parallel round instead of a chain of 4-6), self-hosted fonts in `frontend/fonts/` (named after their content hash), and the page colour set inline. In the browser the sidebar lists and hidden menu items are remembered per tab (`sessionStorage`, `cb-index`, `cb-hidden-perms`) so they are there from the first frame, and `@view-transition` keeps the old page up until the new one can be drawn. `tests/test_frontend.py` checks all of it.

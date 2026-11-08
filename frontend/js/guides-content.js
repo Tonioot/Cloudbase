@@ -26,7 +26,7 @@ export const GUIDES = [
 </table>
 
 <h2>From repository to container</h2>
-<p>When you create an app, Cloudbase clones the repository to <code>~/.cloudbase/apps/&lt;name&gt;</code> on the primary and builds a Docker image from it. If the repository contains its own <code>Dockerfile</code>, that is used as-is. Otherwise Cloudbase writes one for you based on the runtime it detects from your start command (Node.js, Python, Ruby, Go, PHP or a generic Ubuntu image). Each instance is then started from that image.</p>
+<p>When you create an app, Cloudbase clones the repository to <code>~/.cloudbase/apps/app-&lt;id&gt;</code> on the primary and builds a Docker image from it. If the repository contains its own <code>Dockerfile</code>, that is used as-is. Otherwise Cloudbase writes one for you based on the runtime it detects from your start command (Node.js, Python, Ruby, Go, PHP or a generic Ubuntu image). Each instance is then started from that image.</p>
 <p>Instances on remote nodes are built on that node: the agent downloads the source from the primary and builds the same image locally, so nodes don’t need access to your Git host.</p>
 
 <h2>How a request reaches your app</h2>

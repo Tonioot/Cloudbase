@@ -1,10 +1,12 @@
-import re
-
 # ── Container naming ──────────────────────────────────────────────────────────
 
-def image_name(app_id: int, app_name: str) -> str:
-    safe = re.sub(r"[^a-z0-9_-]", "-", app_name.lower())
-    return f"cloudbase/{safe}-{app_id}:latest"
+def image_name(app_id: int) -> str:
+    return f"cloudbase/app-{app_id}:latest"
+
+
+def app_dir_name(app_id: int) -> str:
+    """The folder of an app's source and its name in nginx: from the id, so renaming an app changes nothing here."""
+    return f"app-{app_id}"
 
 
 # ── Replica helpers ───────────────────────────────────────────────────────────

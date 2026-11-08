@@ -304,7 +304,10 @@
             <section class="settings-group sv2-sec" id="set-general" data-nav="General" data-icon="info">
               <header class="sv2-head"><h3>General</h3><p>What this app is and where its code comes from.</p></header>
               <div class="s3-card">
-                <div class="s3-row"><span class="s3-label"><span class="s3-title">Name</span></span><span class="s3-value" id="si-name">—</span></div>
+                <div class="s3-row">
+                  <span class="s3-label"><label class="s3-title" for="cfg-name">Name</label><span class="s3-desc">You can rename the app. With a base domain set, its automatic address follows the name.</span></span>
+                  <span class="s3-ctl"><input class="input" id="cfg-name" type="text" maxlength="100" autocomplete="off" spellcheck="false" data-perm="apps.configure" /></span>
+                </div>
                 <div class="s3-row"><span class="s3-label"><span class="s3-title">Repository</span></span><span class="s3-value" id="si-repo">—</span></div>
                 <div class="s3-row"><span class="s3-label"><span class="s3-title">Type</span></span><span class="s3-value" id="si-type">—</span></div>
                 <div class="s3-row"><span class="s3-label"><span class="s3-title">Created</span></span><span class="s3-value" id="si-date">—</span></div>

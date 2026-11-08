@@ -23,7 +23,6 @@ def image_exists(img: str) -> bool:
 def run_job_container(
     app_id: int,
     run_id: int,
-    app_name: str,
     img: str,
     command: str,
     env_vars: dict,
@@ -49,7 +48,6 @@ def run_job_container(
         "environment": env_vars,
         "labels": {
             "cloudbase.app_id": str(app_id),
-            "cloudbase.app_name": app_name,
             "cloudbase.cron_run_id": str(run_id),
         },
     }

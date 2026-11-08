@@ -28,7 +28,7 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dic
     if not node.is_local:
         # Nothing to send: once its instances are gone from the node's list, the node removes their containers
         # (also later, when the node was offline just now)
-        _best_effort_remove_app_nginx(app.name)
+        _best_effort_remove_app_nginx(app.id)
         _best_effort_delete_app_certificate(app)
         await _cleanup_app_dependencies(db, app.id)
         await db.delete(app)
@@ -55,12 +55,12 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dic
         elif r_node and not r_node.is_local:
             desired.nudge(r_node.id)     # the replica's row goes with the app; its node removes the container
 
-    await asyncio.to_thread(containers_cleanup.remove_image, app_id, app.name)
+    await asyncio.to_thread(containers_cleanup.remove_image, app_id)
 
-    _best_effort_remove_app_nginx(app.name)
+    _best_effort_remove_app_nginx(app.id)
     _best_effort_delete_app_certificate(app)
 
-    app_dir = pm.get_app_dir(app.name)
+    app_dir = pm.get_app_dir(app.id)
     if os.path.exists(app_dir):
         await asyncio.to_thread(shutil.rmtree, app_dir)
 

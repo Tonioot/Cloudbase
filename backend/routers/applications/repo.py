@@ -120,7 +120,7 @@ async def list_git_commits(
     _user: dict = Depends(_auth.require_permission("apps.view")),
 ):
     app = await _get_or_404(app_id, db)
-    app_dir = _git_app_dir_or_404(app.name)
+    app_dir = _git_app_dir_or_404(app.id)
 
     def _get_commits() -> tuple[str, str, list]:
         branch = _current_branch(app_dir)

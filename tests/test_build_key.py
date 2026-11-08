@@ -79,7 +79,7 @@ def test_a_built_image_carries_the_revision_and_the_key(repo, monkeypatch):
     monkeypatch.setattr(build, "_cleanup_before_build", lambda *a, **k: None)
     monkeypatch.setattr(build, "buildkit_available", lambda: False)
     monkeypatch.setattr(build, "_run_build", lambda app_id, app_dir, img, push, buildargs=None, labels=None, secret_env=None: seen.update(labels=labels))
-    build.build_image(1, "shop", str(repo), lambda *a: None, "python", "python app.py", 8000)
+    build.build_image(1, str(repo), lambda *a: None, "python", "python app.py", 8000)
     revision = build.source_revision_of(str(repo))
     assert seen["labels"][build.REVISION_LABEL] == revision
     assert seen["labels"][build.KEY_LABEL] == build.build_key("python", "python app.py", 8000, "", {}, revision)
@@ -90,12 +90,12 @@ def test_a_built_image_carries_the_revision_and_the_key(repo, monkeypatch):
 def builder(repo, monkeypatch):
     calls, state, lines = [], {"key": None}, []
     monkeypatch.setattr(build, "build_image", lambda *a, **k: calls.append((a, k)))
-    monkeypatch.setattr(build, "image_key", lambda app_id, name: state["key"])
+    monkeypatch.setattr(build, "image_key", lambda app_id: state["key"])
 
     def run(**overrides):
         args = dict(app_type="python", start_command="python app.py", port=8000, build_command="", build_env={})
         args.update(overrides)
-        return build.build_image_unless_current(1, "shop", str(repo), lambda _a, line: lines.append(line), **args)
+        return build.build_image_unless_current(1, str(repo), lambda _a, line: lines.append(line), **args)
     return run, calls, state, lines, repo
 
 
@@ -148,7 +148,7 @@ def _node(monkeypatch, label):
     monkeypatch.setattr(prepare, "local_image_ok", lambda img: True)
     monkeypatch.setattr(source, "_download_and_extract_source", download)
     monkeypatch.setattr(prepare, "build_image_local", build_local)
-    monkeypatch.setattr(prepare.containers_build, "image_key", lambda app_id, name: label)
+    monkeypatch.setattr(prepare.containers_build, "image_key", lambda app_id: label)
     monkeypatch.setattr(prepare, "_built", set())
     return source, log
 

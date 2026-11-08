@@ -36,6 +36,7 @@ class DeployRequest(BaseModel):
 
 
 class UpdateRequest(BaseModel):
+    name: Optional[str] = None                # renaming changes the automatic subdomain, nothing else
     domain: Optional[str] = None
     extra_domains: Optional[list] = None      # additional domains/subdomains
     redirect_domains: Optional[list] = None   # domains that redirect to primary

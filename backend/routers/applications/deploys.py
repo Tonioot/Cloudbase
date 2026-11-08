@@ -41,7 +41,7 @@ log = logging.getLogger("cloudbase.apps")
 async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None), db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
     target_commit = _check_git_ref(payload.commit if payload else None)
-    app_dir = pm.get_app_dir(app.name)
+    app_dir = pm.get_app_dir(app.id)
 
     if not os.path.exists(app_dir):
         # The directory is missing! Let's try to restore it by re-deploying.
@@ -91,7 +91,7 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
     try:
         await asyncio.to_thread(
             containers_build.build_image,
-            app_id, app.name, app_dir, _push,
+            app_id, app_dir, _push,
             app.app_type or "unknown", app.start_command or "",
             _image_port(app),
             **_image_build_kwargs(app),
@@ -99,7 +99,7 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
     except Exception as e:
         raise HTTPException(500, f"Failed to rebuild Docker image: {e}") from e
 
-    app.docker_image = containers_naming.image_name(app_id, app.name)
+    app.docker_image = containers_naming.image_name(app_id)
     if source_revision:
         app.image_revision = source_revision
     await log_audit(db, "app.pull", actor=actor, app_id=app_id, detail={"name": app.name, "commit": commit_info})
@@ -143,7 +143,7 @@ async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), 
     try:
         img = await asyncio.to_thread(
             containers_build.build_image,
-            app_id, app.name, app.working_dir, _push,
+            app_id, app.working_dir, _push,
             app.app_type or "unknown", app.start_command or "", _image_port(app),
             **_image_build_kwargs(app),
         )
@@ -205,7 +205,7 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
     """Streaming SSE variant of git_pull. Each build log line is emitted as it happens."""
     app = await _get_or_404(app_id, db)
     target_commit = _check_git_ref(payload.commit if payload else None)
-    app_dir = pm.get_app_dir(app.name)
+    app_dir = pm.get_app_dir(app.id)
 
     if not os.path.exists(app_dir):
         async def _reclone_gen():
@@ -240,12 +240,12 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
 
             await asyncio.to_thread(
                 containers_build.build_image,
-                app_id, app.name, app_dir, _docker_push,
+                app_id, app_dir, _docker_push,
                 app.app_type or "unknown", app.start_command or "",
                 _image_port(app),
                 **_image_build_kwargs(app),
             )
-            app.docker_image = containers_naming.image_name(app_id, app.name)
+            app.docker_image = containers_naming.image_name(app_id)
             if source_revision:
                 app.image_revision = source_revision
             await db.commit()
@@ -321,7 +321,7 @@ async def rebuild_docker_image_stream(app_id: int, _user: dict = Depends(_auth.r
 
             img = await asyncio.to_thread(
                 containers_build.build_image,
-                app_id, app.name, app.working_dir, _push,
+                app_id, app.working_dir, _push,
                 app.app_type or "unknown", app.start_command or "", _image_port(app),
                 **_image_build_kwargs(app),
             )
