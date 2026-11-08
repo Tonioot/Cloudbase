@@ -99,6 +99,10 @@ class CheckRepoRequest(BaseModel):
     github_token_id: Optional[str] = None
 
 
+class AppCheckRepoRequest(BaseModel):
+    repo_url: str
+
+
 class ScaleRequest(BaseModel):
     node_id: Optional[int] = None
     docker_cpu_limit: Optional[float] = None

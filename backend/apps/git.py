@@ -51,6 +51,14 @@ def _decrypt_github_token(stored: Optional[str]) -> Optional[str]:
     return plain or None
 
 
+_NO_PROMPT_ENV = {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never", "GIT_ASKPASS": "echo"}
+_NO_HELPER = ["-c", "credential.helper="]
+
+
+def _git_network_env() -> dict:
+    return {**os.environ, **_NO_PROMPT_ENV}
+
+
 def _build_clone_url(repo_url: str, token: Optional[str]) -> str:
     """Put an access token in an HTTPS clone URL, in the form each host expects."""
     if not token or not repo_url.startswith("https://"):
@@ -82,10 +90,10 @@ def _normalize_repo_url(value: str) -> str:
 
 def _ls_remote(url: str, token: Optional[str]) -> tuple[bool, str, Optional[str], list[str]]:
     """(ok, message, default_branch, branches) — talks to the remote without cloning."""
-    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_ASKPASS": "echo"}
+    env = _git_network_env()
     try:
         r = subprocess.run(
-            ["git", "ls-remote", "--symref", _build_clone_url(url, token), "HEAD", "refs/heads/*"],
+            ["git", *_NO_HELPER, "ls-remote", "--symref", _build_clone_url(url, token), "HEAD", "refs/heads/*"],
             capture_output=True, text=True, timeout=20, env=env,
         )
     except subprocess.TimeoutExpired:
@@ -146,9 +154,9 @@ def _git_app_dir_or_404(app_id: int) -> str:
 
 
 def _fetch_origin(app_dir: str, branch: str) -> None:
-    fetch = subprocess.run(["git", "fetch", "origin", branch], cwd=app_dir, capture_output=True, text=True)
+    fetch = subprocess.run(["git", *_NO_HELPER, "fetch", "origin", branch], cwd=app_dir, capture_output=True, text=True, env=_git_network_env())
     if fetch.returncode != 0:
-        fetch = subprocess.run(["git", "fetch", "origin"], cwd=app_dir, capture_output=True, text=True)
+        fetch = subprocess.run(["git", *_NO_HELPER, "fetch", "origin"], cwd=app_dir, capture_output=True, text=True, env=_git_network_env())
     if fetch.returncode != 0:
         raise HTTPException(500, f"Git fetch failed: {fetch.stderr}")
 
@@ -250,10 +258,11 @@ async def _deploy_app(app: Application):
     log.info("[deploy] Cloning from %s", app.repo_url.replace(github_token or "SECRET", "***") if github_token else app.repo_url)
 
     result = await asyncio.to_thread(subprocess.run,
-        ["git", "clone", "--", clone_url, "."],
+        ["git", *_NO_HELPER, "clone", "--", clone_url, "."],
         cwd=app_dir,
         capture_output=True,
         text=True,
+        env=_git_network_env(),
     )
 
     if result.returncode != 0:

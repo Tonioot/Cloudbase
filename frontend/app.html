@@ -312,6 +312,10 @@
                   <span class="s3-label"><label class="s3-title" for="cfg-repo">Repository</label><span class="s3-desc">Another repository: the next pull or deploy fetches from it. It needs the branch this app follows.</span></span>
                   <span class="s3-ctl"><input class="input" id="cfg-repo" type="text" autocomplete="off" spellcheck="false" placeholder="https://github.com/you/repo" data-perm="apps.configure" /></span>
                 </div>
+                <div class="s3-row">
+                  <span class="s3-label"><label class="s3-title" for="cfg-deploy-branch">Branch</label><span class="s3-desc">What every pull and deploy fetches, by hand or automatic.</span></span>
+                  <span class="s3-ctl"><select class="input" id="cfg-deploy-branch"><option value="">Loading branches…</option></select></span>
+                </div>
                 <div class="s3-row"><span class="s3-label"><span class="s3-title">Type</span></span><span class="s3-value" id="si-type">—</span></div>
                 <div class="s3-row"><span class="s3-label"><span class="s3-title">Created</span></span><span class="s3-value" id="si-date">—</span></div>
               </div>
@@ -381,14 +385,10 @@
 
             <!-- Deploys -->
             <section class="settings-group sv2-sec" id="autodeploy-section" data-nav="Deploys" data-icon="rocket" data-perm="apps.configure">
-              <header class="sv2-head"><h3>Deploys</h3><p>Which branch the app follows, and whether new commits are put live automatically.</p></header>
+              <header class="sv2-head"><h3>Deploys</h3><p>Put new commits live automatically. Cloudbase checks the branch and rolls new commits out.</p></header>
               <div class="s3-card">
-                <div class="s3-row">
-                  <span class="s3-label"><label class="s3-title" for="cfg-deploy-branch">Branch</label><span class="s3-desc">What every pull and deploy fetches, by hand or automatic.</span></span>
-                  <span class="s3-ctl"><select class="input" id="cfg-deploy-branch"><option value="">Loading branches…</option></select></span>
-                </div>
                 <label class="s3-row">
-                  <span class="s3-label"><span class="s3-title">Auto-deploy</span><span class="s3-desc">Deploy every new commit on that branch.</span></span>
+                  <span class="s3-label"><span class="s3-title">Auto-deploy</span><span class="s3-desc">Deploy every new commit on the app’s branch (set under General).</span></span>
                   <span class="toggle"><input type="checkbox" id="cfg-autodeploy" /><span class="toggle-slider"></span></span>
                 </label>
                 <div id="autodeploy-options">

@@ -233,6 +233,7 @@ export const api = {
   listDeployments:       (id, limit = 50) => request('GET', `/apps/${id}/deployments?limit=${limit}`),
   getDeployment:         (id, depId) => request('GET', `/apps/${id}/deployments/${depId}`),
   listBranches:          (id)       => request('GET', `/apps/${id}/branches`),
+  checkAppRepo:          (id, data) => request('POST', `/apps/${id}/check-repo`, data),
   checkDomain:           (domain)   => request('POST', '/domains/check', { domain }),
   requestCertificate:    (domains, email, certName) => request('POST', '/domains/certificate', { domains, email, cert_name: certName || null }),
   deleteCertificate:     (certName) => request('DELETE', `/domains/certificate/${encodeURIComponent(certName)}`),

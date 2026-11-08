@@ -14,7 +14,7 @@ from apps.git import _current_branch, _decrypt_github_token, _fetch_origin, _git
 from apps.images import _dockerfile_build_kwargs, _image_port
 from apps.serializers import _get_or_404
 from routers.applications.deps import _source_archive_auth
-from routers.applications.schemas import CheckRepoRequest
+from routers.applications.schemas import CheckRepoRequest, AppCheckRepoRequest
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
@@ -22,17 +22,29 @@ router = APIRouter(prefix="/api/apps", tags=["applications"])
 log = logging.getLogger("cloudbase.apps")
 
 
-@router.post("/check-repo")
-async def check_repo(req: CheckRepoRequest, _user: dict = Depends(_auth.require_permission("apps.deploy"))):
-    """Validate a repository URL (and token) before an app is created."""
-    url = _normalize_repo_url(req.repo_url)
+async def _look_at_repository(raw_url: str, token) -> dict:
+    """Is this a repository we can read, and which branches does it have?"""
+    url = _normalize_repo_url(raw_url)
     if url.startswith("git@"):
         return {"ok": False, "repo_url": url, "message": "SSH links aren’t supported. Use the HTTPS link, e.g. https://github.com/user/repo."}
     if not re.match(r"^https?://[^/\s]+/[^\s]+$", url):
         return {"ok": False, "repo_url": url, "message": "That doesn’t look like a repository link, e.g. https://github.com/user/repo."}
-    token = _resolve_token(req.github_token, req.github_token_id)
     ok, msg, default_branch, branches = await asyncio.to_thread(_ls_remote, url, token)
     return {"ok": ok, "repo_url": url, "message": msg, "default_branch": default_branch, "branches": branches[:200]}
+
+
+@router.post("/check-repo")
+async def check_repo(req: CheckRepoRequest, _user: dict = Depends(_auth.require_permission("apps.deploy"))):
+    """Validate a repository URL (and token) before an app is created."""
+    return await _look_at_repository(req.repo_url, _resolve_token(req.github_token, req.github_token_id))
+
+
+@router.post("/{app_id}/check-repo")
+async def check_app_repo(app_id: int, req: AppCheckRepoRequest, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.configure"))):
+    """The same for an existing app, with the token the app already has: to pick the branch of another repository
+    before it is saved. Only for those who may configure the app, as the token goes to that address."""
+    app = await _get_or_404(app_id, db)
+    return await _look_at_repository(req.repo_url, _decrypt_github_token(app.github_token))
 
 
 # Never part of what a node builds from

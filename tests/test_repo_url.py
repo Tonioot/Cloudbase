@@ -24,7 +24,9 @@ def remote(monkeypatch):
     def fake(url, token):
         answer["asked"].append((url, token))
         return answer["ok"], answer["message"], answer["default"], answer["branches"]
+    from routers.applications import repo as repo_router
     monkeypatch.setattr(git, "_ls_remote", fake)
+    monkeypatch.setattr(repo_router, "_ls_remote", fake)            # the endpoint imported the name
     return answer
 
 
@@ -111,3 +113,28 @@ def test_an_app_without_a_clone_yet_just_gets_the_new_address(admin, remote):
     app_id, _ = _app("repo-noclone", with_clone=False)
     assert admin.put(f"/api/apps/{app_id}", json={"repo_url": "https://github.com/new/place"}).status_code == 200
     assert _row(app_id).repo_url == "https://github.com/new/place"
+
+
+# ── looking at another repository before it is saved ──────────────────────────────
+def test_the_branches_of_another_repository_are_looked_up_with_the_token_of_the_app(admin, remote):
+    from apps.git import _encrypt_github_token
+    app_id, _ = _app("repo-look", github_token=_encrypt_github_token("s3cret"))
+    r = admin.post(f"/api/apps/{app_id}/check-repo", json={"repo_url": "github.com/new/place/tree/main"})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "repo_url": "https://github.com/new/place", "message": "", "default_branch": "main", "branches": ["main", "develop"]}
+    assert remote["asked"] == [("https://github.com/new/place", "s3cret")]
+
+
+def test_an_address_that_is_not_a_repository_is_refused_without_asking_the_host(admin, remote):
+    app_id, _ = _app("repo-look-bad")
+    r = admin.post(f"/api/apps/{app_id}/check-repo", json={"repo_url": "git@github.com:new/place.git"})
+    assert r.json()["ok"] is False and "SSH" in r.json()["message"]
+    assert remote["asked"] == []
+
+
+def test_only_those_who_may_configure_the_app_can_send_its_token_to_an_address(remote):
+    from fastapi.testclient import TestClient
+    import main
+    anonymous = TestClient(main.app, base_url="http://localhost")          # not logged in (and without starting the app again)
+    app_id, _ = _app("repo-look-perm")
+    assert anonymous.post(f"/api/apps/{app_id}/check-repo", json={"repo_url": "https://github.com/new/place"}).status_code in (401, 403)

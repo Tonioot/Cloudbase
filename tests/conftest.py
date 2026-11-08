@@ -14,6 +14,10 @@ atexit.register(shutil.rmtree, _HOME, ignore_errors=True)
 for _var in ("HOME", "USERPROFILE"):
     os.environ[_var] = _HOME
 os.environ["CLOUDBASE_BUILDKIT"] = "0"  # tests never shell out to docker unless they opt in
+# Nor do they ever ask anyone for a Git login: on a desktop the credential manager answers a request to a
+# host with a sign-in window
+os.environ["GIT_TERMINAL_PROMPT"] = "0"
+os.environ["GCM_INTERACTIVE"] = "never"
 
 import pytest  # noqa: E402
 
@@ -56,3 +60,17 @@ def admin(client):
     assert r.status_code == 200, r.text
     return client
 
+
+
+@pytest.fixture(autouse=True)
+def _no_git_host(monkeypatch):
+    """A test that wants a repository's answer says what it is; none reaches a real Git host."""
+    from apps import git
+    from routers.applications import repo
+    from workers import autodeploy
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a test tried to reach a Git host: patch apps.git._ls_remote (and the module that imports it)")
+    for module in (git, repo):
+        monkeypatch.setattr(module, "_ls_remote", refuse)
+    monkeypatch.setattr(autodeploy, "_remote_head", refuse)

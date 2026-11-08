@@ -1543,22 +1543,50 @@ function initAutoDeploySettings() {
   const interval = document.getElementById('cfg-deploy-interval');
   interval.value = String([60, 300, 900].includes(app.auto_deploy_interval) ? app.auto_deploy_interval : 60);
 
+}
+
+/** The branch picker next to the repository: the branches of the saved repository, or of the address being typed. */
+function initBranchSetting() {
   const branchSel = document.getElementById('cfg-deploy-branch');
+  const repoInput = document.getElementById('cfg-repo');
+  if (!branchSel || !repoInput) return;
+
   const fallback = () => {
     // Repository unreachable: keep the saved branch, or follow the checked-out one
     const b = app.deploy_branch || '';
     branchSel.innerHTML = `<option value="${escAttr(b)}">${escHtml(b || 'Current branch')}</option>`;
   };
-  api.listBranches(APP_ID).then(res => {
+  const fill = (res, wanted) => {
     const current = res.current_branch || res.default_branch || '';
     const branches = res.branches?.length ? res.branches : [current].filter(Boolean);
     if (!branches.length) return fallback();
-    const wasClean = !_dirtySettingsSections().includes('autodeploy-section');
+    const wasClean = !_dirtySettingsSections().includes('set-general');
     branchSel.innerHTML = branches.map(b => `<option value="${escAttr(b)}">${escHtml(b)}${b === current ? ' (current)' : ''}</option>`).join('');
-    branchSel.value = app.deploy_branch || current;
+    branchSel.value = branches.includes(wanted) ? wanted : (res.default_branch || current);
     // Filling in the list is not a change by the user
-    if (wasClean) _settingsBaselineReset(['autodeploy-section']);
-  }).catch(fallback);
+    if (wasClean) _settingsBaselineReset(['set-general']);
+  };
+
+  api.listBranches(APP_ID).then(res => fill(res, app.deploy_branch || res.current_branch || res.default_branch)).catch(fallback);
+
+  // Another repository typed: show its branches, so a new repository and a branch of it can be saved together
+  repoInput.addEventListener('change', async () => {
+    const url = repoInput.value.trim();
+    if (!url || url === app.repo_url) return;
+    const previous = branchSel.value;
+    branchSel.disabled = true;
+    try {
+      const res = await api.checkAppRepo(APP_ID, { repo_url: url });
+      if (!res.ok) { toast(res.message || 'That repository can’t be read', 'error'); return; }
+      repoInput.value = res.repo_url;
+      fill(res, previous);
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      branchSel.disabled = false;
+      _refreshSettingsDirty();
+    }
+  });
 }
 
 let _cronEditor = null;
@@ -1622,6 +1650,7 @@ function initSettings() {
   document.getElementById('cfg-port').value         = app.port           || '';
   renderNetwork();
   initAutoDeploySettings();
+  initBranchSetting();
 
   _updateAppTypeVisibility(app);
   document.getElementById('cfg-restart-policy').value = app.restart_policy || 'no';

@@ -118,6 +118,7 @@ POST    /api/apps
 POST    /api/apps/check-repo
 POST    /api/apps/cron/preview
 POST    /api/apps/{app_id}/certs/upload
+POST    /api/apps/{app_id}/check-repo
 POST    /api/apps/{app_id}/cron/pause
 POST    /api/apps/{app_id}/cron/resume
 POST    /api/apps/{app_id}/cron/run
