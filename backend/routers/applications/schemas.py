@@ -21,7 +21,6 @@ class DeployRequest(BaseModel):
     docker_tmpfs_size_mb: Optional[int] = None
     env_vars: Optional[dict] = None
     node_id: Optional[int] = None
-    auto_start: Optional[bool] = None
     restart_policy: Optional[str] = None   # no | always | on-failure
     no_web: Optional[bool] = None          # True = no web server, skip nginx + port assignment
     app_type: Optional[str] = None         # "static" = serve files with nginx (start_command = publish dir)
@@ -55,7 +54,6 @@ class UpdateRequest(BaseModel):
     env_var_keys: Optional[list] = None   # full set of remaining key names (None = keep all)
     github_token: Optional[str] = None
     github_token_id: Optional[str] = None   # ID of a saved vault token
-    auto_start:     Optional[bool] = None
     restart_policy: Optional[str] = None   # no | always | on-failure
     source_revision: Optional[str] = None
     image_revision: Optional[str] = None

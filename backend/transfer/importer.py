@@ -182,7 +182,6 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
         port=containers_dockerfiles.STATIC_INTERNAL_PORT if is_static else _opt(entry, "port", int),
         app_type="static" if is_static else None,
         env_vars=encrypt_env(env),
-        auto_start=bool(entry.get("auto_start")),
         restart_policy=entry.get("restart_policy") or "no",
         no_web=no_web,
         docker_cpu_limit=entry.get("docker_cpu_limit"),

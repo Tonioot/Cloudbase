@@ -22,7 +22,7 @@ VERSION = 1
 # Copied one to one from the Application row.
 PLAIN_FIELDS = (
     "repo_url", "domain", "app_type", "start_command", "build_command", "port", "no_web",
-    "auto_start", "restart_policy", "auto_deploy", "deploy_branch", "deploy_strategy", "auto_deploy_interval",
+    "restart_policy", "auto_deploy", "deploy_branch", "deploy_strategy", "auto_deploy_interval",
     "docker_cpu_limit", "docker_memory_limit_mb", "docker_read_only_root", "docker_tmpfs_enabled", "docker_tmpfs_size_mb",
     "autoscale_enabled", "autoscale_min_replicas", "autoscale_max_replicas", "autoscale_cpu_target",
     "maintenance_mode", "update_mode", "source_revision", "image_revision",

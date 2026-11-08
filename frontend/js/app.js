@@ -54,7 +54,6 @@ function _updateAppTypeVisibility(app) {
   // Cron jobs: no instances to keep running — runs instead of restart/boot/autoscale
   if (el('set-schedule'))        el('set-schedule').style.display = isCron ? '' : 'none';
   if (el('cfg-restart-row'))     el('cfg-restart-row').style.display = isCron ? 'none' : '';
-  if (el('cfg-autostart-row'))   el('cfg-autostart-row').style.display = isCron ? 'none' : '';
   if (el('cfg-autoscale-card'))  el('cfg-autoscale-card').style.display = isCron ? 'none' : '';
 
   // Settings panel
@@ -1625,7 +1624,6 @@ function initSettings() {
   initAutoDeploySettings();
 
   _updateAppTypeVisibility(app);
-  document.getElementById('cfg-autostart').checked  = !!app.auto_start;
   document.getElementById('cfg-restart-policy').value = app.restart_policy || 'no';
   document.getElementById('cfg-docker-cpu').value = app.docker_cpu_limit || '';
   document.getElementById('cfg-docker-memory').value = app.docker_memory_limit_mb || '';
@@ -2735,7 +2733,6 @@ async function saveSettings() {
     build_command:  document.getElementById('cfg-build').value.trim(),  // "" clears it
     port:           parseInt(document.getElementById('cfg-port').value) || null,
     no_web:         !!app?.no_web,
-    auto_start:     document.getElementById('cfg-autostart').checked,
     restart_policy: document.getElementById('cfg-restart-policy').value,
     docker_cpu_limit: Number.isFinite(dockerCpu) ? dockerCpu : null,
     docker_memory_limit_mb: Number.isInteger(dockerMemory) ? dockerMemory : null,

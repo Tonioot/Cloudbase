@@ -37,7 +37,7 @@ def _make_app(name: str, instances: int = 2, status: str = "running", port: int 
             node = await ensure_local_node(db)
             app = Application(
                 name=name, repo_url=f"https://github.com/acme/{name}", start_command="npm start", build_command="npm run build",
-                port=3000, status=status, restart_policy="always", auto_start=True,
+                port=3000, status=status, restart_policy="always",
                 env_vars=encrypt_env({"SECRET_KEY": SECRET_ENV, "NODE_ENV": "production"}),
                 github_token=encrypt_text(SECRET_TOKEN), docker_memory_limit_mb=256,
                 domain=None, extra_domains=json.dumps(["www.example.test"]), **extra)
@@ -207,7 +207,7 @@ def test_round_trip_restores_envs_token_and_instances(admin, deploys):
         assert decrypt_text(app.github_token) == SECRET_TOKEN
         assert app.repo_url == "https://github.com/acme/tx-roundtrip"
         assert (app.start_command, app.build_command, app.port) == ("npm start", "npm run build", 3000)
-        assert app.restart_policy == "always" and app.auto_start is True and app.docker_memory_limit_mb == 256
+        assert app.restart_policy == "always" and app.docker_memory_limit_mb == 256
         assert json.loads(app.extra_domains) == ["www.example.test"]
         assert len(replicas) == 2 and all(r.node_id is not None and r.external_port for r in replicas)
         assert len({r.external_port for r in replicas}) == 2                   # fresh, distinct ports

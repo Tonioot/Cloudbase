@@ -48,7 +48,6 @@ async def init_db():
         existing_columns = {row[1] for row in result.fetchall()}
 
         for col, definition in [
-            ("auto_start",        "BOOLEAN NOT NULL DEFAULT 0"),
             ("restart_policy",    "VARCHAR(20) NOT NULL DEFAULT 'no'"),
             ("docker_cpu_limit",  "FLOAT"),
             ("docker_memory_limit_mb", "INTEGER"),

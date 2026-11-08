@@ -4,8 +4,6 @@ from sqlalchemy import select
 from core.database import AsyncSessionLocal
 from core.models import Application, ApplicationReplica
 from nodes import registry as nodes_registry
-from apps import runtime as apps_runtime
-from core.env_crypto import decrypt_env
 from containers import processes as pm
 from containers import replicas as containers_replicas
 from containers import stats_logs as containers_stats_logs
@@ -19,12 +17,12 @@ log = logging.getLogger("cloudbase.main")
 
 
 async def _startup_recovery() -> None:
-    """Bring the log tailers, auto-start apps, nginx configs and the panel config in line with the DB.
+    """Bring the log tailers, the app statuses, the nginx configs and the panel config in line with the DB.
 
     Keeping this server's instances running (and repairing them) is the local reconciler's job
     (nodes/local.py); here is only what has to happen once, as the panel starts."""
     async with AsyncSessionLocal() as db:
-        local_node = await nodes_registry.ensure_local_node(db)
+        await nodes_registry.ensure_local_node(db)
 
     # Live logs of the containers that kept running while the panel was down
     try:
@@ -44,16 +42,8 @@ async def _startup_recovery() -> None:
             replica_map.setdefault(r.app_id, []).append(r)
 
         for a in (await db.execute(select(Application))).scalars().all():
-            app_replicas = replica_map.get(a.id)
-            if not app_replicas:
-                continue
-            # auto_start: start the stopped instances that run on this server
-            if a.auto_start and a.start_command and a.working_dir:
-                env_vars = decrypt_env(a.env_vars or "")
-                for replica in app_replicas:
-                    if replica.node_id == local_node.id and replica.status == "stopped":
-                        await apps_runtime._start_replica_runtime(a, replica, local_node, env_vars, db)
-            a.status = _derive_app_status_from_instances(app_replicas)
+            if replica_map.get(a.id):
+                a.status = _derive_app_status_from_instances(replica_map[a.id])
         await db.commit()
 
     # Regenerate nginx configs from live instance state so stale configs on disk

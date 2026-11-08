@@ -85,7 +85,6 @@ async def deploy_app(
         port=containers_dockerfiles.STATIC_INTERNAL_PORT if is_static else req.port,
         app_type="static" if is_static else None,
         env_vars=encrypt_env(req.env_vars or {}),
-        auto_start=bool(req.auto_start) if req.auto_start is not None else False,
         restart_policy=req.restart_policy or "no",
         no_web=is_no_web,
         docker_cpu_limit=req.docker_cpu_limit,

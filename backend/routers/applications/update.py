@@ -101,8 +101,6 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
     if resolved is not None:
         app.github_token = _encrypt_github_token(resolved)
         app.github_token_id = req.github_token_id or None
-    if req.auto_start is not None:
-        app.auto_start = req.auto_start
     if req.restart_policy is not None and req.restart_policy in ("no", "always", "on-failure"):
         app.restart_policy = req.restart_policy
     if req.source_revision is not None:

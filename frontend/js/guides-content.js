@@ -351,7 +351,7 @@ SESSION_SECRET=change-me</pre>
   <li><strong>Restart on failure</strong> — restart when the process exits with an error.</li>
   <li><strong>Always restart</strong> — restart on any exit.</li>
 </ul>
-<p><strong>Start on boot</strong> starts the app’s instances when Cloudbase itself starts, for example after a server reboot.</p>
+<p>Instances that were running come back by themselves after a server reboot or a restart of Cloudbase; one you stopped yourself stays stopped.</p>
 
 <h2>Crash protection</h2>
 <p>An instance that keeps crashing is not restarted forever. After 5 restarts within 60 seconds (configurable under <a href="/settings?s=system">System settings</a>), Cloudbase gives up and marks it as <code>error</code>. Fix the cause, then start it again.</p>

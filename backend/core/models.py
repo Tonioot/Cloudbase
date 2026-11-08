@@ -77,7 +77,6 @@ class Application(Base):
     last_error = Column(Text, nullable=True)
     env_vars = Column(Text, nullable=True)
     nginx_enabled  = Column(Boolean, default=False)
-    auto_start     = Column(Boolean, default=False)
     restart_policy = Column(String(20), default="no")   # no | always | on-failure
     docker_image   = Column(String(500), nullable=True)
     source_revision = Column(String(120), nullable=True)

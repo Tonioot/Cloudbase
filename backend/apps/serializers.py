@@ -63,7 +63,6 @@ def _app_to_dict(
         "last_error": app.last_error,
         "env_vars": {k: "" for k in decrypt_env(app.env_vars or "")} if include_sensitive else {},
         "nginx_enabled": app.nginx_enabled,
-        "auto_start":     app.auto_start,
         "restart_policy": app.restart_policy or "no",
         "docker_image":   app.docker_image,
         "source_revision": app.source_revision,
