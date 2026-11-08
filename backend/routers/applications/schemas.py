@@ -37,6 +37,7 @@ class DeployRequest(BaseModel):
 
 class UpdateRequest(BaseModel):
     name: Optional[str] = None                # renaming changes the automatic subdomain, nothing else
+    repo_url: Optional[str] = None            # another repository; the next pull or deploy fetches from it
     domain: Optional[str] = None
     extra_domains: Optional[list] = None      # additional domains/subdomains
     redirect_domains: Optional[list] = None   # domains that redirect to primary

@@ -276,6 +276,38 @@ async def _deploy_app(app: Application):
     log.info("[deploy] Deployment finished for app=%s", app.name)
 
 
+async def _change_repository(app: Application, new_url: str) -> bool:
+    """Point an app at another repository. Returns whether it changed; raises HTTPException(400) when it cannot.
+
+    The URL is in the database and, as `origin`, in the app's git folder: a pull fetches from `origin`, so both
+    have to change. The new repository must be reachable with the app's token and have the branch the app follows;
+    an app that follows "whatever is checked out" moves to the default branch of the new repository when that
+    branch is not there."""
+    if new_url == app.repo_url:
+        return False
+    token = _decrypt_github_token(app.github_token)
+    ok, message, default_branch, branches = await asyncio.to_thread(_ls_remote, new_url, token)
+    if not ok:
+        raise HTTPException(400, message)
+    app_dir = pm.get_app_dir(app.id)
+    has_clone = os.path.isdir(os.path.join(app_dir, ".git"))
+    if app.deploy_branch and app.deploy_branch not in branches:
+        raise HTTPException(400, f"That repository has no branch '{app.deploy_branch}' (it has: {', '.join(branches[:8])}). Change the branch first.")
+    if not app.deploy_branch and has_clone:
+        current = await asyncio.to_thread(_current_branch, app_dir)
+        if current not in branches:
+            app.deploy_branch = default_branch
+    if has_clone:
+        result = await asyncio.to_thread(
+            subprocess.run, ["git", "remote", "set-url", "origin", _build_clone_url(new_url, token)],
+            cwd=app_dir, capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            raise HTTPException(500, f"Could not point the source at the new repository: {result.stderr.strip()}")
+    app.repo_url = new_url
+    return True
+
+
 async def _sync_app_source(app: Application, app_dir: str, target_commit: Optional[str], log, branch: Optional[str] = None) -> tuple[str, Optional[str]]:
     """Fetch and hard-reset the app's working tree to target_commit (or the
     branch head). With `branch`, switch to that branch first.

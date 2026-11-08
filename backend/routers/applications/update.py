@@ -11,12 +11,12 @@ from nodes.registry import ensure_local_node
 from core.env_crypto import decrypt_env, encrypt_env
 from core.audit import log_audit
 from core import auth as _auth, system_config as _syscfg
-from apps.git import _encrypt_github_token, _resolve_token
+from apps.git import _change_repository, _encrypt_github_token, _normalize_repo_url, _resolve_token
 from apps.images import _image_port, _dockerfile_build_kwargs
 from apps.nginx_sync import _auto_subdomain, _resolve_ssl_paths, _write_app_nginx_config, _get_nginx_backends, _get_nginx_mode, _best_effort_remove_app_nginx, _ensure_maintenance_files
 from apps.serializers import _app_to_dict, _get_or_404
 from apps import health as health_app
-from apps.validation import _validate_docker_runtime_settings, _check_domain_conflicts, _check_new_app_name
+from apps.validation import _validate_docker_runtime_settings, _check_domain_conflicts, _check_new_app_name, _check_repo_url
 from routers.applications.schemas import UpdateRequest
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
@@ -116,6 +116,9 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         if branch and (branch.startswith("-") or ".." in branch or not re.match(r"^[A-Za-z0-9._/-]{1,200}$", branch)):
             raise HTTPException(400, "Invalid branch name")
         app.deploy_branch = branch or None
+    if req.repo_url is not None:
+        if await _change_repository(app, _check_repo_url(_normalize_repo_url(req.repo_url))):
+            await log_audit(db, "app.repository_change", actor=actor, app_id=app.id, detail={"repo_url": app.repo_url})
     if req.deploy_strategy is not None:
         if req.deploy_strategy not in ("rolling", "blue_green"):
             raise HTTPException(400, "deploy_strategy must be rolling or blue_green")

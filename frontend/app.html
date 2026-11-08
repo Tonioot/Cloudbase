@@ -308,7 +308,10 @@
                   <span class="s3-label"><label class="s3-title" for="cfg-name">Name</label><span class="s3-desc">You can rename the app. With a base domain set, its automatic address follows the name.</span></span>
                   <span class="s3-ctl"><input class="input" id="cfg-name" type="text" maxlength="100" autocomplete="off" spellcheck="false" data-perm="apps.configure" /></span>
                 </div>
-                <div class="s3-row"><span class="s3-label"><span class="s3-title">Repository</span></span><span class="s3-value" id="si-repo">—</span></div>
+                <div class="s3-row">
+                  <span class="s3-label"><label class="s3-title" for="cfg-repo">Repository</label><span class="s3-desc">Another repository: the next pull or deploy fetches from it. It needs the branch this app follows.</span></span>
+                  <span class="s3-ctl"><input class="input" id="cfg-repo" type="text" autocomplete="off" spellcheck="false" placeholder="https://github.com/you/repo" data-perm="apps.configure" /></span>
+                </div>
                 <div class="s3-row"><span class="s3-label"><span class="s3-title">Type</span></span><span class="s3-value" id="si-type">—</span></div>
                 <div class="s3-row"><span class="s3-label"><span class="s3-title">Created</span></span><span class="s3-value" id="si-date">—</span></div>
               </div>

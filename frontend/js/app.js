@@ -1613,7 +1613,7 @@ function initSettings() {
 
   // Info rows
   document.getElementById('cfg-name').value       = app.name;
-  document.getElementById('si-repo').textContent  = app.repo_url;
+  document.getElementById('cfg-repo').value       = app.repo_url;
   document.getElementById('si-type').textContent  = app.app_type || '—';
   document.getElementById('si-date').textContent  = fmtDate(app.created_at);
 
@@ -2730,6 +2730,7 @@ async function saveSettings() {
 
   const payload = {
     name:           document.getElementById('cfg-name').value.trim() || app.name,
+    repo_url:       document.getElementById('cfg-repo').value.trim() || app.repo_url,
     start_command:  document.getElementById('cfg-cmd').value.trim()    || null,
     build_command:  document.getElementById('cfg-build').value.trim(),  // "" clears it
     port:           parseInt(document.getElementById('cfg-port').value) || null,
@@ -2771,6 +2772,7 @@ async function saveSettings() {
     } else {
       toast('Settings saved');
     }
+    document.getElementById('cfg-repo').value = app.repo_url;        // as the server cleaned it up
     _settingsBaselineReset();
   } catch (e) {
     toast(e.message, 'error');
