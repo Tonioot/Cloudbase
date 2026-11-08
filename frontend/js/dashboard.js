@@ -148,7 +148,7 @@ function appKind(app) {
 }
 
 function nodeLabel(n) {
-  return n ? (n.is_local ? 'primary' : n.name) : 'primary';
+  return n ? (n.is_local ? 'Primary' : n.name) : 'Primary';
 }
 
 function replicasOnNode(app, node) {
@@ -263,7 +263,7 @@ function nodeRowHTML(n) {
         <span class="node-row-title">
           <span class="dot" style="background:${statusColor(n.status)};box-shadow:0 0 0 4px ${online ? 'var(--green-halo)' : 'transparent'}"></span>
           <a class="node-row-name" href="/node?id=${n.id}">${esc(nodeLabel(n))}</a>
-          ${n.is_local ? '<span class="node-row-tag">primary</span>' : ''}
+          ${n.is_local ? '<span class="node-row-tag">Primary</span>' : ''}
         </span>
         <span class="node-row-meta">${esc(metaParts.join(' · '))}</span>
       </div>
