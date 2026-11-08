@@ -106,12 +106,12 @@ def test_dangerous_git_refs_are_rejected(apps, ref):
         apps._check_git_ref(ref)
 
 
-@pytest.mark.parametrize("url", ["https://github.com/a/b.git", "git@github.com:a/b.git", "ssh://git@host/a/b"])
+@pytest.mark.parametrize("url", ["https://github.com/a/b.git", "http://git.local/a/b"])
 def test_valid_repo_urls(apps, url):
     assert apps._check_repo_url(url) == url
 
 
-@pytest.mark.parametrize("url", ["", "file:///etc/passwd", "ext::sh -c id", "--upload-pack=x", "ftp://host/x"])
+@pytest.mark.parametrize("url", ["", "file:///etc/passwd", "ext::sh -c id", "--upload-pack=x", "ftp://host/x", "git@github.com:a/b.git", "ssh://git@host/a/b"])
 def test_dangerous_repo_urls_are_rejected(apps, url):
     with pytest.raises(HTTPException):
         apps._check_repo_url(url)

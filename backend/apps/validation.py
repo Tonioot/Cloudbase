@@ -79,7 +79,7 @@ def _validate_docker_runtime_settings(
 _RESERVED_APP_NAMES = {"cloudbase", "cloudbase-default", "zz-cloudbase-acme", "default"}
 
 
-_REPO_URL_RE = re.compile(r"^(https?://|ssh://|git@)[^\s]+$")
+_REPO_URL_RE = re.compile(r"^https?://[^\s]+$")
 
 
 # Commits, branches and other refs passed to git: never an option ("-..."), no whitespace
@@ -106,7 +106,7 @@ async def _check_new_app_name(name: Optional[str], db: AsyncSession, exclude_id:
 def _check_repo_url(url: Optional[str]) -> str:
     url = (url or "").strip()
     if not _REPO_URL_RE.match(url):
-        raise HTTPException(400, "Repository URL must start with https://, http://, ssh:// or git@")
+        raise HTTPException(400, "Repository URL must start with https:// or http:// (SSH links are not supported)")
     return url
 
 
