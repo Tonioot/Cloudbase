@@ -396,7 +396,7 @@
 .inst-list { overflow-x: auto; }
 .inst-main {
   display: grid;
-  grid-template-columns: 76px 110px minmax(100px, 1fr) 80px 120px 130px 72px 150px;
+  grid-template-columns: 100px 110px minmax(100px, 1fr) 80px 120px 130px 72px 150px;
   gap: 14px;
   align-items: center;
   min-width: 860px;
@@ -405,13 +405,46 @@
 .inst-row { padding: 12px 0; border-bottom: 1px solid var(--line); }
 #btn-remove-selected[hidden], #btn-restart-selected[hidden] { display: none; }
 .inst-id { display: inline-flex; align-items: center; gap: 8px; }
-.inst-id input { margin: 0; cursor: pointer; }
+.inst-check { position: relative; display: inline-flex; cursor: pointer; }
+.inst-check input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.inst-check-box {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  flex-shrink: 0;
+  transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
+}
+.inst-check:hover .inst-check-box { border-color: var(--text-2); }
+.inst-check input:checked + .inst-check-box,
+.inst-check input:indeterminate + .inst-check-box { background: var(--text); border-color: var(--text); }
+.inst-check input:checked + .inst-check-box::after {
+  content: "";
+  display: block;
+  width: 4px;
+  height: 8px;
+  margin: 1px 0 0 4px;
+  border: solid var(--bg);
+  border-width: 0 1.6px 1.6px 0;
+  transform: rotate(45deg);
+}
+.inst-check input:indeterminate + .inst-check-box::after {
+  content: "";
+  display: block;
+  width: 8px;
+  height: 0;
+  margin: 5.5px 0 0 2.5px;
+  border-top: 1.6px solid var(--bg);
+}
+.inst-check input:focus-visible + .inst-check-box { box-shadow: 0 0 0 3px var(--focus); }
+.inst-check input:disabled + .inst-check-box { opacity: 0.4; }
 .inst-id, .inst-port, .inst-usage { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
 .inst-status { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
 .inst-node { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inst-uptime { color: var(--muted); font-size: 12px; }
 .inst-actions { display: flex; justify-content: flex-end; gap: 6px; }
-.inst-meta { display: flex; gap: 14px; padding: 6px 0 0 90px; font-size: 12px; color: var(--faint); }
+.inst-meta { display: flex; gap: 14px; padding: 6px 0 0 114px; font-size: 12px; color: var(--faint); }
 .inst-meta .mono { font-family: var(--font-mono); }
 .inst-error {
   margin: 8px 0 0 70px;

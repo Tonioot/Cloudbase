@@ -2514,7 +2514,7 @@ async function initInstances() {
       return `
       <div class="inst-row"${isStarting ? ' data-starting="1"' : ''}>
         <div class="inst-main">
-          <span class="inst-id"><input type="checkbox" class="inst-select" data-perm="apps.scale" data-id="${inst.id}" aria-label="Select instance ${inst.id}" ${selected.has(inst.id) ? 'checked' : ''} ${pendingRemovals.has(inst.id) ? 'disabled' : ''} />#${inst.id}</span>
+          <span class="inst-id"><label class="inst-check"><input type="checkbox" class="inst-select" data-perm="apps.scale" data-id="${inst.id}" aria-label="Select instance ${inst.id}" ${selected.has(inst.id) ? 'checked' : ''} ${pendingRemovals.has(inst.id) ? 'disabled' : ''} /><span class="inst-check-box" aria-hidden="true"></span></label>#${inst.id}</span>
           <span class="inst-status" style="color:${statusColor}"><span class="dot" style="background:${statusDot}"></span>${inst.status}</span>
           <span class="inst-node">${escHtml(nodeName)}</span>
           <span class="inst-port">:${inst.external_port || '—'}</span>
@@ -2533,19 +2533,36 @@ async function initInstances() {
 
     wrap.innerHTML = `
       <div class="inst-list">
-        <div class="inst-main inst-head" aria-hidden="true">
-          <span>Instance</span><span>Status</span><span>Node</span><span>Port</span><span>Connection</span><span>CPU · Memory</span><span>Uptime</span><span></span>
+        <div class="inst-main inst-head">
+          <span class="inst-id"><label class="inst-check" data-perm="apps.scale"><input type="checkbox" id="inst-select-all" aria-label="Select all instances" /><span class="inst-check-box" aria-hidden="true"></span></label>Instance</span><span>Status</span><span>Node</span><span>Port</span><span>Connection</span><span>CPU · Memory</span><span>Uptime</span><span></span>
         </div>
         ${cards}
       </div>`;
     if (window._applyPermVisibility) window._applyPermVisibility(wrap);
     _rescheduleInstancesTimer();
 
+    const allBox = wrap.querySelector('#inst-select-all');
+    const selectableIds = instances.map(i => i.id).filter(id => !pendingRemovals.has(id));
+    const syncAllBox = () => {
+      if (!allBox) return;
+      const n = selectableIds.filter(id => selected.has(id)).length;
+      allBox.checked = selectableIds.length > 0 && n === selectableIds.length;
+      allBox.indeterminate = n > 0 && n < selectableIds.length;
+    };
+    syncAllBox();
+    if (allBox) allBox.addEventListener('change', () => {
+      selectableIds.forEach(id => { if (allBox.checked) selected.add(id); else selected.delete(id); });
+      wrap.querySelectorAll('.inst-select').forEach(b => { b.checked = selected.has(parseInt(b.dataset.id, 10)); });
+      updateSelectionBtn();
+      syncAllBox();
+    });
+
     wrap.querySelectorAll('.inst-select').forEach(box => {
       box.addEventListener('change', () => {
         const id = parseInt(box.dataset.id, 10);
         if (box.checked) selected.add(id); else selected.delete(id);
         updateSelectionBtn();
+        syncAllBox();
       });
     });
 
@@ -2660,7 +2677,7 @@ async function initInstances() {
               <fieldset class="form-block">
                 <legend>Wanted instances <small>now ${currentCount}</small></legend>
                 <label class="unit-input"><span class="sr-only">Wanted instances</span>
-                  <input id="scale-count" class="input" type="number" min="1" max="20" step="1" value="${currentCount || 1}" />
+                  <input id="scale-count" class="input" type="number" min="1" step="1" value="${currentCount || 1}" />
                   <span class="unit">instances</span>
                 </label>
                 <p class="field-hint" id="scale-hint" style="margin-top:10px"></p>
@@ -2678,11 +2695,11 @@ async function initInstances() {
         const value = () => parseInt(input.value, 10);
         const update = () => {
           const v = value();
-          const valid = Number.isInteger(v) && v >= 1 && v <= 20;
+          const valid = Number.isInteger(v) && v >= 1;
           const diff = valid ? v - currentCount : 0;
           okBtn.disabled = !valid || diff === 0;
           okBtn.textContent = diff < 0 ? 'Remove ' + (-diff) : diff > 0 ? 'Add ' + diff : 'Scale';
-          hint.textContent = !valid ? 'Pick a number between 1 and 20.'
+          hint.textContent = !valid ? 'Pick a number of 1 or more.'
             : diff > 0 ? `${diff} new ${diff === 1 ? 'instance' : 'instances'}, spread over the online nodes (the node with the fewest of this app first).`
             : diff < 0 ? `${-diff} ${-diff === 1 ? 'instance' : 'instances'} removed: ones that are not running first, then from the busiest node, then the newest.`
             : 'Already at this number.';
@@ -2760,7 +2777,7 @@ async function initInstances() {
               <fieldset class="form-block">
                 <legend>Amount <small>how many instances to start with these settings</small></legend>
                 <label class="unit-input"><span class="sr-only">Number of instances</span>
-                  <input id="inst-count" class="input" type="number" min="1" max="20" step="1" value="${presetCount}" />
+                  <input id="inst-count" class="input" type="number" min="1" step="1" value="${presetCount}" />
                   <span class="unit">instances</span>
                 </label>
               </fieldset>
@@ -2809,7 +2826,7 @@ async function initInstances() {
           const readonly = !!backdrop.querySelector('#inst-readonly')?.checked;
           const tmpfs = backdrop.querySelector('#inst-tmpfs').checked;
           const tmpfsSz = parseInt(backdrop.querySelector('#inst-tmpfs-size').value, 10);
-          const count = Math.min(20, Math.max(1, parseInt(backdrop.querySelector('#inst-count').value, 10) || 1));
+          const count = Math.max(1, parseInt(backdrop.querySelector('#inst-count').value, 10) || 1);
           backdrop.remove();
           resolve({
             count,
