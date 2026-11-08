@@ -2534,7 +2534,7 @@ async function initInstances() {
     wrap.innerHTML = `
       <div class="inst-list">
         <div class="inst-main inst-head">
-          <span class="inst-id"><label class="inst-check" data-perm="apps.scale"><input type="checkbox" id="inst-select-all" aria-label="Select all instances" /><span class="inst-check-box" aria-hidden="true"></span></label>Instance</span><span>Status</span><span>Node</span><span>Port</span><span>Connection</span><span>CPU · Memory</span><span>Uptime</span><span></span>
+          <span class="inst-id"><label class="inst-check" data-perm="apps.scale"><input type="checkbox" id="inst-select-all" aria-label="Select all instances" /><span class="inst-check-box" aria-hidden="true"></span></label>ID</span><span>Status</span><span>Node</span><span>Port</span><span>Connection</span><span>CPU · Memory</span><span>Uptime</span><span></span>
         </div>
         ${cards}
       </div>`;
