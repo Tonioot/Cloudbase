@@ -327,7 +327,6 @@ def test_an_instance_only_goes_live_once_it_is_healthy(client, nodes):
     """Reachable is not enough: the port can be open long before the app can answer."""
     import http.server
     import threading
-    import time
     from nodes import promote
     answers = {"/up": 503}
 
