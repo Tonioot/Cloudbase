@@ -38,9 +38,10 @@ agent/                      the node agent (runs on remote servers, talks to the
 3. **State has one owner.** A module-level dict or flag is defined in one module, and only that module rebinds it. Others read it through a function (an imported name would go stale when it is rebound).
 4. **Files stay under ~500 lines, functions under ~100.** Split by concern, not by size.
 5. **One action at a time per app.** Whatever changes an app's instances (deploy, start, stop, restart, scale, removing an instance, delete, the autoscaler) holds the app through `apps/state.py` (`@locked("…")`, `app_lock`, or `acquire_app`/`release_app`); a second action is refused with a 409. Code that runs inside such an action must not take the lock again (a deploy restarts through `restart_locked`).
-6. **Route order matters.** FastAPI uses the first matching route. Include order is set in `main.py` and in each `routers/<area>/__init__.py`.
+6. **Derived state is not stored.** An app has no status column: `apps/serializers.py` `app_status()` computes it from the statuses of its instances (a cron job from its schedule), and background code that needs 'apps that run' uses `apps/runtime.py` `has_running_instance()` in SQL. Only the instance status is stored, and only `nodes/observed.py`, `nodes/promote.py` and `nodes/liveness.py` decide it (the start/stop/deploy code writes `desired`).
+7. **Route order matters.** FastAPI uses the first matching route. Include order is set in `main.py` and in each `routers/<area>/__init__.py`.
 
-`tests/test_app_structure.py` enforces rules 1, 2 and 6 (and that every route still exists); rules 3, 4 and 5 are by review (`tests/test_app_lock.py` covers the endpoints of rule 5).
+`tests/test_app_structure.py` enforces rules 1, 2 and 7 (and that every route still exists); rules 3, 4, 5 and 6 are by review (`tests/test_app_lock.py` covers the endpoints of rule 5).
 
 ## Working on it
 

@@ -147,7 +147,6 @@ async def _do_zero_downtime_deploy(app_id: int, db: AsyncSession, local_node: No
                     new_backends.append(backend)
         new_ids.add(new_rid)
 
-    app.status = "running"
     if new_img:
         app.docker_image = new_img
     else:

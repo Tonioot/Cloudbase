@@ -189,7 +189,6 @@ async def _do_rolling_deploy(app_id: int, db: AsyncSession, actor: str):
         completed_new_ids.add(new_replica.id)
         pm._push_line(app_id, f"[Rolling] Old instance {old_replica.id} stopped.")
 
-    app.status = "running"
     if new_img:
         app.docker_image = new_img
     else:

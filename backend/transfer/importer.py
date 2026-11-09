@@ -30,7 +30,7 @@ from apps.validation import (
     _validate_docker_runtime_settings,
 )
 from containers import dockerfiles as containers_dockerfiles
-from core import config as _cfg
+from core import activity, config as _cfg
 from core.audit import log_audit
 from core.database import AsyncSessionLocal
 from core.env_crypto import encrypt_env
@@ -191,7 +191,6 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
         docker_tmpfs_size_mb=entry.get("docker_tmpfs_size_mb"),
         source_revision=entry.get("source_revision"),
         image_revision=entry.get("image_revision"),
-        status="deploying",
         node_id=target_id if not target_is_local else None,
         maintenance_mode=bool(entry.get("maintenance_mode")),
         update_mode=bool(entry.get("update_mode")),
@@ -236,10 +235,8 @@ async def deploy_imported(imported: list[Imported], target_is_local: bool, actor
                 local_node = await ensure_local_node(db)
                 is_cron = bool(app.cron_schedule)
                 if target_is_local or is_cron:   # a remote node gets its source when the instance starts there
-                    await _deploy_app(app)
-                    app.status = _cron.status_of(app) if is_cron else "stopped"
-                else:
-                    app.status = "stopped" if item.instances else "deploying"
+                    with activity.track(app.id, "deploying", "Cloning the repository"):
+                        await _deploy_app(app)
                 if app.domain and not app.no_web:
                     app.nginx_enabled = True
                     if target_is_local:
@@ -253,7 +250,6 @@ async def deploy_imported(imported: list[Imported], target_is_local: bool, actor
                 async with AsyncSessionLocal() as db:
                     app = (await db.execute(select(Application).where(Application.id == item.id))).scalar_one_or_none()
                     if app:
-                        app.status = "error"
                         app.last_error = str(getattr(exc, "detail", exc))[:500]
                         await db.commit()
             except Exception:

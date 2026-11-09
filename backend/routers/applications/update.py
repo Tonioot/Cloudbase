@@ -14,7 +14,7 @@ from core import auth as _auth, system_config as _syscfg
 from apps.git import _change_repository, _encrypt_github_token, _normalize_repo_url, _resolve_token
 from apps.images import _image_port, _dockerfile_build_kwargs
 from apps.nginx_sync import _auto_subdomain, _resolve_ssl_paths, _write_app_nginx_config, _get_nginx_backends, _get_nginx_mode, _best_effort_remove_app_nginx, _ensure_maintenance_files
-from apps.serializers import _app_to_dict, _get_or_404
+from apps.serializers import _app_to_dict, _get_or_404, _replica_views
 from apps import health as health_app
 from apps.validation import _validate_docker_runtime_settings, _check_domain_conflicts, _check_new_app_name, _check_repo_url
 from routers.applications.schemas import UpdateRequest
@@ -193,4 +193,4 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
 
     await log_audit(db, "app.config_update", actor=actor, app_id=app.id, detail={"name": app.name})
     await db.commit()
-    return _app_to_dict(app)
+    return _app_to_dict(app, await _replica_views(app.id, db))

@@ -16,7 +16,7 @@ from core.env_crypto import decrypt_env
 from core.audit import log_audit
 from core import auth as _auth
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
-from apps.runtime import _start_replica_runtime, _load_node_map, _derive_app_status_from_instances
+from apps.runtime import _start_replica_runtime, _load_node_map
 from apps.serializers import _replica_to_dict, _get_or_404
 from apps.state import locked
 
@@ -230,12 +230,6 @@ async def _remove_replicas(app, replicas, db, actor):
         removed.append(replica.id)
         await db.delete(replica)
     await db.flush()
-
-    remaining_result = await db.execute(
-        select(ApplicationReplica).where(ApplicationReplica.app_id == app.id)
-    )
-    remaining = remaining_result.scalars().all()
-    app.status = _derive_app_status_from_instances(remaining) if remaining else "stopped"
 
     # Regenerate nginx config without the removed backends.
     if _has_public_nginx_domain(app):

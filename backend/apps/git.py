@@ -270,6 +270,7 @@ async def _deploy_app(app: Application):
         raise HTTPException(400, _friendly_git_clone_error(result.stderr))
 
     app.working_dir = app_dir
+    app.last_error = None
     app.source_revision = await asyncio.to_thread(_resolve_source_revision, app_dir)
     app.image_revision = None
     if app.app_type != "static":

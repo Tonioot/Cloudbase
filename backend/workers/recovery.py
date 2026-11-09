@@ -2,13 +2,12 @@ import asyncio
 import logging
 from sqlalchemy import select
 from core.database import AsyncSessionLocal
-from core.models import Application, ApplicationReplica
+from core.models import Application
 from nodes import registry as nodes_registry
 from containers import processes as pm
 from containers import replicas as containers_replicas
 from containers import stats_logs as containers_stats_logs
 from core import system_config as _syscfg
-from apps.runtime import _derive_app_status_from_instances
 from apps.nginx_sync import _write_app_nginx_config as _startup_nginx
 from nodes.registry import ensure_local_node as _startup_local_node
 from nginx.panel import _refresh_panel_nginx
@@ -17,7 +16,7 @@ log = logging.getLogger("cloudbase.main")
 
 
 async def _startup_recovery() -> None:
-    """Bring the log tailers, the app statuses, the nginx configs and the panel config in line with the DB.
+    """Bring the log tailers, the nginx configs and the panel config in line with the DB.
 
     Keeping this server's instances running (and repairing them) is the local reconciler's job
     (nodes/local.py); here is only what has to happen once, as the panel starts."""
@@ -34,17 +33,6 @@ async def _startup_recovery() -> None:
                 )
     except Exception as exc:
         log.warning("STARTUP could not attach the live logs: %s", exc)
-
-    async with AsyncSessionLocal() as db:
-        replicas = (await db.execute(select(ApplicationReplica))).scalars().all()
-        replica_map: dict[int, list] = {}
-        for r in replicas:
-            replica_map.setdefault(r.app_id, []).append(r)
-
-        for a in (await db.execute(select(Application))).scalars().all():
-            if replica_map.get(a.id):
-                a.status = _derive_app_status_from_instances(replica_map[a.id])
-        await db.commit()
 
     # Regenerate nginx configs from live instance state so stale configs on disk
     # (written before the instance-based model) are replaced with correct upstreams.

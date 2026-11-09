@@ -13,7 +13,7 @@ from core.audit import log_audit
 from containers import processes as pm
 from core import applog
 from apps.validation import _assign_external_port
-from apps.runtime import _start_replica_runtime
+from apps.runtime import _start_replica_runtime, has_running_instance
 from apps.deploy_common import _wait_new_instance_healthy
 from mesh import routing
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
@@ -223,7 +223,7 @@ async def _autoscaler():
                 result = await db.execute(
                     select(Application).where(
                         Application.autoscale_enabled == True,
-                        Application.status == "running",
+                        has_running_instance(),
                     )
                 )
                 apps = result.scalars().all()

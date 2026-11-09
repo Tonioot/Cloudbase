@@ -35,7 +35,7 @@ def world(client):
         def app(self, name):
             async def go():
                 async with AsyncSessionLocal() as db:
-                    app = Application(name=name, repo_url="https://example.test/x", start_command="npm start", port=3000, status="running")
+                    app = Application(name=name, repo_url="https://example.test/x", start_command="npm start", port=3000)
                     db.add(app)
                     await db.commit()
                     return app.id

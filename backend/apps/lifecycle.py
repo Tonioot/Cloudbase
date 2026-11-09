@@ -9,14 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps.git import _refresh_app_source_revision
 from apps.nginx_sync import _has_public_nginx_domain, _restore_nginx_after_transition, _write_app_nginx_config
 from apps.runtime import (
-    _derive_app_status_from_instances,
     _has_live_replicas,
     _load_app_replicas,
     _load_node_map,
     _resolve_replica_node,
     _start_replica_runtime,
 )
-from apps.serializers import _get_or_404
+from apps.serializers import _get_or_404, app_status
 from apps.state import _set_active_transition_mode, app_lock, locked
 from core import activity
 from containers import processes as pm
@@ -62,7 +61,6 @@ async def restart_locked(app_id: int, db: AsyncSession, actor: str):
         await _start_replica_runtime(app, replica, _resolve_replica_node(replica, node_map, local_node),
                                      env_vars, db, source_revision)
 
-    app.status = _derive_app_status_from_instances(replicas)
     if _has_public_nginx_domain(app) and not show_restart_page:
         await _write_app_nginx_config(app, db, local_node)
 
@@ -78,7 +76,7 @@ async def restart_locked(app_id: int, db: AsyncSession, actor: str):
             )
         )
 
-    return {"status": app.status, "instance_count": len(replicas)}
+    return {"status": app_status(app, [r.status for r in replicas]), "instance_count": len(replicas)}
 
 
 @locked("starting")
@@ -115,7 +113,6 @@ async def start_app_now(app_id: int, db: AsyncSession, actor: str):
         replica_node = _resolve_replica_node(replica, node_map, local_node)
         await _start_replica_runtime(app, replica, replica_node, env_vars, db, source_revision)
 
-    app.status = _derive_app_status_from_instances(replicas)
     if _has_public_nginx_domain(app) and not show_start_page:
         await _write_app_nginx_config(app, db, local_node)
 
@@ -131,4 +128,4 @@ async def start_app_now(app_id: int, db: AsyncSession, actor: str):
             )
         )
 
-    return {"status": app.status, "instance_count": len(replicas)}
+    return {"status": app_status(app, [r.status for r in replicas]), "instance_count": len(replicas)}

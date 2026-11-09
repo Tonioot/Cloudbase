@@ -91,7 +91,7 @@ def _setup(tmp_path):
         async with AsyncSessionLocal() as db:
             node = Node(name="src-node", role="node", status="online", auth_token="token-src", is_local=False, enabled=True)
             app = Application(name="src-app", repo_url="https://example.test/x", start_command="python app.py", port=8000,
-                              status="running", working_dir=str(source), app_type="python")
+                              working_dir=str(source), app_type="python")
             db.add_all([node, app])
             await db.flush()
             # two instances of the same app on one node: the check "does this node run the app" must cope with that

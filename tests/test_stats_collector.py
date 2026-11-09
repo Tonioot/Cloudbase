@@ -132,7 +132,7 @@ def test_the_instances_tab_marks_the_app_as_watched(admin):
 
     async def make():
         async with AsyncSessionLocal() as db:
-            app = Application(name="collect-marks", repo_url="https://example.test/x", start_command="x", port=3000, status="running")
+            app = Application(name="collect-marks", repo_url="https://example.test/x", start_command="x", port=3000)
             db.add(app)
             await db.commit()
             return app.id

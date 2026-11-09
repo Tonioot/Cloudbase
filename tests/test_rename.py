@@ -20,7 +20,7 @@ def _app(name, **fields):
 
     async def go():
         async with AsyncSessionLocal() as db:
-            app = Application(name=name, repo_url="https://example.test/x", start_command="x", port=3000, status="stopped", **fields)
+            app = Application(name=name, repo_url="https://example.test/x", start_command="x", port=3000, **fields)
             db.add(app)
             await db.commit()
             return app.id

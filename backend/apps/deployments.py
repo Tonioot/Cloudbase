@@ -116,6 +116,7 @@ async def run_deploy(
                     if app.cron_schedule:
                         push("[Deploy] Image built. The next run of the job uses it.")
                         message = f"Deployed {commit_info}; the next run uses it"
+                app.last_error = None
                 await apps_log_audit(db, "app.deploy", actor=actor, app_id=app_id,
                                      detail={"name": app.name, "commit": commit_info, "strategy": strategy, "trigger": trigger})
                 await db.commit()

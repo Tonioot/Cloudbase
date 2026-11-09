@@ -55,7 +55,7 @@ async def list_runs(
     if before:
         q = q.where(CronRun.id < before)
     runs = (await db.execute(q)).scalars().all()
-    return {"cron": cron.info(app), "status": app.status, "runs": [cron.run_dict(r) for r in runs]}
+    return {"cron": cron.info(app), "status": cron.status_of(app), "runs": [cron.run_dict(r) for r in runs]}
 
 
 @router.get("/{app_id}/cron/runs/{run_id}")

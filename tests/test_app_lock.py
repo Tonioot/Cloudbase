@@ -136,7 +136,7 @@ def _make_app(name):
 
     async def go():
         async with AsyncSessionLocal() as db:
-            app = Application(name=name, repo_url="https://example.test/x", start_command="npm start", port=3000, status="stopped",
+            app = Application(name=name, repo_url="https://example.test/x", start_command="npm start", port=3000,
                               working_dir=tempfile.gettempdir())
             db.add(app)
             await db.commit()

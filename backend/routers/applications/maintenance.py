@@ -9,7 +9,7 @@ from nginx import files as nginx_files
 from nodes.registry import ensure_local_node
 from core import auth as _auth
 from apps.nginx_sync import _ensure_maintenance_files, _get_nginx_mode, _has_public_nginx_domain, _write_app_nginx_config
-from apps.serializers import _app_to_dict, _get_or_404
+from apps.serializers import _app_to_dict, _get_or_404, _replica_views
 from routers.applications.schemas import MaintenanceSettings, RenderPageRequest
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
@@ -82,7 +82,7 @@ async def toggle_maintenance_mode(app_id: int, _user: dict = Depends(_auth.requi
         raise HTTPException(500, f"Nginx config failed: {msg}")
 
     await db.commit()
-    return _app_to_dict(app)
+    return _app_to_dict(app, await _replica_views(app.id, db))
 
 
 @router.post("/{app_id}/update-mode/toggle")
@@ -111,7 +111,7 @@ async def toggle_update_mode(app_id: int, _user: dict = Depends(_auth.require_pe
         raise HTTPException(500, f"Nginx config failed: {msg}")
 
     await db.commit()
-    return _app_to_dict(app)
+    return _app_to_dict(app, await _replica_views(app.id, db))
 
 
 @router.post("/{app_id}/maintenance-pages/render")

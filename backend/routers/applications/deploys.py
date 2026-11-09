@@ -147,7 +147,6 @@ async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), 
             **_image_build_kwargs(app),
         )
         source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
-        app.status = "running" if was_running else "stopped"
         app.docker_image = img
         if source_revision:
             app.image_revision = source_revision
@@ -325,7 +324,6 @@ async def rebuild_docker_image_stream(app_id: int, _user: dict = Depends(_auth.r
                 **_image_build_kwargs(app),
             )
             source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
-            app.status = "running" if was_running else "stopped"
             app.docker_image = img
             if source_revision:
                 app.image_revision = source_revision

@@ -11,6 +11,7 @@ from cron import scheduler as _cron
 from core.env_crypto import decrypt_env
 from core import system_config as _syscfg
 from apps.git import _github_token_label
+from apps.runtime import status_of_instances
 
 async def _get_or_404(app_id: int, db: AsyncSession) -> Application:
     result = await db.execute(select(Application).where(Application.id == app_id))
@@ -20,10 +21,27 @@ async def _get_or_404(app_id: int, db: AsyncSession) -> Application:
     return app
 
 
+def app_status(app: Application, instance_statuses) -> str:
+    """What the app is: it follows from its instances (a cron job from its schedule); nothing stores it."""
+    if app.cron_schedule:
+        return _cron.status_of(app)
+    if not instance_statuses:
+        return "error" if app.last_error else "stopped"      # no instance: stopped, or the last deploy failed
+    return status_of_instances(instance_statuses)
+
+
+async def _replica_views(app_id: int, db: AsyncSession) -> list[dict]:
+    rows = (await db.execute(
+        select(ApplicationReplica, Node).join(Node, ApplicationReplica.node_id == Node.id, isouter=True)
+        .where(ApplicationReplica.app_id == app_id).order_by(ApplicationReplica.id)
+    )).all()
+    return [_replica_to_dict(replica, node) for replica, node in rows]
+
+
 def _app_to_dict(
     app: Application,
+    replicas: list,
     include_sensitive: bool = True,
-    replicas: Optional[list] = None,
     include_page_configs: bool = True,
 ) -> dict:
     import re as _re
@@ -57,7 +75,7 @@ def _app_to_dict(
         "start_command": app.start_command,
         "build_command": app.build_command,
         "port": app.port,
-        "status": app.status,
+        "status": app_status(app, [r["status"] for r in replicas]),
         "activity": activity.get(app.id),        # what is being done to the app right now, or None
         "working_dir": app.working_dir,
         "last_error": app.last_error,
@@ -97,8 +115,8 @@ def _app_to_dict(
         "health_path": health.settings_of(app)[0],
         "health_expect": health.settings_of(app)[1],
         "health_timeout_seconds": health.settings_of(app)[2],
-        "replicas": replicas if replicas is not None else [],
-        "replica_count": len(replicas) if replicas is not None else 0,
+        "replicas": replicas,
+        "replica_count": len(replicas),
         "node_id": app.node_id,
         "cron": _cron.info(app),
     }

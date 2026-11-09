@@ -71,7 +71,7 @@ class Application(Base):
     deploy_strategy      = Column(String(20), default="rolling", nullable=False)  # rolling | blue_green
     auto_deploy_interval = Column(Integer, default=60, nullable=False)  # seconds between checks
     port          = Column(Integer, nullable=True)   # internal port (inside container)
-    status = Column(String(20), default="stopped")
+    # No status column: what an app is doing follows from its instances (apps/serializers.py app_status)
     node_id = Column(Integer, ForeignKey("nodes.id"), nullable=True, index=True)
     working_dir = Column(String(500), nullable=True)
     last_error = Column(Text, nullable=True)

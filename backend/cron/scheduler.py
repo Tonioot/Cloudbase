@@ -107,14 +107,6 @@ def run_dict(run: CronRun, with_output: bool = False) -> dict:
     return out
 
 
-async def _set_app_status(app_id: int) -> None:
-    async with AsyncSessionLocal() as db:
-        app = await db.get(Application, app_id)
-        if app is not None and app.cron_schedule:
-            app.status = status_of(app)
-            await db.commit()
-
-
 async def set_enabled(app_id: int, enabled: bool, actor: str) -> dict:
     """Pause or resume the schedule. A resumed job starts at the next slot."""
     async with AsyncSessionLocal() as db:
@@ -123,12 +115,11 @@ async def set_enabled(app_id: int, enabled: bool, actor: str) -> dict:
             raise HTTPException(404, "Cron job not found")
         app.cron_enabled = enabled
         app.cron_last_slot = None
-        app.status = status_of(app)
         await log_audit(db, "cron.resume" if enabled else "cron.pause", actor=actor, app_id=app_id,
                         detail={"name": app.name})
         await db.commit()
         pm._push_line(app_id, f"[Cron] Schedule {'resumed' if enabled else 'paused'} by {actor}")
-        return {"status": app.status, "cron": info(app)}
+        return {"status": status_of(app), "cron": info(app)}
 
 
 async def update_settings(app_id: int, actor: str, *, schedule: Optional[str] = None, tz_name: Optional[str] = None,
@@ -180,7 +171,6 @@ async def start_run(app_id: int, trigger: str, actor: str, slot: Optional[dateti
         await db.refresh(run)
         _running[app_id] = run.id
         result = run_dict(run)
-    await _set_app_status(app_id)
     asyncio.create_task(_execute(run.id))
     return result
 
@@ -281,7 +271,6 @@ async def _execute(run_id: int) -> None:
         else:
             duration = 0
     _running.pop(app_id, None)
-    await _set_app_status(app_id)
 
     took = f"{duration:.1f}s" if duration < 90 else f"{duration / 60:.1f} min"
     if status == "success":
@@ -374,9 +363,6 @@ async def _recover() -> None:
         for run in stale:
             run.status, run.finished_at = "failed", _utcnow()
             run.error = "Interrupted: Cloudbase restarted during the run"
-        apps = (await db.execute(select(Application).where(Application.cron_schedule.is_not(None)))).scalars().all()
-        for app in apps:
-            app.status = status_of(app)
         await db.commit()
     try:
         for name in await asyncio.to_thread(containers_jobs.list_job_containers):

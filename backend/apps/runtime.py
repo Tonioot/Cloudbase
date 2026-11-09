@@ -92,23 +92,20 @@ def _remote_replica_command_payload(app: Application, env_vars: dict, external_p
     }
 
 
-def _derive_app_status_from_instances(replicas: list) -> str:
-    """Derive the overall app status from its instance statuses."""
-    statuses = {r.status for r in replicas}
-    if "running" in statuses:
-        return "running"
-    if "starting" in statuses:
-        return "starting"
-    if "restarting" in statuses:
-        return "restarting"
-    if "stopping" in statuses:
-        return "stopping"
-    if "deploying" in statuses:
-        return "deploying"
-    if statuses and statuses - {"stopped", "error", "pending"} == set():
-        if statuses == {"error"} or (statuses - {"stopped", "pending"} == {"error"}):
-            return "error"
+def status_of_instances(statuses) -> str:
+    """The status of a (non-cron) app from the statuses of its instances."""
+    statuses = set(statuses)
+    for status in ("running", "starting", "restarting", "stopping", "deploying"):
+        if status in statuses:
+            return status
+    if "error" in statuses and statuses <= {"stopped", "error", "pending"}:
+        return "error"
     return "stopped"
+
+
+def has_running_instance():
+    """SQL condition for 'this app runs': at least one instance is running."""
+    return Application.id.in_(select(ApplicationReplica.app_id).where(ApplicationReplica.status == "running"))
 
 
 def _instance_payload(app: Application, replica: ApplicationReplica, env_vars: dict,

@@ -224,7 +224,7 @@ def _replica(node_id, port, status="starting", app_id=None, health_path=""):
             aid = app_id
             if aid is None:
                 app = Application(name=f"mesh-app-{port}", repo_url="https://example.test/x", start_command="x", port=3000,
-                                  status="running", health_path=health_path)
+                                  health_path=health_path)
                 db.add(app)
                 await db.flush()
                 aid = app.id

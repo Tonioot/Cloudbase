@@ -43,7 +43,7 @@ def _app(name, **fields):
     async def go():
         async with AsyncSessionLocal() as db:
             app = Application(name=name, repo_url="https://example.test/x", start_command="npm start", port=3000,
-                              status="stopped", env_vars=encrypt_env({"A": "1"}), **fields)
+                              env_vars=encrypt_env({"A": "1"}), **fields)
             db.add(app)
             await db.commit()
             return app.id

@@ -14,6 +14,7 @@ from containers import naming as containers_naming
 from containers import stats_logs as containers_stats_logs
 from nodes.commands import wait_for_node_command, queue_node_command
 from nodes.state import _node_ws_connections
+from apps.runtime import has_running_instance
 from apps.stream import _aggregate_frames
 from core.history import _HISTORY_RETENTION_DAYS, _OVERVIEW_SAMPLE_SECONDS
 
@@ -52,7 +53,7 @@ async def collect_local_stats_once(now: float | None = None) -> int:
     Docker stats calls made."""
     now = _time.monotonic() if now is None else now
     async with AsyncSessionLocal() as db:
-        apps = (await db.execute(select(Application).where(Application.status == "running"))).scalars().all()
+        apps = (await db.execute(select(Application).where(has_running_instance()))).scalars().all()
         local_node = (await db.execute(select(_Node).where(_Node.is_local == True))).scalar_one_or_none()  # noqa: E712
         local_node_id = local_node.id if local_node else None
         running_replicas = (await db.execute(
@@ -304,7 +305,7 @@ async def _overview_sampler():
 
                 db.add(OverviewHistory(
                     timestamp=now,
-                    apps_running=sum(1 for a in apps if a.status == "running"),
+                    apps_running=len({r.app_id for r in replicas if r.status == "running"}),
                     apps_total=len(apps),
                     instances=sum(1 for r in replicas if r.status == "running"),
                     cpu_percent=round(sum(cpu_vals) / len(cpu_vals), 1) if cpu_vals else None,
@@ -342,7 +343,7 @@ async def _stats_history_writer():
         try:
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
-                    select(Application).where(Application.status == "running")
+                    select(Application).where(has_running_instance())
                 )
                 apps = result.scalars().all()
                 for a in apps:

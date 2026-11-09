@@ -41,7 +41,7 @@ def _app(name, repo_url="https://github.com/old/repo", with_clone=True, branch="
 
     async def go():
         async with AsyncSessionLocal() as db:
-            app = Application(name=name, repo_url=repo_url, start_command="x", port=3000, status="stopped", **fields)
+            app = Application(name=name, repo_url=repo_url, start_command="x", port=3000, **fields)
             db.add(app)
             await db.commit()
             return app.id

@@ -9,7 +9,7 @@ from cron import scheduler as _cron
 from nodes.registry import ensure_local_node
 from core.env_crypto import encrypt_env
 from core.audit import log_audit
-from core import config as _cfg, auth as _auth
+from core import activity, config as _cfg, auth as _auth
 from apps import health as health_app
 from apps.git import _normalize_repo_url, _encrypt_github_token, _deploy_app, _resolve_token
 from apps.nginx_sync import _write_app_nginx_config
@@ -94,7 +94,6 @@ async def deploy_app(
         docker_tmpfs_size_mb=req.docker_tmpfs_size_mb,
         source_revision=req.source_revision,
         image_revision=req.image_revision,
-        status="deploying",
         node_id=target_node.id if not target_node.is_local else None,
         cron_schedule=" ".join(req.cron_schedule.split()) if is_cron else None,
         cron_timezone=(req.cron_timezone or None) if is_cron else None,
@@ -116,11 +115,11 @@ async def deploy_app(
             app.nginx_enabled = True
         await db.commit()
         await db.refresh(app)
-        return _app_to_dict(app)
+        return _app_to_dict(app, [])
 
     try:
-        await _deploy_app(app)
-        app.status = _cron.status_of(app) if is_cron else "stopped"
+        with activity.track(app.id, "deploying", "Cloning the repository"):
+            await _deploy_app(app)
 
         if app.domain and not app.no_web:
             app.nginx_enabled = True
@@ -129,8 +128,8 @@ async def deploy_app(
         await log_audit(db, "app.deploy", actor=actor, app_id=app.id, detail={"name": app.name})
         await db.commit()
         await db.refresh(app)
-        return _app_to_dict(app)
+        return _app_to_dict(app, [])
     except Exception as e:
-        app.status = "error"
+        app.last_error = str(getattr(e, "detail", e))[:500]          # an app without instances shows as an error
         await db.commit()
         raise HTTPException(500, str(e))
