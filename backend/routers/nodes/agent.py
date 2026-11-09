@@ -4,7 +4,7 @@ import logging
 import secrets
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Header, WebSocket, WebSocketDisconnect, Depends
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal, get_db
 from core.models import Node, NodeInvite
@@ -12,11 +12,11 @@ from core.audit import log_audit
 from mesh import hub
 from core import config as _cfg, system_config as _syscfg
 from nodes import metrics as node_metrics, observed, snapshot
+from nodes.liveness import node_gone
 from nodes.commands import _apply_command_result, _claim_pending_commands, _commit_with_sqlite_lock_retry, _dispatch_queued_commands_ws, _utcnow, fail_commands_in_flight
 from nodes.registry import _as_node_dict, get_node_by_token_or_401
 from nodes.state import _get_node_event, _node_event_subscribers, _node_ws_connections, _pending_pings, _push_node_event, push_node_stream_data
 from routers.nodes.schemas import CommandResultRequest, ObservedRequest, RegisterNodeRequest, WireguardEnrollRequest
-from core.models import ApplicationReplica
 
 log = logging.getLogger("cloudbase.nodes")
 
@@ -234,34 +234,10 @@ async def agent_ws(websocket: WebSocket):
                     return_when=asyncio.FIRST_COMPLETED,
                 )
 
-                # Only mark offline when this websocket is still the active one.
-                if _node_ws_connections.get(node_id) is None:
-                    async with AsyncSessionLocal() as db:
-                        result = await db.execute(select(Node).where(Node.id == node_id))
-                        offline_node = result.scalar_one_or_none()
-                        if offline_node and offline_node.status != "offline":
-                            offline_node.status = "offline"
-                            if offline_node.offline_since is None:
-                                offline_node.offline_since = _utcnow()
-                            offline_node.connection_type = None
-                            # Mark running replicas so they get recovered on reconnect
-                            rep_res = await db.execute(
-                                select(ApplicationReplica).where(
-                                    and_(
-                                        ApplicationReplica.node_id == node_id,
-                                        ApplicationReplica.status.in_(["running", "starting"]),
-                                    )
-                                )
-                            )
-                            for _r in rep_res.scalars().all():
-                                _r.status = "node_offline"
-                                _r.substatus = None
-                            await _commit_with_sqlite_lock_retry(
-                                db,
-                                context=f"agent_ws/offline-mark node_id={node_id}",
-                            )
-                            log.info("Node id=%d marked offline after WS disconnect", node_id)
-                    _push_node_event(node_id, {"type": "node_offline", "node_id": node_id})
+                # Another connection took over, or the panel dropped this one (a ping timed out): leave.
+                # What that means for the node is decided below, once, in the finally.
+                if _node_ws_connections.get(node_id) is not websocket:
+                    break
 
                 if event_task in done:
                     event.clear()
@@ -360,27 +336,6 @@ async def agent_ws(websocket: WebSocket):
 
         if node_id is not None and should_mark_offline:
             try:
-                async with AsyncSessionLocal() as db:
-                    result = await db.execute(select(Node).where(Node.id == node_id))
-                    offline_node = result.scalar_one_or_none()
-                    if offline_node and offline_node.status != "offline":
-                        offline_node.status = "offline"
-                        if offline_node.offline_since is None:
-                            offline_node.offline_since = _utcnow()
-                        offline_node.connection_type = None
-                        rep_res = await db.execute(
-                            select(ApplicationReplica).where(
-                                and_(
-                                    ApplicationReplica.node_id == node_id,
-                                    ApplicationReplica.status.in_(["running", "starting"]),
-                                )
-                            )
-                        )
-                        for _r in rep_res.scalars().all():
-                            _r.status = "node_offline"
-                            _r.substatus = None
-                        await db.commit()
-                        log.info("Node id=%d marked offline after WS disconnect", node_id)
-                _push_node_event(node_id, {"type": "node_offline", "node_id": node_id})
+                await node_gone(node_id)
             except Exception as e:
                 log.error("Error marking node id=%s offline: %s", node_id, e)

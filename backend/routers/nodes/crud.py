@@ -6,16 +6,16 @@ from datetime import timedelta
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from core.database import AsyncSessionLocal, get_db
+from core.database import get_db
 from core.models import Node, NodeInvite, NodeCommand
 from core.audit import log_audit
 from core import auth as _auth
 from mesh import hub
 from nodes.commands import _utcnow, queue_node_command, wait_for_node_command
 from nodes import workloads as node_workloads
-from nodes.liveness import run_node_docker_cleanup
+from nodes.liveness import node_gone, run_node_docker_cleanup
 from nodes.registry import _as_node_dict, ensure_local_node, get_node_or_404
-from nodes.state import _node_ws_connections, _pending_pings, _push_node_event
+from nodes.state import _node_ws_connections, _pending_pings
 from routers.nodes.schemas import InviteRequest, NodeUpdateRequest
 from core.models import Application, ApplicationReplica
 from core.models import Database
@@ -172,15 +172,7 @@ async def ping_node(node_id: int, _user: dict = Depends(_auth.require_permission
         except asyncio.TimeoutError:
             # WS is stale — evict it and mark node offline immediately
             _node_ws_connections.pop(node_id, None)
-            async with AsyncSessionLocal() as wdb:
-                stale = await wdb.get(Node, node_id)
-                if stale:
-                    stale.status = "offline"
-                    stale.connection_type = None
-                    if stale.offline_since is None:
-                        stale.offline_since = _utcnow()
-                    await wdb.commit()
-            _push_node_event(node_id, {"type": "node_offline", "node_id": node_id})
+            await node_gone(node_id)
             return {"reachable": False, "latency_ms": None, "transport": "websocket", "error": "Ping timed out — node marked offline"}
         except Exception as exc:
             return {"reachable": False, "latency_ms": None, "transport": "websocket", "error": str(exc)}

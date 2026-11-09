@@ -11,6 +11,7 @@ from core.database import AsyncSessionLocal
 from core.models import Application, ApplicationReplica, Node
 from mesh import routing
 from nodes.commands import _utcnow
+from nodes.liveness import mark_instances_offline
 
 log = logging.getLogger("cloudbase.nodes")
 
@@ -117,12 +118,9 @@ async def regen_nginx_for_app(app_id: int) -> None:
 async def link_down(node_id: int) -> None:
     """The node network to this node broke: its instances leave nginx and are recovered when it is back."""
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(ApplicationReplica).where(
-            and_(ApplicationReplica.node_id == node_id, ApplicationReplica.status.in_(["running", "starting"]))))
-        replicas = result.scalars().all()
-        app_ids = {r.app_id for r in replicas}
-        for replica in replicas:
-            replica.status, replica.substatus = "node_offline", None
+        app_ids = set((await db.execute(select(ApplicationReplica.app_id).where(
+            and_(ApplicationReplica.node_id == node_id, ApplicationReplica.status.in_(["running", "starting"]))))).scalars().all())
+        await mark_instances_offline(db, node_id)
         await db.commit()
     for app_id in app_ids:
         await regen_nginx_for_app(app_id)
