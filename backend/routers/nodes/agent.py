@@ -52,7 +52,6 @@ async def register_node(req: RegisterNodeRequest, db: AsyncSession = Depends(get
         name=req.name,
         role=req.role if req.role in ("main", "node", "hybrid") else "node",
         status="online",
-        api_base_url=req.api_base_url,
         public_host=req.public_host,
         auth_token=auth_token,
         is_local=False,

@@ -65,11 +65,9 @@ def clean_timeout(seconds) -> int:
 
 
 def settings_of(app) -> tuple[str, str, int]:
-    """(path, expect, timeout) of an app; apps from before the setting existed get the defaults."""
-    path = getattr(app, "health_path", None)
-    return (DEFAULT_PATH if path is None else path,
-            getattr(app, "health_expect", None) or "",
-            getattr(app, "health_timeout_seconds", None) or DEFAULT_TIMEOUT_SECONDS)
+    """(path, expect, timeout) of an app."""
+    path = app.health_path
+    return (DEFAULT_PATH if path is None else path, app.health_expect or "", app.health_timeout_seconds or DEFAULT_TIMEOUT_SECONDS)
 
 
 def answer(host: str, port: int, path: str = DEFAULT_PATH, expect: str = "") -> tuple[bool, str]:

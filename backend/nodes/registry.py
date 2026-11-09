@@ -241,7 +241,6 @@ def _as_node_dict(node: Node) -> dict:
         "name": node.name,
         "role": node.role,
         "status": node.status,
-        "api_base_url": node.api_base_url,
         "public_host": node.public_host,
         "is_local": bool(node.is_local),
         "enabled": bool(node.enabled),

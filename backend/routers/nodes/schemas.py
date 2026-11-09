@@ -10,7 +10,6 @@ class RegisterNodeRequest(BaseModel):
     invite_code: str
     name: str
     role: str = "node"
-    api_base_url: Optional[str] = None
     public_host: Optional[str] = None
     capabilities: Optional[dict] = None
     metadata_json: Optional[dict] = None

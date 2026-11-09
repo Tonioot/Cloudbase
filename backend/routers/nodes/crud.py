@@ -179,20 +179,6 @@ async def ping_node(node_id: int, _user: dict = Depends(_auth.require_permission
         finally:
             _pending_pings.pop(ping_id, None)
 
-    if node.api_base_url:
-        import httpx
-        try:
-            t0 = time.monotonic()
-            async with httpx.AsyncClient() as client:
-                resp = await asyncio.wait_for(
-                    client.get(f"{node.api_base_url}/api/health", timeout=5),
-                    timeout=6,
-                )
-            latency_ms = round((time.monotonic() - t0) * 1000)
-            return {"reachable": resp.status_code == 200, "latency_ms": latency_ms, "transport": "http"}
-        except Exception as exc:
-            return {"reachable": False, "latency_ms": None, "transport": "http", "error": str(exc)}
-
     return {"reachable": False, "latency_ms": None, "transport": "none", "error": "No active connection"}
 
 

@@ -157,11 +157,6 @@ def save_config_sections(sections: dict) -> None:
     _config = _load()
 
 
-def set_base_domain(value: str) -> None:
-    """Update base_domain in config.yaml and reload the in-memory config."""
-    save_server_config({"base_domain": (value or "").strip()})
-
-
 def validate() -> None:
     """Log warnings for any configuration problems detected at startup."""
     import logging

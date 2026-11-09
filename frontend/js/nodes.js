@@ -157,7 +157,6 @@ function _renderOverviewTab(drawer, node) {
         ${_pill('Connection', node.is_local ? '<span style="color:var(--green)">Local ✓</span>' : node.websocket_connected ? '<span style="color:var(--green)">WebSocket ✓</span>' : node.status === 'online' ? '<span style="color:var(--yellow)">Connecting...</span>' : '<span style="color:var(--text-muted)">Offline</span>')}
         ${_pill('Last seen', lastSeen)}
         ${_pill('Agent version', esc(node.agent_version || 'unknown'))}
-        ${node.api_base_url ? _pill('API URL', `<span style="font-family:monospace;font-size:11px">${esc(node.api_base_url)}</span>`) : ''}
         ${node.public_host ? _pill('Public host', esc(node.public_host)) : ''}
       </div>
 

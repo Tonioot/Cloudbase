@@ -34,11 +34,6 @@ def _load_state() -> Optional[AgentState]:
         return None
 
 
-def is_node() -> bool:
-    """True when this server is registered as a node of a primary."""
-    return os.path.exists(STATE_PATH)
-
-
 def _save_state(state: AgentState) -> None:
     try:
         with open(STATE_PATH, "w") as f:

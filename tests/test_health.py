@@ -37,10 +37,10 @@ def test_settings_are_checked_when_they_are_saved():
         health.clean_timeout("soon")
 
 
-def test_an_app_from_before_the_setting_gets_the_defaults():
-    class Old:
-        pass
-    assert health.settings_of(Old()) == ("/", "", health.DEFAULT_TIMEOUT_SECONDS)
+def test_empty_settings_fall_back_to_the_defaults():
+    class Unset:
+        health_path, health_expect, health_timeout_seconds = None, None, None
+    assert health.settings_of(Unset()) == ("/", "", health.DEFAULT_TIMEOUT_SECONDS)
 
 
 # ── asking a real instance ──────────────────────────────────────────────────────
