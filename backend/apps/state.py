@@ -1,5 +1,9 @@
 import asyncio
+import contextlib
+import functools
 from typing import Optional
+
+from fastapi import HTTPException
 
 RESTART_READY_TIMEOUT_SECONDS = 180
 
@@ -25,12 +29,47 @@ DEPLOY_HEALTH_PROGRESS_SECONDS = 30
 _active_transition_modes: dict[int, tuple[str, float]] = {}
 
 
-# App ids with a rolling / blue-green deploy in progress (one at a time per app).
-_deploys_in_progress: set[int] = set()
+# One action at a time per app. Whoever changes an app's instances (deploy, start, stop, restart, scale,
+# removing an instance, delete, the autoscaler) holds the app for the duration; a second one is refused
+# with a 409 instead of racing the first. The panel is one process with one event loop and the check and
+# the claim below have no await between them, so a plain dict is enough.
+_busy: dict[int, str] = {}
 
 
-# App ids the autoscaler is currently adding/removing a replica for.
-_scaling_in_progress: set[int] = set()
+def busy_with(app_id: int) -> Optional[str]:
+    """What is being done to the app right now ("deploying", "scaling", ...), or None."""
+    return _busy.get(app_id)
+
+
+def acquire_app(app_id: int, what: str) -> None:
+    """Claim the app for `what`, or raise 409 when something else has it. Pair with release_app()."""
+    if app_id in _busy:
+        raise HTTPException(409, f"This app is busy ({_busy[app_id]}) — try again when that is done.")
+    _busy[app_id] = what
+
+
+def release_app(app_id: int) -> None:
+    _busy.pop(app_id, None)
+
+
+@contextlib.contextmanager
+def app_lock(app_id: int, what: str):
+    acquire_app(app_id, what)
+    try:
+        yield
+    finally:
+        release_app(app_id)
+
+
+def locked(what: str):
+    """Decorator for an async function whose first argument (or app_id=) is the app id."""
+    def wrap(fn):
+        @functools.wraps(fn)
+        async def inner(*args, **kwargs):
+            with app_lock(kwargs.get("app_id", args[0] if args else None), what):
+                return await fn(*args, **kwargs)
+        return inner
+    return wrap
 
 
 def _set_active_transition_mode(app_id: int, mode: str, started_at: Optional[float] = None) -> float:

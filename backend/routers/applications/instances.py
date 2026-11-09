@@ -18,6 +18,7 @@ from core import auth as _auth
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
 from apps.runtime import _start_replica_runtime, _load_node_map, _derive_app_status_from_instances
 from apps.serializers import _replica_to_dict, _get_or_404
+from apps.state import locked
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
@@ -96,6 +97,7 @@ async def get_instance_stats(app_id: int, _user: dict = Depends(_auth.require_pe
 
 
 @router.post("/{app_id}/instances/{instance_id}/restart")
+@locked("restarting")
 @activity.tracked("restarting")
 async def restart_instance(
     app_id: int,
@@ -156,6 +158,7 @@ async def _replicas_of_app(app_id, ids, db):
 
 
 @router.post("/{app_id}/instances/restart")
+@locked("restarting")
 @activity.tracked("restarting")
 async def restart_instances(
     app_id: int,
@@ -174,6 +177,7 @@ async def restart_instances(
 
 
 @router.post("/{app_id}/instances/remove")
+@locked("removing instances")
 async def remove_instances(
     app_id: int,
     req: InstanceIdsRequest,
@@ -190,6 +194,7 @@ async def remove_instances(
 
 
 @router.delete("/{app_id}/instances/{instance_id}")
+@locked("removing an instance")
 async def delete_instance(
     app_id: int,
     instance_id: int,

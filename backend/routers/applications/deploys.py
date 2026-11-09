@@ -19,12 +19,11 @@ from core.audit import log_audit
 from core import auth as _auth
 from apps.rolling import _do_rolling_deploy
 from apps.bluegreen import _do_zero_downtime_deploy
-from apps.deploy_common import _single_deploy
 from apps.git import _build_clone_url, _current_branch, _decrypt_github_token, _deploy_app, _fetch_origin, _refresh_app_source_revision, _resolve_source_revision, _sync_app_source
 from apps.images import _image_build_kwargs, _image_port
 from apps.runtime import _has_live_replicas, _load_app_replicas
 from apps.serializers import _deployment_dict, _get_or_404
-from apps.state import _deploys_in_progress
+from apps.state import app_lock, busy_with
 from apps.validation import _check_git_ref
 from routers.applications.schemas import GitDeployRequest, PullRequest
 from routers.applications.sse import _DEPLOY_STREAM_DONE, _SSE_HEADERS, _SSE_PING, _queue_get_or_heartbeat, _sse_line
@@ -188,7 +187,7 @@ async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), 
 
 @router.post("/{app_id}/deploy-rolling")
 async def deploy_rolling(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
-    with _single_deploy(app_id):
+    with app_lock(app_id, "deploying"):
         return await _do_rolling_deploy(app_id, db, actor)
 
 
@@ -196,7 +195,7 @@ async def deploy_rolling(app_id: int, db: AsyncSession = Depends(get_db), _user:
 async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
     await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)
-    with _single_deploy(app_id):
+    with app_lock(app_id, "deploying"):
         return await _do_zero_downtime_deploy(app_id, db, local_node, actor)
 
 
@@ -382,7 +381,7 @@ async def list_deployments(app_id: int, limit: int = 50, db: AsyncSession = Depe
         select(Deployment).where(Deployment.app_id == app_id)
         .order_by(Deployment.created_at.desc(), Deployment.id.desc()).limit(max(1, min(limit, 200)))
     )).scalars().all()
-    return {"deployments": [_deployment_dict(d) for d in rows], "in_progress": app_id in _deploys_in_progress}
+    return {"deployments": [_deployment_dict(d) for d in rows], "in_progress": busy_with(app_id) == "deploying"}
 
 
 @router.get("/{app_id}/deployments/{deployment_id}")
@@ -417,8 +416,8 @@ async def deploy_stream(
     app = await _get_or_404(app_id, db)
     if not app.working_dir or not os.path.exists(app.working_dir):
         raise HTTPException(400, "No working directory — deploy the app first")
-    if app_id in _deploys_in_progress:
-        raise HTTPException(409, "A deploy is already in progress for this app — wait for it to finish.")
+    if busy_with(app_id):
+        raise HTTPException(409, f"This app is busy ({busy_with(app_id)}) — try again when that is done.")
 
     target_commit = _check_git_ref(payload.commit)
     loop = asyncio.get_running_loop()

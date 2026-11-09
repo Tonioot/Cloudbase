@@ -17,7 +17,7 @@ from apps.runtime import (
     _start_replica_runtime,
 )
 from apps.serializers import _get_or_404
-from apps.state import _set_active_transition_mode
+from apps.state import _set_active_transition_mode, app_lock, locked
 from core import activity
 from containers import processes as pm
 from core.audit import log_audit
@@ -26,8 +26,14 @@ from cron import scheduler as _cron
 from nodes.registry import ensure_local_node
 
 
-@activity.tracked("restarting")
 async def restart_app_now(app_id: int, db: AsyncSession, actor: str):
+    with app_lock(app_id, "restarting"):
+        return await restart_locked(app_id, db, actor)
+
+
+@activity.tracked("restarting")
+async def restart_locked(app_id: int, db: AsyncSession, actor: str):
+    """restart_app_now for a caller that already holds the app (a deploy that restarts what it just built)."""
     app = await _get_or_404(app_id, db)
     if app.cron_schedule:
         return await _cron.start_run(app_id, "manual", actor)
@@ -75,6 +81,7 @@ async def restart_app_now(app_id: int, db: AsyncSession, actor: str):
     return {"status": app.status, "instance_count": len(replicas)}
 
 
+@locked("starting")
 @activity.tracked("starting")
 async def start_app_now(app_id: int, db: AsyncSession, actor: str):
     app = await _get_or_404(app_id, db)

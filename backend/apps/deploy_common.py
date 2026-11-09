@@ -1,32 +1,12 @@
 import asyncio
-import contextlib
-from fastapi import HTTPException
 from core.database import AsyncSessionLocal
 from core.models import Application, ApplicationReplica
 from containers import processes as pm
 from apps import health as app_health
-from apps.state import DEPLOY_HEALTH_PROGRESS_SECONDS, _deploys_in_progress, _scaling_in_progress
+from apps.state import DEPLOY_HEALTH_PROGRESS_SECONDS
 
 # A new instance may first have to download the source and build the image
 REMOTE_START_TIMEOUT_SECONDS = 900
-
-
-@contextlib.contextmanager
-def _single_deploy(app_id: int):
-    """Reject a second rolling / blue-green deploy while one is running for this app.
-
-    These requests take minutes; without this a retry (or a second click after a
-    proxy timeout) starts a parallel deploy that races the first one.
-    """
-    if app_id in _deploys_in_progress:
-        raise HTTPException(409, "A deploy is already in progress for this app — wait for it to finish.")
-    if app_id in _scaling_in_progress:
-        raise HTTPException(409, "The autoscaler is adding or removing an instance for this app — try again in a moment.")
-    _deploys_in_progress.add(app_id)
-    try:
-        yield
-    finally:
-        _deploys_in_progress.discard(app_id)
 
 
 async def _wait_new_instance_healthy(app_id: int, replica_id: int, backend: str) -> tuple[bool, str]:

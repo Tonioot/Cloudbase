@@ -10,6 +10,7 @@ from apps.lifecycle import restart_app_now, start_app_now
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
 from apps.runtime import _derive_app_status_from_instances, _load_app_replicas, _load_node_map, _resolve_replica_node, _stop_replica_runtime
 from apps.serializers import _get_or_404
+from apps.state import locked
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
@@ -20,6 +21,7 @@ async def start_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict
 
 
 @router.post("/{app_id}/stop")
+@locked("stopping")
 @activity.tracked("stopping")
 async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.stop")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)

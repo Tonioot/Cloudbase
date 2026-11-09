@@ -15,11 +15,13 @@ from core import auth as _auth
 from apps.nginx_sync import _best_effort_remove_app_nginx, _best_effort_delete_app_certificate
 from apps.runtime import _get_app_node, _cleanup_app_dependencies, _load_node_map
 from apps.serializers import _get_or_404
+from apps.state import locked
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
 
 @router.delete("/{app_id}")
+@locked("deleting")
 async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.delete")), actor: str = Depends(_auth.get_current_actor)):
     app = await _get_or_404(app_id, db)
     local_node = await ensure_local_node(db)

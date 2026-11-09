@@ -10,10 +10,10 @@ from containers import processes as pm, naming as containers_naming, build as co
 from core.database import AsyncSessionLocal
 from core import activity
 from core.models import Application, Deployment
-from apps import state as apps_state, deploy_common as apps_deploy_common, rolling as apps_rolling, bluegreen as apps_bluegreen, git as apps_git, nginx_sync as apps_nginx_sync, runtime as apps_runtime, images as apps_images
+from apps import state as apps_state, rolling as apps_rolling, bluegreen as apps_bluegreen, git as apps_git, nginx_sync as apps_nginx_sync, runtime as apps_runtime, images as apps_images
 from core.audit import log_audit as apps_log_audit
 from nodes.registry import ensure_local_node as apps_ensure_local_node
-from apps.lifecycle import restart_app_now
+from apps.lifecycle import restart_locked
 
 log = logging.getLogger("cloudbase.deploys")
 
@@ -68,12 +68,7 @@ async def run_deploy(
     dep_id: Optional[int] = None
     app_name, commit_label = f"app {app_id}", None
     try:
-        # A webhook deploy shouldn't fail just because the autoscaler is busy
-        # adding/removing an instance — wait for that to finish first.
-        deadline = asyncio.get_running_loop().time() + 900
-        while app_id in apps_state._scaling_in_progress and asyncio.get_running_loop().time() < deadline:
-            await asyncio.sleep(2)
-        with apps_deploy_common._single_deploy(app_id):
+        with apps_state.app_lock(app_id, "deploying"):
             async with AsyncSessionLocal() as db:
                 app = await db.get(Application, app_id)
                 if not app:
@@ -165,7 +160,7 @@ async def _rebuild(app: Application, db, source_revision, push, *, restart: bool
         push("[Deploy] App isn’t running — the new version starts the next time you start it.")
         return {"restarted": False}
     push("[Deploy] Restarting instances with the new image…")
-    await restart_app_now(app.id, db, actor)
+    await restart_locked(app.id, db, actor)
     return {"restarted": True}
 
 

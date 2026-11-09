@@ -63,8 +63,8 @@ async def _check_app(app_id: int) -> None:
         )).first()
     if seen:
         return
-    if app_id in apps_state._deploys_in_progress:
-        return  # the next round picks up whatever is newest by then
+    if apps_state.busy_with(app_id):
+        return  # a deploy, a scale action, ...: the next round picks up whatever is newest by then
     log.info("[auto-deploy] app %s: new commit %s on %s", app_id, head[:7], branch)
     try:
         await run_deploy(app_id, commit=head, strategy=app.deploy_strategy or "rolling",

@@ -11,6 +11,7 @@ from core.audit import log_audit
 from core import auth as _auth, config as _cfg
 from apps.runtime import _start_replica_runtime
 from apps.serializers import _replica_to_dict, _get_or_404
+from apps.state import locked
 from apps.validation import _assign_external_port
 from routers.applications.schemas import ScaleRequest
 from routers.applications.instances import _remove_replicas
@@ -22,6 +23,7 @@ log = logging.getLogger("cloudbase.apps")
 
 
 @router.post("/{app_id}/scale")
+@locked("scaling")
 @activity.tracked("scaling")
 async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.scale")), actor: str = Depends(_auth.get_current_actor)):
     if (await _get_or_404(app_id, db)).cron_schedule:

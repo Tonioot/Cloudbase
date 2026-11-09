@@ -3,6 +3,7 @@ import logging
 import time as _time
 from typing import Optional
 import psutil
+from fastapi import HTTPException
 from sqlalchemy import select
 from core.database import AsyncSessionLocal
 from core import activity
@@ -17,7 +18,7 @@ from apps.deploy_common import _wait_new_instance_healthy
 from mesh import routing
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
 from nodes.registry import ensure_local_node
-from apps.state import DEPLOY_HEALTH_TIMEOUT_SECONDS, _deploys_in_progress, _scaling_in_progress
+from apps.state import DEPLOY_HEALTH_TIMEOUT_SECONDS, acquire_app, busy_with, release_app
 from nodes import desired
 
 # ── Autoscaler ───────────────────────────────────────────────────────────────
@@ -26,7 +27,7 @@ async def _autoscaler():
 
     Scale up goes to the least-loaded online node (local or remote); scale down
     removes remote replicas first, then the newest local one. Scale actions run
-    as background tasks and mark the app in _scaling_in_progress, so a deploy
+    as background tasks that hold the app (apps.state.acquire_app), so a deploy
     and a scale action never overlap. Nginx is rewritten after every change so
     traffic follows the replica set. Every action is written to the server log,
     the app's live log and the audit log (actor "autoscaler").
@@ -212,7 +213,7 @@ async def _autoscaler():
         except Exception as e:
             alog.warning("[autoscaler] app_id=%d scale action error: %s", app_id, e)
         finally:
-            _scaling_in_progress.discard(app_id)
+            release_app(app_id)
             _last_scaled[app_id] = asyncio.get_running_loop().time()
 
     await asyncio.sleep(60)
@@ -233,11 +234,11 @@ async def _autoscaler():
                     since_action = now - _last_scaled.get(app.id, 0)
                     if since_action < UP_COOLDOWN:
                         continue
-                    # A deploy (or our own previous scale action) is still running.
-                    # Blue-green/rolling deploys briefly run old + new replicas side by
+                    # A deploy (or our own previous scale action, or somebody restarting the app) is still
+                    # running. Blue-green/rolling deploys briefly run old + new replicas side by
                     # side; scaling down then would kill the new one while the deploy
                     # stops the old one, leaving the app with zero instances.
-                    if app.id in _deploys_in_progress or app.id in _scaling_in_progress:
+                    if busy_with(app.id):
                         _last_scaled[app.id] = now
                         continue
 
@@ -289,12 +290,12 @@ async def _autoscaler():
                         action = _scale_down(app.id, victim.id, count, down_peak, target)
 
                     if action is not None:
-                        # A deploy may have started during the queries above.
-                        if app.id in _deploys_in_progress:
+                        # Something may have started during the queries above.
+                        try:
+                            acquire_app(app.id, "scaling")      # held until the action is done (_run_action)
+                        except HTTPException:
                             action.close()
                             continue
-                        # Blocks deploys (see _single_deploy) until the action is done.
-                        _scaling_in_progress.add(app.id)
                         _last_scaled[app.id] = now
                         asyncio.create_task(_run_action(app.id, action))
 
