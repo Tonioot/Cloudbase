@@ -6,7 +6,7 @@ import pytest
 from agent import reconcile
 from agent.reconcile import Reconciler
 from agent.state import AgentState
-from containers import processes as pm, reconciler as engine, replicas as containers_replicas
+from containers import processes as pm, reconciler as engine, instances as containers_instances
 
 
 def _run(coro):
@@ -27,8 +27,8 @@ class FakeResponse:
 class FakeClient:
     """The primary, as far as the agent can see: answers the list, remembers the reports."""
 
-    def __init__(self, replicas=None, hash_="h1"):
-        self.replicas, self.hash = replicas or [], hash_
+    def __init__(self, instances=None, hash_="h1"):
+        self.instances, self.hash = instances or [], hash_
         self.reports, self.asked = [], []
 
     async def get(self, url, params=None, headers=None, timeout=None):
@@ -36,49 +36,49 @@ class FakeClient:
         self.asked.append(params)
         if params and params.get("have") == self.hash:
             return FakeResponse({"hash": self.hash, "unchanged": True})
-        return FakeResponse({"hash": self.hash, "replicas": self.replicas})
+        return FakeResponse({"hash": self.hash, "instances": self.instances})
 
     async def post(self, url, json=None, headers=None, timeout=None):
         assert url.endswith("/api/nodes/agent/observed") and headers == {"X-Node-Token": "t"}
-        self.reports.append(json["replicas"])
+        self.reports.append(json["instances"])
         return FakeResponse({"ok": True})
 
 
-def entry(replica_id, desired="running", spec_hash="aaaa", **spec):
-    base = {"app_id": 1, "app_name": "shop", "internal_port": 3000, "external_port": 9100 + replica_id,
+def entry(instance_id, desired="running", spec_hash="aaaa", **spec):
+    base = {"app_id": 1, "app_name": "shop", "internal_port": 3000, "external_port": 9100 + instance_id,
             "env_vars": {"K": "v"}, "source_revision": "rev1", "docker_options": {"restart_policy": "no", "publish_port": True}}
-    return {"replica_id": replica_id, "app_id": 1, "desired": desired,
+    return {"instance_id": instance_id, "app_id": 1, "desired": desired,
             "spec_hash": spec_hash if desired == "running" else None, "spec": {**base, **spec} if desired == "running" else None}
 
 
-def container(replica_id, status="running", spec="aaaa", exit_code=0):
-    return {"name": f"cloudbase-app-1-replica-{replica_id}", "id": f"cid{replica_id}" + "0" * 20, "app_id": 1,
-            "replica_id": replica_id, "status": status, "spec": spec, "exit_code": exit_code}
+def container(instance_id, status="running", spec="aaaa", exit_code=0):
+    return {"name": f"cloudbase-app-1-instance-{instance_id}", "id": f"cid{instance_id}" + "0" * 20, "app_id": 1,
+            "instance_id": instance_id, "status": status, "spec": spec, "exit_code": exit_code}
 
 
 class Docker:
     """A stand-in for Docker on this node."""
 
     def __init__(self, monkeypatch, containers=()):
-        self.containers = {c["replica_id"]: dict(c) for c in containers}
+        self.containers = {c["instance_id"]: dict(c) for c in containers}
         self.removed, self.started, self.built = [], [], []
-        monkeypatch.setattr(containers_replicas, "list_replica_containers", lambda: [dict(c) for c in self.containers.values()])
-        monkeypatch.setattr(pm, "stop_docker_replica", self._stop)
-        monkeypatch.setattr(pm, "start_docker_replica", self._start)
+        monkeypatch.setattr(containers_instances, "list_instance_containers", lambda: [dict(c) for c in self.containers.values()])
+        monkeypatch.setattr(pm, "stop_docker_instance", self._stop)
+        monkeypatch.setattr(pm, "start_docker_instance", self._start)
         monkeypatch.setattr(reconcile, "ensure_image", self._ensure_image)
         self.fail_start = None
 
-    def _stop(self, app_id, replica_id):
-        self.removed.append(replica_id)
-        self.containers.pop(replica_id, None)
+    def _stop(self, app_id, instance_id):
+        self.removed.append(instance_id)
+        self.containers.pop(instance_id, None)
         return True
 
-    def _start(self, app_id, replica_id, internal_port, external_port, env, options):
+    def _start(self, app_id, instance_id, internal_port, external_port, env, options):
         if self.fail_start:
             raise RuntimeError(self.fail_start)
-        self.started.append({"replica_id": replica_id, "port": external_port, "env": env, "options": options, "internal": internal_port})
-        self.containers[replica_id] = container(replica_id, spec=options["spec_hash"])
-        return self.containers[replica_id]["id"]
+        self.started.append({"instance_id": instance_id, "port": external_port, "env": env, "options": options, "internal": internal_port})
+        self.containers[instance_id] = container(instance_id, spec=options["spec_hash"])
+        return self.containers[instance_id]["id"]
 
     async def _ensure_image(self, client, state, spec, progress):
         progress("downloading")
@@ -105,8 +105,8 @@ async def converge(rec, passes=1):
         await settle(rec)
 
 
-def state_of(rec, replica_id):
-    return rec.observed[replica_id]["state"]
+def state_of(rec, instance_id):
+    return rec.observed[instance_id]["state"]
 
 
 # ── getting the list ──────────────────────────────────────────────────────────
@@ -126,7 +126,7 @@ def test_an_instance_that_leaves_the_list_is_forgotten(monkeypatch):
     async def go():
         await rec.pull()
         rec.observed[2] = {"state": "running"}
-        client.replicas, client.hash = [entry(1)], "h2"
+        client.instances, client.hash = [entry(1)], "h2"
         await rec.pull()
     _run(go())
     assert set(rec.entries) == {1} and 2 not in rec.observed
@@ -137,6 +137,22 @@ def test_nothing_is_touched_before_the_list_has_been_received(monkeypatch):
     rec, _, docker = make(monkeypatch, [], containers=[container(7)])
     _run(rec.reconcile_once())
     assert docker.removed == [] and docker.started == []              # "I know nothing" is not "nothing should run"
+
+
+def test_an_answer_that_is_not_a_list_changes_nothing(monkeypatch):
+    """E.g. a primary on an older version, whose list has other names: never read as 'nothing should run'."""
+    rec, client, docker = make(monkeypatch, [], containers=[container(7)])
+
+    async def wrong(url, params=None, headers=None, timeout=None):
+        return FakeResponse({"hash": "h9", "something_else": [entry(7)]})
+    client.get = wrong
+
+    async def go():
+        with pytest.raises(KeyError):
+            await rec.pull()
+        await rec.reconcile_once()
+    _run(go())
+    assert not rec.synced and docker.removed == [] and 7 in docker.containers
 
 
 def test_a_container_the_primary_does_not_know_is_removed(monkeypatch):
@@ -219,7 +235,7 @@ def test_a_new_spec_recreates_the_container(monkeypatch):
     async def go():
         await rec.pull()
         await converge(rec)
-        client.replicas, client.hash = [entry(1, spec_hash="bbbb")], "h2"          # the primary restarted it
+        client.instances, client.hash = [entry(1, spec_hash="bbbb")], "h2"          # the primary restarted it
         await rec.pull()
         await converge(rec)
     _run(go())
@@ -299,7 +315,7 @@ def test_a_new_spec_gets_a_fresh_start_after_giving_up(monkeypatch):
         await converge(rec)
         rec.attempts[1]["count"] = engine.MAX_ATTEMPTS
         docker.fail_start = None
-        client.replicas, client.hash = [entry(1, spec_hash="bbbb")], "h2"
+        client.instances, client.hash = [entry(1, spec_hash="bbbb")], "h2"
         await rec.pull()
         await converge(rec)
     _run(go())
@@ -369,7 +385,7 @@ def test_the_agent_does_not_call_the_local_api():
         assert "run-remote" not in text and "stop-remote" not in text, path.name
 
 
-@pytest.mark.parametrize("command", ["start_replica", "stop_replica", "refresh_source", "delete_app"])
+@pytest.mark.parametrize("command", ["start_instance", "stop_instance", "refresh_source", "delete_app"])
 def test_the_commands_that_desired_state_replaced_are_gone_from_the_agent(command):
     from agent.dispatch import COMMAND_HANDLERS
     assert command not in COMMAND_HANDLERS
@@ -397,10 +413,10 @@ def test_containers_are_removed_at_the_same_time(monkeypatch):
     rec, _, docker = make(monkeypatch, [entry(1, desired="stopped"), entry(2, desired="stopped")], [container(1), container(2)])
     stop = docker._stop
 
-    def slow(app_id, replica_id):
+    def slow(app_id, instance_id):
         time.sleep(0.4)
-        return stop(app_id, replica_id)
-    monkeypatch.setattr(pm, "stop_docker_replica", slow)
+        return stop(app_id, instance_id)
+    monkeypatch.setattr(pm, "stop_docker_instance", slow)
 
     async def go():
         await rec.pull()
@@ -414,7 +430,7 @@ def test_containers_are_removed_at_the_same_time(monkeypatch):
 
 def test_a_container_that_could_not_be_stopped_is_not_reported_as_stopped(monkeypatch):
     rec, _, docker = make(monkeypatch, [entry(1, desired="stopped")], [container(1)])
-    monkeypatch.setattr(pm, "stop_docker_replica", lambda app_id, replica_id: False)
+    monkeypatch.setattr(pm, "stop_docker_instance", lambda app_id, instance_id: False)
 
     async def go():
         await rec.pull()

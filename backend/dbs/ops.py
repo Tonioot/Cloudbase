@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from dbs import lifecycle as dbs_lifecycle
 from core.database import AsyncSessionLocal
-from core.models import DatabaseLink, Database, Application, Node, ApplicationReplica
+from core.models import DatabaseLink, Database, Application, Node, Instance
 from nodes import commands as node_commands
 from dbs.provision import _spec
 from dbs.state import COMMAND_TIMEOUT_SECONDS, PROVISION_TIMEOUT_SECONDS, _busy
@@ -115,7 +115,7 @@ async def _links_for(database_id: int, db: AsyncSession) -> list[dict]:
         return []
     app_ids = [app.id for _, app in rows]
     rep_result = await db.execute(
-        select(ApplicationReplica.app_id, ApplicationReplica.node_id).where(ApplicationReplica.app_id.in_(app_ids))
+        select(Instance.app_id, Instance.node_id).where(Instance.app_id.in_(app_ids))
     )
     nodes_by_app: dict[int, set] = {}
     for app_id, node_id in rep_result.all():

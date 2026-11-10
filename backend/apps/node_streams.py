@@ -17,14 +17,14 @@ _system_history: deque = deque(maxlen=60)
 
 
 async def follow_container_logs(app_id: int, send: Callable[[str], Awaitable[None]]) -> None:
-    """Every replica container of app_id on this machine: recent lines first, then live.
+    """Every instance container of app_id on this machine: recent lines first, then live.
 
     Looks again every few seconds, so instances started later are followed too."""
     loop = asyncio.get_running_loop()
     lines: asyncio.Queue = asyncio.Queue()
     followed: set[str] = set()
     streams: list = []
-    prefix = f"cloudbase-app-{app_id}-replica-"
+    prefix = f"cloudbase-app-{app_id}-instance-"
 
     def reader(name: str, tail: int) -> None:
         try:
@@ -70,7 +70,7 @@ async def follow_container_logs(app_id: int, send: Callable[[str], Awaitable[Non
 
 
 async def stream_container_stats(app_id: int, send: Callable[[dict], Awaitable[None]]) -> None:
-    """Every 2 s: stats of app_id's replica containers on this machine, added up."""
+    """Every 2 s: stats of app_id's instance containers on this machine, added up."""
     while True:
         frame = await containers_stats_logs.app_aggregate_stats(app_id)
         frame["timestamp"] = int(time.time() * 1000)

@@ -7,7 +7,7 @@ import asyncio
 import socket
 
 from core.database import AsyncSessionLocal
-from core.models import Application, ApplicationReplica, Node
+from core.models import Application, Instance, Node
 
 POLL_SECONDS = 2
 
@@ -16,15 +16,15 @@ class Unreachable(RuntimeError):
     pass
 
 
-def backend_for(replica: ApplicationReplica, node: Node | None) -> str | None:
+def backend_for(instance: Instance, node: Node | None) -> str | None:
     """'host:port' that nginx and the health checks use for this instance, or None while it has no address."""
-    if not replica.external_port:
+    if not instance.external_port:
         return None
     if node is None or node.is_local:
-        return f"127.0.0.1:{replica.external_port}"
+        return f"127.0.0.1:{instance.external_port}"
     if not node.wg_ip:
         return None
-    return f"{node.wg_ip}:{replica.external_port}"
+    return f"{node.wg_ip}:{instance.external_port}"
 
 
 def split(backend: str) -> tuple[str, int]:
@@ -40,14 +40,14 @@ def port_open(host: str, port: int, timeout: float = 1.0) -> bool:
         return False
 
 
-async def _publishes_no_port(replica: ApplicationReplica) -> bool:
+async def _publishes_no_port(instance: Instance) -> bool:
     """A worker or bot has no web server: there is no port to connect to, it is live once it runs."""
     async with AsyncSessionLocal() as db:
-        app = await db.get(Application, replica.app_id)
+        app = await db.get(Application, instance.app_id)
     return bool(app and app.no_web)
 
 
-async def wait_reachable(replica_id: int, timeout: float) -> str:
+async def wait_reachable(instance_id: int, timeout: float) -> str:
     """Wait until the instance accepts connections; returns its backend.
 
     Raises Unreachable when the node reports an error, the instance disappears or the time runs out.
@@ -56,15 +56,15 @@ async def wait_reachable(replica_id: int, timeout: float) -> str:
     deadline = loop.time() + timeout
     while True:
         async with AsyncSessionLocal() as db:
-            replica = await db.get(ApplicationReplica, replica_id)
-            node = await db.get(Node, replica.node_id) if replica else None
-        if replica is None:
+            instance = await db.get(Instance, instance_id)
+            node = await db.get(Node, instance.node_id) if instance else None
+        if instance is None:
             raise Unreachable("instance was removed")
-        if replica.status == "error":
-            raise Unreachable(f"node reported an error: {replica.last_error or 'unknown'}")
-        if await _publishes_no_port(replica):
+        if instance.status == "error":
+            raise Unreachable(f"node reported an error: {instance.last_error or 'unknown'}")
+        if await _publishes_no_port(instance):
             return ""                       # a worker is live once its node runs it, and promote asks only after that
-        backend = backend_for(replica, node)
+        backend = backend_for(instance, node)
         if backend and await asyncio.to_thread(port_open, *split(backend)):
             return backend
         if loop.time() >= deadline:

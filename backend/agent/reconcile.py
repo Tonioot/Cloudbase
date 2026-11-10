@@ -25,7 +25,7 @@ class Reconciler(Engine):
 
     async def _send_report(self, body: dict) -> None:
         resp = await self.client.post(
-            f"{self.state.main_url}/api/nodes/agent/observed", json={"replicas": body},
+            f"{self.state.main_url}/api/nodes/agent/observed", json={"instances": body},
             headers={"X-Node-Token": self.state.auth_token}, timeout=30)
         resp.raise_for_status()
 

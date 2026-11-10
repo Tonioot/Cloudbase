@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps import health as app_health, nginx_sync
 from apps.git import _refresh_app_source_revision
 from apps.images import _image_build_kwargs, _image_port
-from apps.runtime import _get_app_node, _start_replica_runtime
+from apps.runtime import _get_app_node, _start_instance_runtime
 from apps.serializers import _get_or_404
 from apps.validation import _assign_external_port
 from containers import build as containers_build, naming as containers_naming, processes as pm
@@ -26,7 +26,7 @@ from core import activity
 from core.audit import log_audit
 from core.database import AsyncSessionLocal
 from core.env_crypto import decrypt_env
-from core.models import Application, ApplicationReplica, Node
+from core.models import Application, Instance, Node
 from nodes import desired
 
 log = logging.getLogger("cloudbase.apps")
@@ -41,21 +41,21 @@ class RolloutFailed(RuntimeError):
     pass
 
 
-async def add_instance(app: Application, node: Node, db: AsyncSession, *, like: Optional[ApplicationReplica] = None,
-                       source_revision: Optional[str] = None) -> ApplicationReplica:
+async def add_instance(app: Application, node: Node, db: AsyncSession, *, like: Optional[Instance] = None,
+                       source_revision: Optional[str] = None) -> Instance:
     """A new instance of the app on this node, on its node's list (committed). `like`: keep that instance's own limits."""
-    replica = ApplicationReplica(app_id=app.id, node_id=node.id, status="starting",
+    instance = Instance(app_id=app.id, node_id=node.id, status="starting",
                                  external_port=await _assign_external_port(None, node.id, db))
     for key in _OWN_LIMITS if like is not None else ():
-        setattr(replica, key, getattr(like, key))
-    db.add(replica)
+        setattr(instance, key, getattr(like, key))
+    db.add(instance)
     await db.flush()
-    await _start_replica_runtime(app, replica, node, decrypt_env(app.env_vars or ""), db, source_revision)
+    await _start_instance_runtime(app, instance, node, decrypt_env(app.env_vars or ""), db, source_revision)
     await db.commit()
-    return replica
+    return instance
 
 
-async def wait_until_live(app_id: int, replica_id: int, push: Callable[[str], None]) -> None:
+async def wait_until_live(app_id: int, instance_id: int, push: Callable[[str], None]) -> None:
     """Wait until promote put the instance live. RolloutFailed when it fails, disappears or takes too long."""
     async with AsyncSessionLocal() as db:
         app = await db.get(Application, app_id)
@@ -65,35 +65,35 @@ async def wait_until_live(app_id: int, replica_id: int, push: Callable[[str], No
     next_progress = started + PROGRESS_SECONDS
     while True:
         async with AsyncSessionLocal() as db:
-            replica = await db.get(ApplicationReplica, replica_id)
-        if replica is None:
-            raise RolloutFailed(f"instance {replica_id} was removed")
-        if replica.status == "running":
+            instance = await db.get(Instance, instance_id)
+        if instance is None:
+            raise RolloutFailed(f"instance {instance_id} was removed")
+        if instance.status == "running":
             return
-        if replica.status == "error":
-            raise RolloutFailed(f"instance {replica_id} failed: {replica.last_error or 'unknown error'}")
-        if replica.status == "node_offline":
-            raise RolloutFailed(f"the node of instance {replica_id} went offline")
+        if instance.status == "error":
+            raise RolloutFailed(f"instance {instance_id} failed: {instance.last_error or 'unknown error'}")
+        if instance.status == "node_offline":
+            raise RolloutFailed(f"the node of instance {instance_id} went offline")
         now = loop.time()
         if now - started > limit:
-            raise RolloutFailed(f"instance {replica_id} was not live after {int(limit)}s")
+            raise RolloutFailed(f"instance {instance_id} was not live after {int(limit)}s")
         if now >= next_progress:
-            what = (replica.substatus or "starting").replace("_", " ")
-            push(f"[Deploy] Instance {replica_id}: {what} ({int(now - started)}s)…")
+            what = (instance.substatus or "starting").replace("_", " ")
+            push(f"[Deploy] Instance {instance_id}: {what} ({int(now - started)}s)…")
             next_progress += PROGRESS_SECONDS
         await asyncio.sleep(POLL_SECONDS)
 
 
-async def remove_instances(app_id: int, replica_ids: list[int]) -> None:
+async def remove_instances(app_id: int, instance_ids: list[int]) -> None:
     """Take instances off their nodes' lists (each node removes the container) and out of nginx."""
-    if not replica_ids:
+    if not instance_ids:
         return
     async with AsyncSessionLocal() as db:
-        for replica_id in replica_ids:
-            replica = await db.get(ApplicationReplica, replica_id)
-            if replica is not None:
-                desired.nudge(replica.node_id)
-                await db.delete(replica)
+        for instance_id in instance_ids:
+            instance = await db.get(Instance, instance_id)
+            if instance is not None:
+                desired.nudge(instance.node_id)
+                await db.delete(instance)
         await db.commit()
     await nginx_sync.refresh_app_nginx(app_id)
 
@@ -127,8 +127,8 @@ async def replace_instances(app_id: int, db: AsyncSession, actor: str, *, batch:
     if not nginx_sync._has_public_nginx_domain(app):
         raise HTTPException(400, "This deploy needs a custom app domain or a configured base domain")
 
-    running = (await db.execute(select(ApplicationReplica).where(
-        ApplicationReplica.app_id == app_id, ApplicationReplica.status == "running").order_by(ApplicationReplica.id))).scalars().all()
+    running = (await db.execute(select(Instance).where(
+        Instance.app_id == app_id, Instance.status == "running").order_by(Instance.id))).scalars().all()
     nodes = {n.id: n for n in (await db.execute(select(Node))).scalars().all()}
     if running:
         slots = [(old, nodes.get(old.node_id)) for old in running]
@@ -148,12 +148,12 @@ async def replace_instances(app_id: int, db: AsyncSession, actor: str, *, batch:
     for start in range(0, len(slots), size):
         group = slots[start:start + size]
         new = [await add_instance(app, node, db, like=old, source_revision=source_revision) for old, node in group]
-        for replica, (old, node) in zip(new, group):
-            push(f"[Deploy] Starting instance {replica.id} on '{node.name}'" + (f" to replace {old.id}…" if old else "…"))
+        for instance, (old, node) in zip(new, group):
+            push(f"[Deploy] Starting instance {instance.id} on '{node.name}'" + (f" to replace {old.id}…" if old else "…"))
         try:
-            for replica in new:
-                await wait_until_live(app_id, replica.id, push)
-                push(f"[Deploy] Instance {replica.id} is live.")
+            for instance in new:
+                await wait_until_live(app_id, instance.id, push)
+                push(f"[Deploy] Instance {instance.id} is live.")
         except RolloutFailed as exc:
             push(f"[Deploy] {exc} — removing the new instance(s); the previous version keeps serving.")
             await remove_instances(app_id, [r.id for r in new])

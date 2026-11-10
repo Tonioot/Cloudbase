@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from core.database import AsyncSessionLocal
 from core import activity
-from core.models import Application, Node, StatsHistory, ApplicationReplica
+from core.models import Application, Node, StatsHistory, Instance
 from core.audit import log_audit
 from containers import processes as pm
 from core import applog
@@ -18,10 +18,10 @@ from apps.state import acquire_app, busy_with, release_app
 
 # ── Autoscaler ───────────────────────────────────────────────────────────────
 async def _autoscaler():
-    """Every 15s check CPU for autoscale-enabled apps and add/remove replicas.
+    """Every 15s check CPU for autoscale-enabled apps and add/remove instances.
 
     Scale up goes to the least-loaded online node (local or remote); scale down
-    removes remote replicas first, then the newest local one. Scale actions run
+    removes remote instances first, then the newest local one. Scale actions run
     as background tasks that hold the app (apps.state.acquire_app), so a deploy
     and a scale action never overlap. A new instance goes live like any other
     (apps/rollout.py, nodes/promote.py); nginx follows the instances by itself.
@@ -87,18 +87,18 @@ async def _autoscaler():
         async with AsyncSessionLocal() as s:
             app = await s.get(Application, app_id)
             node = await _pick_scale_up_node(s, await ensure_local_node(s))
-            replica = await rollout.add_instance(app, node, s)
-        _say(app_id, f"CPU {avg_cpu:.1f}% > {target:.0f}% over the last {UP_WINDOW}s — adding instance {replica.id} on '{node.name}' ({count} → {count + 1})…")
+            instance = await rollout.add_instance(app, node, s)
+        _say(app_id, f"CPU {avg_cpu:.1f}% > {target:.0f}% over the last {UP_WINDOW}s — adding instance {instance.id} on '{node.name}' ({count} → {count + 1})…")
         try:
-            await rollout.wait_until_live(app_id, replica.id, lambda line: pm._push_line(app_id, line))
+            await rollout.wait_until_live(app_id, instance.id, lambda line: pm._push_line(app_id, line))
         except rollout.RolloutFailed as e:
-            _say(app_id, f"Scale up failed on '{node.name}': {e} — instance {replica.id} removed.", logging.WARNING)
-            await rollout.remove_instances(app_id, [replica.id])
+            _say(app_id, f"Scale up failed on '{node.name}': {e} — instance {instance.id} removed.", logging.WARNING)
+            await rollout.remove_instances(app_id, [instance.id])
             await _audit(app_id, "app.autoscale_failed", {"direction": "up", "node": node.name, "error": str(e)})
             return
-        _say(app_id, f"Scaled UP to {count + 1} instances (new instance {replica.id} on '{node.name}').")
+        _say(app_id, f"Scaled UP to {count + 1} instances (new instance {instance.id} on '{node.name}').")
         await _audit(app_id, "app.autoscale_up", {
-            "replica_id": replica.id, "node": node.name, "replicas": count + 1, "cpu": round(avg_cpu, 1),
+            "instance_id": instance.id, "node": node.name, "instances": count + 1, "cpu": round(avg_cpu, 1),
         })
 
     async def _scale_down(app_id: int, victim_id: int, node_name: str, count: int, avg_cpu: float, target: float) -> None:
@@ -106,7 +106,7 @@ async def _autoscaler():
         await rollout.remove_instances(app_id, [victim_id])       # out of nginx now; its node stops the container
         _say(app_id, f"Scaled DOWN to {count - 1} instances (removed instance {victim_id} on '{node_name}').")
         await _audit(app_id, "app.autoscale_down", {
-            "replica_id": victim_id, "node": node_name, "replicas": count - 1, "cpu": round(avg_cpu, 1),
+            "instance_id": victim_id, "node": node_name, "instances": count - 1, "cpu": round(avg_cpu, 1),
         })
 
     async def _run_action(app_id: int, coro) -> None:
@@ -138,7 +138,7 @@ async def _autoscaler():
                     if since_action < UP_COOLDOWN:
                         continue
                     # A deploy (or our own previous scale action, or somebody restarting the app) is still
-                    # running. Blue-green/rolling deploys briefly run old + new replicas side by
+                    # running. Blue-green/rolling deploys briefly run old + new instances side by
                     # side; scaling down then would kill the new one while the deploy
                     # stops the old one, leaving the app with zero instances.
                     if busy_with(app.id):
@@ -165,31 +165,31 @@ async def _autoscaler():
                         continue
 
                     rep_result = await db.execute(
-                        select(ApplicationReplica)
+                        select(Instance)
                         .where(
-                            ApplicationReplica.app_id == app.id,
-                            ApplicationReplica.status.in_(["running", "starting"]),
+                            Instance.app_id == app.id,
+                            Instance.status.in_(["running", "starting"]),
                         )
-                        .order_by(ApplicationReplica.id.desc())
+                        .order_by(Instance.id.desc())
                     )
-                    replicas = rep_result.scalars().all()
-                    count = len(replicas)
-                    # Don't act on a replica set that is still settling.
-                    if any(r.status == "starting" for r in replicas):
+                    instances = rep_result.scalars().all()
+                    count = len(instances)
+                    # Don't act on a instance set that is still settling.
+                    if any(r.status == "starting" for r in instances):
                         continue
 
-                    min_r = app.autoscale_min_replicas or 1
-                    max_r = app.autoscale_max_replicas or 4
+                    min_r = app.autoscale_min_instances or 1
+                    max_r = app.autoscale_max_instances or 4
                     target = app.autoscale_cpu_target or 70.0
 
                     action = None
                     if up_avg is not None and up_avg > target and count < max_r:
                         action = _scale_up(app.id, count, up_avg, target)
                     elif down_peak is not None and down_peak < target * 0.5 and count > min_r:
-                        # Remove remote replicas first (the primary keeps the base load),
-                        # newest first within each group (replicas is ordered by id desc).
+                        # Remove remote instances first (the primary keeps the base load),
+                        # newest first within each group (instances is ordered by id desc).
                         is_local = lambda r: r.node_id == local_node.id  # noqa: E731
-                        victim = next((r for r in replicas if not is_local(r)), None) or replicas[0]
+                        victim = next((r for r in instances if not is_local(r)), None) or instances[0]
                         victim_node = await db.get(Node, victim.node_id)
                         action = _scale_down(app.id, victim.id, victim_node.name if victim_node else "?", count, down_peak, target)
 

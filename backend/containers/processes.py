@@ -7,7 +7,7 @@ from typing import Optional
 
 from core import activity, applog
 from containers import naming as containers_naming
-from containers import replicas as containers_replicas
+from containers import instances as containers_instances
 from containers import stats_logs as containers_stats_logs
 
 APPS_BASE_DIR = os.path.expanduser("~/.cloudbase/apps")
@@ -27,8 +27,8 @@ _stats_history: dict[int, deque] = {}
 _stats_queues: dict[int, list[asyncio.Queue]] = {}
 _stats_queues_lock = threading.Lock()
 
-# Latest stats snapshot per replica_id (for the instances table)
-_replica_stats: dict[int, dict] = {}
+# Latest stats snapshot per instance_id (for the instances table)
+_instance_stats: dict[int, dict] = {}
 
 
 def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
@@ -82,16 +82,16 @@ def is_watched(app_id: int, now: Optional[float] = None) -> bool:
     return _watched_until.get(app_id, 0.0) > now
 
 
-def set_replica_stats(replica_id: int, data: dict) -> None:
-    _replica_stats[replica_id] = data
+def set_instance_stats(instance_id: int, data: dict) -> None:
+    _instance_stats[instance_id] = data
 
 
-def get_replica_stats(replica_id: int) -> dict | None:
-    return _replica_stats.get(replica_id)
+def get_instance_stats(instance_id: int) -> dict | None:
+    return _instance_stats.get(instance_id)
 
 
-def get_all_replica_stats(app_id: int, replica_ids: list[int]) -> dict[int, dict]:
-    return {rid: _replica_stats[rid] for rid in replica_ids if rid in _replica_stats}
+def get_all_instance_stats(app_id: int, instance_ids: list[int]) -> dict[int, dict]:
+    return {rid: _instance_stats[rid] for rid in instance_ids if rid in _instance_stats}
 
 
 def subscribe_logs(app_id: int) -> asyncio.Queue:
@@ -163,46 +163,46 @@ def detect_app_type_from_command(cmd: str) -> str:
     return "unknown"
 
 
-def start_docker_replica(
+def start_docker_instance(
     app_id: int,
-    replica_id: int,
+    instance_id: int,
     internal_port: int,
     external_port: int,
     env_vars: dict,
     docker_options: dict | None = None,
 ) -> str:
-    """Start a replica container using the existing image (no rebuild). Returns container ID."""
+    """Start a instance container using the existing image (no rebuild). Returns container ID."""
     def _push(aid, line):
         log_buffers.setdefault(aid, deque(maxlen=5000)).append(str(line))
         _push_line(aid, line)
 
     img = containers_naming.image_name(app_id)
     try:
-        container_id = containers_replicas.run_replica_container(
-            app_id, replica_id, img,
+        container_id = containers_instances.run_instance_container(
+            app_id, instance_id, img,
             internal_port, external_port, env_vars or {}, docker_options, _push,
         )
     except Exception as e:
         message = str(e) or "Unknown Docker error"
-        _push(app_id, f"[Replica] Start failed for replica {replica_id}: {message}")
+        _push(app_id, f"[Instance] Start failed for instance {instance_id}: {message}")
         raise RuntimeError(message) from e
 
     if _main_loop is not None and not _main_loop.is_closed():
         containers_stats_logs.attach_container_log_tailer(
             app_id, log_buffers, _push_container_line, _main_loop,
-            cname=containers_naming.replica_container_name(app_id, replica_id),
+            cname=containers_naming.instance_container_name(app_id, instance_id),
         )
 
     return container_id
 
 
-def stop_docker_replica(app_id: int, replica_id: int) -> bool:
-    """Stop and remove a replica container."""
+def stop_docker_instance(app_id: int, instance_id: int) -> bool:
+    """Stop and remove a instance container."""
     def _push(aid, line):
         log_buffers.setdefault(aid, deque(maxlen=5000)).append(str(line))
         _push_line(aid, line)
 
-    return containers_replicas.stop_replica_container(app_id, replica_id, push_line_fn=_push)
+    return containers_instances.stop_instance_container(app_id, instance_id, push_line_fn=_push)
 
 
 def get_recent_docker_logs(app_id: int, lines: int = 300) -> list[str]:

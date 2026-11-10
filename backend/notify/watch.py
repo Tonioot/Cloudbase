@@ -4,7 +4,7 @@ from datetime import timedelta
 from typing import Optional
 from sqlalchemy import select
 from core.database import AsyncSessionLocal
-from core.models import NotificationDelivery, ApplicationReplica, Notification, Database, Application, Node
+from core.models import NotificationDelivery, Instance, Notification, Database, Application, Node
 from nginx import certbot as nginx_certbot
 from notify.emit import emit, open_keys, resolve
 from notify.events import _CERT_CHECK_SECONDS, _DISK_HYSTERESIS, _WATCH_SECONDS
@@ -61,7 +61,7 @@ async def _watch_once() -> None:
 
     async with AsyncSessionLocal() as db:
         nodes = (await db.execute(select(Node))).scalars().all()
-        replicas = (await db.execute(select(ApplicationReplica))).scalars().all()
+        instances = (await db.execute(select(Instance))).scalars().all()
         databases = (await db.execute(select(Database))).scalars().all()
         app_names = dict((await db.execute(select(Application.id, Application.name))).all())
 
@@ -90,9 +90,9 @@ async def _watch_once() -> None:
         elif key in open_ and disk is not None:
             resolutions[key] = (f"Disk on {node.name} is back to {disk:.0f}%", "")
 
-    replica_ids = set()
-    for r in replicas:
-        replica_ids.add(r.id)
+    instance_ids = set()
+    for r in instances:
+        instance_ids.add(r.id)
         key = f"instance.failed:{r.id}"
         app_name = app_names.get(r.app_id, f"app {r.app_id}")
         if r.status == "error":
@@ -139,7 +139,7 @@ async def _watch_once() -> None:
         kind, _, ident = key.partition(":")
         if ident.isdigit() and (
             (kind in ("node.offline", "node.disk_high") and int(ident) not in node_ids)
-            or (kind == "instance.failed" and int(ident) not in replica_ids)
+            or (kind == "instance.failed" and int(ident) not in instance_ids)
             or (kind == "database.down" and int(ident) not in database_ids)
         ):
             gone.add(key)

@@ -8,7 +8,7 @@ from core import sysmetrics
 from nodes import metrics as node_metrics
 from sqlalchemy import select
 from core.database import AsyncSessionLocal
-from core.models import Application, Node as _Node, ApplicationReplica as _AR, OverviewHistory, NodeMetricsHistory, StatsHistory, ApplicationReplica as _AppReplica, Application as _App
+from core.models import Application, Node as _Node, Instance as _AR, OverviewHistory, NodeMetricsHistory, StatsHistory, Instance as _AppInstance, Application as _App
 from containers import processes as pm
 from containers import naming as containers_naming
 from containers import stats_logs as containers_stats_logs
@@ -56,50 +56,50 @@ async def collect_local_stats_once(now: float | None = None) -> int:
         apps = (await db.execute(select(Application).where(has_running_instance()))).scalars().all()
         local_node = (await db.execute(select(_Node).where(_Node.is_local == True))).scalar_one_or_none()  # noqa: E712
         local_node_id = local_node.id if local_node else None
-        running_replicas = (await db.execute(
-            select(_AppReplica).where(
-                _AppReplica.status == "running",
-                _AppReplica.node_id == local_node_id,
+        running_instances = (await db.execute(
+            select(_AppInstance).where(
+                _AppInstance.status == "running",
+                _AppInstance.node_id == local_node_id,
             )
         )).scalars().all()
     # The session is closed here: Docker is asked with no database lock held.
 
-    replicas_by_app: dict[int, list] = {}
-    for r in running_replicas:
-        replicas_by_app.setdefault(r.app_id, []).append(r)
-    return await sample_due_apps(apps, replicas_by_app, local_node_id, now)
+    instances_by_app: dict[int, list] = {}
+    for r in running_instances:
+        instances_by_app.setdefault(r.app_id, []).append(r)
+    return await sample_due_apps(apps, instances_by_app, local_node_id, now)
 
 
-async def sample_due_apps(apps, replicas_by_app: dict[int, list], local_node_id, now: float, last_sample: dict | None = None) -> int:
+async def sample_due_apps(apps, instances_by_app: dict[int, list], local_node_id, now: float, last_sample: dict | None = None) -> int:
     """Ask Docker about the running instances of the apps that are due. Returns the number of calls made."""
     last_sample = _last_sample if last_sample is None else last_sample
     due = [a for a in apps
            if not (a.node_id and a.node_id != local_node_id)          # apps on other nodes stream their own stats
-           and replicas_by_app.get(a.id) and _wants_sample(a.id, now, last_sample)]
+           and instances_by_app.get(a.id) and _wants_sample(a.id, now, last_sample)]
     gate = asyncio.Semaphore(STATS_CONCURRENCY)
     calls = 0
 
-    async def sample(replica):
+    async def sample(instance):
         nonlocal calls
         async with gate:
             calls += 1
             return await asyncio.to_thread(
                 containers_stats_logs.get_container_stats_by_name,
-                containers_naming.replica_container_name(replica.app_id, replica.id))
+                containers_naming.instance_container_name(instance.app_id, instance.id))
 
     async def one_app(a):
         try:
-            replicas = replicas_by_app[a.id]
-            results = await asyncio.gather(*[sample(r) for r in replicas])
+            instances = instances_by_app[a.id]
+            results = await asyncio.gather(*[sample(r) for r in instances])
             last_sample[a.id] = now
             stats_list = []
             stamp = int(_time.time() * 1000)
-            for replica, s in zip(replicas, results):
+            for instance, s in zip(instances, results):
                 if not s:
                     continue
                 stats_list.append(s)
-                frame = {"replica_id": replica.id, "timestamp": stamp, **s}
-                pm.set_replica_stats(replica.id, frame)
+                frame = {"instance_id": instance.id, "timestamp": stamp, **s}
+                pm.set_instance_stats(instance.id, frame)
                 pm._push_stat(a.id, frame)
             if not stats_list:
                 return
@@ -120,7 +120,7 @@ async def sample_due_apps(apps, replicas_by_app: dict[int, list], local_node_id,
             pass
 
     await asyncio.gather(*[one_app(a) for a in due])
-    for app_id in [i for i in last_sample if i not in replicas_by_app]:
+    for app_id in [i for i in last_sample if i not in instances_by_app]:
         del last_sample[app_id]                                    # apps that no longer run here
     return calls
 
@@ -138,13 +138,13 @@ async def _stats_collector():
         await asyncio.sleep(2)
 
 
-# ── Remote replica stats poller ───────────────────────────────────────────────
-async def _remote_replica_stats_poller():
-    """Poll remote nodes every 15s to keep per-replica stats fresh for the instances tab.
+# ── Remote instance stats poller ───────────────────────────────────────────────
+async def _remote_instance_stats_poller():
+    """Poll remote nodes every 15s to keep per-instance stats fresh for the instances tab.
 
     Only fires when no stats WebSocket relay is already streaming for a given app
-    (the relay in stats.py feeds _replica_stats in real-time when the stats tab is open).
-    Uses one get_stats command per (node, app) pair — not per replica — to keep load low.
+    (the relay in stats.py feeds _instance_stats in real-time when the stats tab is open).
+    Uses one get_stats command per (node, app) pair — not per instance — to keep load low.
     """
     await asyncio.sleep(20)
     while True:
@@ -161,21 +161,21 @@ async def _remote_replica_stats_poller():
                         _AR.node_id.isnot(None),
                     )
                 )
-                all_running_replicas = rep_result.scalars().all()
+                all_running_instances = rep_result.scalars().all()
 
-            remote_replicas = [r for r in all_running_replicas if r.node_id != local_node_id]
+            remote_instances = [r for r in all_running_instances if r.node_id != local_node_id]
 
-            if not remote_replicas:
+            if not remote_instances:
                 await asyncio.sleep(15)
                 continue
 
             # Group by (node_id, app_id) — one command per pair
             from collections import defaultdict
             groups: dict[tuple[int, int], list] = defaultdict(list)
-            for r in remote_replicas:
+            for r in remote_instances:
                 groups[(r.node_id, r.app_id)].append(r)
 
-            async def _poll_group(node_id: int, app_id: int, replicas: list):
+            async def _poll_group(node_id: int, app_id: int, instances: list):
                 # Skip if no agent WS — command would just queue forever
                 if node_id not in _node_ws_connections:
                     return
@@ -201,24 +201,24 @@ async def _remote_replica_stats_poller():
                                              "system_memory_used_mb", "system_memory_percent")
                             }
                             snap["timestamp"] = int(_time.time() * 1000)
-                            for replica in replicas:
-                                pm.set_replica_stats(replica.id, {"replica_id": replica.id, **snap})
+                            for instance in instances:
+                                pm.set_instance_stats(instance.id, {"instance_id": instance.id, **snap})
                             app_frames.setdefault(app_id, []).append(dict(snap))
-                            _rlog.info("poll stored stats for %d replicas on node=%d", len(replicas), node_id)
+                            _rlog.info("poll stored stats for %d instances on node=%d", len(instances), node_id)
                         elif s.get("status") == "stopped":
                             _rlog.info("poll node=%d app=%d temporarily stopped during restart", node_id, app_id)
-                            # Fallback to per-replica stats to avoid losing metrics when
+                            # Fallback to per-instance stats to avoid losing metrics when
                             # app-level aggregate briefly reports stopped.
-                            for replica in replicas:
+                            for instance in instances:
                                 try:
                                     rdone = await node_commands.ask(
-                                        node_id, "get_replica_stats",
-                                        {"app_id": app_id, "app_name": app_name, "replica_id": replica.id},
+                                        node_id, "get_instance_stats",
+                                        {"app_id": app_id, "app_name": app_name, "instance_id": instance.id},
                                         app_id=app_id, timeout=12)
                                     if rdone.status == "done" and rdone.result:
                                         rs = rdone.result
                                         if rs.get("cpu_percent") is not None:
-                                            pm.set_replica_stats(replica.id, {"replica_id": replica.id, **rs})
+                                            pm.set_instance_stats(instance.id, {"instance_id": instance.id, **rs})
                                 except Exception:
                                     continue
                 except Exception as _e:
@@ -253,7 +253,7 @@ async def _overview_sampler():
         try:
             async with AsyncSessionLocal() as db:
                 apps = (await db.execute(select(Application))).scalars().all()
-                replicas = (await db.execute(select(_AR))).scalars().all()
+                instances = (await db.execute(select(_AR))).scalars().all()
                 nodes = (await db.execute(select(_Node))).scalars().all()
 
                 now = _dt.datetime.utcnow()
@@ -286,9 +286,9 @@ async def _overview_sampler():
 
                 db.add(OverviewHistory(
                     timestamp=now,
-                    apps_running=len({r.app_id for r in replicas if r.status == "running"}),
+                    apps_running=len({r.app_id for r in instances if r.status == "running"}),
                     apps_total=len(apps),
-                    instances=sum(1 for r in replicas if r.status == "running"),
+                    instances=sum(1 for r in instances if r.status == "running"),
                     cpu_percent=round(sum(cpu_vals) / len(cpu_vals), 1) if cpu_vals else None,
                     mem_used_mb=round(mem_used) if mem_total else None,
                     mem_total_mb=round(mem_total) if mem_total else None,
@@ -331,7 +331,7 @@ async def _stats_history_writer():
                     recent = pm.get_recent_stats(a.id)
                     if not recent:
                         continue
-                    # Skip per-replica frames (they have replica_id, not cpu_percent at top level)
+                    # Skip per-instance frames (they have instance_id, not cpu_percent at top level)
                     agg = [s for s in recent if "cpu_percent" in s]
                     if not agg:
                         continue

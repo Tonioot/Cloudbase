@@ -16,21 +16,21 @@ def _run(coro):
 def node_with_work(client):
     from sqlalchemy import delete
     from core.database import AsyncSessionLocal
-    from core.models import Application, ApplicationReplica, Database, Node
+    from core.models import Application, Instance, Database, Node
 
     async def setup():
         async with AsyncSessionLocal() as db:
             node = Node(name="page-node", status="online", auth_token="token-page", is_local=False, enabled=True,
-                        wg_ip="10.77.0.9", wg_public_key="P" * 44, wg_state="up", agent_version="2.0.0")
+                        wg_ip="10.77.0.9", wg_public_key="P" * 44, wg_state="up", agent_version="3.0.0")
             other = Node(name="other-page-node", status="online", auth_token="token-page-2", is_local=False, enabled=True)
             app_b = Application(name="b-shop", repo_url="https://example.test/b", start_command="x", port=3000)
             app_a = Application(name="a-blog", repo_url="https://example.test/a", start_command="x", port=3000)
             db.add_all([node, other, app_a, app_b])
             await db.flush()
             db.add_all([
-                ApplicationReplica(app_id=app_b.id, node_id=node.id, status="running", external_port=9601),
-                ApplicationReplica(app_id=app_a.id, node_id=node.id, status="error", external_port=9602, last_error="no space left"),
-                ApplicationReplica(app_id=app_a.id, node_id=other.id, status="running", external_port=9603),
+                Instance(app_id=app_b.id, node_id=node.id, status="running", external_port=9601),
+                Instance(app_id=app_a.id, node_id=node.id, status="error", external_port=9602, last_error="no space left"),
+                Instance(app_id=app_a.id, node_id=other.id, status="running", external_port=9603),
                 Database(name="page-db", engine="postgres", version="16", node_id=node.id, status="running", credentials="x"),
                 Database(name="elsewhere-db", engine="redis", version="7", node_id=other.id, status="running", credentials="x"),
             ])
@@ -42,7 +42,7 @@ def node_with_work(client):
     async def cleanup():
         async with AsyncSessionLocal() as db:
             await db.execute(delete(Database).where(Database.node_id.in_([node_id, other_id])))
-            await db.execute(delete(ApplicationReplica).where(ApplicationReplica.app_id.in_(app_ids)))
+            await db.execute(delete(Instance).where(Instance.app_id.in_(app_ids)))
             await db.execute(delete(Application).where(Application.id.in_(app_ids)))
             await db.execute(delete(Node).where(Node.id.in_([node_id, other_id])))
             await db.commit()

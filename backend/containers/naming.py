@@ -9,10 +9,10 @@ def app_dir_name(app_id: int) -> str:
     return f"app-{app_id}"
 
 
-# ── Replica helpers ───────────────────────────────────────────────────────────
+# ── Instance helpers ───────────────────────────────────────────────────────────
 
-def replica_container_name(app_id: int, replica_id: int) -> str:
-    return f"cloudbase-app-{app_id}-replica-{replica_id}"
+def instance_container_name(app_id: int, instance_id: int) -> str:
+    return f"cloudbase-app-{app_id}-instance-{instance_id}"
 
 
 def job_container_name(app_id: int, run_id: int) -> str:

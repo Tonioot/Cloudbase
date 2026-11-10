@@ -82,7 +82,7 @@ def _setup(tmp_path):
     from pathlib import Path
     from containers import processes as pm
     from core.database import AsyncSessionLocal
-    from core.models import Application, ApplicationReplica, Node
+    from core.models import Application, Instance, Node
     source = Path(pm.APPS_BASE_DIR) / "src-app"          # the source must lie in the apps directory: anything else is never served
     source.mkdir(parents=True, exist_ok=True)
     _tree(source)
@@ -95,8 +95,8 @@ def _setup(tmp_path):
             db.add_all([node, app])
             await db.flush()
             # two instances of the same app on one node: the check "does this node run the app" must cope with that
-            db.add_all([ApplicationReplica(app_id=app.id, node_id=node.id, status="running", external_port=9501),
-                        ApplicationReplica(app_id=app.id, node_id=node.id, status="running", external_port=9502)])
+            db.add_all([Instance(app_id=app.id, node_id=node.id, status="running", external_port=9501),
+                        Instance(app_id=app.id, node_id=node.id, status="running", external_port=9502)])
             await db.commit()
             return app.id, node.id
     return asyncio.run(go())
@@ -111,11 +111,11 @@ def served(client, tmp_path):
     shutil.rmtree(os.path.join(pm.APPS_BASE_DIR, "src-app"), ignore_errors=True)
     from sqlalchemy import delete
     from core.database import AsyncSessionLocal
-    from core.models import Application, ApplicationReplica, Node
+    from core.models import Application, Instance, Node
 
     async def cleanup():
         async with AsyncSessionLocal() as db:
-            await db.execute(delete(ApplicationReplica).where(ApplicationReplica.app_id == app_id))
+            await db.execute(delete(Instance).where(Instance.app_id == app_id))
             await db.execute(delete(Application).where(Application.id == app_id))
             await db.execute(delete(Node).where(Node.id == node_id))
             await db.commit()

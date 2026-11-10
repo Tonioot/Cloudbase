@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from core import activity
-from core.models import ApplicationReplica, Node
+from core.models import Instance, Node
 from containers import processes as pm
 from nodes import desired
 from nodes import commands as node_commands
@@ -14,8 +14,8 @@ from core.env_crypto import decrypt_env
 from core.audit import log_audit
 from core import auth as _auth
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
-from apps.runtime import _start_replica_runtime, _load_node_map
-from apps.serializers import _replica_to_dict, _get_or_404
+from apps.runtime import _start_instance_runtime, _load_node_map
+from apps.serializers import _instance_to_dict, _get_or_404
 from apps.state import locked
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
@@ -23,32 +23,32 @@ router = APIRouter(prefix="/api/apps", tags=["applications"])
 
 @router.get("/{app_id}/instances")
 async def list_instances(app_id: int, _user: dict = Depends(_auth.require_permission("apps.view")), db: AsyncSession = Depends(get_db)):
-    """Return all instances (ApplicationReplica rows) for an app."""
+    """Return all instances (Instance rows) for an app."""
     await _get_or_404(app_id, db)
     node_map = await _load_node_map(db)
     rep_result = await db.execute(
-        select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
-        .order_by(ApplicationReplica.id)
+        select(Instance).where(Instance.app_id == app_id)
+        .order_by(Instance.id)
     )
-    return [_replica_to_dict(r, node_map.get(r.node_id)) for r in rep_result.scalars().all()]
+    return [_instance_to_dict(r, node_map.get(r.node_id)) for r in rep_result.scalars().all()]
 
 
 @router.get("/{app_id}/instances/stats")
 async def get_instance_stats(app_id: int, _user: dict = Depends(_auth.require_permission("apps.view")), db: AsyncSession = Depends(get_db)):
-    """Return the latest stats snapshot for each replica of this app."""
+    """Return the latest stats snapshot for each instance of this app."""
     await _get_or_404(app_id, db)
     pm.mark_watched(app_id)       # someone is looking: the collector samples this app every 2 s for a while
     rep_result = await db.execute(
-        select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
+        select(Instance).where(Instance.app_id == app_id)
     )
-    replicas = rep_result.scalars().all()
-    replica_ids = [r.id for r in replicas]
-    snapshots = pm.get_all_replica_stats(app_id, replica_ids)
+    instances = rep_result.scalars().all()
+    instance_ids = [r.id for r in instances]
+    snapshots = pm.get_all_instance_stats(app_id, instance_ids)
 
-    # On-demand fallback: remote replicas without a cached snapshot get fetched in parallel.
+    # On-demand fallback: remote instances without a cached snapshot get fetched in parallel.
     # We fire all commands concurrently so the total wait is bounded by one timeout, not N×timeout.
     missing_remote_running = [
-        r for r in replicas
+        r for r in instances
         if r.id not in snapshots and r.status in ("running", "starting")
     ]
     if missing_remote_running:
@@ -59,14 +59,14 @@ async def get_instance_stats(app_id: int, _user: dict = Depends(_auth.require_pe
             if not node or node.is_local or node.status != "online":
                 return
             try:
-                done = await node_commands.ask(node.id, "get_replica_stats",
-                                               {"app_id": r.app_id, "app_name": "", "replica_id": r.id},
+                done = await node_commands.ask(node.id, "get_instance_stats",
+                                               {"app_id": r.app_id, "app_name": "", "instance_id": r.id},
                                                app_id=r.app_id, timeout=1.5)
                 if done.status == "done" and done.result:
                     result = done.result
                     if result.get("cpu_percent") is not None:
-                        pm.set_replica_stats(r.id, {"replica_id": r.id, **result})
-                        snapshots[r.id] = {"replica_id": r.id, **result}
+                        pm.set_instance_stats(r.id, {"instance_id": r.id, **result})
+                        snapshots[r.id] = {"instance_id": r.id, **result}
             except Exception:
                 pass
 
@@ -98,32 +98,32 @@ async def restart_instance(
     """Restart a single application instance."""
     app = await _get_or_404(app_id, db)
     rep_result = await db.execute(
-        select(ApplicationReplica).where(
-            ApplicationReplica.id == instance_id,
-            ApplicationReplica.app_id == app_id,
+        select(Instance).where(
+            Instance.id == instance_id,
+            Instance.app_id == app_id,
         )
     )
-    replica = rep_result.scalar_one_or_none()
-    if not replica:
+    instance = rep_result.scalar_one_or_none()
+    if not instance:
         raise HTTPException(404, "Instance not found")
 
-    await _restart_replica(app, replica, db, actor)
+    await _restart_instance(app, instance, db, actor)
     await db.commit()
-    return {"status": replica.status, "instance_id": instance_id}
+    return {"status": instance.status, "instance_id": instance_id}
 
 
-async def _restart_replica(app, replica, db, actor):
-    replica_node = await db.get(Node, replica.node_id)
-    if replica_node is None:
+async def _restart_instance(app, instance, db, actor):
+    instance_node = await db.get(Node, instance.node_id)
+    if instance_node is None:
         raise HTTPException(409, "The node of this instance no longer exists")
-    if not replica_node.is_local and replica_node.status != "online":
-        raise HTTPException(400, f"Node '{replica_node.name}' is offline")
+    if not instance_node.is_local and instance_node.status != "online":
+        raise HTTPException(400, f"Node '{instance_node.name}' is offline")
 
     # A new spec makes the node recreate the container: that is the restart
-    await _start_replica_runtime(app, replica, replica_node, decrypt_env(app.env_vars or ""), db)
+    await _start_instance_runtime(app, instance, instance_node, decrypt_env(app.env_vars or ""), db)
 
     await log_audit(db, "instance.restart", actor=actor, app_id=app.id,
-                    detail={"name": app.name, "instance_id": replica.id})
+                    detail={"name": app.name, "instance_id": instance.id})
     if _has_public_nginx_domain(app):
         await _write_app_nginx_config(app, db)
 
@@ -133,14 +133,14 @@ class InstanceIdsRequest(BaseModel):
     ids: List[int] = Field(..., min_length=1, max_length=50)
 
 
-async def _replicas_of_app(app_id, ids, db):
+async def _instances_of_app(app_id, ids, db):
     result = await db.execute(
-        select(ApplicationReplica).where(ApplicationReplica.id.in_(ids), ApplicationReplica.app_id == app_id)
+        select(Instance).where(Instance.id.in_(ids), Instance.app_id == app_id)
     )
-    replicas = result.scalars().all()
-    if len(replicas) != len(set(ids)):
+    instances = result.scalars().all()
+    if len(instances) != len(set(ids)):
         raise HTTPException(404, "One or more instances were not found")
-    return replicas
+    return instances
 
 
 @router.post("/{app_id}/instances/restart")
@@ -155,11 +155,11 @@ async def restart_instances(
 ):
     """Restart several instances of an app in one go."""
     app = await _get_or_404(app_id, db)
-    replicas = await _replicas_of_app(app_id, req.ids, db)
-    for replica in replicas:
-        await _restart_replica(app, replica, db, actor)
+    instances = await _instances_of_app(app_id, req.ids, db)
+    for instance in instances:
+        await _restart_instance(app, instance, db, actor)
     await db.commit()
-    return {"status": "restarting", "instance_ids": sorted(r.id for r in replicas)}
+    return {"status": "restarting", "instance_ids": sorted(r.id for r in instances)}
 
 
 @router.post("/{app_id}/instances/remove")
@@ -173,10 +173,10 @@ async def remove_instances(
 ):
     """Stop and remove several instances of an app in one go."""
     app = await _get_or_404(app_id, db)
-    replicas = await _replicas_of_app(app_id, req.ids, db)
-    await _remove_replicas(app, replicas, db, actor)
+    instances = await _instances_of_app(app_id, req.ids, db)
+    await _remove_instances(app, instances, db, actor)
     await db.commit()
-    return {"status": "deleted", "instance_ids": sorted(r.id for r in replicas)}
+    return {"status": "deleted", "instance_ids": sorted(r.id for r in instances)}
 
 
 @router.delete("/{app_id}/instances/{instance_id}")
@@ -191,29 +191,29 @@ async def delete_instance(
     """Stop and remove a single application instance."""
     app = await _get_or_404(app_id, db)
     rep_result = await db.execute(
-        select(ApplicationReplica).where(
-            ApplicationReplica.id == instance_id,
-            ApplicationReplica.app_id == app_id,
+        select(Instance).where(
+            Instance.id == instance_id,
+            Instance.app_id == app_id,
         )
     )
-    replica = rep_result.scalar_one_or_none()
-    if not replica:
+    instance = rep_result.scalar_one_or_none()
+    if not instance:
         raise HTTPException(404, "Instance not found")
 
-    await _remove_replicas(app, [replica], db, actor)
+    await _remove_instances(app, [instance], db, actor)
     await db.commit()
     return {"status": "deleted", "instance_id": instance_id}
 
 
-async def _remove_replicas(app, replicas, db, actor):
+async def _remove_instances(app, instances, db, actor):
     # Nothing to send: the node (this server too) removes any container whose instance is no longer on its list,
     # also when it was offline just now and only hears about it when it is back.
     removed = []
-    for replica in replicas:
-        desired.nudge(replica.node_id)
+    for instance in instances:
+        desired.nudge(instance.node_id)
         # Always delete the DB row regardless of container state or node availability
-        removed.append(replica.id)
-        await db.delete(replica)
+        removed.append(instance.id)
+        await db.delete(instance)
     await db.flush()
 
     # Regenerate nginx config without the removed backends.

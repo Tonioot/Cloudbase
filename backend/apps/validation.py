@@ -5,19 +5,19 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from core.models import Application, ApplicationReplica
+from core.models import Application, Instance
 from nginx import paths as nginx_paths
 from containers import apps as containers_apps
 
 async def _assign_external_port(requested: Optional[int], node_id: int, db: AsyncSession) -> int:
     """Return requested port if free, else the next free port of the instance range, for an instance on this node."""
-    replica_result = await db.execute(
-        select(ApplicationReplica.external_port).where(
-            ApplicationReplica.node_id == node_id,
-            ApplicationReplica.external_port.isnot(None),
+    instance_result = await db.execute(
+        select(Instance.external_port).where(
+            Instance.node_id == node_id,
+            Instance.external_port.isnot(None),
         )
     )
-    used: set[int] = {row[0] for row in replica_result.all()}
+    used: set[int] = {row[0] for row in instance_result.all()}
 
     if requested:
         if requested in used:

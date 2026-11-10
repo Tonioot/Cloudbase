@@ -2,6 +2,8 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 import os
 
+import rename_migration
+
 DATA_DIR = os.path.expanduser("~/.cloudbase")
 os.makedirs(DATA_DIR, exist_ok=True)
 
@@ -28,13 +30,13 @@ AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
 # Instances from before the primary was a node row of its own belong to it
-REPLICAS_WITHOUT_NODE_SQL = (
-    "UPDATE application_replicas SET node_id = (SELECT id FROM nodes WHERE is_local = 1 LIMIT 1) "
+INSTANCES_WITHOUT_NODE_SQL = (
+    "UPDATE application_instances SET node_id = (SELECT id FROM nodes WHERE is_local = 1 LIMIT 1) "
     "WHERE node_id IS NULL AND EXISTS (SELECT 1 FROM nodes WHERE is_local = 1)"
 )
 
 # Statuses older versions wrote that nothing understands any more: the instance is on its way up
-OLD_INSTANCE_STATUSES_SQL = "UPDATE application_replicas SET status = 'starting' WHERE status IN ('restarting', 'deploying')"
+OLD_INSTANCE_STATUSES_SQL = "UPDATE application_instances SET status = 'starting' WHERE status IN ('restarting', 'deploying')"
 
 
 class Base(DeclarativeBase):
@@ -51,6 +53,7 @@ async def init_db():
     # Importing every model registers its table with Base.metadata for create_all below.
     from core.models import Application, Node, NodeInvite, AuditLog, StatsHistory, User, SystemConfig, Role, Permission, role_permissions  # noqa: F401
     async with engine.begin() as conn:
+        await rename_migration.migrate_database(conn)          # TEMPORARY, see rename_migration.py
         await conn.run_sync(Base.metadata.create_all)
         # Migrate existing DBs: add columns introduced after initial schema.
         result = await conn.exec_driver_sql("PRAGMA table_info(applications)")
@@ -81,8 +84,8 @@ async def init_db():
             ("health_expect",          "VARCHAR(60) NOT NULL DEFAULT ''"),
             ("health_timeout_seconds", "INTEGER NOT NULL DEFAULT 600"),
             ("autoscale_enabled",      "BOOLEAN NOT NULL DEFAULT 0"),
-            ("autoscale_min_replicas", "INTEGER NOT NULL DEFAULT 1"),
-            ("autoscale_max_replicas", "INTEGER NOT NULL DEFAULT 4"),
+            ("autoscale_min_instances", "INTEGER NOT NULL DEFAULT 1"),
+            ("autoscale_max_instances", "INTEGER NOT NULL DEFAULT 4"),
             ("autoscale_cpu_target",   "FLOAT NOT NULL DEFAULT 70.0"),
             ("auto_deploy",            "BOOLEAN NOT NULL DEFAULT 0"),
             ("deploy_branch",          "VARCHAR(200)"),
@@ -198,9 +201,9 @@ async def init_db():
             if existing_history_cols and col not in existing_history_cols:
                 await conn.exec_driver_sql(f"ALTER TABLE node_metrics_history ADD COLUMN {col} FLOAT")
 
-        # application_replicas
-        result = await conn.exec_driver_sql("PRAGMA table_info(application_replicas)")
-        existing_replica_cols = {row[1] for row in result.fetchall()}
+        # application_instances
+        result = await conn.exec_driver_sql("PRAGMA table_info(application_instances)")
+        existing_instance_cols = {row[1] for row in result.fetchall()}
         for col, definition in [
             ("docker_cpu_limit",         "FLOAT"),
             ("docker_memory_limit_mb",   "INTEGER"),
@@ -212,17 +215,17 @@ async def init_db():
             ("spec_json",               "TEXT"),
             ("spec_hash",               "VARCHAR(20)"),
         ]:
-            if col in existing_replica_cols:
+            if col in existing_instance_cols:
                 continue
             await conn.exec_driver_sql(
-                f"ALTER TABLE application_replicas ADD COLUMN {col} {definition}"
+                f"ALTER TABLE application_instances ADD COLUMN {col} {definition}"
             )
-        await conn.exec_driver_sql(REPLICAS_WITHOUT_NODE_SQL)
+        await conn.exec_driver_sql(INSTANCES_WITHOUT_NODE_SQL)
         await conn.exec_driver_sql(OLD_INSTANCE_STATUSES_SQL)
         # Instances on other nodes written before nodes were driven by desired state: what they were doing
         # is what they should keep doing (nodes/desired.py writes their spec the first time a node asks)
         await conn.exec_driver_sql(
-            "UPDATE application_replicas SET desired = CASE WHEN status IN "
+            "UPDATE application_instances SET desired = CASE WHEN status IN "
             "('running','starting','restarting','node_offline','pending') THEN 'running' ELSE 'stopped' END "
             "WHERE desired IS NULL AND node_id IN (SELECT id FROM nodes WHERE is_local = 0)"
         )

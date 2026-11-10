@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal
-from core.models import ApplicationReplica, Node, Application
+from core.models import Instance, Node, Application
 from nginx import certificates as nginx_certificates
 from nginx import paths as nginx_paths
 from nginx import certbot as nginx_certbot
@@ -98,10 +98,10 @@ async def _nginx_mode(app: Application, db: AsyncSession, backends: list[str]) -
     if mode != "normal" or backends:
         return mode
     coming_up = (await db.execute(
-        select(ApplicationReplica.container_id).where(
-            ApplicationReplica.app_id == app.id,
-            ApplicationReplica.desired == "running",
-            ApplicationReplica.status.in_(_COMING_UP),
+        select(Instance.container_id).where(
+            Instance.app_id == app.id,
+            Instance.desired == "running",
+            Instance.status.in_(_COMING_UP),
         )
     )).scalars().all()
     if not coming_up:
@@ -211,22 +211,22 @@ def _ensure_maintenance_files(app: Application, app_id: int) -> tuple[bool, str]
 async def _get_nginx_backends(app: Application, db: AsyncSession) -> list[str]:
     """Return nginx backend addresses for an app as a list of 'host:port' strings.
 
-    Local replicas use 127.0.0.1:{external_port}.
-    Remote replicas use {node wg_ip}:{external_port} (over the node network).
-    Replicas that are running but have no address yet are omitted.
-    Returns an empty list when no running replicas exist.
+    Local instances use 127.0.0.1:{external_port}.
+    Remote instances use {node wg_ip}:{external_port} (over the node network).
+    Instances that are running but have no address yet are omitted.
+    Returns an empty list when no running instances exist.
     """
     result = await db.execute(
-        select(ApplicationReplica, Node)
-        .join(Node, ApplicationReplica.node_id == Node.id, isouter=True)
+        select(Instance, Node)
+        .join(Node, Instance.node_id == Node.id, isouter=True)
         .where(
-            ApplicationReplica.app_id == app.id,
-            ApplicationReplica.status == "running",
+            Instance.app_id == app.id,
+            Instance.status == "running",
         )
     )
     backends: list[str] = []
-    for replica, r_node in result.all():
-        backend = routing.backend_for(replica, r_node)
+    for instance, r_node in result.all():
+        backend = routing.backend_for(instance, r_node)
         if backend:
             backends.append(backend)
     return backends

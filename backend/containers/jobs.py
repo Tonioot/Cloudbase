@@ -3,7 +3,7 @@ import threading
 from containers.client import _apply_linked_databases, _assert_image_local, _get_client
 from containers.dockerfiles import _cmd_to_json
 from containers.naming import job_container_name
-from containers.replicas import remove_container_by_name
+from containers.instances import remove_container_by_name
 
 # ── Cron jobs ─────────────────────────────────────────────────────────────────
 # A run is one container that does its work and exits; it is removed afterwards.

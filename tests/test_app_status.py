@@ -43,7 +43,7 @@ def test_a_cron_job_follows_its_schedule_not_instances():
 # ── through the API ───────────────────────────────────────────────────────────
 def _rows(app_name, statuses):
     from core.database import AsyncSessionLocal
-    from core.models import Application, ApplicationReplica
+    from core.models import Application, Instance
     from nodes.registry import ensure_local_node
 
     async def go():
@@ -53,7 +53,7 @@ def _rows(app_name, statuses):
             db.add(app)
             await db.flush()
             for i, status in enumerate(statuses):
-                db.add(ApplicationReplica(app_id=app.id, node_id=node.id, status=status, external_port=9700 + i + hash(app_name) % 50 * 10))
+                db.add(Instance(app_id=app.id, node_id=node.id, status=status, external_port=9700 + i + hash(app_name) % 50 * 10))
             await db.commit()
             return app.id
     return asyncio.run(go())
@@ -62,11 +62,11 @@ def _rows(app_name, statuses):
 def _set_instance(app_id, status):
     from sqlalchemy import update
     from core.database import AsyncSessionLocal
-    from core.models import ApplicationReplica
+    from core.models import Instance
 
     async def go():
         async with AsyncSessionLocal() as db:
-            await db.execute(update(ApplicationReplica).where(ApplicationReplica.app_id == app_id).values(status=status))
+            await db.execute(update(Instance).where(Instance.app_id == app_id).values(status=status))
             await db.commit()
     asyncio.run(go())
 
@@ -107,11 +107,11 @@ def test_background_workers_pick_apps_by_their_running_instances(client):
 
 def test_an_instance_only_takes_a_known_status():
     """A typo in a status (or a status nothing understands) fails where it is written, not later in nginx or the panel."""
-    from core.models import INSTANCE_STATUSES, ApplicationReplica
-    row = ApplicationReplica(app_id=1, node_id=1)
+    from core.models import INSTANCE_STATUSES, Instance
+    row = Instance(app_id=1, node_id=1)
     for status in INSTANCE_STATUSES:
         row.status = status
     with pytest.raises(ValueError, match="unknown instance status"):
         row.status = "runing"
     with pytest.raises(ValueError):
-        ApplicationReplica(app_id=1, node_id=1, status="restarting")
+        Instance(app_id=1, node_id=1, status="restarting")

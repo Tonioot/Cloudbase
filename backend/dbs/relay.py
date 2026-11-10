@@ -7,7 +7,7 @@ from sqlalchemy import select
 from dbs import proxy as db_proxy
 from dbs import lifecycle as dbs_lifecycle
 from core.database import AsyncSessionLocal
-from core.models import Node, DatabaseLink, Database, Application, ApplicationReplica
+from core.models import Node, DatabaseLink, Database, Application, Instance
 from nodes.registry import get_node_by_token_or_401
 from dbs.ops import _allowlist
 from dbs.state import DIAL_TIMEOUT_SECONDS, _control, _pending_dials
@@ -48,14 +48,14 @@ async def _compute_desired_proxies() -> dict[int, set[int]]:
         if not rows:
             return {}
         app_ids = {r[0] for r in rows}
-        replica_rows = (await db.execute(
-            select(ApplicationReplica.app_id, ApplicationReplica.node_id).where(ApplicationReplica.app_id.in_(app_ids))
+        instance_rows = (await db.execute(
+            select(Instance.app_id, Instance.node_id).where(Instance.app_id.in_(app_ids))
         )).all()
         app_rows = (await db.execute(
             select(Application.id, Application.node_id).where(Application.id.in_(app_ids))
         )).all()
     nodes_by_app: dict[int, set[int]] = {}
-    for app_id, node_id in replica_rows:
+    for app_id, node_id in instance_rows:
         if node_id is not None:
             nodes_by_app.setdefault(app_id, set()).add(node_id)
     for app_id, node_id in app_rows:

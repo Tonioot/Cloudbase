@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from apps import nginx_sync
 from containers import cleanup as containers_cleanup
 from core.database import AsyncSessionLocal
-from core.models import ApplicationReplica, Node
+from core.models import Instance, Node
 from nodes import commands as node_commands
 from nodes.commands import _commit_with_sqlite_lock_retry, _utcnow
 from nodes.state import _node_ws_connections, _push_node_event
@@ -19,12 +19,12 @@ log = logging.getLogger("cloudbase.nodes")
 async def mark_instances_offline(db: AsyncSession, node_id: int) -> set[int]:
     """The primary cannot reach this node: its live instances leave rotation and are picked up again when it is back
     (nodes/observed.py). Returns the apps whose nginx config must follow, once the caller has committed."""
-    rows = await db.execute(select(ApplicationReplica).where(
-        and_(ApplicationReplica.node_id == node_id, ApplicationReplica.status.in_(["running", "starting"]))))
+    rows = await db.execute(select(Instance).where(
+        and_(Instance.node_id == node_id, Instance.status.in_(["running", "starting"]))))
     app_ids = set()
-    for replica in rows.scalars().all():
-        replica.status, replica.substatus = "node_offline", None
-        app_ids.add(replica.app_id)
+    for instance in rows.scalars().all():
+        instance.status, instance.substatus = "node_offline", None
+        app_ids.add(instance.app_id)
     return app_ids
 
 

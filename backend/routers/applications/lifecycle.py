@@ -7,7 +7,7 @@ from core.audit import log_audit
 from core import auth as _auth
 from apps.lifecycle import restart_app_now, start_app_now
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
-from apps.runtime import _load_app_replicas, _load_node_map, _stop_replica_runtime
+from apps.runtime import _load_app_instances, _load_node_map, _stop_instance_runtime
 from apps.serializers import _get_or_404, app_status
 from apps.state import locked
 
@@ -26,9 +26,9 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict 
     app = await _get_or_404(app_id, db)
     if app.cron_schedule:
         return await _cron.set_enabled(app_id, False, actor)
-    replicas = await _load_app_replicas(app_id, db)
+    instances = await _load_app_instances(app_id, db)
 
-    if not replicas:
+    if not instances:
         if _has_public_nginx_domain(app):
             await _write_app_nginx_config(app, db)
         await log_audit(db, "app.stop", actor=actor, app_id=app_id, detail={"name": app.name})
@@ -36,18 +36,18 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict 
         return {"status": "stopped", "instance_count": 0}
 
     node_map = await _load_node_map(db)
-    for replica in replicas:
-        if replica.status not in ("running", "starting", "stopping", "node_offline"):
+    for instance in instances:
+        if instance.status not in ("running", "starting", "stopping", "node_offline"):
             continue
-        replica_node = node_map.get(replica.node_id)
-        await _stop_replica_runtime(app, replica, replica_node, db)
+        instance_node = node_map.get(instance.node_id)
+        await _stop_instance_runtime(app, instance, instance_node, db)
 
     if _has_public_nginx_domain(app):
         await _write_app_nginx_config(app, db)
 
     await log_audit(db, "app.stop", actor=actor, app_id=app_id, detail={"name": app.name})
     await db.commit()
-    return {"status": app_status(app, [r.status for r in replicas]), "instance_count": len(replicas)}
+    return {"status": app_status(app, [r.status for r in instances]), "instance_count": len(instances)}
 
 
 @router.post("/{app_id}/restart")

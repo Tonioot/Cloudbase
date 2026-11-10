@@ -16,7 +16,7 @@ def env(client, monkeypatch):
     from sqlalchemy import delete
     from apps import nginx_sync, rollout
     from core.database import AsyncSessionLocal
-    from core.models import Application, ApplicationReplica, Node
+    from core.models import Application, Instance, Node
     from nodes.registry import ensure_local_node
 
     monkeypatch.setattr(rollout, "POLL_SECONDS", 0.02)
@@ -42,7 +42,7 @@ def env(client, monkeypatch):
             async def go():
                 async with AsyncSessionLocal() as db:
                     row = Node(name=name, status=status, auth_token=f"token-{name}", is_local=False, enabled=True,
-                               wg_ip="10.77.0.9", agent_version="2.0.0")
+                               wg_ip="10.77.0.9", agent_version="3.0.0")
                     db.add(row)
                     await db.commit()
                     return row.id
@@ -66,7 +66,7 @@ def env(client, monkeypatch):
                     await db.flush()
                     ids = []
                     for i, (node_id, status, cpu) in enumerate(instances):
-                        row = ApplicationReplica(app_id=app.id, node_id=node_id, status=status, desired="running",
+                        row = Instance(app_id=app.id, node_id=node_id, status=status, desired="running",
                                                  external_port=12000 + app.id * 10 + i, docker_cpu_limit=cpu)
                         db.add(row)
                         await db.flush()
@@ -81,15 +81,15 @@ def env(client, monkeypatch):
             async def go():
                 from sqlalchemy import select
                 async with AsyncSessionLocal() as db:
-                    return (await db.execute(select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
-                                             .order_by(ApplicationReplica.id))).scalars().all()
+                    return (await db.execute(select(Instance).where(Instance.app_id == app_id)
+                                             .order_by(Instance.id))).scalars().all()
             return _run(go())
 
     yield Env()
 
     async def cleanup():
         async with AsyncSessionLocal() as db:
-            await db.execute(delete(ApplicationReplica).where(ApplicationReplica.app_id.in_(made["apps"])))
+            await db.execute(delete(Instance).where(Instance.app_id.in_(made["apps"])))
             await db.execute(delete(Application).where(Application.id.in_(made["apps"])))
             await db.execute(delete(Node).where(Node.id.in_(made["nodes"])))
             await db.commit()
@@ -97,14 +97,14 @@ def env(client, monkeypatch):
 
 
 async def _fake_promote(app_id, known: set, outcome, seen: list, stop: asyncio.Event):
-    """Plays node + promote: every new 'starting' instance goes live (or fails, as `outcome(replica)` says).
+    """Plays node + promote: every new 'starting' instance goes live (or fails, as `outcome(instance)` says).
     Records which instances existed at the moment each new one went live."""
     from sqlalchemy import select
     from core.database import AsyncSessionLocal
-    from core.models import ApplicationReplica
+    from core.models import Instance
     while not stop.is_set():
         async with AsyncSessionLocal() as db:
-            rows = (await db.execute(select(ApplicationReplica).where(ApplicationReplica.app_id == app_id))).scalars().all()
+            rows = (await db.execute(select(Instance).where(Instance.app_id == app_id))).scalars().all()
             for row in rows:
                 if row.id not in known and row.status == "starting":
                     known.add(row.id)
@@ -125,8 +125,8 @@ def _deploy(app_id, batch, outcome=lambda row: "running"):
         known: set = set()
         async with AsyncSessionLocal() as db:
             from sqlalchemy import select
-            from core.models import ApplicationReplica
-            known |= {r.id for r in (await db.execute(select(ApplicationReplica).where(ApplicationReplica.app_id == app_id))).scalars()}
+            from core.models import Instance
+            known |= {r.id for r in (await db.execute(select(Instance).where(Instance.app_id == app_id))).scalars()}
         stop = asyncio.Event()
         fake = asyncio.create_task(_fake_promote(app_id, known, outcome, seen, stop))
         try:

@@ -19,7 +19,7 @@ def generate_config(
     """Generate an nginx server block.
 
     port: single int (the panel itself), or list[str] of "host:port" backends
-          for multi-replica load balancing (nginx upstream block).
+          for multi-instance load balancing (nginx upstream block).
 
     mode:
       'normal'       -  proxy to app; 502/503 automatically serve downtime.html

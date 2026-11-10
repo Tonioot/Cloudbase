@@ -2,7 +2,7 @@ from fastapi import Request, HTTPException, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
-from core.models import Node, ApplicationReplica
+from core.models import Node, Instance
 from core import auth as _auth
 
 async def _request_can_manage_apps(request: Request) -> bool:
@@ -24,9 +24,9 @@ async def _source_archive_auth(request: Request, app_id: int, db: AsyncSession =
 
 def _require_node_agent_for_app(app_id_param: str = "app_id"):
     """Dependency factory that authenticates node-agent calls and verifies the
-    calling node actually has a replica for the requested app.
+    calling node actually has a instance for the requested app.
 
-    Needs the X-Node-Token of a node that has a replica of app_id.
+    Needs the X-Node-Token of a node that has a instance of app_id.
     """
     async def _dep(request: Request, app_id: int, db: AsyncSession = Depends(get_db)):
         node_token = request.headers.get("X-Node-Token", "")
@@ -41,13 +41,13 @@ def _require_node_agent_for_app(app_id_param: str = "app_id"):
             raise HTTPException(status_code=401, detail="Invalid or disabled node token")
 
         # "At least one": a node may run several instances of the same app
-        replica_result = await db.execute(
-            select(ApplicationReplica.id).where(
-                ApplicationReplica.app_id == app_id,
-                ApplicationReplica.node_id == node.id,
+        instance_result = await db.execute(
+            select(Instance.id).where(
+                Instance.app_id == app_id,
+                Instance.node_id == node.id,
             ).limit(1)
         )
-        if replica_result.first() is None:
-            raise HTTPException(status_code=403, detail="Node has no replica for this app")
+        if instance_result.first() is None:
+            raise HTTPException(status_code=403, detail="Node has no instance for this app")
 
     return _dep

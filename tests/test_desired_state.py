@@ -24,7 +24,7 @@ def _node(name, token=None, status="online"):
     async def go():
         async with AsyncSessionLocal() as db:
             node = Node(name=name, status=status, auth_token=token or f"token-{name}", is_local=False, enabled=True,
-                        wg_ip="127.0.0.1", wg_public_key="K" * 44, wg_state="up", agent_version="2.0.0")
+                        wg_ip="127.0.0.1", wg_public_key="K" * 44, wg_state="up", agent_version="3.0.0")
             db.add(node)
             await db.commit()
             return node.id, node.auth_token
@@ -46,48 +46,48 @@ def _app(name):
     return _run(go())
 
 
-def _replica(app_id, node_id, port, status="starting", desired=None):
+def _instance(app_id, node_id, port, status="starting", desired=None):
     from core.database import AsyncSessionLocal
-    from core.models import ApplicationReplica
+    from core.models import Instance
 
     async def go():
         async with AsyncSessionLocal() as db:
-            rep = ApplicationReplica(app_id=app_id, node_id=node_id, external_port=port, status=status, desired=desired)
+            rep = Instance(app_id=app_id, node_id=node_id, external_port=port, status=status, desired=desired)
             db.add(rep)
             await db.commit()
             return rep.id
     return _run(go())
 
 
-def _row(replica_id):
+def _row(instance_id):
     from core.database import AsyncSessionLocal
-    from core.models import ApplicationReplica
+    from core.models import Instance
 
     async def go():
         async with AsyncSessionLocal() as db:
-            return await db.get(ApplicationReplica, replica_id)
+            return await db.get(Instance, instance_id)
     return _run(go())
 
 
-def _start(node_id, replica_id, payload=None):
+def _start(node_id, instance_id, payload=None):
     from core.database import AsyncSessionLocal
     from nodes import desired
 
     async def go():
         async with AsyncSessionLocal() as db:
-            digest = await desired.start(db, node_id=node_id, replica_id=replica_id, payload=payload or PAYLOAD)
+            digest = await desired.start(db, node_id=node_id, instance_id=instance_id, payload=payload or PAYLOAD)
             await db.commit()
             return digest
     return _run(go())
 
 
-def _stop(node_id, replica_id):
+def _stop(node_id, instance_id):
     from core.database import AsyncSessionLocal
     from nodes import desired
 
     async def go():
         async with AsyncSessionLocal() as db:
-            await desired.stop(db, node_id=node_id, replica_id=replica_id)
+            await desired.stop(db, node_id=node_id, instance_id=instance_id)
             await db.commit()
     _run(go())
 
@@ -107,7 +107,7 @@ def setup(client):
     """A node, an app and a clean-up afterwards."""
     from sqlalchemy import delete
     from core.database import AsyncSessionLocal
-    from core.models import Application, ApplicationReplica, Node
+    from core.models import Application, Instance, Node
     made = {"nodes": [], "apps": []}
 
     def node(name):
@@ -124,7 +124,7 @@ def setup(client):
 
     async def cleanup():
         async with AsyncSessionLocal() as db:
-            await db.execute(delete(ApplicationReplica).where(ApplicationReplica.app_id.in_(made["apps"])))
+            await db.execute(delete(Instance).where(Instance.app_id.in_(made["apps"])))
             await db.execute(delete(Application).where(Application.id.in_(made["apps"])))
             await db.execute(delete(Node).where(Node.id.in_(made["nodes"])))
             await db.commit()
@@ -135,29 +135,29 @@ def setup(client):
 def test_starting_an_instance_stores_an_encrypted_spec_and_a_hash(setup):
     node, app = setup
     node_id, _ = node("d-start")
-    rid = _replica(app("d-start-app"), node_id, 9101)
+    rid = _instance(app("d-start-app"), node_id, 9101)
     digest = _start(node_id, rid)
     row = _row(rid)
     assert row.desired == "running" and row.spec_hash == digest and len(digest) == 16
     assert "s3cret" not in row.spec_json and "shop" not in row.spec_json          # not readable in the database
-    spec = _snapshot(node_id)["replicas"][0]["spec"]
-    assert spec["env_vars"] == {"SECRET_KEY": "s3cret"} and spec["replica_id"] == rid and spec["external_port"] == 9100
+    spec = _snapshot(node_id)["instances"][0]["spec"]
+    assert spec["env_vars"] == {"SECRET_KEY": "s3cret"} and spec["instance_id"] == rid and spec["external_port"] == 9100
 
 
 def test_every_start_gets_a_new_hash_so_a_restart_recreates_the_container(setup):
     node, app = setup
     node_id, _ = node("d-restart")
-    rid = _replica(app("d-restart-app"), node_id, 9102)
+    rid = _instance(app("d-restart-app"), node_id, 9102)
     assert _start(node_id, rid) != _start(node_id, rid)
 
 
 def test_stopping_keeps_the_row_and_the_list_says_stopped(setup):
     node, app = setup
     node_id, _ = node("d-stop")
-    rid = _replica(app("d-stop-app"), node_id, 9103)
+    rid = _instance(app("d-stop-app"), node_id, 9103)
     _start(node_id, rid)
     _stop(node_id, rid)
-    entry = _snapshot(node_id)["replicas"][0]
+    entry = _snapshot(node_id)["instances"][0]
     assert entry["desired"] == "stopped" and entry["spec"] is None and _row(rid) is not None
 
 
@@ -166,17 +166,17 @@ def test_the_list_only_has_the_instances_of_that_node(setup):
     a, _ = node("d-a")
     b, _ = node("d-b")
     app_id = app("d-two-nodes")
-    ra, rb = _replica(app_id, a, 9104), _replica(app_id, b, 9105)
+    ra, rb = _instance(app_id, a, 9104), _instance(app_id, b, 9105)
     _start(a, ra)
     _start(b, rb)
-    assert [e["replica_id"] for e in _snapshot(a)["replicas"]] == [ra]
-    assert [e["replica_id"] for e in _snapshot(b)["replicas"]] == [rb]
+    assert [e["instance_id"] for e in _snapshot(a)["instances"]] == [ra]
+    assert [e["instance_id"] for e in _snapshot(b)["instances"]] == [rb]
 
 
 def test_the_list_hash_changes_with_the_list_and_not_otherwise(setup):
     node, app = setup
     node_id, _ = node("d-hash")
-    rid = _replica(app("d-hash-app"), node_id, 9106)
+    rid = _instance(app("d-hash-app"), node_id, 9106)
     _start(node_id, rid)
     first = _snapshot(node_id)["hash"]
     assert _snapshot(node_id)["hash"] == first
@@ -187,31 +187,31 @@ def test_the_list_hash_changes_with_the_list_and_not_otherwise(setup):
 def test_instances_from_before_desired_state_get_a_spec_the_first_time_a_node_asks(setup):
     node, app = setup
     node_id, _ = node("d-legacy")
-    rid = _replica(app("d-legacy-app"), node_id, 9107, status="running", desired="running")
+    rid = _instance(app("d-legacy-app"), node_id, 9107, status="running", desired="running")
     assert _row(rid).spec_json is None
-    entry = _snapshot(node_id)["replicas"][0]
+    entry = _snapshot(node_id)["instances"][0]
     assert entry["desired"] == "running" and entry["spec"]["external_port"] == 9107 and entry["spec"]["env_vars"] == {"A": "1"}
     assert _row(rid).spec_hash == entry["spec_hash"]
-    assert _snapshot(node_id)["replicas"][0]["spec_hash"] == entry["spec_hash"]       # written once, not every time
+    assert _snapshot(node_id)["instances"][0]["spec_hash"] == entry["spec_hash"]       # written once, not every time
 
 
 # ── the endpoints ────────────────────────────────────────────────────────────────
 def test_a_node_asks_for_its_list_and_gets_nothing_back_when_it_has_the_latest(client, setup):
     node, app = setup
     node_id, token = node("d-http")
-    rid = _replica(app("d-http-app"), node_id, 9108)
+    rid = _instance(app("d-http-app"), node_id, 9108)
     _start(node_id, rid)
     first = client.get("/api/nodes/agent/desired", headers={"X-Node-Token": token}).json()
-    assert [e["replica_id"] for e in first["replicas"]] == [rid]
+    assert [e["instance_id"] for e in first["instances"]] == [rid]
     again = client.get("/api/nodes/agent/desired", params={"have": first["hash"]}, headers={"X-Node-Token": token}).json()
     assert again == {"hash": first["hash"], "unchanged": True}
-    assert client.get("/api/nodes/agent/desired", params={"have": "old"}, headers={"X-Node-Token": token}).json()["replicas"]
+    assert client.get("/api/nodes/agent/desired", params={"have": "old"}, headers={"X-Node-Token": token}).json()["instances"]
 
 
 def test_the_list_and_the_report_need_a_node_token(client):
     assert client.get("/api/nodes/agent/desired").status_code == 401
     assert client.get("/api/nodes/agent/desired", headers={"X-Node-Token": "nope"}).status_code == 401
-    assert client.post("/api/nodes/agent/observed", json={"replicas": {}}).status_code == 401
+    assert client.post("/api/nodes/agent/observed", json={"instances": {}}).status_code == 401
 
 
 def test_a_node_cannot_report_about_instances_of_another_node(client, setup):
@@ -219,10 +219,10 @@ def test_a_node_cannot_report_about_instances_of_another_node(client, setup):
     mine, my_token = node("d-mine")
     other, _ = node("d-other")
     app_id = app("d-shared-app")
-    theirs = _replica(app_id, other, 9109, status="starting", desired="running")
+    theirs = _instance(app_id, other, 9109, status="starting", desired="running")
     spec_hash = _start(other, theirs)
     r = client.post("/api/nodes/agent/observed", headers={"X-Node-Token": my_token},
-                    json={"replicas": {str(theirs): {"state": "error", "spec_hash": spec_hash, "error": "boom"}}})
+                    json={"instances": {str(theirs): {"state": "error", "spec_hash": spec_hash, "error": "boom"}}})
     assert r.status_code == 200 and _row(theirs).status == "starting"
 
 
@@ -230,16 +230,16 @@ def test_reports_are_limited_in_size(client, setup):
     node, _ = setup
     _, token = node("d-big")
     r = client.post("/api/nodes/agent/observed", headers={"X-Node-Token": token},
-                    json={"replicas": {"1": {"state": "error", "error": "x" * 5000}}})
+                    json={"instances": {"1": {"state": "error", "error": "x" * 5000}}})
     assert r.status_code == 422
 
 
 # ── a report becomes a status ──────────────────────────────────────────────────
-def _report(node_id, replica_id, **report):
+def _report(node_id, instance_id, **report):
     from nodes import observed
 
     async def go():
-        await observed.apply(node_id, {str(replica_id): report})
+        await observed.apply(node_id, {str(instance_id): report})
         await asyncio.sleep(0)
     _run(go())
 
@@ -251,7 +251,7 @@ def instance(setup):
 
     def make(name, status="starting", port=9200):
         node_id, token = node(name)
-        rid = _replica(app(f"{name}-app"), node_id, port, status=status)
+        rid = _instance(app(f"{name}-app"), node_id, port, status=status)
         digest = _start(node_id, rid)
         return node_id, rid, digest
     return make
@@ -303,7 +303,7 @@ def test_a_node_that_comes_back_brings_its_instances_back(instance, monkeypatch)
     """Offline instances become starting again as soon as the node reports them, with nothing to recover."""
     node_id, rid, digest = instance("o-back", status="node_offline")
     from nodes import observed
-    monkeypatch.setattr(observed.promote, "start_promotion", lambda replica_id: None)
+    monkeypatch.setattr(observed.promote, "start_promotion", lambda instance_id: None)
     _report(node_id, rid, state="running", spec_hash=digest, container_id="c9")
     assert _row(rid).status == "starting"
     _report(node_id, rid, state="starting", substatus="creating_container", spec_hash=digest)
@@ -327,19 +327,19 @@ def test_an_instance_that_should_stop_is_not_revived_by_a_late_report(instance):
 # ── the places that used to send commands ─────────────────────────────────────────
 def test_starting_a_remote_instance_writes_the_list_instead_of_sending_a_command(setup):
     from core.database import AsyncSessionLocal
-    from core.models import Application, ApplicationReplica, Node
+    from core.models import Application, Instance, Node
     from apps import runtime
     from nodes import commands as node_commands
     node, app = setup
     node_id, _ = node("c-start")
     app_id = app("c-start-app")
-    rid = _replica(app_id, node_id, 9301)
+    rid = _instance(app_id, node_id, 9301)
 
     async def go():
         async with AsyncSessionLocal() as db:
-            a, r, n = await db.get(Application, app_id), await db.get(ApplicationReplica, rid), await db.get(Node, node_id)
+            a, r, n = await db.get(Application, app_id), await db.get(Instance, rid), await db.get(Node, node_id)
             before = {c["id"] for c in node_commands.history(node_id)}
-            await runtime._start_replica_runtime(a, r, n, {"A": "1"}, db)
+            await runtime._start_instance_runtime(a, r, n, {"A": "1"}, db)
             await db.commit()
             return [c for c in node_commands.history(node_id) if c["id"] not in before]
     commands = _run(go())
@@ -349,18 +349,18 @@ def test_starting_a_remote_instance_writes_the_list_instead_of_sending_a_command
 
 def test_stopping_a_remote_instance_changes_the_list(setup):
     from core.database import AsyncSessionLocal
-    from core.models import Application, ApplicationReplica, Node
+    from core.models import Application, Instance, Node
     from apps import runtime
     node, app = setup
     node_id, _ = node("c-stop")
     app_id = app("c-stop-app")
-    rid = _replica(app_id, node_id, 9302, status="running")
+    rid = _instance(app_id, node_id, 9302, status="running")
     _start(node_id, rid)
 
     async def go():
         async with AsyncSessionLocal() as db:
-            a, r, n = await db.get(Application, app_id), await db.get(ApplicationReplica, rid), await db.get(Node, node_id)
-            await runtime._stop_replica_runtime(a, r, n, db)
+            a, r, n = await db.get(Application, app_id), await db.get(Instance, rid), await db.get(Node, node_id)
+            await runtime._stop_instance_runtime(a, r, n, db)
             await db.commit()
     _run(go())
     row = _row(rid)
@@ -372,12 +372,12 @@ def test_deleting_an_instance_needs_no_message_to_the_node(admin, setup):
     node, app = setup
     node_id, _ = node("c-delete")
     app_id = app("c-delete-app")
-    rid = _replica(app_id, node_id, 9303, status="running")
+    rid = _instance(app_id, node_id, 9303, status="running")
     _start(node_id, rid)
     node_commands.forget(node_id)                                   # an earlier test's node may have had this id
     assert admin.delete(f"/api/apps/{app_id}/instances/{rid}").status_code == 200
     assert _row(rid) is None
-    assert _snapshot(node_id)["replicas"] == []                     # gone from the list: the node removes the container
+    assert _snapshot(node_id)["instances"] == []                     # gone from the list: the node removes the container
     assert node_commands.history(node_id) == []
 
 
@@ -385,7 +385,7 @@ def test_scaling_to_a_wanted_number_removes_the_newest_instances(admin, setup):
     node, app = setup
     node_id, _ = node("c-target")
     app_id = app("c-target-app")
-    ids = [_replica(app_id, node_id, 9320 + i, status="running") for i in range(4)]
+    ids = [_instance(app_id, node_id, 9320 + i, status="running") for i in range(4)]
     for rid in ids:
         _start(node_id, rid)
     assert admin.post(f"/api/apps/{app_id}/scale", json={"target": 4}).json()["removed"] == []
@@ -415,7 +415,7 @@ def test_several_instances_can_be_removed_or_restarted_in_one_request(admin, set
     node, app = setup
     node_id, _ = node("c-bulk")
     app_id = app("c-bulk-app")
-    ids = [_replica(app_id, node_id, 9310 + i, status="running") for i in range(3)]
+    ids = [_instance(app_id, node_id, 9310 + i, status="running") for i in range(3)]
     for rid in ids:
         _start(node_id, rid)
     assert admin.post(f"/api/apps/{app_id}/instances/restart", json={"ids": ids[:2]}).status_code == 200
@@ -433,8 +433,8 @@ def test_no_command_for_starting_or_stopping_is_left_in_the_code():
         if "venv" in path.parts or "__pycache__" in path.parts:
             continue
         text = path.read_text(encoding="utf-8")
-        for gone in ('command_type="start_replica"', 'command_type="stop_replica"', 'command_type="refresh_source"',
-                     'command_type="delete_app"', '"start_replica":', '"stop_replica":'):
+        for gone in ('command_type="start_instance"', 'command_type="stop_instance"', 'command_type="refresh_source"',
+                     'command_type="delete_app"', '"start_instance":', '"stop_instance":'):
             assert gone not in text, f"{path.name} still uses {gone}"
 
 
@@ -471,7 +471,7 @@ def test_a_new_agent_process_fails_what_the_old_one_was_doing(client, setup):
     node_id, _ = node("k-session")
 
     async def go():
-        stuck = asyncio.create_task(commands.ask(node_id, "get_replica_stats", {}, timeout=5))
+        stuck = asyncio.create_task(commands.ask(node_id, "get_instance_stats", {}, timeout=5))
         cron = asyncio.create_task(commands.ask(node_id, "cron_run", {}, timeout=0.5))
         await asyncio.sleep(0.05)
         commands.take_queued(node_id)                              # both were sent to the old process
@@ -490,7 +490,7 @@ def test_the_agent_websocket_tells_the_node_when_its_list_changed(admin, setup):
     node, app = setup
     node_id, token = node("k-ws")
     app_id = app("k-ws-app")
-    rid = _replica(app_id, node_id, 9304, status="running")
+    rid = _instance(app_id, node_id, 9304, status="running")
     _start(node_id, rid)
     with admin.websocket_connect("/api/nodes/ws/agent") as ws:
         ws.send_json({"type": "auth", "token": token, "session": "s1"})
@@ -507,7 +507,7 @@ def test_a_node_with_an_old_agent_is_not_given_work_it_would_never_see(setup):
     from core.models import Node
     node, app = setup
     node_id, _ = node("v-old")
-    rid = _replica(app("v-old-app"), node_id, 9401)
+    rid = _instance(app("v-old-app"), node_id, 9401)
 
     async def set_version(version):
         async with AsyncSessionLocal() as db:
@@ -517,7 +517,10 @@ def test_a_node_with_an_old_agent_is_not_given_work_it_would_never_see(setup):
     with pytest.raises(HTTPException, match="older Cloudbase"):
         _start(node_id, rid)
     assert _row(rid).desired is None                                  # nothing was written
+    _run(set_version("2.3.1"))                                         # 2.x reads the list by its old names
+    with pytest.raises(HTTPException, match="older Cloudbase"):
+        _start(node_id, rid)
     _run(set_version(None))                                            # not known yet: let it through
     assert _start(node_id, rid)
-    _run(set_version("2.3.1"))
+    _run(set_version("3.0.0"))
     assert _start(node_id, rid)

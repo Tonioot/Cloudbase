@@ -1,4 +1,4 @@
-import { api, wsLogs, wsReplicaLogs, wsStats, wsAppCloudbaseLogs, PermissionError } from './api.js';
+import { api, wsLogs, wsInstanceLogs, wsStats, wsAppCloudbaseLogs, PermissionError } from './api.js';
 import { createLogViewer, fillComponentSelect } from './logviewer.js';
 import { auditTableHTML, cssVar, icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, stripAnsi, ansiToHtml, setBtn, parseDotEnv, pickTextFile, mergeEnvIntoRows, timeAgo } from './utils.js';
 import { pickGitHubToken } from './sidebar.js';
@@ -135,9 +135,9 @@ function _syncStatsViewFromAppStatus() {
 /* ─── Header ────────────────────────────────────────────────────────────── */
 function formatPortSummary(app) {
   if (app.cron) return cronSummary(app);
-  const replicas = app.replicas || [];
-  const running = replicas.filter(r => r.status === 'running');
-  const total = replicas.length;
+  const instances = app.instances || [];
+  const running = instances.filter(r => r.status === 'running');
+  const total = instances.length;
   if (total === 0) {
     return app.port ? `Port ${app.port}` : 'No instances';
   }
@@ -259,7 +259,7 @@ function _syncZeroDowntimeButton() {
       rollingBtn.onclick = async () => {
         const ok = await confirm(
           'Rolling Deploy',
-          'Replaces each replica one at a time with a freshly built image. While one replica is updating, the others keep serving traffic — no downtime page is shown.'
+          'Replaces each instance one at a time with a freshly built image. While one instance is updating, the others keep serving traffic — no downtime page is shown.'
         );
         if (!ok) return;
         rollingBtn.disabled = true;
@@ -267,7 +267,7 @@ function _syncZeroDowntimeButton() {
         rollingBtn.textContent = 'Deploying…';
         try {
           const res = await api.deployRolling(APP_ID);
-          toast(`Rolling deploy complete — ${res.replaced} replica(s) replaced`, 'success');
+          toast(`Rolling deploy complete — ${res.replaced} instance(s) replaced`, 'success');
           app = await api.getApp(APP_ID);
           updateHeaderStatus();
         } catch (e) {
@@ -596,7 +596,7 @@ function _switchLogInstance() {
   reset();
   logWs = isAll
     ? wsLogs(APP_ID, _appendLogLine, reset)
-    : wsReplicaLogs(APP_ID, parseInt(val, 10), _appendLogLine, reset);
+    : wsInstanceLogs(APP_ID, parseInt(val, 10), _appendLogLine, reset);
 }
 
 // "Cloudbase" source: the app's own Cloudbase log (deploys, builds, scaling,
@@ -708,8 +708,8 @@ function handleStatData(data) {
     }
     return;
   }
-  // Per-replica frame — not an aggregated app-level frame, skip for charts
-  if (data.replica_id != null && data.cpu_percent == null) return;
+  // Per-instance frame — not an aggregated app-level frame, skip for charts
+  if (data.instance_id != null && data.cpu_percent == null) return;
   lastStatStatus = 'running';
 
   if (data._instance_count) _updateStatsContextBar(data._instance_count);
@@ -1120,7 +1120,7 @@ async function loadDir(path) {
   currentFilePath = path;
   const list = document.getElementById('files-list');
   const bcrumb = document.getElementById('files-breadcrumb');
-  const isRemote = (app.replicas || []).some(r => r.node_id && !r.node_is_local);
+  const isRemote = (app.instances || []).some(r => r.node_id && !r.node_is_local);
   list.innerHTML = `<div style="padding:16px;color:var(--text-muted);font-size:12px">${isRemote && path === '' ? 'Fetching from node…' : 'Loading…'}</div>`;
 
   try {
@@ -1548,8 +1548,8 @@ function initSettings() {
   // Autoscaling
   const autoscaleEnabled = !!app.autoscale_enabled;
   document.getElementById('cfg-autoscale-enabled').checked = autoscaleEnabled;
-  document.getElementById('cfg-autoscale-min').value = app.autoscale_min_replicas || 1;
-  document.getElementById('cfg-autoscale-max').value = app.autoscale_max_replicas || 4;
+  document.getElementById('cfg-autoscale-min').value = app.autoscale_min_instances || 1;
+  document.getElementById('cfg-autoscale-max').value = app.autoscale_max_instances || 4;
   document.getElementById('cfg-autoscale-cpu').value = app.autoscale_cpu_target || 70;
 
   // Health check
@@ -2839,8 +2839,8 @@ async function saveSettings() {
     docker_tmpfs_enabled: document.getElementById('cfg-docker-tmpfs-enabled').checked,
     docker_tmpfs_size_mb: Number.isInteger(dockerTmpfsSize) ? dockerTmpfsSize : null,
     autoscale_enabled:      document.getElementById('cfg-autoscale-enabled').checked,
-    autoscale_min_replicas: parseInt(document.getElementById('cfg-autoscale-min').value) || 1,
-    autoscale_max_replicas: parseInt(document.getElementById('cfg-autoscale-max').value) || 4,
+    autoscale_min_instances: parseInt(document.getElementById('cfg-autoscale-min').value) || 1,
+    autoscale_max_instances: parseInt(document.getElementById('cfg-autoscale-max').value) || 4,
     autoscale_cpu_target:   parseFloat(document.getElementById('cfg-autoscale-cpu').value) || 70,
     auto_deploy:            document.getElementById('cfg-autodeploy').checked,
     deploy_branch:          document.getElementById('cfg-deploy-branch').value,

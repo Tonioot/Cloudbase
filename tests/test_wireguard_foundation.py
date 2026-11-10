@@ -174,4 +174,4 @@ def test_no_trace_of_the_reverse_tunnels_is_left():
     for gone in ("routers/nodes/tunnel.py", "nodes/tunnel.py", "agent/tunnels.py"):
         assert not (ROOT / "backend" / gone).exists(), gone
     from core import models
-    assert not hasattr(models.ApplicationReplica, "tunnel_port")
+    assert not hasattr(models.Instance, "tunnel_port")

@@ -12,14 +12,14 @@ from agent.source import ensure_image
 
 
 async def cmd_get_logs_tail(_client, _state, main_id, payload):
-    """Get recent logs from all replica containers for this app."""
+    """Get recent logs from all instance containers for this app."""
     limit = payload.get("limit") or 200
 
     def collect() -> list[str]:
         lines: list[str] = []
         try:
             result = subprocess.run(
-                ["docker", "ps", "-a", "--format", "{{.Names}}", "--filter", f"name=cloudbase-app-{main_id}-replica-"],
+                ["docker", "ps", "-a", "--format", "{{.Names}}", "--filter", f"name=cloudbase-app-{main_id}-instance-"],
                 capture_output=True, text=True, timeout=10,
             )
             for cname in result.stdout.splitlines():
@@ -40,7 +40,7 @@ async def cmd_get_logs_tail(_client, _state, main_id, payload):
 
 
 async def cmd_get_stats(_client, _state, main_id, _payload):
-    """Aggregate stats across all replica containers for this app on this node."""
+    """Aggregate stats across all instance containers for this app on this node."""
     return await containers_stats_logs.app_aggregate_stats(int(main_id))
 
 
@@ -49,16 +49,16 @@ async def cmd_docker_cleanup(_client, _state, _main_id, payload):
     return await asyncio.to_thread(containers_cleanup.cleanup_docker, bool(payload.get("aggressive")))
 
 
-async def cmd_get_replica_stats(_client, _state, main_id, payload):
-    replica_id = payload.get("replica_id")
-    if replica_id is None:
-        return {"status": "stopped", "docker": True, "error": "missing replica_id"}
-    cname = containers_naming.replica_container_name(int(main_id), int(replica_id))
+async def cmd_get_instance_stats(_client, _state, main_id, payload):
+    instance_id = payload.get("instance_id")
+    if instance_id is None:
+        return {"status": "stopped", "docker": True, "error": "missing instance_id"}
+    cname = containers_naming.instance_container_name(int(main_id), int(instance_id))
     stats = await asyncio.to_thread(containers_stats_logs.get_container_stats_by_name, cname)
     if not stats or stats.get("status") != "running":
         return {"status": "stopped", "docker": True}
     stats["timestamp"] = int(time.time() * 1000)
-    stats["replica_id"] = int(replica_id)
+    stats["instance_id"] = int(instance_id)
     return stats
 
 
@@ -75,7 +75,7 @@ async def cmd_get_agent_logs(_client, _state, _main_id, payload):
     return {"lines": [l.rstrip() for l in all_lines[-lines:]]}
 
 
-async def cmd_get_replica_logs(_client, _state, _main_id, payload):
+async def cmd_get_instance_logs(_client, _state, _main_id, payload):
     container_name = payload.get("container_name")
     lines = payload.get("lines") or 200
     if not container_name:

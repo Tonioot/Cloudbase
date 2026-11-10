@@ -151,8 +151,8 @@ async def _rebuild(app: Application, db, source_revision, push, *, restart: bool
         if not app.cron_schedule:
             push("[Docker] Image built. Restart or deploy to put it live.")
         return {}
-    replicas = await apps_runtime._load_app_replicas(app.id, db)
-    if not apps_runtime._has_live_replicas(replicas):
+    instances = await apps_runtime._load_app_instances(app.id, db)
+    if not apps_runtime._has_live_instances(instances):
         push("[Deploy] App isn’t running — the new version starts the next time you start it.")
         return {"restarted": False}
     push("[Deploy] Restarting instances with the new image…")

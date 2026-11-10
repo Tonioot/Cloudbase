@@ -17,7 +17,7 @@ from nodes.liveness import node_gone, run_node_docker_cleanup
 from nodes.registry import _as_node_dict, ensure_local_node, get_node_or_404
 from nodes.state import _node_ws_connections, _pending_pings
 from routers.nodes.schemas import InviteRequest, NodeUpdateRequest
-from core.models import Application, ApplicationReplica
+from core.models import Application, Instance
 from core.models import Database
 from core import system_logs
 
@@ -100,20 +100,20 @@ async def delete_node(node_id: int, db: AsyncSession = Depends(get_db), _user: d
         select(func.count()).where(Application.node_id == node_id)
     )
     app_count = app_count_result.scalar() or 0
-    replica_count_result = await db.execute(
-        select(func.count()).where(ApplicationReplica.node_id == node_id)
+    instance_count_result = await db.execute(
+        select(func.count()).where(Instance.node_id == node_id)
     )
-    replica_count = replica_count_result.scalar() or 0
+    instance_count = instance_count_result.scalar() or 0
     database_count_result = await db.execute(
         select(func.count()).where(Database.node_id == node_id)
     )
     database_count = database_count_result.scalar() or 0
-    if app_count > 0 or replica_count > 0 or database_count > 0:
+    if app_count > 0 or instance_count > 0 or database_count > 0:
         details = []
         if app_count > 0:
             details.append(f"{app_count} app{'s' if app_count != 1 else ''}")
-        if replica_count > 0:
-            details.append(f"{replica_count} instance{'s' if replica_count != 1 else ''}")
+        if instance_count > 0:
+            details.append(f"{instance_count} instance{'s' if instance_count != 1 else ''}")
         if database_count > 0:
             details.append(f"{database_count} database{'s' if database_count != 1 else ''}")
         raise HTTPException(

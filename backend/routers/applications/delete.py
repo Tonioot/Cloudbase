@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
-from core.models import ApplicationReplica
+from core.models import Instance
 from containers import processes as pm, cleanup as containers_cleanup
 from nodes.registry import ensure_local_node
 from nodes import desired
@@ -44,18 +44,18 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dic
             return {"message": f"App '{app.name}' deleted"}
         return {"message": f"App '{app.name}' removed (node '{node.name}' was offline — it removes the containers when it is back)"}
 
-    # Stop and remove all replica containers before deleting
-    replica_result = await db.execute(
-        select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
+    # Stop and remove all instance containers before deleting
+    instance_result = await db.execute(
+        select(Instance).where(Instance.app_id == app_id)
     )
     node_map = await _load_node_map(db)
-    for replica in replica_result.scalars().all():
-        r_node = node_map.get(replica.node_id)
+    for instance in instance_result.scalars().all():
+        r_node = node_map.get(instance.node_id)
         if r_node and r_node.is_local:
             # Stopped here too, not only through the list: the image is removed right below and must be free
-            await asyncio.to_thread(pm.stop_docker_replica, app_id, replica.id)
+            await asyncio.to_thread(pm.stop_docker_instance, app_id, instance.id)
         elif r_node and not r_node.is_local:
-            desired.nudge(r_node.id)     # the replica's row goes with the app; its node removes the container
+            desired.nudge(r_node.id)     # the instance's row goes with the app; its node removes the container
 
     await asyncio.to_thread(containers_cleanup.remove_image, app_id)
 

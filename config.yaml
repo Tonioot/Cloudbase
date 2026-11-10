@@ -33,7 +33,7 @@ limits:
   # Maximum number of apps that can be deployed
   max_apps: 1000
 
-  # Maximum total number of instances (replicas) across all apps and nodes
+  # Maximum total number of instances (instances) across all apps and nodes
   max_instances: 10000
 
   # Maximum number of nodes (primary + remote) that can be registered

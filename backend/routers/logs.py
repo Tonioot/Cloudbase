@@ -6,7 +6,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
 
 from core import auth
 from core.database import AsyncSessionLocal, get_db
-from core.models import Application, ApplicationReplica, Node
+from core.models import Application, Instance, Node
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from containers import processes as pm
@@ -181,8 +181,8 @@ async def stream_logs(app_id: int, websocket: WebSocket):
         pm.unsubscribe_logs(app_id, q)
 
 
-@router.websocket("/ws/apps/{app_id}/replicas/{replica_id}/logs")
-async def stream_replica_logs(app_id: int, replica_id: int, websocket: WebSocket):
+@router.websocket("/ws/apps/{app_id}/instances/{instance_id}/logs")
+async def stream_instance_logs(app_id: int, instance_id: int, websocket: WebSocket):
     """Live logs of one instance: the last 300 lines, then new output as it arrives."""
     if not await auth.authorize_websocket(websocket, "apps.view"):
         return
@@ -190,17 +190,17 @@ async def stream_replica_logs(app_id: int, replica_id: int, websocket: WebSocket
 
     async with AsyncSessionLocal() as db:
         app = (await db.execute(select(Application).where(Application.id == app_id))).scalar_one_or_none()
-        replica = (await db.execute(select(ApplicationReplica).where(
-            ApplicationReplica.id == replica_id, ApplicationReplica.app_id == app_id,
+        instance = (await db.execute(select(Instance).where(
+            Instance.id == instance_id, Instance.app_id == app_id,
         ))).scalar_one_or_none()
-        if not app or not replica:
+        if not app or not instance:
             await websocket.send_text("Instance not found\n")
             await websocket.close()
             return
-        node = await db.get(Node, replica.node_id)
+        node = await db.get(Node, instance.node_id)
         app_name = app.name
 
-    cname = containers_naming.replica_container_name(app_id, replica_id)
+    cname = containers_naming.instance_container_name(app_id, instance_id)
 
     if node is None or node.is_local:
         # Follow the container directly; the blocking docker stream runs in a thread
@@ -218,7 +218,7 @@ async def stream_replica_logs(app_id: int, replica_id: int, websocket: WebSocket
                     loop.call_soon_threadsafe(q.put_nowait, raw.decode("utf-8", errors="replace").rstrip())
             except Exception as exc:
                 if type(exc).__name__ == "NotFound":
-                    msg = f"[Cloudbase] Instance #{replica_id} has no container right now — start it to see its logs."
+                    msg = f"[Cloudbase] Instance #{instance_id} has no container right now — start it to see its logs."
                 else:
                     msg = f"[Cloudbase] Log stream ended: {exc}"
                 loop.call_soon_threadsafe(q.put_nowait, msg)
@@ -247,8 +247,8 @@ async def stream_replica_logs(app_id: int, replica_id: int, websocket: WebSocket
     last: list[str] = []
     try:
         while True:
-            done = await node_commands.ask(node_id, "get_replica_logs",
-                                           {"app_id": app_id, "app_name": app_name, "replica_id": replica_id,
+            done = await node_commands.ask(node_id, "get_instance_logs",
+                                           {"app_id": app_id, "app_name": app_name, "instance_id": instance_id,
                                             "container_name": cname, "lines": 300},
                                            app_id=app_id, reuse=True)
             if done.status == "done":

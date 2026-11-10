@@ -3,11 +3,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 import datetime as _dt
-from core.models import StatsHistory, Application, ApplicationReplica
+from core.models import StatsHistory, Application, Instance
 from nodes.registry import ensure_local_node
 from core import auth as _auth
 from apps.runtime import _load_node_map
-from apps.serializers import _get_or_404, _replica_to_dict, _app_to_dict
+from apps.serializers import _get_or_404, _instance_to_dict, _app_to_dict
 from routers.applications.deps import _request_can_manage_apps
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
@@ -20,23 +20,23 @@ async def list_apps(request: Request, db: AsyncSession = Depends(get_db), _viewe
     apps = result.scalars().all()
     node_map = await _load_node_map(db)
 
-    # Batch-fetch all replica rows so we can derive statuses without N+1 Docker checks
-    rep_result = await db.execute(select(ApplicationReplica))
-    all_replicas = rep_result.scalars().all()
-    replica_map: dict[int, list] = {}
-    for r in all_replicas:
-        replica_map.setdefault(r.app_id, []).append(r)
+    # Batch-fetch all instance rows so we can derive statuses without N+1 Docker checks
+    rep_result = await db.execute(select(Instance))
+    all_instances = rep_result.scalars().all()
+    instance_map: dict[int, list] = {}
+    for r in all_instances:
+        instance_map.setdefault(r.app_id, []).append(r)
 
     include_sensitive = await _request_can_manage_apps(request)
     result_list = []
     for a in apps:
-        app_replicas = replica_map.get(a.id, [])
-        replica_dicts = [_replica_to_dict(r, node_map.get(r.node_id)) for r in app_replicas]
+        app_instances = instance_map.get(a.id, [])
+        instance_dicts = [_instance_to_dict(r, node_map.get(r.node_id)) for r in app_instances]
         result_list.append(
             _app_to_dict(
                 a,
                 include_sensitive=include_sensitive,
-                replicas=replica_dicts,
+                instances=instance_dicts,
                 include_page_configs=False,
             )
         )
@@ -48,11 +48,11 @@ async def get_app(app_id: int, request: Request, _user: dict = Depends(_auth.req
     await ensure_local_node(db)
     app = await _get_or_404(app_id, db)
     node_map = await _load_node_map(db)
-    replica_result = await db.execute(
-        select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
+    instance_result = await db.execute(
+        select(Instance).where(Instance.app_id == app_id)
     )
-    replicas_dicts = [_replica_to_dict(r, node_map.get(r.node_id)) for r in replica_result.scalars().all()]
-    return _app_to_dict(app, replicas_dicts, include_sensitive=await _request_can_manage_apps(request))
+    instances_dicts = [_instance_to_dict(r, node_map.get(r.node_id)) for r in instance_result.scalars().all()]
+    return _app_to_dict(app, instances_dicts, include_sensitive=await _request_can_manage_apps(request))
 
 
 @router.get("/{app_id}/stats/history")

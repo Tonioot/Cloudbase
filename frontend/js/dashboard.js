@@ -151,8 +151,8 @@ function nodeLabel(n) {
   return n ? (n.is_local ? 'Primary' : n.name) : 'Primary';
 }
 
-function replicasOnNode(app, node) {
-  return (app.replicas || []).filter(r =>
+function instancesOnNode(app, node) {
+  return (app.instances || []).filter(r =>
     node.is_local ? (r.node_id === node.id || r.node_id == null) : r.node_id === node.id);
 }
 
@@ -186,7 +186,7 @@ function setKpi(id, value, unit, histKey) {
 /* ─── Key numbers ───────────────────────────────────────────────────────── */
 function renderKpis() {
   const running = appsData.filter(a => a.status === 'running').length;
-  const instances = appsData.reduce((s, a) => s + (a.replicas || []).filter(r => r.status === 'running').length, 0);
+  const instances = appsData.reduce((s, a) => s + (a.instances || []).filter(r => r.status === 'running').length, 0);
   const online = nodesData.filter(n => n.status === 'online');
 
   // Cluster CPU = average over online nodes; memory = used / total in GB
@@ -239,7 +239,7 @@ function nodeRowHTML(n) {
   ].filter(Boolean);
 
   const apps = appsData
-    .map(a => ({ app: a, reps: replicasOnNode(a, n) }))
+    .map(a => ({ app: a, reps: instancesOnNode(a, n) }))
     .filter(x => x.reps.length);
   const chips = apps.length
     ? apps.map(({ app, reps }) => {
@@ -356,7 +356,7 @@ function appSubline(app) {
 }
 
 function appRowHTML(app) {
-  const reps = app.replicas || [];
+  const reps = app.instances || [];
   const up = reps.filter(r => r.status === 'running').length;
   const nodeIds = [...new Set(reps.map(r => r.node_id ?? null))];
   const nodeNames = nodeIds.length

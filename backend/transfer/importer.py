@@ -10,6 +10,8 @@ Two phases, so the request can answer in a moment:
 import json
 import logging
 import re
+
+import rename_migration
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -34,7 +36,7 @@ from core import activity, config as _cfg
 from core.audit import log_audit
 from core.database import AsyncSessionLocal
 from core.env_crypto import encrypt_env
-from core.models import Application, ApplicationReplica, Node
+from core.models import Application, Instance, Node
 from cron import scheduler as _cron
 from nodes.registry import ensure_local_node
 
@@ -121,6 +123,7 @@ async def import_apps(db: AsyncSession, entries: list[dict], target_node_id: Opt
 
 
 async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_local: bool, actor: str, warnings: list[str]) -> Imported:
+    entry = rename_migration.old_export_keys(entry)          # TEMPORARY, see rename_migration.py
     name = await _check_new_app_name(entry.get("name"), db)
     repo_url = _check_repo_url(_normalize_repo_url(entry.get("repo_url") or ""))
     domains = [d for d in [entry.get("domain"), *(entry.get("extra_domains") or []), *(entry.get("redirect_domains") or [])] if d]
@@ -162,8 +165,8 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
         "auto_deploy_interval": (max(30, min(_opt(entry, "auto_deploy_interval", int), 3600))
                                  if _opt(entry, "auto_deploy_interval", int) is not None else None),
         "autoscale_enabled": _opt(entry, "autoscale_enabled", bool),
-        "autoscale_min_replicas": _opt(entry, "autoscale_min_replicas", int),
-        "autoscale_max_replicas": _opt(entry, "autoscale_max_replicas", int),
+        "autoscale_min_instances": _opt(entry, "autoscale_min_instances", int),
+        "autoscale_max_instances": _opt(entry, "autoscale_max_instances", int),
         "autoscale_cpu_target": _opt(entry, "autoscale_cpu_target", int),
         "health_path": _health(health.clean_path, entry.get("health_path")),
         "health_expect": _health(health.clean_expect, entry.get("health_expect")),
@@ -209,13 +212,13 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
 
     instances = 0
     wanted = 0 if is_cron else max(0, min(int(entry.get("instances") or 0), MAX_INSTANCES_PER_APP))
-    existing = (await db.execute(select(func.count()).select_from(ApplicationReplica))).scalar() or 0
+    existing = (await db.execute(select(func.count()).select_from(Instance))).scalar() or 0
     room = max(0, _cfg.get_limit("max_instances") - existing)
     if wanted > room:
         warnings.append(f"{name}: only {room} of {wanted} instances created (instance limit reached)")
         wanted = room
     for _ in range(wanted):
-        db.add(ApplicationReplica(app_id=app.id, node_id=target_id, status="stopped",
+        db.add(Instance(app_id=app.id, node_id=target_id, status="stopped",
                                   external_port=await _assign_external_port(None, target_id, db)))
         await db.flush()
         instances += 1

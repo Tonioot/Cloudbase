@@ -58,8 +58,8 @@ class UpdateRequest(BaseModel):
     source_revision: Optional[str] = None
     image_revision: Optional[str] = None
     autoscale_enabled:      Optional[bool]  = None
-    autoscale_min_replicas: Optional[int]   = None
-    autoscale_max_replicas: Optional[int]   = None
+    autoscale_min_instances: Optional[int]   = None
+    autoscale_max_instances: Optional[int]   = None
     autoscale_cpu_target:   Optional[float] = None
     auto_deploy:            Optional[bool]  = None
     deploy_branch:          Optional[str]   = None   # "" = the checked-out branch

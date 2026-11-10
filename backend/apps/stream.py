@@ -3,7 +3,7 @@ import json
 import logging
 import secrets
 from sqlalchemy import select
-from core.models import Application, ApplicationReplica, Node
+from core.models import Application, Instance, Node
 from nodes import commands as node_commands
 from nodes.state import _node_ws_connections, unsubscribe_node_stream, subscribe_node_stream
 
@@ -11,7 +11,7 @@ log = logging.getLogger("cloudbase.stats")
 
 
 def _aggregate_frames(frames: list[dict]) -> dict:
-    """Merge stats from multiple nodes/replicas into one aggregated frame.
+    """Merge stats from multiple nodes/instances into one aggregated frame.
 
     CPU → average across nodes (each node already reports % of its own cores).
     Memory / network / disk → sum (additive resources).
@@ -117,17 +117,17 @@ async def _open_remote_stream(node: Node, app_id: int, app_name: str, out_q: asy
 
 
 async def _get_app_node(app: Application, db, local_node: Node) -> Node:
-    """Return the node of the first running replica, falling back to local."""
+    """Return the node of the first running instance, falling back to local."""
     result = await db.execute(
-        select(ApplicationReplica).where(
-            ApplicationReplica.app_id == app.id,
-            ApplicationReplica.status == "running",
-            ApplicationReplica.node_id.isnot(None),
+        select(Instance).where(
+            Instance.app_id == app.id,
+            Instance.status == "running",
+            Instance.node_id.isnot(None),
         ).limit(1)
     )
-    replica = result.scalar_one_or_none()
-    if replica and replica.node_id:
-        node_result = await db.execute(select(Node).where(Node.id == replica.node_id))
+    instance = result.scalar_one_or_none()
+    if instance and instance.node_id:
+        node_result = await db.execute(select(Node).where(Node.id == instance.node_id))
         node = node_result.scalar_one_or_none()
         if node:
             return node

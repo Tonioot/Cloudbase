@@ -304,8 +304,8 @@ export function wsLogs(appId, onLine, onOpen) {
 }
 
 /** One instance's container output: the last 300 lines, then live. */
-export function wsReplicaLogs(appId, replicaId, onLine, onOpen) {
-  return wsLineStream(`/ws/apps/${appId}/replicas/${replicaId}/logs`, onLine, onOpen);
+export function wsInstanceLogs(appId, instanceId, onLine, onOpen) {
+  return wsLineStream(`/ws/apps/${appId}/instances/${instanceId}/logs`, onLine, onOpen);
 }
 
 export function wsStats(appId, onData) {

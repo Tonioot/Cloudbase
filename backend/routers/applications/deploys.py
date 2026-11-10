@@ -19,7 +19,7 @@ from core import auth as _auth
 from apps.rollout import replace_instances
 from apps.git import _build_clone_url, _current_branch, _decrypt_github_token, _deploy_app, _fetch_origin, _refresh_app_source_revision, _resolve_source_revision, _sync_app_source
 from apps.images import _image_build_kwargs, _image_port
-from apps.runtime import _has_live_replicas, _load_app_replicas
+from apps.runtime import _has_live_instances, _load_app_instances
 from apps.serializers import _deployment_dict, _get_or_404
 from apps.state import app_lock, busy_with
 from apps.validation import _check_git_ref
@@ -77,7 +77,7 @@ async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None)
     if source_revision:
         app.source_revision = source_revision
 
-    was_running = _has_live_replicas(await _load_app_replicas(app_id, db))
+    was_running = _has_live_instances(await _load_app_instances(app_id, db))
     action_logs: list[str] = [f"[Git] Updated code to {target_commit or branch} ({commit_info})"]
     action_logs.append("[Docker] Rebuilding image...")
 
@@ -130,7 +130,7 @@ async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), 
     if not app.working_dir:
         raise HTTPException(400, "No working directory — deploy the app first")
 
-    was_running = _has_live_replicas(await _load_app_replicas(app_id, db))
+    was_running = _has_live_instances(await _load_app_instances(app_id, db))
     action_logs: list[str] = ["[Docker] Rebuilding image..."]
 
     def _push(aid, line):
@@ -217,7 +217,7 @@ async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(defaul
     queue: asyncio.Queue = asyncio.Queue()
     result_holder: dict = {}
     loop = asyncio.get_running_loop()
-    was_running = _has_live_replicas(await _load_app_replicas(app_id, db))
+    was_running = _has_live_instances(await _load_app_instances(app_id, db))
 
     def _q(line: str) -> None:
         loop.call_soon_threadsafe(queue.put_nowait, str(line))
@@ -300,7 +300,7 @@ async def rebuild_docker_image_stream(app_id: int, _user: dict = Depends(_auth.r
     queue: asyncio.Queue = asyncio.Queue()
     result_holder: dict = {}
     loop = asyncio.get_running_loop()
-    was_running = _has_live_replicas(await _load_app_replicas(app_id, db))
+    was_running = _has_live_instances(await _load_app_instances(app_id, db))
 
     def _q(line: str) -> None:
         loop.call_soon_threadsafe(queue.put_nowait, str(line))

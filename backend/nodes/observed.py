@@ -9,7 +9,7 @@ import logging
 from sqlalchemy import select
 
 from core.database import AsyncSessionLocal
-from core.models import ApplicationReplica
+from core.models import Instance
 from apps import nginx_sync
 from nodes import promote
 from nodes.commands import _utcnow
@@ -17,38 +17,38 @@ from nodes.commands import _utcnow
 log = logging.getLogger("cloudbase.nodes")
 
 
-def _apply_one(replica: ApplicationReplica, report: dict) -> tuple[bool, bool]:
+def _apply_one(instance: Instance, report: dict) -> tuple[bool, bool]:
     """Update one instance from its report. Returns (needs a reachability check, nginx must be rewritten)."""
     state = report.get("state")
-    if replica.desired != "running":
-        if state == "stopped" and replica.status != "stopped":
-            replica.status, replica.substatus, replica.container_id = "stopped", None, None
+    if instance.desired != "running":
+        if state == "stopped" and instance.status != "stopped":
+            instance.status, instance.substatus, instance.container_id = "stopped", None, None
             return False, False
         return False, False
 
-    if report.get("spec_hash") != replica.spec_hash:
+    if report.get("spec_hash") != instance.spec_hash:
         return False, False                         # about an older start of this instance: the newer one is on its way
 
-    was_live = replica.status == "running"
+    was_live = instance.status == "running"
     if state == "running":
-        replica.container_id = report.get("container_id") or replica.container_id
+        instance.container_id = report.get("container_id") or instance.container_id
         if was_live:
             return False, False
-        if replica.status in ("starting", "node_offline", "error", "pending"):
-            replica.status, replica.substatus, replica.last_error = "starting", report.get("substatus") or "waiting", None
+        if instance.status in ("starting", "node_offline", "error", "pending"):
+            instance.status, instance.substatus, instance.last_error = "starting", report.get("substatus") or "waiting", None
             return True, False
         return False, False
     if state in ("building", "starting"):
-        if replica.status in ("starting", "node_offline", "error", "pending"):
-            replica.status, replica.substatus, replica.last_error = "starting", report.get("substatus"), None
+        if instance.status in ("starting", "node_offline", "error", "pending"):
+            instance.status, instance.substatus, instance.last_error = "starting", report.get("substatus"), None
         return False, was_live
     if state == "error":
-        replica.status, replica.substatus = "error", None
-        replica.last_error = (report.get("error") or "the node could not run this instance")[:2000]
+        instance.status, instance.substatus = "error", None
+        instance.last_error = (report.get("error") or "the node could not run this instance")[:2000]
         return False, was_live
     # "stopped" or anything else while it should run: the node has not got to it yet
-    if replica.status == "node_offline":
-        replica.status = "starting"
+    if instance.status == "node_offline":
+        instance.status = "starting"
     return False, was_live
 
 
@@ -59,19 +59,19 @@ async def apply(node_id: int, reports: dict) -> None:
         return
     to_check, rewrite = [], set()
     async with AsyncSessionLocal() as db:
-        rows = (await db.execute(select(ApplicationReplica).where(
-            ApplicationReplica.node_id == node_id, ApplicationReplica.id.in_(ids)))).scalars().all()
-        for replica in rows:
-            before = replica.status
-            check, regen = _apply_one(replica, reports.get(str(replica.id)) or {})
+        rows = (await db.execute(select(Instance).where(
+            Instance.node_id == node_id, Instance.id.in_(ids)))).scalars().all()
+        for instance in rows:
+            before = instance.status
+            check, regen = _apply_one(instance, reports.get(str(instance.id)) or {})
             if check:
-                to_check.append(replica.id)
-            if regen or replica.status != before:          # nginx shows what the instances do (apps/nginx_sync.py)
-                rewrite.add(replica.app_id)
-            if db.is_modified(replica):
-                replica.updated_at = _utcnow()
+                to_check.append(instance.id)
+            if regen or instance.status != before:          # nginx shows what the instances do (apps/nginx_sync.py)
+                rewrite.add(instance.app_id)
+            if db.is_modified(instance):
+                instance.updated_at = _utcnow()
         await db.commit()
-    for replica_id in to_check:
-        promote.start_promotion(replica_id)
+    for instance_id in to_check:
+        promote.start_promotion(instance_id)
     for app_id in rewrite:
         await nginx_sync.refresh_app_nginx(app_id)

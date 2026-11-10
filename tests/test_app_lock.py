@@ -99,8 +99,8 @@ def test_a_deploy_restarts_what_it_built_without_waiting_for_itself(monkeypatch)
         calls.append(("restart", state.busy_with(app_id)))
         return {}
 
-    async def fake_replicas(app_id, db):
-        return ["a-live-replica"]
+    async def fake_instances(app_id, db):
+        return ["a-live-instance"]
 
     class Db:
         async def commit(self):
@@ -116,8 +116,8 @@ def test_a_deploy_restarts_what_it_built_without_waiting_for_itself(monkeypatch)
         no_web = False
 
     monkeypatch.setattr(deployments, "restart_locked", fake_restart)
-    monkeypatch.setattr(deployments.apps_runtime, "_load_app_replicas", fake_replicas)
-    monkeypatch.setattr(deployments.apps_runtime, "_has_live_replicas", lambda replicas: True)
+    monkeypatch.setattr(deployments.apps_runtime, "_load_app_instances", fake_instances)
+    monkeypatch.setattr(deployments.apps_runtime, "_has_live_instances", lambda instances: True)
     monkeypatch.setattr(deployments.containers_build, "build_image_unless_current", lambda *a, **k: ("img", True))
     monkeypatch.setattr(deployments.apps_images, "_image_build_kwargs", lambda app: {})
     monkeypatch.setattr(deployments.apps_images, "_image_port", lambda app: 3000)

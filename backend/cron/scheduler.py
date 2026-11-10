@@ -22,7 +22,7 @@ from cron import expr as cronexpr
 from containers import naming as containers_naming
 from containers import jobs as containers_jobs
 from containers import build as containers_build
-from containers import replicas as containers_replicas
+from containers import instances as containers_instances
 from notify import emit as notify_emit
 from containers import processes as pm
 from core.database import AsyncSessionLocal
@@ -210,7 +210,7 @@ async def _run_local(app: Application, run_id: int, push) -> dict:
 async def _run_remote(app: Application, node: Node, run_id: int) -> dict:
     if not (node.enabled and node.status == "online"):
         raise RuntimeError(f"Node '{node.name}' is offline")
-    payload = apps_runtime._remote_replica_command_payload(app, decrypt_env(app.env_vars or ""), 0)
+    payload = apps_runtime._remote_instance_command_payload(app, decrypt_env(app.env_vars or ""), 0)
     payload.update({"run_id": run_id, "command": app.start_command or "",
                     "timeout_seconds": app.cron_timeout_seconds or 3600})
     done = await node_commands.ask(node.id, "cron_run", payload, app_id=app.id,
@@ -363,7 +363,7 @@ async def _recover() -> None:
         await db.commit()
     try:
         for name in await asyncio.to_thread(containers_jobs.list_job_containers):
-            await asyncio.to_thread(containers_replicas.remove_container_by_name, name)
+            await asyncio.to_thread(containers_instances.remove_container_by_name, name)
     except Exception as e:
         log.debug("could not clean up job containers: %s", e)
 

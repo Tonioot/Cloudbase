@@ -72,11 +72,11 @@ def _add_node(name: str, key: str | None = None, ip: str | None = None, wg_state
 def _delete_nodes(*ids):
     from sqlalchemy import delete
     from core.database import AsyncSessionLocal
-    from core.models import ApplicationReplica, Node
+    from core.models import Instance, Node
 
     async def go():
         async with AsyncSessionLocal() as db:
-            await db.execute(delete(ApplicationReplica).where(ApplicationReplica.node_id.in_(ids)))
+            await db.execute(delete(Instance).where(Instance.node_id.in_(ids)))
             await db.execute(delete(Node).where(Node.id.in_(ids)))
             await db.commit()
     _run(go())
@@ -215,9 +215,9 @@ def test_a_helper_that_fails_means_every_node_is_down(client, fake_hub, nodes):
 
 
 # ── routing ───────────────────────────────────────────────────────────────────
-def _replica(node_id, port, status="starting", app_id=None, health_path=""):
+def _instance(node_id, port, status="starting", app_id=None, health_path=""):
     from core.database import AsyncSessionLocal
-    from core.models import Application, ApplicationReplica
+    from core.models import Application, Instance
 
     async def go():
         async with AsyncSessionLocal() as db:
@@ -228,20 +228,20 @@ def _replica(node_id, port, status="starting", app_id=None, health_path=""):
                 db.add(app)
                 await db.flush()
                 aid = app.id
-            rep = ApplicationReplica(app_id=aid, node_id=node_id, external_port=port, status=status)
+            rep = Instance(app_id=aid, node_id=node_id, external_port=port, status=status)
             db.add(rep)
             await db.commit()
             return rep.id, aid
     return _run(go())
 
 
-def _replica_row(replica_id):
+def _instance_row(instance_id):
     from core.database import AsyncSessionLocal
-    from core.models import ApplicationReplica
+    from core.models import Instance
 
     async def go():
         async with AsyncSessionLocal() as db:
-            return await db.get(ApplicationReplica, replica_id)
+            return await db.get(Instance, instance_id)
     return _run(go())
 
 
@@ -256,14 +256,14 @@ def listener():
 
 
 def test_the_backend_is_local_for_the_primary_and_over_the_node_network_for_others():
-    from core.models import ApplicationReplica, Node
+    from core.models import Instance, Node
     from mesh.routing import backend_for
-    rep = ApplicationReplica(external_port=8123)
+    rep = Instance(external_port=8123)
     assert backend_for(rep, None) == "127.0.0.1:8123"
     assert backend_for(rep, Node(is_local=True)) == "127.0.0.1:8123"
     assert backend_for(rep, Node(is_local=False, wg_ip="10.77.0.4")) == "10.77.0.4:8123"
     assert backend_for(rep, Node(is_local=False, wg_ip=None)) is None          # not on the node network: no address
-    assert backend_for(ApplicationReplica(external_port=None), Node(is_local=False, wg_ip="10.77.0.4")) is None
+    assert backend_for(Instance(external_port=None), Node(is_local=False, wg_ip="10.77.0.4")) is None
 
 
 def test_nginx_only_gets_instances_that_are_reachable_over_the_node_network(client, nodes):
@@ -272,9 +272,9 @@ def test_nginx_only_gets_instances_that_are_reachable_over_the_node_network(clie
     from apps.nginx_sync import _get_nginx_backends
     on_wg, _ = nodes("wg-nginx-a", key=KEYS[3], ip="10.77.0.20", wg_state="up")
     off_wg, _ = nodes("wg-nginx-b")
-    rid1, app_id = _replica(on_wg, 9301, status="running")
-    _replica(off_wg, 9302, status="running", app_id=app_id)
-    _replica(on_wg, 9303, status="starting", app_id=app_id)
+    rid1, app_id = _instance(on_wg, 9301, status="running")
+    _instance(off_wg, 9302, status="running", app_id=app_id)
+    _instance(on_wg, 9303, status="starting", app_id=app_id)
 
     async def go():
         async with AsyncSessionLocal() as db:
@@ -286,14 +286,14 @@ def test_nginx_only_gets_instances_that_are_reachable_over_the_node_network(clie
 def test_waiting_for_an_instance_returns_its_backend(client, nodes, listener):
     from mesh import routing
     node_id, _ = nodes("wg-wait", ip="127.0.0.1")
-    rid, _ = _replica(node_id, listener)
+    rid, _ = _instance(node_id, listener)
     assert _run(routing.wait_reachable(rid, 5)) == f"127.0.0.1:{listener}"
 
 
 def test_waiting_stops_at_once_when_the_node_reports_an_error(client, nodes):
     from mesh import routing
     node_id, _ = nodes("wg-wait-err", ip="127.0.0.1")
-    rid, _ = _replica(node_id, 9399, status="error")
+    rid, _ = _instance(node_id, 9399, status="error")
     with pytest.raises(routing.Unreachable, match="node reported an error"):
         _run(routing.wait_reachable(rid, 5))
 
@@ -302,7 +302,7 @@ def test_waiting_gives_up_after_the_timeout(client, nodes, monkeypatch):
     from mesh import routing
     monkeypatch.setattr(routing, "POLL_SECONDS", 0.05)
     node_id, _ = nodes("wg-wait-late", ip="127.0.0.1")
-    rid, _ = _replica(node_id, 9398)
+    rid, _ = _instance(node_id, 9398)
     with pytest.raises(routing.Unreachable, match="did not become reachable"):
         _run(routing.wait_reachable(rid, 0.2))
 
@@ -317,9 +317,9 @@ def test_waiting_notices_an_instance_that_was_removed(client):
 def test_a_started_instance_goes_live_when_it_can_be_reached(client, nodes, listener):
     from nodes import promote
     node_id, _ = nodes("wg-live", ip="127.0.0.1", wg_state="up")
-    rid, _ = _replica(node_id, listener)
+    rid, _ = _instance(node_id, listener)
     _run(promote.promote_when_reachable(rid))
-    row = _replica_row(rid)
+    row = _instance_row(rid)
     assert row.status == "running" and row.last_error is None
 
 
@@ -342,29 +342,29 @@ def test_an_instance_only_goes_live_once_it_is_healthy(client, nodes):
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     try:
         node_id, _ = nodes("wg-health", ip="127.0.0.1", wg_state="up")
-        rid, _ = _replica(node_id, httpd.server_address[1], health_path="/up")
+        rid, _ = _instance(node_id, httpd.server_address[1], health_path="/up")
 
         async def go():
             task = asyncio.get_running_loop().create_task(promote.promote_when_reachable(rid))
             await asyncio.sleep(2.5)
-            before = _replica_row_async_status(rid)
+            before = _instance_row_async_status(rid)
             answers["/up"] = 200
             await task
             return before
         before = _run(go())
         assert before == ("starting", "health_check")          # open port, no healthy answer yet: not in nginx
-        assert _replica_row(rid).status == "running"
+        assert _instance_row(rid).status == "running"
     finally:
         httpd.shutdown()
 
 
-def _replica_row_async_status(replica_id):
+def _instance_row_async_status(instance_id):
     """The row as stored now, from inside a running loop."""
     import sqlite3
     from core.database import DATA_DIR
     conn = sqlite3.connect(f"{DATA_DIR}/cloudbase.db")
     try:
-        return conn.execute("SELECT status, substatus FROM application_replicas WHERE id = ?", (replica_id,)).fetchone()
+        return conn.execute("SELECT status, substatus FROM application_instances WHERE id = ?", (instance_id,)).fetchone()
     finally:
         conn.close()
 
@@ -372,9 +372,9 @@ def _replica_row_async_status(replica_id):
 def test_an_instance_that_a_deploy_already_handled_is_left_alone(client, nodes, listener):
     from nodes import promote
     node_id, _ = nodes("wg-live-stopped", ip="127.0.0.1", wg_state="up")
-    rid, _ = _replica(node_id, listener, status="stopped")
+    rid, _ = _instance(node_id, listener, status="stopped")
     _run(promote.promote_when_reachable(rid))
-    assert _replica_row(rid).status == "stopped"
+    assert _instance_row(rid).status == "stopped"
 
 
 def test_an_unreachable_instance_waits_for_recovery_when_the_link_is_down_and_fails_otherwise(client, nodes, monkeypatch):
@@ -384,12 +384,12 @@ def test_an_unreachable_instance_waits_for_recovery_when_the_link_is_down_and_fa
     monkeypatch.setattr(routing, "POLL_SECONDS", 0.05)
     down, _ = nodes("wg-late-down", ip="127.0.0.1", wg_state="down")
     up, _ = nodes("wg-late-up", ip="127.0.0.1", wg_state="up")
-    r_down, _ = _replica(down, 9397)
-    r_up, _ = _replica(up, 9396)
+    r_down, _ = _instance(down, 9397)
+    r_up, _ = _instance(up, 9396)
     _run(promote.promote_when_reachable(r_down))
     _run(promote.promote_when_reachable(r_up))
-    assert _replica_row(r_down).status == "node_offline"
-    assert _replica_row(r_up).status == "error" and "did not become reachable" in _replica_row(r_up).last_error
+    assert _instance_row(r_down).status == "node_offline"
+    assert _instance_row(r_up).status == "error" and "did not become reachable" in _instance_row(r_up).last_error
 
 
 # ── the agent ────────────────────────────────────────────────────────────────

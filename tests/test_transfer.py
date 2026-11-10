@@ -29,7 +29,7 @@ def _make_app(name: str, instances: int = 2, status: str = "running", port: int 
     """Insert an app (and instances) straight into the database, like an earlier install would have."""
     from core.database import AsyncSessionLocal
     from core.env_crypto import encrypt_env, encrypt_text
-    from core.models import Application, ApplicationReplica
+    from core.models import Application, Instance
     from nodes.registry import ensure_local_node
 
     async def go():
@@ -44,7 +44,7 @@ def _make_app(name: str, instances: int = 2, status: str = "running", port: int 
             db.add(app)
             await db.flush()
             for i in range(instances):
-                db.add(ApplicationReplica(app_id=app.id, node_id=node.id, status=status, external_port=port + 1 + i))
+                db.add(Instance(app_id=app.id, node_id=node.id, status=status, external_port=port + 1 + i))
             await db.commit()
             return app.id
     return _run(go())
@@ -53,11 +53,11 @@ def _make_app(name: str, instances: int = 2, status: str = "running", port: int 
 def _delete_app(app_id: int) -> None:
     from sqlalchemy import delete
     from core.database import AsyncSessionLocal
-    from core.models import Application, ApplicationReplica
+    from core.models import Application, Instance
 
     async def go():
         async with AsyncSessionLocal() as db:
-            await db.execute(delete(ApplicationReplica).where(ApplicationReplica.app_id == app_id))
+            await db.execute(delete(Instance).where(Instance.app_id == app_id))
             await db.execute(delete(Application).where(Application.id == app_id))
             await db.commit()
     _run(go())
@@ -66,14 +66,14 @@ def _delete_app(app_id: int) -> None:
 def _load_app(name: str):
     from sqlalchemy import select
     from core.database import AsyncSessionLocal
-    from core.models import Application, ApplicationReplica
+    from core.models import Application, Instance
 
     async def go():
         async with AsyncSessionLocal() as db:
             app = (await db.execute(select(Application).where(Application.name == name))).scalar_one_or_none()
             if not app:
                 return None, []
-            reps = (await db.execute(select(ApplicationReplica).where(ApplicationReplica.app_id == app.id))).scalars().all()
+            reps = (await db.execute(select(Instance).where(Instance.app_id == app.id))).scalars().all()
             return app, reps
     return _run(go())
 
@@ -200,7 +200,7 @@ def test_round_trip_restores_envs_token_and_instances(admin, deploys):
     assert body["skipped"] == []
     assert body["imported"] == [{"name": "tx-roundtrip", "instances": 2, "will_start": True}]
 
-    app, replicas = _load_app("tx-roundtrip")
+    app, instances = _load_app("tx-roundtrip")
     try:
         from core.env_crypto import decrypt_env, decrypt_text
         assert decrypt_env(app.env_vars) == {"SECRET_KEY": SECRET_ENV, "NODE_ENV": "production"}
@@ -209,8 +209,8 @@ def test_round_trip_restores_envs_token_and_instances(admin, deploys):
         assert (app.start_command, app.build_command, app.port) == ("npm start", "npm run build", 3000)
         assert app.restart_policy == "always" and app.docker_memory_limit_mb == 256
         assert json.loads(app.extra_domains) == ["www.example.test"]
-        assert len(replicas) == 2 and all(r.node_id is not None and r.external_port for r in replicas)
-        assert len({r.external_port for r in replicas}) == 2                   # fresh, distinct ports
+        assert len(instances) == 2 and all(r.node_id is not None and r.external_port for r in instances)
+        assert len({r.external_port for r in instances}) == 2                   # fresh, distinct ports
         # deployed and started in the background (BackgroundTasks ran after the response)
         assert deploys["deployed"] == ["tx-roundtrip"] and deploys["started"] == [app.id]
     finally:
@@ -275,10 +275,10 @@ def test_a_cron_job_is_imported_without_instances(admin, deploys):
     blob = _export(admin, [app_id]).content
     _delete_app(app_id)
     body = _import(admin, blob).json()
-    app, replicas = _load_app("tx-cron")
+    app, instances = _load_app("tx-cron")
     try:
         assert body["imported"][0]["instances"] == 0
-        assert app.cron_schedule == "*/5 * * * *" and replicas == []
+        assert app.cron_schedule == "*/5 * * * *" and instances == []
     finally:
         _delete_app(app.id)
 

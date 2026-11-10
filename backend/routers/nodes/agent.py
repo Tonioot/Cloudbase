@@ -11,7 +11,7 @@ from core.models import Node, NodeInvite
 from core.audit import log_audit
 from mesh import hub
 from core import config as _cfg, system_config as _syscfg
-from nodes import metrics as node_metrics, observed, snapshot
+from nodes import desired, metrics as node_metrics, observed, snapshot
 from nodes.liveness import node_gone
 from nodes import commands as node_commands
 from nodes.commands import _commit_with_sqlite_lock_retry, _utcnow
@@ -108,6 +108,8 @@ async def agent_desired(
     if not x_node_token:
         raise HTTPException(401, "Missing node token")
     node = await get_node_by_token_or_401(x_node_token, db)
+    if desired.agent_too_old(node):          # it would misread the list; without one it removes nothing
+        raise desired._too_old(node)
     snap = await snapshot.snapshot(db, node.id)
     if have and have == snap["hash"]:
         return {"hash": snap["hash"], "unchanged": True}
@@ -124,7 +126,7 @@ async def agent_observed(
     if not x_node_token:
         raise HTTPException(401, "Missing node token")
     node = await get_node_by_token_or_401(x_node_token, db)
-    await observed.apply(node.id, {k: v.model_dump() for k, v in req.replicas.items()})
+    await observed.apply(node.id, {k: v.model_dump() for k, v in req.instances.items()})
     return {"ok": True}
 
 

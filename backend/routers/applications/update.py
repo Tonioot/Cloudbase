@@ -14,7 +14,7 @@ from core import auth as _auth, system_config as _syscfg
 from apps.git import _change_repository, _encrypt_github_token, _normalize_repo_url, _resolve_token
 from apps.images import _image_port, _dockerfile_build_kwargs
 from apps.nginx_sync import _auto_subdomain, _write_app_nginx_config, _best_effort_remove_app_nginx
-from apps.serializers import _app_to_dict, _get_or_404, _replica_views
+from apps.serializers import _app_to_dict, _get_or_404, _instance_views
 from apps import health as health_app
 from apps.validation import _validate_docker_runtime_settings, _check_domain_conflicts, _check_new_app_name, _check_repo_url
 from routers.applications.schemas import UpdateRequest
@@ -131,10 +131,10 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.auto_deploy_interval = max(30, min(int(req.auto_deploy_interval), 3600))
     if req.autoscale_enabled is not None:
         app.autoscale_enabled = req.autoscale_enabled
-    if req.autoscale_min_replicas is not None:
-        app.autoscale_min_replicas = max(1, req.autoscale_min_replicas)
-    if req.autoscale_max_replicas is not None:
-        app.autoscale_max_replicas = max(1, req.autoscale_max_replicas)
+    if req.autoscale_min_instances is not None:
+        app.autoscale_min_instances = max(1, req.autoscale_min_instances)
+    if req.autoscale_max_instances is not None:
+        app.autoscale_max_instances = max(1, req.autoscale_max_instances)
     if req.autoscale_cpu_target is not None:
         app.autoscale_cpu_target = max(10.0, min(95.0, req.autoscale_cpu_target))
 
@@ -179,4 +179,4 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
 
     await log_audit(db, "app.config_update", actor=actor, app_id=app.id, detail={"name": app.name})
     await db.commit()
-    return _app_to_dict(app, await _replica_views(app.id, db))
+    return _app_to_dict(app, await _instance_views(app.id, db))

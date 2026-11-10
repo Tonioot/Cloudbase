@@ -9,7 +9,7 @@ from nginx import pages as nginx_pages
 from nginx import files as nginx_files
 from core import auth as _auth
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
-from apps.serializers import _app_to_dict, _get_or_404, _replica_views
+from apps.serializers import _app_to_dict, _get_or_404, _instance_views
 from routers.applications.schemas import MaintenanceSettings, RenderPageRequest
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
@@ -72,7 +72,7 @@ async def _toggle(app_id: int, db: AsyncSession, flag: str, other: str) -> dict:
     log.info("[maintenance] app_id=%d %s=%s", app_id, flag, getattr(app, flag))
     await _write_app_nginx_config(app, db)
     await db.commit()
-    return _app_to_dict(app, await _replica_views(app.id, db))
+    return _app_to_dict(app, await _instance_views(app.id, db))
 
 
 @router.post("/{app_id}/maintenance-pages/render")

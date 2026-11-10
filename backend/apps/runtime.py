@@ -2,7 +2,7 @@ import asyncio
 from typing import Optional
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
-from core.models import Deployment, StatsHistory, ApplicationReplica, Node, Application, AuditLog
+from core.models import Deployment, StatsHistory, Instance, Node, Application, AuditLog
 from containers import processes as pm
 from core import applog
 from dbs import links as db_links
@@ -22,7 +22,7 @@ async def _cleanup_app_dependencies(db: AsyncSession, app_id: int) -> None:
         .values(app_id=None)
     )
     await db.execute(delete(StatsHistory).where(StatsHistory.app_id == app_id))
-    await db.execute(delete(ApplicationReplica).where(ApplicationReplica.app_id == app_id))
+    await db.execute(delete(Instance).where(Instance.app_id == app_id))
     await db.execute(delete(Deployment).where(Deployment.app_id == app_id))
 
 
@@ -44,14 +44,14 @@ def _docker_runtime_options(app: Application) -> dict:
     }
 
 
-async def _load_app_replicas(app_id: int, db: AsyncSession) -> list[ApplicationReplica]:
+async def _load_app_instances(app_id: int, db: AsyncSession) -> list[Instance]:
     result = await db.execute(
-        select(ApplicationReplica).where(ApplicationReplica.app_id == app_id)
+        select(Instance).where(Instance.app_id == app_id)
     )
     return result.scalars().all()
 
 
-def _remote_replica_command_payload(app: Application, env_vars: dict, external_port: int, source_revision: Optional[str] = None) -> dict:
+def _remote_instance_command_payload(app: Application, env_vars: dict, external_port: int, source_revision: Optional[str] = None) -> dict:
     if source_revision is None:
         source_revision = _refresh_app_source_revision(app)
     app_type = app.app_type or pm.detect_app_type_from_command(app.start_command or "")
@@ -90,26 +90,26 @@ def status_of_instances(statuses) -> str:
 
 def has_running_instance():
     """SQL condition for 'this app runs': at least one instance is running."""
-    return Application.id.in_(select(ApplicationReplica.app_id).where(ApplicationReplica.status == "running"))
+    return Application.id.in_(select(Instance.app_id).where(Instance.status == "running"))
 
 
-def _instance_payload(app: Application, replica: ApplicationReplica, env_vars: dict,
+def _instance_payload(app: Application, instance: Instance, env_vars: dict,
                       source_revision: Optional[str] = None) -> dict:
     """The spec of one instance: the app's settings, with the instance's own limits on top."""
-    payload = _remote_replica_command_payload(app, env_vars, replica.external_port or app.port or 8000, source_revision)
+    payload = _remote_instance_command_payload(app, env_vars, instance.external_port or app.port or 8000, source_revision)
     for key in ("docker_cpu_limit", "docker_memory_limit_mb", "docker_tmpfs_size_mb"):
-        if getattr(replica, key) is not None:
-            payload[key] = getattr(replica, key)
+        if getattr(instance, key) is not None:
+            payload[key] = getattr(instance, key)
     for key in ("docker_read_only_root", "docker_tmpfs_enabled"):
-        if getattr(replica, key):
+        if getattr(instance, key):
             payload[key] = True
     return payload
 
 
-async def _start_replica_runtime(
+async def _start_instance_runtime(
     app: Application,
-    replica: ApplicationReplica,
-    replica_node: Optional[Node],
+    instance: Instance,
+    instance_node: Optional[Node],
     env_vars: dict,
     db: AsyncSession,
     source_revision: Optional[str] = None,
@@ -118,63 +118,63 @@ async def _start_replica_runtime(
 
     The node's reconciler does the rest, and that includes this server's own (nodes/local.py). A new spec makes
     it recreate the container, which is what a restart is."""
-    if replica_node is None:
-        replica.status = "error"
-        replica.last_error = "Replica node not found"
+    if instance_node is None:
+        instance.status = "error"
+        instance.last_error = "Instance node not found"
         return
-    if not replica_node.is_local and (replica_node.status != "online" or not replica_node.enabled):
-        replica.status = "error"
-        replica.last_error = f"Node '{replica_node.name}' is offline"
+    if not instance_node.is_local and (instance_node.status != "online" or not instance_node.enabled):
+        instance.status = "error"
+        instance.last_error = f"Node '{instance_node.name}' is offline"
         return
     if source_revision is None:
         source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
-    await desired.start(db, node_id=replica_node.id, replica_id=replica.id,
-                        payload=_instance_payload(app, replica, env_vars, source_revision))
-    replica.status = "starting"
-    replica.substatus = None
-    replica.last_error = None
+    await desired.start(db, node_id=instance_node.id, instance_id=instance.id,
+                        payload=_instance_payload(app, instance, env_vars, source_revision))
+    instance.status = "starting"
+    instance.substatus = None
+    instance.last_error = None
 
 
-async def _stop_replica_runtime(
+async def _stop_instance_runtime(
     app: Application,
-    replica: ApplicationReplica,
-    replica_node: Optional[Node],
+    instance: Instance,
+    instance_node: Optional[Node],
     db: AsyncSession,
 ) -> None:
     """Stop an instance: it should not run any more; its row stays so it can be started again."""
-    if replica_node is None:
-        replica.status = "stopped"
-        replica.container_id = None
-        replica.last_error = None
+    if instance_node is None:
+        instance.status = "stopped"
+        instance.container_id = None
+        instance.last_error = None
         return
 
-    await desired.stop(db, node_id=replica_node.id, replica_id=replica.id)
-    if replica_node.is_local or (replica_node.status == "online" and replica_node.enabled):
-        replica.status = "stopping"                 # "stopped" once the node reports the container gone
-        replica.last_error = None
+    await desired.stop(db, node_id=instance_node.id, instance_id=instance.id)
+    if instance_node.is_local or (instance_node.status == "online" and instance_node.enabled):
+        instance.status = "stopping"                 # "stopped" once the node reports the container gone
+        instance.last_error = None
         return
 
-    replica.status = "stopped"
-    replica.container_id = None
-    replica.last_error = None
+    instance.status = "stopped"
+    instance.container_id = None
+    instance.last_error = None
 
 
-def _has_live_replicas(replicas: list[ApplicationReplica]) -> bool:
-    return any(r.status in ("running", "starting") for r in replicas)
+def _has_live_instances(instances: list[Instance]) -> bool:
+    return any(r.status in ("running", "starting") for r in instances)
 
 
 async def _get_app_node(app: Application, db: AsyncSession, local_node: Optional[Node] = None) -> Node:
     """Return the node that should handle single-node operations (logs, git, rebuild).
 
-    Prefers the node of the first running replica, then any replica, then local.
+    Prefers the node of the first running instance, then any instance, then local.
     """
     rep_result = await db.execute(
-        select(ApplicationReplica).where(ApplicationReplica.app_id == app.id)
-        .order_by(ApplicationReplica.status.desc())  # running > stopped
+        select(Instance).where(Instance.app_id == app.id)
+        .order_by(Instance.status.desc())  # running > stopped
         .limit(5)
     )
-    replicas = rep_result.scalars().all()
-    candidate = next((r for r in replicas if r.status in ("running", "starting")), None) or next(iter(replicas), None)
+    instances = rep_result.scalars().all()
+    candidate = next((r for r in instances if r.status in ("running", "starting")), None) or next(iter(instances), None)
     if candidate:
         node = await db.get(Node, candidate.node_id)
         if node:

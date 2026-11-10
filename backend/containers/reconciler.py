@@ -19,7 +19,7 @@ import asyncio
 import logging
 import time
 
-from containers import processes as pm, replicas as containers_replicas
+from containers import processes as pm, instances as containers_instances
 
 _logger = logging.getLogger("cloudbase.agent")      # the node-agent log, also where the primary's reconciler writes
 
@@ -64,9 +64,9 @@ class Reconciler:
         self.entries: dict[int, dict] = {}
         self.synced = False
         self.observed: dict[int, dict] = {}
-        self.attempts: dict[int, dict] = {}       # replica id -> {hash, count, next, error}
+        self.attempts: dict[int, dict] = {}       # instance id -> {hash, count, next, error}
         self.started_at: dict[int, float] = {}
-        self.tasks: dict[int, tuple[str, asyncio.Task]] = {}    # replica id -> (spec hash, running start)
+        self.tasks: dict[int, tuple[str, asyncio.Task]] = {}    # instance id -> (spec hash, running start)
         self.pull_now = asyncio.Event()
         self.reconcile_now = asyncio.Event()
         self.report_now = asyncio.Event()
@@ -101,21 +101,23 @@ class Reconciler:
         data = await self._fetch_list()
         if data.get("unchanged"):
             return
-        self.entries = {int(e["replica_id"]): e for e in data.get("replicas", [])}
+        # Strict on purpose: an answer without "instances" (another version, an error page) is not an empty list,
+        # and taking it for one would remove every container here
+        self.entries = {int(e["instance_id"]): e for e in data["instances"]}
         self.list_hash, self.synced = data["hash"], True
-        for replica_id in [r for r in self.observed if r not in self.entries]:
-            del self.observed[replica_id]
-            self.attempts.pop(replica_id, None)
-            self.started_at.pop(replica_id, None)
+        for instance_id in [r for r in self.observed if r not in self.entries]:
+            del self.observed[instance_id]
+            self.attempts.pop(instance_id, None)
+            self.started_at.pop(instance_id, None)
         _log(f"[reconcile] list received: {sum(e['desired'] == 'running' for e in self.entries.values())} to run, "
                    f"{sum(e['desired'] != 'running' for e in self.entries.values())} stopped")
         self.reconcile_now.set()
 
     # ── what we see ─────────────────────────────────────────────────────────
-    def _set(self, replica_id: int, state: str, **fields) -> None:
+    def _set(self, instance_id: int, state: str, **fields) -> None:
         report = {"state": state, "substatus": None, "container_id": None, "spec_hash": None, "error": None, **fields}
-        if self.observed.get(replica_id) != report:
-            self.observed[replica_id] = report
+        if self.observed.get(instance_id) != report:
+            self.observed[instance_id] = report
             self.report_now.set()
 
     async def report(self) -> None:
@@ -125,37 +127,37 @@ class Reconciler:
     async def reconcile_once(self) -> None:
         if not self.synced:
             return
-        containers = {c["replica_id"]: c for c in await asyncio.to_thread(containers_replicas.list_replica_containers)}
+        containers = {c["instance_id"]: c for c in await asyncio.to_thread(containers_instances.list_instance_containers)}
 
         # 1. whatever should not run, goes. All at once: stopping a container takes seconds, and one that is slow
         # must not hold up the others (nor the report that the others are gone)
         doomed = [c for rid, c in containers.items()
                   if (self.entries.get(rid) or {}).get("desired") != "running"]
         removed = await asyncio.gather(*(self._remove(c) for c in doomed))
-        stuck = {c["replica_id"] for c, gone in zip(doomed, removed) if not gone}
+        stuck = {c["instance_id"] for c, gone in zip(doomed, removed) if not gone}
         containers = {rid: c for rid, c in containers.items()
                       if (self.entries.get(rid) or {}).get("desired") == "running"}
 
-        for replica_id, entry in self.entries.items():
+        for instance_id, entry in self.entries.items():
             if entry["desired"] != "running":
-                if replica_id not in stuck:                 # never say "stopped" about a container that is still there
-                    self._set(replica_id, "stopped")
-                self._cancel_start(replica_id)
+                if instance_id not in stuck:                 # never say "stopped" about a container that is still there
+                    self._set(instance_id, "stopped")
+                self._cancel_start(instance_id)
                 continue
-            self._ensure(entry, containers.get(replica_id))
+            self._ensure(entry, containers.get(instance_id))
 
         # starts that belong to an instance that left the list
-        for replica_id in [r for r in self.tasks if r not in self.entries]:
-            self._cancel_start(replica_id)
+        for instance_id in [r for r in self.tasks if r not in self.entries]:
+            self._cancel_start(instance_id)
 
     async def _remove(self, container: dict) -> bool:
         """Remove the container of an instance that should not run. Returns whether it is gone."""
-        replica_id = container["replica_id"]
-        self._cancel_start(replica_id)
-        _log(f"[reconcile] removing instance {replica_id} ({container['name']}): not wanted anymore")
+        instance_id = container["instance_id"]
+        self._cancel_start(instance_id)
+        _log(f"[reconcile] removing instance {instance_id} ({container['name']}): not wanted anymore")
         began = time.monotonic()
         try:
-            gone = await asyncio.to_thread(pm.stop_docker_replica, container["app_id"], replica_id)
+            gone = await asyncio.to_thread(pm.stop_docker_instance, container["app_id"], instance_id)
         except Exception as exc:
             _log(f"[reconcile] could not remove {container['name']}: {exc}")
             return False
@@ -166,94 +168,94 @@ class Reconciler:
             _log(f"[reconcile] removing {container['name']} took {took:.0f}s")
         return gone is not False
 
-    def _cancel_start(self, replica_id: int) -> None:
-        running = self.tasks.pop(replica_id, None)
+    def _cancel_start(self, instance_id: int) -> None:
+        running = self.tasks.pop(instance_id, None)
         if running and not running[1].done():
             running[1].cancel()
 
     def _ensure(self, entry: dict, container: dict | None) -> None:
-        replica_id, wanted = entry["replica_id"], entry["spec_hash"]
+        instance_id, wanted = entry["instance_id"], entry["spec_hash"]
 
         # Already starting this very spec: report what that start is doing
-        running = self.tasks.get(replica_id)
+        running = self.tasks.get(instance_id)
         if running and running[0] == wanted and not running[1].done():
             return
         if running:
-            self._cancel_start(replica_id)
+            self._cancel_start(instance_id)
 
         up_to_date = container is not None and (container["spec"] in (None, wanted))   # no label: made before desired state
         if container and container["status"] == "running" and up_to_date:
-            self.attempts.pop(replica_id, None)
-            self._set(replica_id, "running", container_id=container["id"], spec_hash=wanted)
+            self.attempts.pop(instance_id, None)
+            self._set(instance_id, "running", container_id=container["id"], spec_hash=wanted)
             return
         if container and container["status"] == "restarting" and up_to_date:
             # Docker is restarting a crashing app by itself (its restart policy); not for us to fight
-            self._set(replica_id, "error", container_id=container["id"], spec_hash=wanted,
+            self._set(instance_id, "error", container_id=container["id"], spec_hash=wanted,
                       error="the app keeps crashing and Docker keeps restarting it; see the logs")
             return
 
-        attempt = self.attempts.get(replica_id)
+        attempt = self.attempts.get(instance_id)
         if attempt and attempt["hash"] != wanted:
-            attempt = self.attempts.pop(replica_id)          # a new spec: a fresh start
+            attempt = self.attempts.pop(instance_id)          # a new spec: a fresh start
             attempt = None
         # Only a start made by this agent can have "crashed right away": without one (after a restart of the agent or of
         # the whole server) an exited container is simply started again
-        started = self.started_at.get(replica_id)
+        started = self.started_at.get(instance_id)
         crashed = (container is not None and up_to_date and container["status"] != "running"
                    and started is not None and time.monotonic() - started < CRASH_WINDOW_SECONDS)
         if crashed:
-            self._failed(replica_id, wanted, f"the container exited right after starting (exit code {container['exit_code']}); see the logs")
-            attempt = self.attempts[replica_id]
+            self._failed(instance_id, wanted, f"the container exited right after starting (exit code {container['exit_code']}); see the logs")
+            attempt = self.attempts[instance_id]
         if attempt:
             if attempt["count"] >= MAX_ATTEMPTS:
-                self._set(replica_id, "error", spec_hash=wanted, error=f"{attempt['error']} (gave up after {MAX_ATTEMPTS} attempts)")
+                self._set(instance_id, "error", spec_hash=wanted, error=f"{attempt['error']} (gave up after {MAX_ATTEMPTS} attempts)")
                 return
             if time.monotonic() < attempt["next"]:
-                self._set(replica_id, "error", spec_hash=wanted, error=attempt["error"])
+                self._set(instance_id, "error", spec_hash=wanted, error=attempt["error"])
                 return
 
-        self._set(replica_id, "starting", spec_hash=wanted, substatus="waiting")
+        self._set(instance_id, "starting", spec_hash=wanted, substatus="waiting")
         task = asyncio.get_running_loop().create_task(self._start(entry, container))
-        self.tasks[replica_id] = (wanted, task)
+        self.tasks[instance_id] = (wanted, task)
 
-    def _failed(self, replica_id: int, spec_hash: str, message: str) -> None:
-        previous = self.attempts.get(replica_id)
+    def _failed(self, instance_id: int, spec_hash: str, message: str) -> None:
+        previous = self.attempts.get(instance_id)
         count = (previous["count"] if previous and previous["hash"] == spec_hash else 0) + 1
-        self.attempts[replica_id] = {"hash": spec_hash, "count": count, "error": message,
+        self.attempts[instance_id] = {"hash": spec_hash, "count": count, "error": message,
                                      "next": time.monotonic() + backoff_seconds(count)}
-        self._set(replica_id, "error", spec_hash=spec_hash, error=message)
-        _log(f"[reconcile] instance {replica_id}: {message} (attempt {count}/{MAX_ATTEMPTS})")
+        self._set(instance_id, "error", spec_hash=spec_hash, error=message)
+        _log(f"[reconcile] instance {instance_id}: {message} (attempt {count}/{MAX_ATTEMPTS})")
 
     async def _start(self, entry: dict, container: dict | None) -> None:
-        replica_id, wanted, spec = entry["replica_id"], entry["spec_hash"], entry["spec"]
+        instance_id, wanted, spec = entry["instance_id"], entry["spec_hash"], entry["spec"]
         try:
             if not self._network_ready():
                 # Not a failure of the app: the node network is still being set up
-                self._set(replica_id, "starting", spec_hash=wanted, substatus="waiting_for_network")
-                _log(f"[reconcile] instance {replica_id}: waiting for the node network")
+                self._set(instance_id, "starting", spec_hash=wanted, substatus="waiting_for_network")
+                _log(f"[reconcile] instance {instance_id}: waiting for the node network")
                 await asyncio.sleep(RECONCILE_SECONDS)
                 return
             app_id = int(spec["app_id"])
 
             def progress(substatus: str) -> None:
-                self._set(replica_id, "building", spec_hash=wanted, substatus=substatus)
+                self._set(instance_id, "building", spec_hash=wanted, substatus=substatus)
 
             await self._prepare(spec, progress)
-            self._set(replica_id, "starting", spec_hash=wanted, substatus="creating_container")
+            self._set(instance_id, "starting", spec_hash=wanted, substatus="creating_container")
             if container is not None:
-                await asyncio.to_thread(pm.stop_docker_replica, app_id, replica_id)      # another spec, or exited
+                await asyncio.to_thread(pm.stop_docker_instance, app_id, instance_id)      # another spec, or exited
             container_id = await asyncio.to_thread(
-                pm.start_docker_replica, app_id, replica_id,
+                pm.start_docker_instance, app_id, instance_id,
                 spec.get("internal_port", 8000), spec["external_port"], spec.get("env_vars") or {},
                 {**runtime_options(spec, self._bind_host()), "spec_hash": wanted})
-            self.started_at[replica_id] = time.monotonic()
-            self.attempts.pop(replica_id, None)
-            self._set(replica_id, "running", container_id=container_id, spec_hash=wanted)
-            _log(f"[reconcile] instance {replica_id} started ({container_id[:12]})")
+            self.started_at[instance_id] = time.monotonic()
+            self.attempts.pop(instance_id, None)
+            self._set(instance_id, "running", container_id=container_id, spec_hash=wanted)
+            _log(f"[reconcile] instance {instance_id} started ({container_id[:12]})")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            self._failed(replica_id, wanted, str(exc) or type(exc).__name__)
+            self._failed(instance_id, wanted, str(exc) or type(exc).__name__)
         finally:
             self.reconcile_now.set()
 

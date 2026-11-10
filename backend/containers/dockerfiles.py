@@ -97,7 +97,7 @@ def _normalize_docker_start_command(app_type: str, start_command: str, port: int
 
 # Static sites: nginx serves the files directly. Cloudbase's own nginx routes
 # to this container like any other app, so start/stop, health checks,
-# maintenance pages and replicas keep working unchanged.
+# maintenance pages and instances keep working unchanged.
 STATIC_INTERNAL_PORT = 80
 
 

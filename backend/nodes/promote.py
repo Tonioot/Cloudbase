@@ -6,7 +6,7 @@ import logging
 from apps import health as app_health
 from apps import nginx_sync
 from core.database import AsyncSessionLocal
-from core.models import Application, ApplicationReplica, Node
+from core.models import Application, Instance, Node
 from mesh import routing
 from nodes.commands import _utcnow
 from nodes.liveness import mark_instances_offline
@@ -17,49 +17,49 @@ REACHABLE_TIMEOUT = 90
 _promoting: set[int] = set()
 
 
-async def promote_when_reachable(replica_id: int) -> None:
+async def promote_when_reachable(instance_id: int) -> None:
     """A started instance on another node goes live once the primary can connect to it."""
-    if replica_id in _promoting:
+    if instance_id in _promoting:
         return
-    _promoting.add(replica_id)
+    _promoting.add(instance_id)
     try:
         try:
-            backend = await routing.wait_reachable(replica_id, REACHABLE_TIMEOUT)      # "" for a worker (no port)
+            backend = await routing.wait_reachable(instance_id, REACHABLE_TIMEOUT)      # "" for a worker (no port)
         except routing.Unreachable as exc:
-            await _give_up(replica_id, str(exc))
+            await _give_up(instance_id, str(exc))
             return
-        if backend and not await _passes_health_check(replica_id, backend):
+        if backend and not await _passes_health_check(instance_id, backend):
             return
         async with AsyncSessionLocal() as db:
-            replica = await db.get(ApplicationReplica, replica_id)
-            if replica is None or replica.status != "starting":
+            instance = await db.get(Instance, instance_id)
+            if instance is None or instance.status != "starting":
                 return                                  # a deploy or a stop got there first
-            replica.status, replica.substatus, replica.last_error = "running", None, None
-            replica.updated_at = _utcnow()
-            app_id = replica.app_id
+            instance.status, instance.substatus, instance.last_error = "running", None, None
+            instance.updated_at = _utcnow()
+            app_id = instance.app_id
             await db.commit()
-        log.info("[mesh] instance %d reachable, live", replica_id)
+        log.info("[mesh] instance %d reachable, live", instance_id)
         await nginx_sync.refresh_app_nginx(app_id)
     except Exception as exc:
-        log.warning("[mesh] promoting instance %d failed: %s", replica_id, exc)
+        log.warning("[mesh] promoting instance %d failed: %s", instance_id, exc)
     finally:
-        _promoting.discard(replica_id)
+        _promoting.discard(instance_id)
 
 
-async def _passes_health_check(replica_id: int, backend: str) -> bool:
+async def _passes_health_check(instance_id: int, backend: str) -> bool:
     """Wait until the instance answers like the app's health check wants. False when it never does, or when
     someone else (a deploy, a stop) took over the instance meanwhile."""
     async with AsyncSessionLocal() as db:
-        replica = await db.get(ApplicationReplica, replica_id)
-        app = await db.get(Application, replica.app_id) if replica else None
-        if replica is None or app is None or replica.status != "starting":
+        instance = await db.get(Instance, instance_id)
+        app = await db.get(Application, instance.app_id) if instance else None
+        if instance is None or app is None or instance.status != "starting":
             return False
-        replica.substatus = "health_check"
+        instance.substatus = "health_check"
         await db.commit()
 
     async def taken_over() -> str:
         async with AsyncSessionLocal() as db:
-            current = await db.get(ApplicationReplica, replica_id)
+            current = await db.get(Instance, instance_id)
         if current is None or current.status != "starting":
             return "taken over"
         return ""
@@ -68,30 +68,30 @@ async def _passes_health_check(replica_id: int, backend: str) -> bool:
     if healthy:
         return True
     if detail != "taken over":
-        await _give_up(replica_id, f"health check failed: {detail}")
+        await _give_up(instance_id, f"health check failed: {detail}")
     return False
 
 
-async def _give_up(replica_id: int, reason: str) -> None:
+async def _give_up(instance_id: int, reason: str) -> None:
     async with AsyncSessionLocal() as db:
-        replica = await db.get(ApplicationReplica, replica_id)
-        if replica is None or replica.status != "starting":
+        instance = await db.get(Instance, instance_id)
+        if instance is None or instance.status != "starting":
             return
-        node = await db.get(Node, replica.node_id)
+        node = await db.get(Node, instance.node_id)
         # With the link down the node may simply be unreachable for a while: recovery retries later
         link_is_down = node is not None and not node.is_local and node.wg_state != "up"
-        replica.status = "node_offline" if link_is_down else "error"
-        replica.substatus = None
-        replica.last_error = reason
-        replica.updated_at = _utcnow()
-        app_id = replica.app_id
+        instance.status = "node_offline" if link_is_down else "error"
+        instance.substatus = None
+        instance.last_error = reason
+        instance.updated_at = _utcnow()
+        app_id = instance.app_id
         await db.commit()
-    log.warning("[mesh] instance %d: %s", replica_id, reason)
+    log.warning("[mesh] instance %d: %s", instance_id, reason)
     await nginx_sync.refresh_app_nginx(app_id)                  # no longer coming up: no start page for it
 
 
-def start_promotion(replica_id: int) -> None:
-    asyncio.get_running_loop().create_task(promote_when_reachable(replica_id))
+def start_promotion(instance_id: int) -> None:
+    asyncio.get_running_loop().create_task(promote_when_reachable(instance_id))
 
 
 async def link_down(node_id: int) -> None:

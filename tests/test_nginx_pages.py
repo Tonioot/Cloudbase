@@ -34,7 +34,7 @@ def nginx(monkeypatch):
 def make(client):
     from sqlalchemy import delete
     from core.database import AsyncSessionLocal
-    from core.models import Application, ApplicationReplica
+    from core.models import Application, Instance
     from nodes.registry import ensure_local_node
     made = []
 
@@ -48,7 +48,7 @@ def make(client):
                 await db.flush()
                 ids = []
                 for i, (status, desired, container) in enumerate(instances):
-                    row = ApplicationReplica(app_id=app.id, node_id=node.id, status=status, desired=desired,
+                    row = Instance(app_id=app.id, node_id=node.id, status=status, desired=desired,
                                              container_id=container, external_port=11000 + app.id * 10 + i)
                     db.add(row)
                     await db.flush()
@@ -63,7 +63,7 @@ def make(client):
 
     async def cleanup():
         async with AsyncSessionLocal() as db:
-            await db.execute(delete(ApplicationReplica).where(ApplicationReplica.app_id.in_(made)))
+            await db.execute(delete(Instance).where(Instance.app_id.in_(made)))
             await db.execute(delete(Application).where(Application.id.in_(made)))
             await db.commit()
     _run(cleanup())
@@ -84,13 +84,13 @@ def _mode(app_id, **app_fields):
     return _run(go())
 
 
-def _set(replica_id, **fields):
+def _set(instance_id, **fields):
     from core.database import AsyncSessionLocal
-    from core.models import ApplicationReplica
+    from core.models import Instance
 
     async def go():
         async with AsyncSessionLocal() as db:
-            row = await db.get(ApplicationReplica, replica_id)
+            row = await db.get(Instance, instance_id)
             for k, v in fields.items():
                 setattr(row, k, v)
             await db.commit()
@@ -154,14 +154,14 @@ def test_a_node_report_that_changes_a_status_rewrites_nginx(make, nginx, monkeyp
     from nodes import observed
     app_id, (rid,) = make("page-report", [("starting", "running", None)])     # was not live: only the status change says so
     _set(rid, spec_hash="abc")
-    monkeypatch.setattr(observed.promote, "start_promotion", lambda replica_id: None)
+    monkeypatch.setattr(observed.promote, "start_promotion", lambda instance_id: None)
 
     from core.database import AsyncSessionLocal
-    from core.models import ApplicationReplica
+    from core.models import Instance
 
     async def node_of():
         async with AsyncSessionLocal() as db:
-            return (await db.get(ApplicationReplica, rid)).node_id
+            return (await db.get(Instance, rid)).node_id
     node_id = _run(node_of())
     _run(observed.apply(node_id, {str(rid): {"state": "error", "error": "crashed", "spec_hash": "abc"}}))
     assert nginx[-1] == "normal"

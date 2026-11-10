@@ -7,7 +7,7 @@ import asyncio
 
 import pytest
 
-from containers import processes as pm, replicas as containers_replicas
+from containers import processes as pm, instances as containers_instances
 from nodes import local, observed
 
 
@@ -28,7 +28,7 @@ def _node(name, is_local=False):
     async def go():
         async with AsyncSessionLocal() as db:
             node = Node(name=name, status="online", auth_token=f"token-{name}", is_local=is_local,
-                        enabled=True, agent_version="2.0.0")
+                        enabled=True, agent_version="3.0.0")
             db.add(node)
             await db.commit()
             return node.id
@@ -50,37 +50,37 @@ def _app(name, **fields):
     return _run(go())
 
 
-def _replica(app_id, node_id, port, status="stopped", desired=None, **fields):
+def _instance(app_id, node_id, port, status="stopped", desired=None, **fields):
     from core.database import AsyncSessionLocal
-    from core.models import ApplicationReplica
+    from core.models import Instance
 
     async def go():
         async with AsyncSessionLocal() as db:
-            rep = ApplicationReplica(app_id=app_id, node_id=node_id, external_port=port, status=status, desired=desired, **fields)
+            rep = Instance(app_id=app_id, node_id=node_id, external_port=port, status=status, desired=desired, **fields)
             db.add(rep)
             await db.commit()
             return rep.id
     return _run(go())
 
 
-def _row(replica_id):
+def _row(instance_id):
     from core.database import AsyncSessionLocal
-    from core.models import ApplicationReplica
+    from core.models import Instance
 
     async def go():
         async with AsyncSessionLocal() as db:
-            return await db.get(ApplicationReplica, replica_id)
+            return await db.get(Instance, instance_id)
     return _run(go())
 
 
-def _with(app_id, replica_id, node_id, action):
-    """Run action(app, replica, node, db) in one session and commit."""
+def _with(app_id, instance_id, node_id, action):
+    """Run action(app, instance, node, db) in one session and commit."""
     from core.database import AsyncSessionLocal
-    from core.models import Application, ApplicationReplica, Node
+    from core.models import Application, Instance, Node
 
     async def go():
         async with AsyncSessionLocal() as db:
-            app, rep, node = await db.get(Application, app_id), await db.get(ApplicationReplica, replica_id), await db.get(Node, node_id)
+            app, rep, node = await db.get(Application, app_id), await db.get(Instance, instance_id), await db.get(Node, node_id)
             result = await action(app, rep, node, db)
             await db.commit()
             return result
@@ -92,26 +92,26 @@ class Docker:
 
     def __init__(self, monkeypatch):
         self.containers, self.started, self.removed, self.built = {}, [], [], []
-        monkeypatch.setattr(containers_replicas, "list_replica_containers", lambda: [dict(c) for c in self.containers.values()])
-        monkeypatch.setattr(pm, "stop_docker_replica", self._stop)
-        monkeypatch.setattr(pm, "start_docker_replica", self._start)
+        monkeypatch.setattr(containers_instances, "list_instance_containers", lambda: [dict(c) for c in self.containers.values()])
+        monkeypatch.setattr(pm, "stop_docker_instance", self._stop)
+        monkeypatch.setattr(pm, "start_docker_instance", self._start)
         monkeypatch.setattr(local.prepare, "ensure_image", self._ensure_image)
         self.promoted = []
         monkeypatch.setattr(observed.promote, "start_promotion", self.promoted.append)
 
-    def add(self, app_id, replica_id, status="running", spec=None):
-        self.containers[replica_id] = {"name": f"cloudbase-app-{app_id}-replica-{replica_id}", "id": f"cid{replica_id}" + "0" * 20,
-                                       "app_id": app_id, "replica_id": replica_id, "status": status, "spec": spec, "exit_code": 0}
+    def add(self, app_id, instance_id, status="running", spec=None):
+        self.containers[instance_id] = {"name": f"cloudbase-app-{app_id}-instance-{instance_id}", "id": f"cid{instance_id}" + "0" * 20,
+                                       "app_id": app_id, "instance_id": instance_id, "status": status, "spec": spec, "exit_code": 0}
 
-    def _stop(self, app_id, replica_id):
-        self.removed.append(replica_id)
-        self.containers.pop(replica_id, None)
+    def _stop(self, app_id, instance_id):
+        self.removed.append(instance_id)
+        self.containers.pop(instance_id, None)
         return True
 
-    def _start(self, app_id, replica_id, internal_port, external_port, env, options):
-        self.started.append({"replica_id": replica_id, "port": external_port, "env": env, "options": options})
-        self.add(app_id, replica_id, spec=options["spec_hash"])
-        return self.containers[replica_id]["id"]
+    def _start(self, app_id, instance_id, internal_port, external_port, env, options):
+        self.started.append({"instance_id": instance_id, "port": external_port, "env": env, "options": options})
+        self.add(app_id, instance_id, spec=options["spec_hash"])
+        return self.containers[instance_id]["id"]
 
     async def _ensure_image(self, spec, progress, fetch, push=None):
         progress("building_image")
@@ -132,8 +132,8 @@ def test_an_instance_started_on_the_primary_goes_through_the_list(monkeypatch):
     from apps import runtime
     docker = Docker(monkeypatch)
     node_id, app_id = _node("lr-start"), _app("lr-start-app")
-    rid = _replica(app_id, node_id, 10501)
-    _with(app_id, rid, node_id, lambda a, r, n, db: runtime._start_replica_runtime(a, r, n, {"A": "1"}, db))
+    rid = _instance(app_id, node_id, 10501)
+    _with(app_id, rid, node_id, lambda a, r, n, db: runtime._start_instance_runtime(a, r, n, {"A": "1"}, db))
     assert _row(rid).status == "starting" and _row(rid).desired == "running" and _row(rid).spec_hash
 
     _run(cycle(local.LocalReconciler(node_id)))
@@ -151,13 +151,13 @@ def test_stopping_an_instance_on_the_primary_removes_its_container(monkeypatch):
     from apps import runtime
     docker = Docker(monkeypatch)
     node_id, app_id = _node("lr-stop"), _app("lr-stop-app")
-    rid = _replica(app_id, node_id, 10502)
-    _with(app_id, rid, node_id, lambda a, r, n, db: runtime._start_replica_runtime(a, r, n, {}, db))
+    rid = _instance(app_id, node_id, 10502)
+    _with(app_id, rid, node_id, lambda a, r, n, db: runtime._start_instance_runtime(a, r, n, {}, db))
     rec = local.LocalReconciler(node_id)
     _run(cycle(rec))
     assert rid in docker.containers
 
-    _with(app_id, rid, node_id, lambda a, r, n, db: runtime._stop_replica_runtime(a, r, n, db))
+    _with(app_id, rid, node_id, lambda a, r, n, db: runtime._stop_instance_runtime(a, r, n, db))
     assert _row(rid).status == "stopping"
     _run(cycle(rec))
     assert rid not in docker.containers and _row(rid).status == "stopped"
@@ -165,15 +165,15 @@ def test_stopping_an_instance_on_the_primary_removes_its_container(monkeypatch):
 
 def test_a_deleted_instance_is_removed_because_it_is_no_longer_on_the_list(monkeypatch):
     from core.database import AsyncSessionLocal
-    from core.models import ApplicationReplica
+    from core.models import Instance
     docker = Docker(monkeypatch)
     node_id, app_id = _node("lr-del"), _app("lr-del-app")
-    rid = _replica(app_id, node_id, 10503, status="running", desired="running")
+    rid = _instance(app_id, node_id, 10503, status="running", desired="running")
     docker.add(app_id, rid, spec=None)
 
     async def delete():
         async with AsyncSessionLocal() as db:
-            await db.delete(await db.get(ApplicationReplica, rid))
+            await db.delete(await db.get(Instance, rid))
             await db.commit()
     rec = local.LocalReconciler(node_id)
     _run(cycle(rec))                                   # an empty list at first: nothing is known to be wrong yet
@@ -185,11 +185,11 @@ def test_a_deleted_instance_is_removed_because_it_is_no_longer_on_the_list(monke
 
 def test_an_instances_own_limits_are_part_of_its_spec():
     from apps import runtime
-    from core.models import Application, ApplicationReplica
+    from core.models import Application, Instance
     app = Application(name="lim", repo_url="https://example.test/x", start_command="x", port=3000,
                       docker_cpu_limit=2.0, docker_memory_limit_mb=512)
-    plain = runtime._instance_payload(app, ApplicationReplica(app_id=1, external_port=1), {}, "rev")
-    own = runtime._instance_payload(app, ApplicationReplica(app_id=1, external_port=1, docker_cpu_limit=0.5,
+    plain = runtime._instance_payload(app, Instance(app_id=1, external_port=1), {}, "rev")
+    own = runtime._instance_payload(app, Instance(app_id=1, external_port=1, docker_cpu_limit=0.5,
                                                             docker_read_only_root=True), {}, "rev")
     assert (plain["docker_cpu_limit"], plain["docker_memory_limit_mb"], plain["docker_read_only_root"]) == (2.0, 512, False)
     assert (own["docker_cpu_limit"], own["docker_memory_limit_mb"], own["docker_read_only_root"]) == (0.5, 512, True)
@@ -198,5 +198,5 @@ def test_an_instances_own_limits_are_part_of_its_spec():
 def test_a_worker_has_no_port_to_wait_for():
     from mesh import routing
     node_id, app_id = _node("lr-worker"), _app("lr-worker-app", no_web=True)
-    rid = _replica(app_id, node_id, 10506, status="running")
+    rid = _instance(app_id, node_id, 10506, status="running")
     assert _run(routing.wait_reachable(rid, 1)) == ""

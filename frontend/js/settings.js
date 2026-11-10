@@ -1327,7 +1327,7 @@ function renderTransfer(root) {
       <label class="check-row">
         <input type="checkbox" class="exp-check" value="${a.id}" checked />
         <span class="check-row-name">${esc(a.name)}</span>
-        <span class="check-row-meta">${plural((a.replicas || []).length, 'instance')}</span>
+        <span class="check-row-meta">${plural((a.instances || []).length, 'instance')}</span>
       </label>`).join('');
     appChecks().forEach(c => c.onchange = () => { expAll.checked = appChecks().every(x => x.checked); sync(); });
     sync();

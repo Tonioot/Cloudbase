@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from core.models import Application, Deployment, Node, ApplicationReplica
+from core.models import Application, Deployment, Node, Instance
 from core import activity
 from nginx import certbot as nginx_certbot
 from cron import scheduler as _cron
@@ -30,17 +30,17 @@ def app_status(app: Application, instance_statuses) -> str:
     return status_of_instances(instance_statuses)
 
 
-async def _replica_views(app_id: int, db: AsyncSession) -> list[dict]:
+async def _instance_views(app_id: int, db: AsyncSession) -> list[dict]:
     rows = (await db.execute(
-        select(ApplicationReplica, Node).join(Node, ApplicationReplica.node_id == Node.id, isouter=True)
-        .where(ApplicationReplica.app_id == app_id).order_by(ApplicationReplica.id)
+        select(Instance, Node).join(Node, Instance.node_id == Node.id, isouter=True)
+        .where(Instance.app_id == app_id).order_by(Instance.id)
     )).all()
-    return [_replica_to_dict(replica, node) for replica, node in rows]
+    return [_instance_to_dict(instance, node) for instance, node in rows]
 
 
 def _app_to_dict(
     app: Application,
-    replicas: list,
+    instances: list,
     include_sensitive: bool = True,
     include_page_configs: bool = True,
 ) -> dict:
@@ -75,7 +75,7 @@ def _app_to_dict(
         "start_command": app.start_command,
         "build_command": app.build_command,
         "port": app.port,
-        "status": app_status(app, [r["status"] for r in replicas]),
+        "status": app_status(app, [r["status"] for r in instances]),
         "activity": activity.get(app.id),        # what is being done to the app right now, or None
         "working_dir": app.working_dir,
         "last_error": app.last_error,
@@ -91,8 +91,8 @@ def _app_to_dict(
         "docker_tmpfs_enabled": bool(app.docker_tmpfs_enabled),
         "docker_tmpfs_size_mb": app.docker_tmpfs_size_mb,
         "autoscale_enabled":      bool(app.autoscale_enabled),
-        "autoscale_min_replicas": app.autoscale_min_replicas or 1,
-        "autoscale_max_replicas": app.autoscale_max_replicas or 4,
+        "autoscale_min_instances": app.autoscale_min_instances or 1,
+        "autoscale_max_instances": app.autoscale_max_instances or 4,
         "autoscale_cpu_target":   app.autoscale_cpu_target or 70.0,
         "maintenance_mode": app.maintenance_mode or False,
         "update_mode":      app.update_mode or False,
@@ -115,33 +115,33 @@ def _app_to_dict(
         "health_path": health.settings_of(app)[0],
         "health_expect": health.settings_of(app)[1],
         "health_timeout_seconds": health.settings_of(app)[2],
-        "replicas": replicas,
-        "replica_count": len(replicas),
+        "instances": instances,
+        "instance_count": len(instances),
         "node_id": app.node_id,
         "cron": _cron.info(app),
     }
 
 
-def _replica_to_dict(replica: ApplicationReplica, node: Optional[Node] = None) -> dict:
+def _instance_to_dict(instance: Instance, node: Optional[Node] = None) -> dict:
     return {
-        "id": replica.id,
-        "app_id": replica.app_id,
-        "node_id": replica.node_id,
+        "id": instance.id,
+        "app_id": instance.app_id,
+        "node_id": instance.node_id,
         "node_name": node.name if node else None,
         "node_is_local": bool(node.is_local) if node else False,
-        "external_port": replica.external_port,
+        "external_port": instance.external_port,
         "wg_state": node.wg_state if node and not node.is_local else None,
-        "container_id": replica.container_id,
-        "status": replica.status,
-        "substatus": replica.substatus,
-        "last_error": replica.last_error,
-        "docker_cpu_limit": replica.docker_cpu_limit,
-        "docker_memory_limit_mb": replica.docker_memory_limit_mb,
-        "docker_read_only_root": bool(replica.docker_read_only_root),
-        "docker_tmpfs_enabled": bool(replica.docker_tmpfs_enabled),
-        "docker_tmpfs_size_mb": replica.docker_tmpfs_size_mb,
-        "created_at": replica.created_at.isoformat() if replica.created_at else None,
-        "updated_at": replica.updated_at.isoformat() if replica.updated_at else None,
+        "container_id": instance.container_id,
+        "status": instance.status,
+        "substatus": instance.substatus,
+        "last_error": instance.last_error,
+        "docker_cpu_limit": instance.docker_cpu_limit,
+        "docker_memory_limit_mb": instance.docker_memory_limit_mb,
+        "docker_read_only_root": bool(instance.docker_read_only_root),
+        "docker_tmpfs_enabled": bool(instance.docker_tmpfs_enabled),
+        "docker_tmpfs_size_mb": instance.docker_tmpfs_size_mb,
+        "created_at": instance.created_at.isoformat() if instance.created_at else None,
+        "updated_at": instance.updated_at.isoformat() if instance.updated_at else None,
     }
 
 

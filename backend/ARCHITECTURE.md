@@ -21,10 +21,10 @@ agent/                      the node agent (runs on remote servers, talks to the
 | Package | What lives there |
 |---|---|
 | `core/` | `config`, `database` + `models`, `auth` (+ `access`: permission map and middleware), `env_crypto`, `token_vault`, `system_config`, `applog`/`system_logs`, `paths` (every file location), `runtime` (port, `IS_NODE`), `history` |
-| `apps/` | application logic: `git`, `images`, `validation`, `nginx_sync`, `runtime` (starting/stopping replicas), `deployments` (run a deploy), `rollout` (replace instances: add new ones, wait until promote put them live, remove the old ones; also used by the autoscaler), `lifecycle`, `serializers`, `state` |
+| `apps/` | application logic: `git`, `images`, `validation`, `nginx_sync`, `runtime` (starting/stopping instances), `deployments` (run a deploy), `rollout` (replace instances: add new ones, wait until promote put them live, remove the old ones; also used by the autoscaler), `lifecycle`, `serializers`, `state` |
 | `nodes/` | `state` (live connections), `desired` (what each node should run: written by start/stop), `snapshot` (the list a node asks for), `observed` (a node's report becomes a status), `local` (the primary's own instances run from the same list), `promote` (an instance goes live once reachable; leaves nginx when the link breaks), `commands` (one-off questions and jobs: logs, stats, backups, cron), `registry` (local node, lookups), `liveness` (silent nodes go offline) |
 | `mesh/` | the node network (WireGuard, hub and spoke with the primary as hub): `addressing`, `helper` (client for the root helper `scripts/cloudbase-wireguard`, via sudo), `hub` (interface, peers, enrolment, handshake health), `routing` (`backend_for`, `wait_reachable`) |
-| `containers/` | Docker on one host: `client`, `naming`, `buildkit`, `dockerfiles`, `build`, `prepare` (get an image onto this machine), `reconciler` (make Docker equal to the list), `cleanup`, `apps`, `replicas`, `jobs`, `stats_logs`, `processes` |
+| `containers/` | Docker on one host: `client`, `naming`, `buildkit`, `dockerfiles`, `build`, `prepare` (get an image onto this machine), `reconciler` (make Docker equal to the list), `cleanup`, `apps`, `instances`, `jobs`, `stats_logs`, `processes` |
 | `nginx/` | `paths`, `pages` (HTML), `config` (nginx config text), `files` (writers), `certbot` (read-only lookups), `certificates` (issuing), `panel` |
 | `dbs/` | managed databases: `docker`, `lifecycle`, `backup_restore`, `updates`, `ops`, `provision`, `view`, `relay`, `proxy`, `workers`, `backups`, `backup_scheduler`, … |
 | `transfer/` | export and import of apps and databases as one file (a tar): `archive` (manifest + dumps), `manifest`/`databases` (what goes in), `jobs`/`exporter` (export runs in the background), `importer`/`db_import` (what comes out) |
@@ -57,6 +57,8 @@ ruff check backend tests scripts
 
 ## Names
 
+An app runs as **instances** (model `Instance`, table `application_instances`, container `cloudbase-app-<id>-instance-<n>`); that is the one name for them, in the code, the API, the agent protocol and the panel. `backend/rename_migration.py` is temporary: it moves servers from the old name and is deleted (with its test) once every server runs 3.0.
+
 An app is known by its **id** on disk, in Docker and in nginx: the source lives in `~/.cloudbase/apps/app-<id>`, the image is `cloudbase/app-<id>:latest`, the nginx config is `app-<id>` with the upstream `cloudbase_app_<id>` (`containers/naming.py`, `nginx/paths.py`). Its name is only what people read, and it decides the automatic subdomain `<name>.<base domain>`. Renaming an app (`PUT /api/apps/{id}` with `name`) therefore rewrites its nginx config for the new subdomain and removes the certificate of the old one, and leaves everything else alone.
 
 ## The frontend
@@ -69,7 +71,7 @@ The primary is a node too, and its own instances work exactly the same way: star
 
 Instances on another node are **not** started with commands. The primary keeps, per instance, whether it
 should run and a *spec* (revision, port, environment, limits): `desired`, `spec_json`, `spec_hash` on the
-replica row (`nodes/desired.py`). Starting, restarting or deploying writes a new spec (a new `spec_hash`);
+instance row (`nodes/desired.py`). Starting, restarting or deploying writes a new spec (a new `spec_hash`);
 stopping sets `desired = stopped`; deleting the row removes it from the list.
 
 The node's agent (`agent/reconcile.py`, the HTTP side of the engine in `containers/reconciler.py`) asks for its list (`GET /api/nodes/agent/desired?have=<hash>`, also

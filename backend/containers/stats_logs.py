@@ -197,10 +197,10 @@ def aggregate_stats_frames(frames: list[dict]) -> dict:
 
 
 async def app_aggregate_stats(app_id: int) -> dict:
-    """Stats of all replica containers of app_id on this host, added up. Needs no database."""
-    pattern = re.compile(rf"^cloudbase-app-{app_id}-replica-(\d+)$")
+    """Stats of all instance containers of app_id on this host, added up. Needs no database."""
+    pattern = re.compile(rf"^cloudbase-app-{app_id}-instance-(\d+)$")
     try:
-        containers = _get_client().containers.list(filters={"name": f"cloudbase-app-{app_id}-replica-"})
+        containers = _get_client().containers.list(filters={"name": f"cloudbase-app-{app_id}-instance-"})
     except Exception:
         return {"status": "stopped", "docker": True}
     frames = []

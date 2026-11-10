@@ -25,7 +25,7 @@ def _app(app_id, node_id=None):
     return N(id=app_id, node_id=node_id)
 
 
-def _replicas(app_id, count):
+def _instances(app_id, count):
     return [N(id=app_id * 1000 + i, app_id=app_id) for i in range(count)]
 
 
@@ -65,9 +65,9 @@ def docker(monkeypatch):
 class Round:
     """A collector with its own memory of when it last looked at each app."""
 
-    def __init__(self, apps_and_replicas):
-        self.apps = [a for a, _ in apps_and_replicas]
-        self.replicas = {a.id: r for a, r in apps_and_replicas}
+    def __init__(self, apps_and_instances):
+        self.apps = [a for a, _ in apps_and_instances]
+        self.instances = {a.id: r for a, r in apps_and_instances}
         self.last = {}
 
     def at(self, now):
@@ -75,24 +75,24 @@ class Round:
 
         async def go():
             _MINE.set(True)
-            return await stats.sample_due_apps(self.apps, self.replicas, None, now, self.last)
+            return await stats.sample_due_apps(self.apps, self.instances, None, now, self.last)
         return _run(go())
 
 
 def test_every_instance_is_asked_once_per_round(docker):
     from containers import processes as pm
     app_id = 900001
-    replicas = _replicas(app_id, 3)
-    assert Round([(_app(app_id), replicas)]).at(1000.0) == 3
+    instances = _instances(app_id, 3)
+    assert Round([(_app(app_id), instances)]).at(1000.0) == 3
     assert len(docker.asked_for(app_id)) == 3                             # not twice each, as it used to be
-    assert all(pm.get_replica_stats(r.id)["cpu_percent"] == 10.0 for r in replicas)
+    assert all(pm.get_instance_stats(r.id)["cpu_percent"] == 10.0 for r in instances)
     frames = pm.get_recent_stats(app_id)
     assert len(frames) == 1 and frames[0]["memory_mb"] == 150.0 and frames[0]["cpu_percent"] == 10.0
 
 
 def test_an_app_nobody_watches_is_sampled_every_15_seconds(docker):
     app_id = 900002
-    rounds = Round([(_app(app_id), _replicas(app_id, 2))])
+    rounds = Round([(_app(app_id), _instances(app_id, 2))])
     rounds.at(1000.0)
     rounds.at(1002.0)
     rounds.at(1010.0)
@@ -104,7 +104,7 @@ def test_an_app_nobody_watches_is_sampled_every_15_seconds(docker):
 def test_an_app_somebody_watches_is_sampled_every_round(docker):
     from containers import processes as pm
     app_id = 900003
-    rounds = Round([(_app(app_id), _replicas(app_id, 2))])
+    rounds = Round([(_app(app_id), _instances(app_id, 2))])
     rounds.at(1000.0)
     pm.mark_watched(app_id, seconds=60)                                   # the instances tab asked for numbers
     rounds.at(time.monotonic())
@@ -115,7 +115,7 @@ def test_an_app_somebody_watches_is_sampled_every_round(docker):
 def test_an_open_stats_tab_counts_as_watching(docker):
     from containers import processes as pm
     app_id = 900004
-    rounds = Round([(_app(app_id), _replicas(app_id, 1))])
+    rounds = Round([(_app(app_id), _instances(app_id, 1))])
     queue = pm.subscribe_stats(app_id)
     rounds.at(1000.0)
     rounds.at(1002.0)
@@ -151,7 +151,7 @@ def test_apps_on_other_nodes_are_left_to_their_own_node(docker):
 
     async def go():
         _MINE.set(True)
-        return await stats.sample_due_apps([remote], {app_id: _replicas(app_id, 2)}, 1, 1000.0, last)
+        return await stats.sample_due_apps([remote], {app_id: _instances(app_id, 2)}, 1, 1000.0, last)
     assert _run(go()) == 0 and docker.asked_for(app_id) == []
 
 
@@ -164,7 +164,7 @@ def test_an_app_without_running_instances_here_is_not_asked_about(docker):
 def test_many_instances_never_run_more_stats_calls_at_once_than_the_limit(docker):
     from workers import stats
     app_id = 900007
-    assert Round([(_app(app_id), _replicas(app_id, 40))]).at(1000.0) == 40
+    assert Round([(_app(app_id), _instances(app_id, 40))]).at(1000.0) == 40
     assert len(docker.asked_for(app_id)) == 40
     assert docker.busiest <= stats.STATS_CONCURRENCY
 
@@ -182,4 +182,4 @@ def test_apps_that_stopped_running_here_are_forgotten():
 def test_the_poller_no_longer_samples_local_instances_a_third_time():
     import inspect
     from workers import stats
-    assert "get_container_stats_by_name" not in inspect.getsource(stats._remote_replica_stats_poller)
+    assert "get_container_stats_by_name" not in inspect.getsource(stats._remote_instance_stats_poller)

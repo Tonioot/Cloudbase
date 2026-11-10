@@ -34,7 +34,7 @@ _PUSH_COMPONENTS = (
     ("[Deploy]", "deploys"),
     ("[Docker build]", "build"),
     ("[Docker]", "build"),
-    ("[Replica]", "instances"),
+    ("[Instance]", "instances"),
     ("[Nginx]", "nginx"),
 )
 _INSTANCE_MARKS = ("⟳", "✖", "⚠", "✓")

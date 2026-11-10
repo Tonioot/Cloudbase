@@ -78,7 +78,8 @@ def _collect_system_info() -> dict:
 
 
 # 2.x: nodes run what the primary lists (desired state) instead of obeying start/stop commands
-AGENT_VERSION = "2.0.0"
+# 3.x: the list and the reports name things as they are named now (instances; 2.x used older names)
+AGENT_VERSION = "3.0.0"
 
 
 def _build_capabilities() -> dict:

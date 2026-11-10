@@ -26,7 +26,7 @@ def write_credentials(password: str) -> None:
 async def seed_demo() -> None:
     from sqlalchemy import select
     from core.database import init_db, AsyncSessionLocal
-    from core.models import Application, ApplicationReplica
+    from core.models import Application, Instance
     from nodes.registry import ensure_local_node
     from core.env_crypto import encrypt_env
 
@@ -39,30 +39,30 @@ async def seed_demo() -> None:
             dict(name="technasium-app", repo_url="https://github.com/example/technasium-app", app_type="nodejs",
                  start_command="npm start", build_command="npm run build", port=3000, domain="technasium.example.com",
                  env={"NODE_ENV": "production", "NEXT_PUBLIC_API_URL": "https://api.example.com", "DATABASE_URL": "postgres://demo"},
-                 replicas=2),
+                 instances=2),
             dict(name="api-server", repo_url="https://github.com/example/api-server", app_type="python",
                  start_command="uvicorn main:app --host 0.0.0.0 --port 8000", port=8000, domain="api.example.com",
-                 env={"LOG_LEVEL": "info"}, replicas=1),
+                 env={"LOG_LEVEL": "info"}, instances=1),
             dict(name="portfolio", repo_url="https://github.com/example/portfolio", app_type="static",
-                 start_command="dist", build_command="npm run build", port=80, domain=None, env={}, replicas=1),
+                 start_command="dist", build_command="npm run build", port=80, domain=None, env={}, instances=1),
             dict(name="discord-bot", repo_url="https://github.com/example/discord-bot", app_type="nodejs",
                  start_command="node bot.js", port=None, domain=None, env={"DISCORD_TOKEN": "demo"},
-                 replicas=1, no_web=True),
+                 instances=1, no_web=True),
             # One app per remaining runtime, so every type icon has something to show
             dict(name="rails-shop", repo_url="https://github.com/example/rails-shop", app_type="ruby",
-                 start_command="rails server -b 0.0.0.0 -p 3000", port=3000, domain=None, env={}, replicas=1),
+                 start_command="rails server -b 0.0.0.0 -p 3000", port=3000, domain=None, env={}, instances=1),
             dict(name="go-gateway", repo_url="https://github.com/example/go-gateway", app_type="go",
-                 start_command="go run .", port=8080, domain=None, env={}, replicas=1),
+                 start_command="go run .", port=8080, domain=None, env={}, instances=1),
             dict(name="php-blog", repo_url="https://github.com/example/php-blog", app_type="php",
-                 start_command="php -S 0.0.0.0:8000 -t public", port=8000, domain=None, env={}, replicas=1),
+                 start_command="php -S 0.0.0.0:8000 -t public", port=8000, domain=None, env={}, instances=1),
             dict(name="java-orders", repo_url="https://github.com/example/java-orders", app_type="java",
-                 start_command="java -jar target/app.jar", port=8080, domain=None, env={}, replicas=1),
+                 start_command="java -jar target/app.jar", port=8080, domain=None, env={}, instances=1),
             dict(name="dotnet-billing", repo_url="https://github.com/example/dotnet-billing", app_type="dotnet",
-                 start_command="dotnet Billing.dll", port=5000, domain=None, env={}, replicas=1),
+                 start_command="dotnet Billing.dll", port=5000, domain=None, env={}, instances=1),
             dict(name="rust-worker", repo_url="https://github.com/example/rust-worker", app_type="rust",
-                 start_command="cargo run --release", port=8080, domain=None, env={}, replicas=1),
+                 start_command="cargo run --release", port=8080, domain=None, env={}, instances=1),
             dict(name="custom-image", repo_url="https://github.com/example/custom-image", app_type="unknown",
-                 start_command="./run.sh", port=9000, domain=None, env={}, replicas=1),
+                 start_command="./run.sh", port=9000, domain=None, env={}, instances=1),
         ]
         demo = [d for d in demo if d["name"] not in existing]
         if not demo:
@@ -80,8 +80,8 @@ async def seed_demo() -> None:
             )
             db.add(app)
             await db.flush()
-            for _ in range(d["replicas"]):
-                db.add(ApplicationReplica(app_id=app.id, node_id=node.id,
+            for _ in range(d["instances"]):
+                db.add(Instance(app_id=app.id, node_id=node.id,
                                           external_port=None if d.get("no_web") else port, status="stopped"))
                 port += 1
         await db.commit()

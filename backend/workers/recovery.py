@@ -5,7 +5,7 @@ from core.database import AsyncSessionLocal
 from core.models import Application
 from nodes import registry as nodes_registry
 from containers import processes as pm
-from containers import replicas as containers_replicas
+from containers import instances as containers_instances
 from containers import stats_logs as containers_stats_logs
 from core import system_config as _syscfg
 from apps.nginx_sync import _write_app_nginx_config as _startup_nginx
@@ -25,7 +25,7 @@ async def _startup_recovery() -> None:
 
     # Live logs of the containers that kept running while the panel was down
     try:
-        for container in await asyncio.to_thread(containers_replicas.list_replica_containers):
+        for container in await asyncio.to_thread(containers_instances.list_instance_containers):
             if container["status"] == "running":
                 containers_stats_logs.attach_container_log_tailer(
                     container["app_id"], pm.log_buffers, pm._push_container_line, asyncio.get_event_loop(),

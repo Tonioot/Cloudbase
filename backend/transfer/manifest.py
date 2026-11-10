@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.env_crypto import decrypt_env, decrypt_text
-from core.models import Application, ApplicationReplica
+from core.models import Application, Instance
 
 FORMAT = "cloudbase-export"
 VERSION = 1
@@ -24,7 +24,7 @@ PLAIN_FIELDS = (
     "repo_url", "domain", "app_type", "start_command", "build_command", "port", "no_web",
     "restart_policy", "auto_deploy", "deploy_branch", "deploy_strategy", "auto_deploy_interval",
     "docker_cpu_limit", "docker_memory_limit_mb", "docker_read_only_root", "docker_tmpfs_enabled", "docker_tmpfs_size_mb",
-    "autoscale_enabled", "autoscale_min_replicas", "autoscale_max_replicas", "autoscale_cpu_target",
+    "autoscale_enabled", "autoscale_min_instances", "autoscale_max_instances", "autoscale_cpu_target",
     "maintenance_mode", "update_mode", "source_revision", "image_revision",
     "cron_schedule", "cron_timezone", "cron_enabled", "cron_timeout_seconds",
     "health_path", "health_expect", "health_timeout_seconds",
@@ -41,7 +41,7 @@ def _json(value: Optional[str], default):
         return default
 
 
-def app_entry(app: Application, replicas: list[ApplicationReplica], include_secrets: bool) -> dict:
+def app_entry(app: Application, instances: list[Instance], include_secrets: bool) -> dict:
     entry = {"name": app.name}
     for field in PLAIN_FIELDS:
         entry[field] = getattr(app, field)
@@ -57,9 +57,9 @@ def app_entry(app: Application, replicas: list[ApplicationReplica], include_secr
         entry["env_names"] = sorted(env)
         entry["git_token"] = None
         entry["has_git_token"] = bool(app.github_token)
-    entry["instances"] = len(replicas)
+    entry["instances"] = len(instances)
     # Should the import start it? Yes when it was running (cron jobs: when enabled, which is a field above).
-    entry["run"] = any(r.status in ("running", "starting") for r in replicas)
+    entry["run"] = any(r.status in ("running", "starting") for r in instances)
     return entry
 
 
@@ -69,18 +69,18 @@ async def build_manifest(db: AsyncSession, app_ids: Optional[list[int]] = None, 
         query = query.where(Application.id.in_(app_ids))
     apps = (await db.execute(query)).scalars().all()
 
-    replicas_by_app: dict[int, list[ApplicationReplica]] = {a.id: [] for a in apps}
+    instances_by_app: dict[int, list[Instance]] = {a.id: [] for a in apps}
     if apps:
-        rows = await db.execute(select(ApplicationReplica).where(ApplicationReplica.app_id.in_(replicas_by_app)))
+        rows = await db.execute(select(Instance).where(Instance.app_id.in_(instances_by_app)))
         for r in rows.scalars():
-            replicas_by_app[r.app_id].append(r)
+            instances_by_app[r.app_id].append(r)
 
     return {
         "format": FORMAT,
         "version": VERSION,
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "secrets_included": include_secrets,
-        "apps": [app_entry(a, replicas_by_app[a.id], include_secrets) for a in apps],
+        "apps": [app_entry(a, instances_by_app[a.id], include_secrets) for a in apps],
     }
 
 

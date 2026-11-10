@@ -5,7 +5,7 @@ from sqlalchemy import select
 from core import auth
 from containers import processes as pm
 from core.database import AsyncSessionLocal
-from core.models import Application, ApplicationReplica, Node
+from core.models import Application, Instance, Node
 from nodes.registry import ensure_local_node
 from apps.node_streams import stream_system_stats
 from apps.stream import _aggregate_frames, _open_remote_stream
@@ -28,33 +28,33 @@ async def stream_stats(app_id: int, websocket: WebSocket):
             return
         local_node = await ensure_local_node(db)
 
-        # Collect all distinct nodes that have running replicas for this app
+        # Collect all distinct nodes that have running instances for this app
         rep_result = await db.execute(
-            select(ApplicationReplica).where(
-                ApplicationReplica.app_id == app_id,
-                ApplicationReplica.status.in_(["running", "starting"]),
+            select(Instance).where(
+                Instance.app_id == app_id,
+                Instance.status.in_(["running", "starting"]),
             )
         )
-        replicas = rep_result.scalars().all()
+        instances = rep_result.scalars().all()
 
         # The primary's own instances are keyed None, those on other nodes by their node id
-        remote_node_ids = {r.node_id for r in replicas if r.node_id != local_node.id}
+        remote_node_ids = {r.node_id for r in instances if r.node_id != local_node.id}
         nodes_result = await db.execute(select(Node).where(Node.id.in_(remote_node_ids)))
         remote_nodes = list(nodes_result.scalars().all())
-        has_local = any(r.node_id == local_node.id for r in replicas)
+        has_local = any(r.node_id == local_node.id for r in instances)
 
-        # Map node_id → list of replica IDs (for feeding per-replica stats on remote frames)
-        replicas_per_node: dict[int | None, list[int]] = {}
-        for r in replicas:
+        # Map node_id → list of instance IDs (for feeding per-instance stats on remote frames)
+        instances_per_node: dict[int | None, list[int]] = {}
+        for r in instances:
             key = None if r.node_id == local_node.id else r.node_id
-            replicas_per_node.setdefault(key, []).append(r.id)
+            instances_per_node.setdefault(key, []).append(r.id)
 
     app_id_val = app.id
     app_name_val = app.name
-    instance_count = len(replicas) if replicas else 1
+    instance_count = len(instances) if instances else 1
 
     # ── Pure local case (fast path) ──────────────────────────────────────────
-    local_replica_ids = replicas_per_node.get(None, [])
+    local_instance_ids = instances_per_node.get(None, [])
     if not remote_nodes and has_local:
         q = pm.subscribe_stats(app_id_val)
         for point in pm.get_recent_stats(app_id_val):
@@ -70,9 +70,9 @@ async def stream_stats(app_id: int, websocket: WebSocket):
                 data = await q.get()
                 if "cpu_percent" in data:
                     data.setdefault("_instance_count", instance_count)
-                    # Keep per-replica stats fresh for single-replica local apps
-                    if len(local_replica_ids) == 1:
-                        pm.set_replica_stats(local_replica_ids[0], {**data, "replica_id": local_replica_ids[0]})
+                    # Keep per-instance stats fresh for single-instance local apps
+                    if len(local_instance_ids) == 1:
+                        pm.set_instance_stats(local_instance_ids[0], {**data, "instance_id": local_instance_ids[0]})
                 await websocket.send_json(data)
         except (WebSocketDisconnect, Exception):
             pass
@@ -89,7 +89,7 @@ async def stream_stats(app_id: int, websocket: WebSocket):
     for rn in remote_nodes:
         tasks.append(await _open_remote_stream(rn, app_id_val, app_name_val, remote_q))
 
-    # Local node stats subscriber (if any local replicas)
+    # Local node stats subscriber (if any local instances)
     local_q = pm.subscribe_stats(app_id_val) if has_local else None
 
     # Flush local history to client immediately
@@ -134,14 +134,14 @@ async def stream_stats(app_id: int, websocket: WebSocket):
                 continue
 
             if "cpu_percent" not in frame:
-                # Per-replica frame or metadata — pass through as-is
+                # Per-instance frame or metadata — pass through as-is
                 await websocket.send_json(frame)
                 continue
 
             latest[node_id] = frame
-            # Store per-replica so the instances/stats endpoint can serve live data
-            for rid in replicas_per_node.get(node_id, []):
-                pm.set_replica_stats(rid, {**frame, "replica_id": rid})
+            # Store per-instance so the instances/stats endpoint can serve live data
+            for rid in instances_per_node.get(node_id, []):
+                pm.set_instance_stats(rid, {**frame, "instance_id": rid})
             merged = _aggregate_frames(list(latest.values()))
             merged["_instance_count"] = instance_count
             # Buffer for history writer

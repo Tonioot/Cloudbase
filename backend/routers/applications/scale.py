@@ -4,17 +4,17 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from core import activity
-from core.models import ApplicationReplica, Node
+from core.models import Instance, Node
 from nodes.registry import ensure_local_node
 from core.env_crypto import decrypt_env
 from core.audit import log_audit
 from core import auth as _auth, config as _cfg
-from apps.runtime import _start_replica_runtime
-from apps.serializers import _replica_to_dict, _get_or_404
+from apps.runtime import _start_instance_runtime
+from apps.serializers import _instance_to_dict, _get_or_404
 from apps.state import locked
 from apps.validation import _assign_external_port
 from routers.applications.schemas import ScaleRequest
-from routers.applications.instances import _remove_replicas
+from routers.applications.instances import _remove_instances
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
@@ -32,19 +32,19 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
     local_node = await ensure_local_node(db)
 
     current = (await db.execute(
-        select(ApplicationReplica).where(ApplicationReplica.app_id == app_id).order_by(ApplicationReplica.id)
+        select(Instance).where(Instance.app_id == app_id).order_by(Instance.id)
     )).scalars().all()
     if req.target is not None:
         if req.target < len(current):
             gone = pick_removals(current, len(current) - req.target, local_node.id)
-            await _remove_replicas(app, gone, db, actor)
+            await _remove_instances(app, gone, db, actor)
             await db.commit()
             return {"instances": [], "removed": sorted(r.id for r in gone), "requested": req.target, "error": None}
         if req.target == len(current):
             return {"instances": [], "removed": [], "requested": req.target, "error": None}
         req.count = req.target - len(current)
 
-    instance_count_result = await db.execute(select(func.count()).select_from(ApplicationReplica))
+    instance_count_result = await db.execute(select(func.count()).select_from(Instance))
     existing = instance_count_result.scalar()
     if existing + req.count > _cfg.get_limit("max_instances"):
         raise HTTPException(400, f"Instance limit reached ({_cfg.get_limit('max_instances')} instances maximum, {existing} in use). Adjust limits.max_instances in config.yaml to increase.")
@@ -91,10 +91,10 @@ def pick_node_for_new(candidates, counts):
     return min(candidates, key=lambda n: (counts.get(n.id, 0), 0 if n.is_local else 1, n.id))
 
 
-def pick_removals(replicas, n, local_node_id):
+def pick_removals(instances, n, local_node_id):
     """Which instances go when there are too many: not-running ones first, then from the node
     holding the most instances of this app (keeps the spread), then the newest."""
-    left = list(replicas)
+    left = list(instances)
     gone = []
     for _ in range(n):
         counts = {}
@@ -110,26 +110,26 @@ def pick_removals(replicas, n, local_node_id):
 async def _add_one(app, app_id, req, target_node, db, actor):
     external_port = await _assign_external_port(None, target_node.id, db)
 
-    replica = ApplicationReplica(
+    instance = Instance(
         app_id=app_id,
         node_id=target_node.id,
         external_port=external_port,
         status="pending",
     )
-    db.add(replica)
-    await db.flush()  # get replica.id before starting container
+    db.add(instance)
+    await db.flush()  # get instance.id before starting container
 
     # The instance's own limits stay on its row, so every later start uses them too
-    replica.docker_cpu_limit = req.docker_cpu_limit
-    replica.docker_memory_limit_mb = req.docker_memory_limit_mb
+    instance.docker_cpu_limit = req.docker_cpu_limit
+    instance.docker_memory_limit_mb = req.docker_memory_limit_mb
     # Whatever the caller leaves out is the app's own setting
-    replica.docker_read_only_root = bool(app.docker_read_only_root if req.docker_read_only_root is None else req.docker_read_only_root)
-    replica.docker_tmpfs_enabled = bool(app.docker_tmpfs_enabled if req.docker_tmpfs_enabled is None else req.docker_tmpfs_enabled)
-    replica.docker_tmpfs_size_mb = req.docker_tmpfs_size_mb
-    await _start_replica_runtime(app, replica, target_node, decrypt_env(app.env_vars or ""), db)
+    instance.docker_read_only_root = bool(app.docker_read_only_root if req.docker_read_only_root is None else req.docker_read_only_root)
+    instance.docker_tmpfs_enabled = bool(app.docker_tmpfs_enabled if req.docker_tmpfs_enabled is None else req.docker_tmpfs_enabled)
+    instance.docker_tmpfs_size_mb = req.docker_tmpfs_size_mb
+    await _start_instance_runtime(app, instance, target_node, decrypt_env(app.env_vars or ""), db)
 
-    await log_audit(db, "app.scale_up", actor=actor, app_id=app_id, detail={"replica_id": replica.id, "node": target_node.name})
+    await log_audit(db, "app.scale_up", actor=actor, app_id=app_id, detail={"instance_id": instance.id, "node": target_node.name})
     await db.commit()
-    await db.refresh(replica)
+    await db.refresh(instance)
 
-    return _replica_to_dict(replica, target_node)
+    return _instance_to_dict(instance, target_node)

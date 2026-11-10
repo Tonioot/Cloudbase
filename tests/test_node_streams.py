@@ -142,7 +142,7 @@ def test_empty_stats_while_a_container_starts_are_not_a_warning(monkeypatch, cap
 
     monkeypatch.setattr(stats_logs, "_get_client", lambda: Client())
     with caplog.at_level(logging.WARNING, logger="cloudbase.docker"):
-        assert stats_logs.get_container_stats_by_name("cloudbase-app-1-replica-85") == {}
+        assert stats_logs.get_container_stats_by_name("cloudbase-app-1-instance-85") == {}
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 

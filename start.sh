@@ -478,9 +478,9 @@ def ago(ts):
 
 apps = con.execute("""
     SELECT a.name, a.status, a.domain, a.nginx_enabled, a.autoscale_enabled,
-           a.autoscale_min_replicas AS amin, a.autoscale_max_replicas AS amax,
-           (SELECT COUNT(*) FROM application_replicas r WHERE r.app_id = a.id AND r.status = 'running') AS up,
-           (SELECT COUNT(*) FROM application_replicas r WHERE r.app_id = a.id) AS total
+           a.autoscale_min_instances AS amin, a.autoscale_max_instances AS amax,
+           (SELECT COUNT(*) FROM application_instances r WHERE r.app_id = a.id AND r.status = 'running') AS up,
+           (SELECT COUNT(*) FROM application_instances r WHERE r.app_id = a.id) AS total
     FROM applications a ORDER BY a.name
 """).fetchall()
 table("APPS", ["NAME", "STATUS", "INSTANCES", "AUTOSCALE", "DOMAIN"], [
@@ -492,7 +492,7 @@ table("APPS", ["NAME", "STATUS", "INSTANCES", "AUTOSCALE", "DOMAIN"], [
 
 nodes = con.execute("""
     SELECT n.name, n.status, n.is_local, n.last_seen, n.node_cpu_percent AS cpu,
-           (SELECT COUNT(*) FROM application_replicas r WHERE r.node_id = n.id AND r.status = 'running') AS up
+           (SELECT COUNT(*) FROM application_instances r WHERE r.node_id = n.id AND r.status = 'running') AS up
     FROM nodes n ORDER BY n.is_local DESC, n.name
 """).fetchall()
 table("NODES", ["NAME", "STATUS", "INSTANCES", "CPU", "LAST SEEN"], [

@@ -327,7 +327,7 @@ SESSION_SECRET=change-me</pre>
   group: 'Apps',
   title: 'Instances & scaling',
   summary: 'Adding instances on any node, restart policies, crash protection and autoscaling.',
-  keywords: 'instances replicas scaling autoscaling restart policy crash ports',
+  keywords: 'instances instances scaling autoscaling restart policy crash ports',
   lead: 'Every instance is one container. More instances means more capacity and no single point of failure — nginx spreads traffic over all healthy ones.',
   body: `
 <h2>Adding and removing instances</h2>
@@ -396,9 +396,9 @@ SESSION_SECRET=change-me</pre>
 
 <h2>Logs on the server</h2>
 <pre>cloudbase logs                         # the Cloudbase service
-docker logs -f cloudbase-app-3-replica-12   # one instance, by container name
+docker logs -f cloudbase-app-3-instance-12   # one instance, by container name
 tail -f ~/.cloudbase/logs/node-agent.log    # the agent on a node</pre>
-<p>Instance containers are named <code>cloudbase-app-&lt;app id&gt;-replica-&lt;instance id&gt;</code>.</p>
+<p>Instance containers are named <code>cloudbase-app-&lt;app id&gt;-instance-&lt;instance id&gt;</code>.</p>
 `,
 },
 
@@ -1309,7 +1309,7 @@ cloudbase restore ~/cloudbase-backup.tar.gz</pre>
 <h2>Status doesn’t match the server</h2>
 <p>Compare with the server itself:</p>
 <pre>docker ps -a --filter name=cloudbase-app</pre>
-<p>Container names are <code>cloudbase-app-&lt;app id&gt;-replica-&lt;instance id&gt;</code>, and the container ID in the instance list matches the first column. A restart of the instance from the panel brings the two back in line.</p>
+<p>Container names are <code>cloudbase-app-&lt;app id&gt;-instance-&lt;instance id&gt;</code>, and the container ID in the instance list matches the first column. A restart of the instance from the panel brings the two back in line.</p>
 
 <h2>HTTPS or certificate problems</h2>
 <ul>
