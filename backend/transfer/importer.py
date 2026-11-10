@@ -232,7 +232,6 @@ async def deploy_imported(imported: list[Imported], target_is_local: bool, actor
                 app = (await db.execute(select(Application).where(Application.id == item.id))).scalar_one_or_none()
                 if not app:
                     continue
-                local_node = await ensure_local_node(db)
                 is_cron = bool(app.cron_schedule)
                 if target_is_local or is_cron:   # a remote node gets its source when the instance starts there
                     with activity.track(app.id, "deploying", "Cloning the repository"):
@@ -240,7 +239,7 @@ async def deploy_imported(imported: list[Imported], target_is_local: bool, actor
                 if app.domain and not app.no_web:
                     app.nginx_enabled = True
                     if target_is_local:
-                        await _write_app_nginx_config(app, db, local_node)
+                        await _write_app_nginx_config(app, db)
                 await db.commit()
                 if item.run and not is_cron:
                     await start_app_now(app.id, db, actor)

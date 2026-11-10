@@ -1,21 +1,8 @@
-import asyncio
 import contextlib
 import functools
 from typing import Optional
 
 from fastapi import HTTPException
-
-RESTART_READY_TIMEOUT_SECONDS = 180
-
-
-RESTART_READY_POLL_SECONDS = 1
-
-
-TRANSITION_HOLD_MAX_SECONDS = 300
-
-
-RESTART_READY_MIN_HEALTHY_RATIO = 0.5
-
 
 # New instances during rolling / blue-green deploys. Generous because some start
 # commands build at boot (e.g. `next build && next start`), which takes minutes
@@ -24,9 +11,6 @@ DEPLOY_HEALTH_TIMEOUT_SECONDS = 600
 
 
 DEPLOY_HEALTH_PROGRESS_SECONDS = 30
-
-
-_active_transition_modes: dict[int, tuple[str, float]] = {}
 
 
 # One action at a time per app. Whoever changes an app's instances (deploy, start, stop, restart, scale,
@@ -70,25 +54,3 @@ def locked(what: str):
                 return await fn(*args, **kwargs)
         return inner
     return wrap
-
-
-def _set_active_transition_mode(app_id: int, mode: str, started_at: Optional[float] = None) -> float:
-    ts = started_at if started_at is not None else asyncio.get_running_loop().time()
-    _active_transition_modes[app_id] = (mode, ts)
-    return ts
-
-
-def _get_active_transition_mode(app_id: int) -> Optional[str]:
-    active = _active_transition_modes.get(app_id)
-    if not active:
-        return None
-    mode, started_at = active
-    elapsed = asyncio.get_running_loop().time() - started_at
-    if elapsed > TRANSITION_HOLD_MAX_SECONDS:
-        _active_transition_modes.pop(app_id, None)
-        return None
-    return mode
-
-
-def _clear_active_transition_mode(app_id: int) -> None:
-    _active_transition_modes.pop(app_id, None)

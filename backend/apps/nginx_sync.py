@@ -1,27 +1,21 @@
 import asyncio
 import json
 import logging
-import math
 import os
-import socket
 from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AsyncSessionLocal
 from core.models import ApplicationReplica, Node, Application
-from containers import processes as pm
 from nginx import certificates as nginx_certificates
 from nginx import paths as nginx_paths
 from nginx import certbot as nginx_certbot
 from nginx import config as nginx_config
 from nginx import files as nginx_files
 from nginx import pages as nginx_pages
-from apps import health as app_health
 from mesh import routing
-from nodes.registry import ensure_local_node
 from core import system_config as _syscfg
-from apps.state import RESTART_READY_MIN_HEALTHY_RATIO, RESTART_READY_POLL_SECONDS, RESTART_READY_TIMEOUT_SECONDS, TRANSITION_HOLD_MAX_SECONDS, _clear_active_transition_mode, _get_active_transition_mode
 
 log = logging.getLogger("cloudbase.apps")
 
@@ -49,13 +43,8 @@ def _has_public_nginx_domain(app: Application) -> bool:
     return bool((app.nginx_enabled and app.domain) or _syscfg.get_base_domain_cached())
 
 
-async def _write_app_nginx_config(
-    app: Application,
-    db: AsyncSession,
-    local_node: Node,
-    *,
-    mode: Optional[str] = None,
-) -> None:
+async def _write_app_nginx_config(app: Application, db: AsyncSession) -> None:
+    """Write the app's nginx config from what is true now: its domains, its running instances and its mode."""
     if app.no_web:
         app.nginx_enabled = False
         _best_effort_remove_app_nginx(app.id)
@@ -73,27 +62,9 @@ async def _write_app_nginx_config(
     ssl_cert = ssl_key = None
     if has_custom:
         ssl_cert, ssl_key = await asyncio.to_thread(_resolve_ssl_paths, app.ssl_cert_path, app.ssl_key_path)
-    backends = await _get_nginx_backends(app, db, local_node)
-    effective_mode = mode or _get_nginx_mode(app)
-    if mode is None and effective_mode == "normal":
-        active_mode = _get_active_transition_mode(app.id)
-        if active_mode in ("restart", "starting"):
-            log.info(
-                "[nginx-transition-guard] app_id=%s forcing mode=%s (normal write suppressed while transition active)",
-                app.id,
-                active_mode,
-            )
-            effective_mode = active_mode
-    log.info(
-        "[nginx-debug] write app_id=%s app=%s mode=%s backends=%d values=%s has_custom=%s base_domain=%s",
-        app.id,
-        app.name,
-        effective_mode,
-        len(backends),
-        backends,
-        has_custom,
-        bool(_base),
-    )
+    backends = await _get_nginx_backends(app, db)
+    mode = await _nginx_mode(app, db, backends)
+    log.debug("[nginx] write app_id=%s mode=%s backends=%s", app.id, mode, backends)
     config = nginx_config.generate_config(
         app.name,
         app.domain if has_custom else None,
@@ -101,7 +72,7 @@ async def _write_app_nginx_config(
         ssl_cert,
         ssl_key,
         app_id=app.id,
-        mode=effective_mode,
+        mode=mode,
         extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
         redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
     )
@@ -111,6 +82,43 @@ async def _write_app_nginx_config(
 
     if not has_custom and not _syscfg.get_base_ssl_cert_cached():
         _schedule_auto_certificate(app)
+
+
+# Instances on their way up: while none of the app's instances is live yet, visitors see the start or restart page
+_COMING_UP = ("pending", "starting", "restarting")
+
+
+async def _nginx_mode(app: Application, db: AsyncSession, backends: list[str]) -> str:
+    """What nginx shows. Follows from the app and its instances, so every write agrees and nothing has to be undone later.
+
+    update / maintenance mode first; then the app itself as soon as one instance is live; while instances are still
+    coming up the restart page (they ran before: they have a container) or the start page; otherwise 'normal', which
+    shows the downtime page when there is nothing to send visitors to."""
+    mode = _get_nginx_mode(app)
+    if mode != "normal" or backends:
+        return mode
+    coming_up = (await db.execute(
+        select(ApplicationReplica.container_id).where(
+            ApplicationReplica.app_id == app.id,
+            ApplicationReplica.desired == "running",
+            ApplicationReplica.status.in_(_COMING_UP),
+        )
+    )).scalars().all()
+    if not coming_up:
+        return "normal"
+    return "restart" if any(coming_up) else "starting"
+
+
+async def refresh_app_nginx(app_id: int) -> None:
+    """Rewrite one app's nginx config after its instances changed (one went live, failed or dropped out)."""
+    async with AsyncSessionLocal() as db:
+        app = await db.get(Application, app_id)
+        if not app or not _has_public_nginx_domain(app):
+            return
+        try:
+            await _write_app_nginx_config(app, db)
+        except Exception as e:
+            log.warning("[nginx] rewriting the config of app %d failed: %s", app_id, e)
 
 
 def _schedule_auto_certificate(app: Application) -> None:
@@ -125,164 +133,9 @@ def _schedule_auto_certificate(app: Application) -> None:
         async with AsyncSessionLocal() as _db:
             fresh = await _db.get(Application, app_id)
             if fresh:
-                await _write_app_nginx_config(fresh, _db, await ensure_local_node(_db))
+                await _write_app_nginx_config(fresh, _db)
 
     asyncio.create_task(nginx_certificates.ensure_auto_certificate(name, _rewrite))
-
-
-async def _wait_for_app_backends_ready(
-    app_id: int,
-    timeout_seconds: int = RESTART_READY_TIMEOUT_SECONDS,
-) -> tuple[bool, str]:
-    deadline = asyncio.get_running_loop().time() + timeout_seconds
-    last_reason = "no running instance backends yet"
-    stable_ready_polls = 0
-
-    while asyncio.get_running_loop().time() < deadline:
-        async with AsyncSessionLocal() as db:
-            app = await db.get(Application, app_id)
-            if not app:
-                return False, "app was removed before nginx restore"
-            backends = await _get_nginx_backends(app, db)
-
-        if not backends:
-            last_reason = "no running instance backends yet"
-            await asyncio.sleep(RESTART_READY_POLL_SECONDS)
-            continue
-
-        ready = 0
-        checked = 0
-        health_path, health_expect, _ = app_health.settings_of(app)
-        for backend in backends:
-            try:
-                host, port = routing.split(str(backend))
-            except ValueError:
-                continue
-            checked += 1
-            if await asyncio.to_thread(_http_service_ready, host, port, health_path, health_expect):
-                ready += 1
-
-        # Require a healthy quorum for two consecutive polls so restart pages
-        # are not cleared prematurely while still allowing partial recovery.
-        required = max(1, math.ceil(checked * RESTART_READY_MIN_HEALTHY_RATIO)) if checked else 0
-        if checked and ready >= required:
-            stable_ready_polls += 1
-            if stable_ready_polls >= 2:
-                return True, f"{ready}/{checked} backend(s) healthy (threshold {required})"
-            last_reason = f"{ready}/{checked} backend(s) healthy (threshold {required}), waiting for stability"
-            await asyncio.sleep(RESTART_READY_POLL_SECONDS)
-            continue
-
-        stable_ready_polls = 0
-
-        last_reason = f"{ready}/{checked} backend(s) healthy (threshold {required})"
-        await asyncio.sleep(RESTART_READY_POLL_SECONDS)
-
-    return False, last_reason
-
-
-async def _restore_nginx_after_transition(
-    app_id: int,
-    started_at: float,
-    transition_label: str,
-) -> None:
-    ready, reason = await _wait_for_app_backends_ready(app_id)
-    elapsed = max(asyncio.get_running_loop().time() - started_at, 0)
-
-    # Do not clear start/restart pages while backends are still unhealthy.
-    # Keep waiting in the background, with a hard cap to avoid infinite loops.
-    if not ready and elapsed < TRANSITION_HOLD_MAX_SECONDS:
-        log.info(
-            "[nginx-transition-debug] app_id=%s label=%s keep_transition_page elapsed=%.1fs reason=%s",
-            app_id,
-            transition_label,
-            elapsed,
-            reason,
-        )
-        pm._push_line(
-            app_id,
-            f"{transition_label.capitalize()} page still active after {elapsed:.1f}s ({reason}); waiting for healthy backends...",
-        )
-        asyncio.create_task(_restore_nginx_after_transition(app_id, started_at, transition_label))
-        return
-
-    # Transition window has ended (ready or hard timeout): allow normal writes again.
-    _clear_active_transition_mode(app_id)
-
-    async with AsyncSessionLocal() as db:
-        app = await db.get(Application, app_id)
-        _base = _syscfg.get_base_domain_cached()
-        has_custom = bool(app and app.nginx_enabled and app.domain)
-        if not app or (not has_custom and not _base):
-            return
-
-        local_node = await ensure_local_node(db)
-        backends = await _get_nginx_backends(app, db, local_node)
-        if not backends:
-            # Readiness can race with status transitions; keep the transition page
-            # active until backends are still present when we restore nginx.
-            if elapsed < TRANSITION_HOLD_MAX_SECONDS:
-                log.info(
-                    "[nginx-transition-debug] app_id=%s label=%s restore_race_no_backends elapsed=%.1fs",
-                    app_id,
-                    transition_label,
-                    elapsed,
-                )
-                pm._push_line(
-                    app_id,
-                    f"{transition_label.capitalize()} page still active after {elapsed:.1f}s (backends temporarily unavailable); retrying...",
-                )
-                asyncio.create_task(_restore_nginx_after_transition(app_id, started_at, transition_label))
-                return
-            pm._push_line(
-                app_id,
-                f"{transition_label.capitalize()} page kept active after {elapsed:.1f}s; no running backends available to restore normal nginx routing.",
-            )
-            return
-
-        ssl_cert = ssl_key = None
-        if has_custom:
-            ssl_cert, ssl_key = await asyncio.to_thread(_resolve_ssl_paths, app.ssl_cert_path, app.ssl_key_path)
-        effective_mode = _get_nginx_mode(app)
-        log.info(
-            "[nginx-transition-debug] app_id=%s label=%s restoring mode=%s backends=%d values=%s",
-            app_id,
-            transition_label,
-            effective_mode,
-            len(backends),
-            backends,
-        )
-        config = nginx_config.generate_config(
-            app.name,
-            app.domain if has_custom else None,
-            backends,
-            ssl_cert,
-            ssl_key,
-            app_id=app.id,
-            mode=effective_mode,
-            extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
-            redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
-        )
-        ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, nginx_paths.app_key(app.id), config)
-
-    log.info(
-        "[nginx-transition] app_id=%d label=%s ready=%s elapsed=%.1fs reason=%r nginx_ok=%s msg=%r",
-        app_id,
-        transition_label,
-        ready,
-        elapsed,
-        reason,
-        ok,
-        msg,
-    )
-    if ok:
-        status_text = "cleared" if ready else "force-cleared after hard timeout"
-        pm._push_line(
-            app_id,
-            f"{transition_label.capitalize()} page {status_text} after {elapsed:.1f}s ({reason}).",
-        )
-    else:
-        pm._push_line(app_id, f"Failed to restore nginx after {transition_label}: {msg}")
 
 
 def _best_effort_delete_app_certificate(app: Application) -> None:
@@ -355,23 +208,7 @@ def _ensure_maintenance_files(app: Application, app_id: int) -> tuple[bool, str]
     return ok, msg
 
 
-def _local_port_accepts_connections(port: int) -> bool:
-    """Return True when localhost:port accepts TCP connections."""
-    try:
-        with socket.create_connection(("127.0.0.1", int(port)), timeout=0.5):
-            return True
-    except Exception:
-        return False
-
-
-def _http_service_ready(host: str, port: int, path: str = "/", expect: str = "") -> bool:
-    """Return True when host:port answers the way the app's health check says is healthy."""
-    if host == "127.0.0.1" and not _local_port_accepts_connections(port):
-        return False
-    return app_health.answer(host, int(port), path, expect)[0]
-
-
-async def _get_nginx_backends(app: Application, db: AsyncSession, local_node: "Node" = None) -> "list[str]":
+async def _get_nginx_backends(app: Application, db: AsyncSession) -> list[str]:
     """Return nginx backend addresses for an app as a list of 'host:port' strings.
 
     Local replicas use 127.0.0.1:{external_port}.

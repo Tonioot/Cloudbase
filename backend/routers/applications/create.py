@@ -123,7 +123,7 @@ async def deploy_app(
 
         if app.domain and not app.no_web:
             app.nginx_enabled = True
-            await _write_app_nginx_config(app, db, local_node)
+            await _write_app_nginx_config(app, db)
 
         await log_audit(db, "app.deploy", actor=actor, app_id=app.id, detail={"name": app.name})
         await db.commit()

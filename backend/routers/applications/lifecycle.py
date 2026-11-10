@@ -3,7 +3,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from core import activity
 from cron import scheduler as _cron
-from nodes.registry import ensure_local_node
 from core.audit import log_audit
 from core import auth as _auth
 from apps.lifecycle import restart_app_now, start_app_now
@@ -27,12 +26,11 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict 
     app = await _get_or_404(app_id, db)
     if app.cron_schedule:
         return await _cron.set_enabled(app_id, False, actor)
-    local_node = await ensure_local_node(db)
     replicas = await _load_app_replicas(app_id, db)
 
     if not replicas:
         if _has_public_nginx_domain(app):
-            await _write_app_nginx_config(app, db, local_node)
+            await _write_app_nginx_config(app, db)
         await log_audit(db, "app.stop", actor=actor, app_id=app_id, detail={"name": app.name})
         await db.commit()
         return {"status": "stopped", "instance_count": 0}
@@ -45,7 +43,7 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict 
         await _stop_replica_runtime(app, replica, replica_node, db)
 
     if _has_public_nginx_domain(app):
-        await _write_app_nginx_config(app, db, local_node)
+        await _write_app_nginx_config(app, db)
 
     await log_audit(db, "app.stop", actor=actor, app_id=app_id, detail={"name": app.name})
     await db.commit()

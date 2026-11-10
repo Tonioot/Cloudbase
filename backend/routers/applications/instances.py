@@ -10,7 +10,6 @@ from core import activity
 from core.models import ApplicationReplica, Node
 from containers import processes as pm
 from nodes import desired
-from nodes.registry import ensure_local_node
 from nodes.commands import queue_node_command, wait_for_node_command
 from core.env_crypto import decrypt_env
 from core.audit import log_audit
@@ -125,7 +124,6 @@ async def restart_instance(
 
 async def _restart_replica(app, replica, db, actor):
     replica_node = await db.get(Node, replica.node_id)
-    local_node = await ensure_local_node(db)
     if replica_node is None:
         raise HTTPException(409, "The node of this instance no longer exists")
     if not replica_node.is_local and replica_node.status != "online":
@@ -137,7 +135,7 @@ async def _restart_replica(app, replica, db, actor):
     await log_audit(db, "instance.restart", actor=actor, app_id=app.id,
                     detail={"name": app.name, "instance_id": replica.id})
     if _has_public_nginx_domain(app):
-        await _write_app_nginx_config(app, db, local_node)
+        await _write_app_nginx_config(app, db)
 
 
 
@@ -220,7 +218,6 @@ async def delete_instance(
 async def _remove_replicas(app, replicas, db, actor):
     # Nothing to send: the node (this server too) removes any container whose instance is no longer on its list,
     # also when it was offline just now and only hears about it when it is back.
-    local_node = await ensure_local_node(db)
     removed = []
     for replica in replicas:
         desired.nudge(replica.node_id)
@@ -231,7 +228,7 @@ async def _remove_replicas(app, replicas, db, actor):
 
     # Regenerate nginx config without the removed backends.
     if _has_public_nginx_domain(app):
-        await _write_app_nginx_config(app, db, local_node)
+        await _write_app_nginx_config(app, db)
 
     for rid in removed:
         await log_audit(db, "instance.delete", actor=actor, app_id=app.id,

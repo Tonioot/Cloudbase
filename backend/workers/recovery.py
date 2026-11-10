@@ -45,7 +45,7 @@ async def _startup_recovery() -> None:
             if not has_custom and not _startup_base:
                 continue
             try:
-                await _startup_nginx(a, db, _startup_local)
+                await _startup_nginx(a, db)
                 log.debug(f"STARTUP nginx regenerated for app {a.id} ({a.name})")
             except Exception as exc:
                 log.debug(f"STARTUP nginx regen failed for app {a.id}: {exc}")

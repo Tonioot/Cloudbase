@@ -6,14 +6,14 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from containers import processes as pm, dockerfiles as containers_dockerfiles
-from nginx import certbot as nginx_certbot, certificates as nginx_certificates, config as nginx_config, files as nginx_files, paths as nginx_paths
+from nginx import certbot as nginx_certbot, certificates as nginx_certificates
 from nodes.registry import ensure_local_node
 from core.env_crypto import decrypt_env, encrypt_env
 from core.audit import log_audit
 from core import auth as _auth, system_config as _syscfg
 from apps.git import _change_repository, _encrypt_github_token, _normalize_repo_url, _resolve_token
 from apps.images import _image_port, _dockerfile_build_kwargs
-from apps.nginx_sync import _auto_subdomain, _resolve_ssl_paths, _write_app_nginx_config, _get_nginx_backends, _get_nginx_mode, _best_effort_remove_app_nginx, _ensure_maintenance_files
+from apps.nginx_sync import _auto_subdomain, _write_app_nginx_config, _best_effort_remove_app_nginx
 from apps.serializers import _app_to_dict, _get_or_404, _replica_views
 from apps import health as health_app
 from apps.validation import _validate_docker_runtime_settings, _check_domain_conflicts, _check_new_app_name, _check_repo_url
@@ -152,22 +152,8 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.image_revision = None
 
     if app.domain and not app.no_web:
-        maint_ok, maint_msg = await asyncio.to_thread(_ensure_maintenance_files, app, app.id)
-        if not maint_ok:
-            raise HTTPException(500, f"Maintenance files failed: {maint_msg}")
-        ssl_cert, ssl_key = await asyncio.to_thread(_resolve_ssl_paths, app.ssl_cert_path, app.ssl_key_path)
-        backends = await _get_nginx_backends(app, db)
-        config = nginx_config.generate_config(
-            app.name, app.domain, backends,
-            ssl_cert, ssl_key,
-            app_id=app.id, mode=_get_nginx_mode(app),
-            extra_domains=json.loads(app.extra_domains or "[]"),
-            redirect_domains=json.loads(app.redirect_domains or "[]"),
-        )
-        ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, nginx_paths.app_key(app.id), config)
-        app.nginx_enabled = ok
-        if not ok:
-            raise HTTPException(500, f"Nginx config failed: {msg}")
+        app.nginx_enabled = True                         # a failed write raises, and nothing is committed
+        await _write_app_nginx_config(app, db)
     elif req.domain is not None and not req.domain.strip() and not app.no_web:
         # Every custom domain was removed: drop them from nginx and fall back to
         # the automatic subdomain (base domain) if there is one.
@@ -178,11 +164,11 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.ssl_key_path = None
         app.nginx_enabled = False
         if _syscfg.get_base_domain_cached():
-            await _write_app_nginx_config(app, db, await ensure_local_node(db))
+            await _write_app_nginx_config(app, db)
         else:
             _best_effort_remove_app_nginx(app.id)
     elif renamed_from and not app.no_web and _syscfg.get_base_domain_cached():
-        await _write_app_nginx_config(app, db, await ensure_local_node(db))      # the new subdomain
+        await _write_app_nginx_config(app, db)      # the new subdomain
 
     if renamed_from:
         # The old automatic subdomain is gone from nginx now; its certificate would only fail to renew

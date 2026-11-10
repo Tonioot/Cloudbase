@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from core.database import AsyncSessionLocal
 from core.models import ApplicationReplica
+from apps import nginx_sync
 from nodes import promote
 from nodes.commands import _utcnow
 
@@ -61,10 +62,11 @@ async def apply(node_id: int, reports: dict) -> None:
         rows = (await db.execute(select(ApplicationReplica).where(
             ApplicationReplica.node_id == node_id, ApplicationReplica.id.in_(ids)))).scalars().all()
         for replica in rows:
+            before = replica.status
             check, regen = _apply_one(replica, reports.get(str(replica.id)) or {})
             if check:
                 to_check.append(replica.id)
-            if regen:
+            if regen or replica.status != before:          # nginx shows what the instances do (apps/nginx_sync.py)
                 rewrite.add(replica.app_id)
             if db.is_modified(replica):
                 replica.updated_at = _utcnow()
@@ -72,4 +74,4 @@ async def apply(node_id: int, reports: dict) -> None:
     for replica_id in to_check:
         promote.start_promotion(replica_id)
     for app_id in rewrite:
-        await promote.regen_nginx_for_app(app_id)
+        await nginx_sync.refresh_app_nginx(app_id)

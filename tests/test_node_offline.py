@@ -155,7 +155,7 @@ def test_a_broken_node_network_takes_the_instances_out_of_rotation_but_not_the_n
 
     async def fake_regen(app_id):
         rewritten.append(app_id)
-    monkeypatch.setattr(promote, "regen_nginx_for_app", fake_regen)
+    monkeypatch.setattr(promote.nginx_sync, "refresh_app_nginx", fake_regen)
     _run(promote.link_down(node_id))
     assert world.replica_row(live).status == "node_offline" and world.replica_row(stopped).status == "stopped"
     assert world.node_row(node_id).status == "online"

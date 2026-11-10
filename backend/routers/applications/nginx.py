@@ -5,7 +5,7 @@ from core.database import get_db
 from nginx import paths as nginx_paths
 from nginx import config as nginx_config
 from core import auth as _auth
-from apps.nginx_sync import _get_nginx_backends, _get_nginx_mode
+from apps.nginx_sync import _get_nginx_backends, _nginx_mode
 from apps.serializers import _get_or_404
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
@@ -16,6 +16,7 @@ async def nginx_debug(app_id: int, db: AsyncSession = Depends(get_db), _user: di
     """Return a full diagnostic snapshot for nginx + maintenance config of this app."""
     import subprocess as sp
     app = await _get_or_404(app_id, db)
+    backends = await _get_nginx_backends(app, db)
 
     safe_name = nginx_paths.app_key(app.id)
     config_path   = f"{nginx_paths.NGINX_SITES_DIR}/{safe_name}"
@@ -46,7 +47,7 @@ async def nginx_debug(app_id: int, db: AsyncSession = Depends(get_db), _user: di
             "nginx_enabled":    app.nginx_enabled,
             "maintenance_mode": app.maintenance_mode,
             "update_mode":      app.update_mode,
-            "computed_mode":    _get_nginx_mode(app),
+            "computed_mode":    await _nginx_mode(app, db, backends),
         },
         "nginx": {
             "status":           nginx_status.stdout.strip(),
@@ -71,9 +72,9 @@ async def nginx_debug(app_id: int, db: AsyncSession = Depends(get_db), _user: di
             ] if app.domain else [],
         },
         "generated_config": nginx_config.generate_config(
-            app.name, app.domain or "(no domain)", await _get_nginx_backends(app, db),
+            app.name, app.domain or "(no domain)", backends,
             app.ssl_cert_path, app.ssl_key_path,
-            app_id=app_id, mode=_get_nginx_mode(app),
+            app_id=app_id, mode=await _nginx_mode(app, db, backends),
             extra_domains=json.loads(app.extra_domains or "[]"),
             redirect_domains=json.loads(app.redirect_domains or "[]"),
         ),

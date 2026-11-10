@@ -71,7 +71,7 @@ def test_renaming_gives_the_app_a_new_subdomain_and_removes_the_old_certificate(
     monkeypatch.setattr(system_config, "get_base_domain_cached", lambda: "apps.example.test")
     removed, rewritten = [], []
 
-    async def fake_write(app, db, node, **kw):
+    async def fake_write(app, db):
         rewritten.append(app.name)
     monkeypatch.setattr(update, "_write_app_nginx_config", fake_write)
     monkeypatch.setattr(update.nginx_certbot, "delete", lambda name: removed.append(name) or True)

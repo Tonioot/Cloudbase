@@ -295,7 +295,7 @@ def test_a_running_instance_that_crashes_leaves_nginx_and_shows_the_error(instan
     async def fake_regen(app_id):
         rewritten.append(app_id)
     from nodes import observed
-    monkeypatch.setattr(observed.promote, "regen_nginx_for_app", fake_regen)
+    monkeypatch.setattr(observed.nginx_sync, "refresh_app_nginx", fake_regen)
     _report(node_id, rid, state="error", error="the app keeps crashing", spec_hash=digest)
     assert _row(rid).status == "error" and rewritten == [_row(rid).app_id]
 

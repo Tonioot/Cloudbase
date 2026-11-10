@@ -79,8 +79,7 @@ async def _autoscaler():
             a = await s.get(Application, app_id)
             if a is None or not _has_public_nginx_domain(a):
                 return
-            local_node = await ensure_local_node(s)
-            await _write_app_nginx_config(a, s, local_node)
+            await _write_app_nginx_config(a, s)
             await s.commit()
 
     def _node_load(n: Node) -> float:
