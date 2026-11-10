@@ -52,11 +52,3 @@ def set_peers(peers: list[dict]) -> int:
 
 def status() -> dict:
     return json.loads(_run(["status"]))
-
-
-def boot() -> dict:
-    return json.loads(_run(["boot"]))
-
-
-def down() -> dict:
-    return json.loads(_run(["down"]))

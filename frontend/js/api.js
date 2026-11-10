@@ -159,8 +159,6 @@ export const api = {
   start:    (id)       => request('POST',   `/apps/${id}/start`),
   stop:     (id)       => request('POST',   `/apps/${id}/stop`),
   restart:  (id)       => request('POST',   `/apps/${id}/restart`),
-  rebuild:  (id)       => request('POST',   `/apps/${id}/rebuild`),
-  pull:     (id, body) => request('POST',   `/apps/${id}/pull`, body),
   listCommits:(id, limit, refresh = true) => request('GET', `/apps/${id}/commits?limit=${limit || 20}&refresh=${refresh ? 1 : 0}`),
 
   /**
@@ -211,16 +209,7 @@ export const api = {
   fileContent:(id, p)  => request('GET',    `/apps/${id}/files/content?path=${encodeURIComponent(p)}`),
   serviceFile:()       => request('GET',    '/apps/system/service-file'),
   discoverCerts:()     => request('GET',    '/apps/system/certs'),
-  uploadSystemCert: (file) => {
-    const fd = new FormData(); fd.append('file', file);
-    return fetch(BASE + '/system/certs/upload', { method: 'POST', body: fd, credentials: 'same-origin' })
-      .then(r => { if (r.status === 401) { redirectToLogin(); return; } return r.json().then(d => { if (r.status === 403) throw new PermissionError(d.detail); if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`); return d; }); });
-  },
-  uploadAppCert: (id, file) => {
-    const fd = new FormData(); fd.append('file', file);
-    return fetch(BASE + `/apps/${id}/certs/upload`, { method: 'POST', body: fd, credentials: 'same-origin' })
-      .then(r => { if (r.status === 401) { redirectToLogin(); return; } return r.json().then(d => { if (r.status === 403) throw new PermissionError(d.detail); if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`); return d; }); });
-  },
+
   getDomainServer:       ()         => request('GET',  '/domains/server'),
   checkRepo:             (data)     => request('POST', '/apps/check-repo', data),
   listDeployments:       (id, limit = 50) => request('GET', `/apps/${id}/deployments?limit=${limit}`),

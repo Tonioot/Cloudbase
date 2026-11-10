@@ -2,7 +2,7 @@ import asyncio
 import logging
 import os
 from typing import Optional
-from fastapi import UploadFile, Depends, Body, HTTPException, File, APIRouter
+from fastapi import Depends, Body, HTTPException, APIRouter
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
@@ -156,24 +156,6 @@ async def save_system_settings(
     if sections:
         _cfg.save_config_sections(sections)
     return {"ok": True}
-
-
-@router.post("/api/system/certs/upload")
-async def upload_system_cert(file: UploadFile = File(...), _: dict = Depends(auth.require_permission("system.manage"))):
-    allowed_exts = {".pem", ".crt", ".cer", ".key"}
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    if ext not in allowed_exts:
-        raise HTTPException(400, "Only .pem, .crt, .cer, .key files are allowed")
-    safe_name = os.path.basename(file.filename or "cert").replace("..", "").lstrip("/")
-    dest_dir = os.path.expanduser("~/.cloudbase/certs")
-    os.makedirs(dest_dir, exist_ok=True)
-    if not safe_name or safe_name.startswith("."):
-        raise HTTPException(400, "Invalid file name")
-    dest_path = os.path.join(dest_dir, safe_name)
-    with open(dest_path, "wb") as f:
-        f.write(await file.read())
-    os.chmod(dest_path, 0o600)  # may be a private key
-    return {"path": dest_path}
 
 
 # ── GitHub token vault ────────────────────────────────────────────────────────

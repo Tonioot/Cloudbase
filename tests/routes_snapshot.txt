@@ -104,7 +104,6 @@ PATCH   /api/nodes/{node_id}
 POST    /api/apps
 POST    /api/apps/check-repo
 POST    /api/apps/cron/preview
-POST    /api/apps/{app_id}/certs/upload
 POST    /api/apps/{app_id}/check-repo
 POST    /api/apps/{app_id}/cron/pause
 POST    /api/apps/{app_id}/cron/resume
@@ -117,9 +116,7 @@ POST    /api/apps/{app_id}/instances/restart
 POST    /api/apps/{app_id}/instances/{instance_id}/restart
 POST    /api/apps/{app_id}/maintenance-mode/toggle
 POST    /api/apps/{app_id}/maintenance-pages/render
-POST    /api/apps/{app_id}/pull
 POST    /api/apps/{app_id}/pull/stream
-POST    /api/apps/{app_id}/rebuild
 POST    /api/apps/{app_id}/rebuild/stream
 POST    /api/apps/{app_id}/restart
 POST    /api/apps/{app_id}/scale
@@ -161,7 +158,6 @@ POST    /api/system/backup-storage/key
 POST    /api/system/backup-storage/key/reveal
 POST    /api/system/backup-storage/test
 POST    /api/system/base-domain
-POST    /api/system/certs/upload
 POST    /api/system/github-tokens
 POST    /api/system/panel-domain
 POST    /api/system/settings

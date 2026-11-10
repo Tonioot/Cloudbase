@@ -119,23 +119,6 @@ def get_base_ssl_key() -> str:
     return str(_config.get("server", {}).get("base_ssl_key", "")).strip()
 
 
-def save_server_config(fields: dict) -> None:
-    """Update one or more fields under server: in config.yaml and reload."""
-    global _config
-    try:
-        try:
-            with open(_CONFIG_PATH, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-        except FileNotFoundError:
-            data = {}
-        data.setdefault("server", {}).update(fields)
-        with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
-            yaml.dump(data, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-    except Exception as e:
-        raise RuntimeError(f"Failed to update config.yaml: {e}")
-    _config = _load()
-
-
 def save_config_sections(sections: dict) -> None:
     """Update arbitrary config sections and reload. E.g. {'limits': {'max_apps': 500}}."""
     global _config

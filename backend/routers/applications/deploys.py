@@ -2,8 +2,6 @@ import asyncio
 import json
 import logging
 import os
-import subprocess
-from typing import Optional
 from fastapi import Body, HTTPException, Depends, APIRouter
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
@@ -14,10 +12,9 @@ from core.models import Deployment
 from containers import processes as pm
 from containers import naming as containers_naming
 from containers import build as containers_build
-from core.audit import log_audit
 from core import auth as _auth
 from apps.rollout import replace_instances
-from apps.git import _build_clone_url, _current_branch, _decrypt_github_token, _deploy_app, _fetch_origin, _refresh_app_source_revision, _resolve_source_revision, _sync_app_source
+from apps.git import _current_branch, _deploy_app, _refresh_app_source_revision, _sync_app_source
 from apps.images import _image_build_kwargs, _image_port
 from apps.runtime import _has_live_instances, _load_app_instances
 from apps.serializers import _deployment_dict, _get_or_404
@@ -31,155 +28,6 @@ router = APIRouter(prefix="/api/apps", tags=["applications"])
 
 
 log = logging.getLogger("cloudbase.apps")
-
-
-@router.post("/{app_id}/pull")
-@activity.tracked("updating")
-async def git_pull(app_id: int, payload: PullRequest | None = Body(default=None), db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
-    app = await _get_or_404(app_id, db)
-    target_commit = _check_git_ref(payload.commit if payload else None)
-    app_dir = pm.get_app_dir(app.id)
-
-    if not os.path.exists(app_dir):
-        # The directory is missing! Let's try to restore it by re-deploying.
-        log.warning("[git-pull] Directory %s missing for app %s, attempting re-clone", app_dir, app.name)
-        try:
-            await _deploy_app(app)
-            await db.commit()
-            return {
-                "message": "App directory was missing; performed a fresh clone successfully",
-                "output": "Fresh clone completed.",
-                "source_revision": app.source_revision,
-            }
-        except Exception as e:
-            raise HTTPException(500, f"App directory was missing and re-clone failed: {e}")
-
-    github_token = _decrypt_github_token(app.github_token)
-
-    def _git_ops() -> tuple[str, str, str, Optional[str]]:
-        if github_token:
-            url = _build_clone_url(app.repo_url, github_token)
-            subprocess.run(["git", "remote", "set-url", "origin", url], cwd=app_dir, capture_output=True)
-        branch = _current_branch(app_dir)
-        _fetch_origin(app_dir, branch)
-        target = target_commit or f"origin/{branch}"
-        reset = subprocess.run(["git", "reset", "--hard", target], cwd=app_dir, capture_output=True, text=True)
-        if reset.returncode != 0 and not target_commit:
-            reset = subprocess.run(["git", "reset", "--hard", "@{u}"], cwd=app_dir, capture_output=True, text=True)
-        if reset.returncode != 0:
-            raise HTTPException(500, f"Git reset failed: {reset.stderr}")
-        log_res = subprocess.run(["git", "log", "-1", "--format=%h - %s (%cr)"], cwd=app_dir, capture_output=True, text=True)
-        commit_info = log_res.stdout.strip() if log_res.returncode == 0 else "Unknown"
-        rev = _resolve_source_revision(app_dir)
-        return branch, reset.stdout.strip(), commit_info, rev
-
-    branch, _, commit_info, source_revision = await asyncio.to_thread(_git_ops)
-    if source_revision:
-        app.source_revision = source_revision
-
-    was_running = _has_live_instances(await _load_app_instances(app_id, db))
-    action_logs: list[str] = [f"[Git] Updated code to {target_commit or branch} ({commit_info})"]
-    action_logs.append("[Docker] Rebuilding image...")
-
-    def _push(aid, line):
-        _ = aid
-        action_logs.append(str(line))
-
-    try:
-        await asyncio.to_thread(
-            containers_build.build_image,
-            app_id, app_dir, _push,
-            app.app_type or "unknown", app.start_command or "",
-            _image_port(app),
-            **_image_build_kwargs(app),
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Failed to rebuild Docker image: {e}") from e
-
-    app.docker_image = containers_naming.image_name(app_id)
-    if source_revision:
-        app.image_revision = source_revision
-    await log_audit(db, "app.pull", actor=actor, app_id=app_id, detail={"name": app.name, "commit": commit_info})
-
-    # Instances on other nodes are not touched: a node downloads and builds the new revision when
-    # one of its instances is started or restarted (a deploy or a restart)
-    await db.commit()
-    if was_running:
-        action_logs.append("[Docker] Image rebuilt. Running container left untouched (no stop/restart). Restart manually to use the new image.")
-    else:
-        action_logs.append("[Docker] Image rebuilt. Start the app to apply changes.")
-    return {
-        "message": f"Updated to {commit_info} and rebuilt the Docker image",
-        "output": (
-            f"Latest commit: {commit_info}\n\nImage rebuilt. Running container was not stopped or restarted. "
-            "Restart manually when you want to switch to the new image."
-            if was_running
-            else f"Latest commit: {commit_info}\n\nImage rebuilt. Start the app to apply changes."
-        ),
-        "commit": commit_info,
-        "source_revision": source_revision,
-        "action_logs": action_logs,
-    }
-
-
-@router.post("/{app_id}/rebuild")
-@activity.tracked("building")
-async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
-    app = await _get_or_404(app_id, db)
-
-    if not app.working_dir:
-        raise HTTPException(400, "No working directory — deploy the app first")
-
-    was_running = _has_live_instances(await _load_app_instances(app_id, db))
-    action_logs: list[str] = ["[Docker] Rebuilding image..."]
-
-    def _push(aid, line):
-        _ = aid
-        action_logs.append(str(line))
-
-    try:
-        img = await asyncio.to_thread(
-            containers_build.build_image,
-            app_id, app.working_dir, _push,
-            app.app_type or "unknown", app.start_command or "", _image_port(app),
-            **_image_build_kwargs(app),
-        )
-        source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
-        app.docker_image = img
-        if source_revision:
-            app.image_revision = source_revision
-        await log_audit(db, "app.rebuild", actor=actor, app_id=app_id, detail={"name": app.name, "image": img})
-        await db.commit()
-        if was_running:
-            action_logs.append("[Docker] Image rebuilt. Running container left untouched (no restart). Restart manually to use the new image.")
-            return {
-                "status": "running",
-                "message": "Image rebuilt. Running container was not restarted.",
-                "output": "Image rebuilt. Running container was not restarted. Restart manually to switch to the new image.",
-                "source_revision": source_revision,
-                "action_logs": action_logs,
-            }
-        action_logs.append("[Docker] Image rebuilt. Start the app to run it.")
-        return {
-            "status": "rebuilt",
-            "message": "Image rebuilt. Start the app to run it.",
-            "output": "Image rebuilt. Start the app to run it.",
-            "source_revision": source_revision,
-            "action_logs": action_logs,
-        }
-    except RuntimeError as e:
-        msg = str(e)
-        if "already in progress" in msg.lower():
-            action_logs.append(f"[Docker] {msg}.")
-            return {
-                "status": "in_progress",
-                "message": "A rebuild is already running for this app.",
-                "output": "A rebuild is already running for this app. Wait for it to finish.",
-                "action_logs": action_logs,
-            }
-        raise HTTPException(500, f"Failed to rebuild Docker image: {e}") from e
-    except Exception as e:
-        raise HTTPException(500, f"Failed to rebuild Docker image: {e}") from e
 
 
 @router.post("/{app_id}/deploy-rolling")

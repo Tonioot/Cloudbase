@@ -85,7 +85,7 @@ def test_every_instance_is_asked_once_per_round(docker):
     instances = _instances(app_id, 3)
     assert Round([(_app(app_id), instances)]).at(1000.0) == 3
     assert len(docker.asked_for(app_id)) == 3                             # not twice each, as it used to be
-    assert all(pm.get_instance_stats(r.id)["cpu_percent"] == 10.0 for r in instances)
+    assert all(pm.get_all_instance_stats(app_id, [r.id])[r.id]["cpu_percent"] == 10.0 for r in instances)
     frames = pm.get_recent_stats(app_id)
     assert len(frames) == 1 and frames[0]["memory_mb"] == 150.0 and frames[0]["cpu_percent"] == 10.0
 
