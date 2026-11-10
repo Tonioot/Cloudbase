@@ -109,7 +109,9 @@ def test_empty_stats_while_a_container_starts_are_not_a_warning(monkeypatch, cap
     from containers import stats_logs
 
     class Container:
-        def stats(self, stream=False):
+        id = "c85"
+
+        def stats(self, stream=False, one_shot=False):
             raise ValueError("Expecting value: line 1 column 1 (char 0)")      # what requests' JSONDecodeError is
 
     class Client:

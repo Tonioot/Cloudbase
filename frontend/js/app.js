@@ -752,15 +752,20 @@ function initStats() {
     if (histSection) histSection.style.display = 'none';
   }
 
-  const historySelect = document.getElementById('history-hours');
-  if (historySelect) {
-    historySelect.onchange = e => loadStatsHistory(parseInt(e.target.value));
+  const historyRange = document.getElementById('history-range');
+  if (historyRange) {
+    historyRange.onclick = e => {
+      const btn = e.target.closest('[data-hours]');
+      if (!btn) return;
+      historyRange.querySelectorAll('[data-hours]').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+      loadStatsHistory(Number(btn.dataset.hours));
+    };
   }
   const exportBtn = document.getElementById('btn-export-stats');
   if (exportBtn && exportBtn.dataset.bound !== '1') {
     exportBtn.dataset.bound = '1';
     exportBtn.onclick = async () => {
-      const hours = parseInt(document.getElementById('history-hours')?.value || '24', 10);
+      const hours = Number(document.querySelector('#history-range [aria-pressed="true"]')?.dataset.hours || 24);
       await exportStatsCsv(hours);
     };
   }
@@ -770,7 +775,7 @@ function initStats() {
     btn.onclick = () => openLargeHistoryChart(btn.dataset.historyChart || 'cpu');
   });
   // Defer slightly so canvas has layout dimensions before drawing
-  setTimeout(() => loadStatsHistory(24), 100);
+  setTimeout(() => loadStatsHistory(Number(document.querySelector('#history-range [aria-pressed="true"]')?.dataset.hours || 24)), 100);
 }
 
 function _removeStatsLoading() {

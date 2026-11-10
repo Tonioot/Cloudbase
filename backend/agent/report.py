@@ -27,26 +27,44 @@ async def instance_stats() -> dict[str, dict]:
     return {str(c["instance_id"]): {**s, "timestamp": stamp} for c, s in zip(containers, results) if s}
 
 
-async def report_once(tick: int, send: Callable[[dict], Awaitable[None]]) -> None:
-    """One round: the instances, and the databases when it is their turn."""
+async def report_instances(send: Callable[[dict], Awaitable[None]]) -> None:
     try:
         await send({"type": "database_progress", "progress": {str(k): v for k, v in dbs_docker.all_progress().items()}})
         await send({"type": "instance_stats", "stats": await instance_stats()})
     except Exception as e:
         _agent_log(f"[report] instance stats: {type(e).__name__}: {e}")
+
+
+async def report_databases(db_round: int, send: Callable[[dict], Awaitable[None]]) -> None:
+    try:
+        databases = await asyncio.to_thread(dbs_lifecycle.report_all, db_round % DB_STATS_EVERY == 0, db_round % DB_DISK_EVERY == 0)
+        await send({"type": "database_report", "databases": databases})
+    except Exception as e:
+        _agent_log(f"[report] databases: {type(e).__name__}: {e}")
+
+
+async def report_once(tick: int, send: Callable[[dict], Awaitable[None]]) -> None:
+    """One round: the instances, and the databases when it is their turn."""
+    await report_instances(send)
     db_round, offset = divmod(tick, DB_EVERY)
     if offset == 0:
-        try:
-            databases = await asyncio.to_thread(dbs_lifecycle.report_all, db_round % DB_STATS_EVERY == 0, db_round % DB_DISK_EVERY == 0)
-            await send({"type": "database_report", "databases": databases})
-        except Exception as e:
-            _agent_log(f"[report] databases: {type(e).__name__}: {e}")
+        await report_databases(db_round, send)
 
 
 async def report_forever(send: Callable[[dict], Awaitable[None]]) -> None:
-    """For as long as the websocket is up."""
-    tick = 0
-    while True:
-        await report_once(tick, send)
-        tick += 1
-        await asyncio.sleep(TICK_SECONDS)
+    """For as long as the websocket is up. The instances on a fixed TICK_SECONDS clock (the time a round takes is not
+    added to it); the databases beside them, so measuring them (du can take seconds) never holds the instances up."""
+    loop = asyncio.get_running_loop()
+    tick, next_at, databases = 0, loop.time(), None
+    try:
+        while True:
+            db_round, offset = divmod(tick, DB_EVERY)
+            if offset == 0 and (databases is None or databases.done()):
+                databases = asyncio.create_task(report_databases(db_round, send))
+            await report_instances(send)
+            tick += 1
+            next_at = max(next_at + TICK_SECONDS, loop.time())
+            await asyncio.sleep(next_at - loop.time())
+    finally:
+        if databases is not None:
+            databases.cancel()

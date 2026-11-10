@@ -94,15 +94,28 @@ def get_recent_container_logs_by_name(container_name_str: str, lines: int = 300)
         return []
 
 
+# Container id -> (its CPU time, the host's CPU time) at the previous sample. With it a sample needs no second reading:
+# Docker's own way waits 1-2 s per container for one. The CPU % is then the average since the previous sample.
+_last_cpu: dict[str, tuple[int, int]] = {}
+
+
 def get_container_stats_by_name(container_name_str: str) -> dict:
     """Resource use of one container, by name."""
     try:
         client = _get_client()
         c = client.containers.get(container_name_str)
-        raw = c.stats(stream=False)
+        previous = _last_cpu.get(c.id)
+        raw = c.stats(stream=False, one_shot=previous is not None)
+        total = raw["cpu_stats"]["cpu_usage"]["total_usage"]
+        system = raw["cpu_stats"].get("system_cpu_usage", 0)
+        if previous is None:
+            previous = (raw["precpu_stats"]["cpu_usage"].get("total_usage", 0), raw["precpu_stats"].get("system_cpu_usage", 0))
+        if len(_last_cpu) > 1000:           # containers come and go; forget the old ones now and then
+            _last_cpu.clear()
+        _last_cpu[c.id] = (total, system)
 
-        cpu_delta = raw["cpu_stats"]["cpu_usage"]["total_usage"] - raw["precpu_stats"]["cpu_usage"]["total_usage"]
-        system_delta = raw["cpu_stats"].get("system_cpu_usage", 0) - raw["precpu_stats"].get("system_cpu_usage", 0)
+        cpu_delta = total - previous[0]
+        system_delta = system - previous[1]
         num_cpus = raw["cpu_stats"].get("online_cpus") or len(raw["cpu_stats"]["cpu_usage"].get("percpu_usage") or [1])
         cpu_percent = (cpu_delta / system_delta * num_cpus * 100.0) if system_delta > 0 else 0.0
 
@@ -116,7 +129,6 @@ def get_container_stats_by_name(container_name_str: str) -> dict:
             mem_cache = mem_inner.get("inactive_file", mem_inner.get("cache", 0))
             rss = max(mem_usage - mem_cache, 0)
 
-        c.reload()
         started_at = c.attrs.get("State", {}).get("StartedAt", "")
         uptime = 0
         if started_at:

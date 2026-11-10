@@ -20,8 +20,8 @@ log = logging.getLogger("cloudbase.main")
 
 
 # ── Background stats collector ────────────────────────────────────────────────
-# Every SAMPLE_SECONDS one frame per app over all its instances: Docker for the ones here (a stats call takes about a
-# second and runs in a thread), what their node sent last for the others (agent/report.py does the same every 5 s).
+# Every SAMPLE_SECONDS one frame per app over all its instances: Docker for the ones here (a stats call runs in a
+# thread), what their node sent last for the others (agent/report.py does the same every 5 s).
 SAMPLE_SECONDS = 5
 STATS_CONCURRENCY = 12        # at most this many Docker stats calls at once, so other threaded work is not starved
 
@@ -107,8 +107,10 @@ async def sample_apps(apps, instances_by_app: dict[int, list], local_node_id: in
 
 
 async def _stats_collector():
-    """Sample every running instance every SAMPLE_SECONDS."""
+    """Sample every running instance every SAMPLE_SECONDS, on a fixed clock: the time a round takes is not added."""
     await asyncio.sleep(4)
+    loop = asyncio.get_running_loop()
+    next_at = loop.time()
     while True:
         try:
             await collect_stats_once()
@@ -116,7 +118,8 @@ async def _stats_collector():
             return
         except Exception:
             pass
-        await asyncio.sleep(SAMPLE_SECONDS)
+        next_at = max(next_at + SAMPLE_SECONDS, loop.time())
+        await asyncio.sleep(next_at - loop.time())
 
 
 async def _overview_sampler():

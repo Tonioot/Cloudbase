@@ -190,11 +190,11 @@
               <!-- Right 2/3: 2×2 real-time charts -->
               <div class="stats-charts-grid">
                 <div class="card chart-card">
-                  <div class="chart-hdr"><div><div class="chart-title">CPU Usage</div><div class="chart-subtitle">Last 2 min · 2s</div></div><span class="chart-badge">%</span></div>
+                  <div class="chart-hdr"><div><div class="chart-title">CPU Usage</div><div class="chart-subtitle">Last 5 min · every 5 s</div></div><span class="chart-badge">%</span></div>
                   <canvas id="chart-cpu" style="width:100%;height:120px;display:block"></canvas>
                 </div>
                 <div class="card chart-card">
-                  <div class="chart-hdr"><div><div class="chart-title">Memory RSS</div><div class="chart-subtitle">Last 2 min · 2s</div></div><span class="chart-badge">MB</span></div>
+                  <div class="chart-hdr"><div><div class="chart-title">Memory RSS</div><div class="chart-subtitle">Last 5 min · every 5 s</div></div><span class="chart-badge">MB</span></div>
                   <canvas id="chart-mem" style="width:100%;height:120px;display:block"></canvas>
                 </div>
                 <div class="card chart-card">
@@ -219,14 +219,11 @@
                 <button class="btn btn-secondary btn-sm" id="btn-export-stats" style="font-size:11px;padding:4px 10px">
                   Export CSV
                 </button>
-                <span style="font-size:11px;color:var(--text-muted)">Time range</span>
-                <select id="history-hours" class="input" style="width:auto;font-size:11px;padding:4px 8px">
-                  <option value="1">Last 1h</option>
-                  <option value="6">Last 6h</option>
-                  <option value="24" selected>Last 24h</option>
-                  <option value="72">Last 3 days</option>
-                  <option value="168">Last 7 days</option>
-                </select>
+                <div class="segmented" role="group" aria-label="Chart range" id="history-range">
+                  <button type="button" data-hours="1" aria-pressed="false">1h</button>
+                  <button type="button" data-hours="24" aria-pressed="true">24h</button>
+                  <button type="button" data-hours="168" aria-pressed="false">7d</button>
+                </div>
               </div>
             </div>
             <div class="history-row">
