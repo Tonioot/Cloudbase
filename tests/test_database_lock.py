@@ -123,3 +123,21 @@ def test_a_database_the_monitor_starts_is_held_while_it_starts(database, monkeyp
     monkeypatch.setattr(workers, "_last_heal", {})
     _run(workers._monitor_tick())
     assert held_while_started == [True]
+
+
+def test_the_monitor_heals_right_after_the_machine_booted(database, monkeypatch):
+    """time.monotonic() starts at boot: 'never healed' must not count as 'healed at 0', or nothing is healed in the
+    first two minutes after a reboot (and a test on a fresh CI machine fails)."""
+    import types
+    from dbs import workers
+    database("lock-boot")
+    started = []
+    monkeypatch.setattr(workers, "time", types.SimpleNamespace(monotonic=lambda: 50.0))
+    monkeypatch.setattr(workers, "_spawn", lambda i, fn: started.append(i))
+
+    async def states(node, ids):
+        return {str(i): {"state": "stopped", "volume": True} for i in ids}
+    monkeypatch.setattr(workers, "_fetch_states", states)
+    monkeypatch.setattr(workers, "_last_heal", {})
+    _run(workers._monitor_tick())
+    assert started

@@ -85,7 +85,7 @@ async def _monitor_tick() -> None:
             if state in ("stopped", "missing"):
                 # Should be running but is not: start it again, with a backoff.
                 now = time.monotonic()
-                if now - _last_heal.get(d.id, 0) < HEAL_BACKOFF_SECONDS:
+                if d.id in _last_heal and now - _last_heal[d.id] < HEAL_BACKOFF_SECONDS:   # (the clock starts at boot: no 0 default)
                     continue
                 try:
                     claim(d.id)                     # somebody may have started an operation meanwhile

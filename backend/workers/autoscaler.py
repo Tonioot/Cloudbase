@@ -42,9 +42,8 @@ async def _autoscaler():
     ACTOR = "autoscaler"
 
     def _recent_cpu_avg(app_id: int, seconds: int) -> Optional[float]:
-        """Average of the live CPU samples (in memory; ~2s apart locally, ~15s for
-        remote nodes) over the last `seconds`, or None when they don't cover
-        most of that window yet (e.g. just after a restart)."""
+        """Average of the live CPU samples (in memory, every 5 s) over the last `seconds`, or None when they
+        don't cover most of that window yet (e.g. just after a restart)."""
         now_ms = _time.time() * 1000
         cutoff_ms = now_ms - seconds * 1000
         frames = [
@@ -134,7 +133,7 @@ async def _autoscaler():
 
                 for app in apps:
                     now = asyncio.get_running_loop().time()
-                    since_action = now - _last_scaled.get(app.id, 0)
+                    since_action = now - _last_scaled[app.id] if app.id in _last_scaled else float("inf")   # (the clock starts at boot)
                     if since_action < UP_COOLDOWN:
                         continue
                     # A deploy (or our own previous scale action, or somebody restarting the app) is still
