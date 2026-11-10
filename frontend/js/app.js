@@ -2292,42 +2292,26 @@ async function initInstances() {
         connHtml = `<span style="font-size:12px;color:var(--red)">${inst.wg_state === 'down' ? 'node network down' : 'not on node network'}</span>`;
       }
 
-      // Startup progress steps
+      // Startup progress: the steps side by side, the current one pulsing
       let startupHtml = '';
       if (isStarting) {
         const sub = inst.substatus;
-        // Steps in the order they always appear — downloading/building may be skipped (cached image)
+        // In the order they always come; downloading/building are skipped with a cached image
         const steps = sub === 'waiting_for_network'
-          ? [{ key: 'waiting_for_network', label: 'Waiting for the node network' }]
+          ? [{ key: 'waiting_for_network', label: 'Node network' }]
           : [
-              { key: 'downloading',        label: 'Downloading source' },
-              { key: 'building_image',     label: 'Building image' },
-              { key: 'creating_container', label: 'Creating container' },
-              { key: 'waiting',            label: 'Starting app' },
-              { key: 'health_check',       label: 'Health check' },
+              { key: 'downloading',        label: 'Source' },
+              { key: 'building_image',     label: 'Image' },
+              { key: 'creating_container', label: 'Container' },
+              { key: 'waiting',            label: 'App' },
+              { key: 'health_check',       label: 'Health' },
             ];
-        // Determine which step is active and which are done
-        const foundIdx = sub ? steps.findIndex(s => s.key === sub) : -1;
-        const activeIdx = foundIdx >= 0 ? foundIdx : 0;
-        startupHtml = `
-          <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border-muted)">
-            <div style="font-size:9px;text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin-bottom:6px">Starting up</div>
-            <div style="display:flex;flex-direction:column;gap:5px">
-              ${steps.map((step, i) => {
-                const isDone   = i < activeIdx;
-                const isActive = i === activeIdx;
-                return `<div style="display:flex;align-items:center;gap:7px">
-                  ${isActive
-                    ? `<svg style="animation:spin 0.8s linear infinite;flex-shrink:0;color:var(--yellow)" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>`
-                    : isDone
-                      ? `<svg style="flex-shrink:0;color:var(--green)" width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`
-                      : `<div style="width:9px;height:9px;border-radius:50%;border:1.5px solid var(--border);flex-shrink:0"></div>`
-                  }
-                  <span style="font-size:11px;color:${isActive ? 'var(--text-primary)' : isDone ? 'var(--green)' : 'var(--text-muted)'};${isActive ? 'font-weight:500' : ''}">${step.label}</span>
-                </div>`;
-              }).join('')}
-            </div>
-          </div>`;
+        const found = sub ? steps.findIndex(st => st.key === sub) : -1;
+        const active = found >= 0 ? found : 0;
+        startupHtml = `<ol class="inst-steps" aria-label="Starting up">${steps.map((st, i) =>
+          `<li class="inst-step${i < active ? ' done' : i === active ? ' active' : ''}"${i === active ? ' aria-current="step"' : ''}>
+             <span class="inst-step-dot" aria-hidden="true"></span><span class="inst-step-label">${st.label}</span>
+           </li>`).join('')}</ol>`;
       }
 
       // Live metrics

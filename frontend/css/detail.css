@@ -404,6 +404,24 @@
 .inst-head { padding: 10px 0; font-size: 12px; color: var(--faint); border-bottom: 1px solid var(--line); }
 .inst-head .inst-id { font-family: inherit; color: inherit; }
 .inst-row { padding: 12px 0; border-bottom: 1px solid var(--line); }
+
+/* Starting up: the steps side by side, joined by a line; done ones green, the current one pulsing */
+.inst-steps { display: flex; list-style: none; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px solid var(--line); max-width: 460px; }
+.inst-step { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
+.inst-step::before { content: ""; position: absolute; top: 4px; left: -50%; right: 50%; height: 2px; background: var(--line); }
+.inst-step:first-child::before { display: none; }
+.inst-step.done::before, .inst-step.active::before { background: var(--green); }
+.inst-step-dot { position: relative; z-index: 1; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--line-strong); background: var(--bg); }
+.inst-step.done .inst-step-dot { background: var(--green); border-color: var(--green); }
+.inst-step.active .inst-step-dot { background: var(--yellow); border-color: var(--yellow); animation: inst-step-pulse 1.6s ease-in-out infinite; }
+.inst-step-label { font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.inst-step.done .inst-step-label { color: var(--text-2); }
+.inst-step.active .inst-step-label { color: var(--text); font-weight: 500; }
+@keyframes inst-step-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--yellow-halo); }
+  50%      { box-shadow: 0 0 0 5px var(--yellow-halo); }
+}
+@media (prefers-reduced-motion: reduce) { .inst-step.active .inst-step-dot { animation: none; box-shadow: 0 0 0 3px var(--yellow-halo); } }
 #btn-remove-selected[hidden], #btn-restart-selected[hidden] { display: none; }
 .inst-id { display: inline-flex; align-items: center; gap: 14px; }
 .inst-check { position: relative; display: inline-flex; cursor: pointer; }
