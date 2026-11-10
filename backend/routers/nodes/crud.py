@@ -1,4 +1,3 @@
-import json
 import asyncio
 import secrets
 import time
@@ -7,11 +6,12 @@ from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
-from core.models import Node, NodeInvite, NodeCommand
+from core.models import Node, NodeInvite
 from core.audit import log_audit
 from core import auth as _auth
 from mesh import hub
-from nodes.commands import _utcnow, queue_node_command, wait_for_node_command
+from nodes import commands as node_commands
+from nodes.commands import _utcnow
 from nodes import workloads as node_workloads
 from nodes.liveness import node_gone, run_node_docker_cleanup
 from nodes.registry import _as_node_dict, ensure_local_node, get_node_or_404
@@ -122,11 +122,11 @@ async def delete_node(node_id: int, db: AsyncSession = Depends(get_db), _user: d
             "Move or delete all apps, instances and databases first."
         )
     node_name = node.name
-    await db.execute(delete(NodeCommand).where(NodeCommand.node_id == node_id))
     await db.execute(delete(NodeInvite).where(NodeInvite.node_id == node_id))
     await db.delete(node)
     await log_audit(db, "node.delete", actor=actor, detail={"name": node_name, "node_id": node_id})
     await db.commit()
+    node_commands.forget(node_id)
     await hub.sync_peers()
     return {"ok": True}
 
@@ -201,16 +201,10 @@ async def get_node_agent_logs(node_id: int, limit: int = 200, db: AsyncSession =
         except Exception as exc:
             return {"lines": [], "source": "local", "error": str(exc)}
 
-    # Remote: queue a command and wait for result
-    cmd = await queue_node_command(
-        db,
-        node_id=node_id,
-        command_type="get_agent_logs",
-        payload={"limit": max(1, min(limit, 2000))},
-    )
     try:
-        cmd = await wait_for_node_command(db, cmd.id, timeout_seconds=20.0)
-        result = json.loads(cmd.result or "{}") if cmd.result else {}
-        return {"lines": result.get("lines", []), "source": "remote"}
+        cmd = await node_commands.ask(node_id, "get_agent_logs", {"limit": max(1, min(limit, 2000))})
+        if cmd.status != "done":
+            return {"lines": [], "source": "remote", "error": cmd.error_message or "The node could not read its log"}
+        return {"lines": (cmd.result or {}).get("lines", []), "source": "remote"}
     except HTTPException:
         return {"lines": [], "source": "remote", "error": "Timed out waiting for agent logs"}

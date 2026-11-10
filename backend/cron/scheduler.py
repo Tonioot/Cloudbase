@@ -32,7 +32,7 @@ from core.audit import log_audit
 from apps import git as apps_git
 from apps import images as apps_images
 from apps import runtime as apps_runtime
-from nodes.commands import queue_node_command, wait_for_node_command
+from nodes import commands as node_commands
 
 log = logging.getLogger("cloudbase.cron")
 
@@ -208,21 +208,18 @@ async def _run_local(app: Application, run_id: int, push) -> dict:
 
 
 async def _run_remote(app: Application, node: Node, run_id: int) -> dict:
-    import json
     if not (node.enabled and node.status == "online"):
         raise RuntimeError(f"Node '{node.name}' is offline")
     payload = apps_runtime._remote_replica_command_payload(app, decrypt_env(app.env_vars or ""), 0)
     payload.update({"run_id": run_id, "command": app.start_command or "",
                     "timeout_seconds": app.cron_timeout_seconds or 3600})
-    async with AsyncSessionLocal() as db:
-        cmd = await queue_node_command(db, node_id=node.id, command_type="cron_run", payload=payload, app_id=app.id)
-        done = await wait_for_node_command(
-            db, cmd.id, timeout_seconds=(app.cron_timeout_seconds or 3600) + BUILD_MARGIN_SECONDS)
+    done = await node_commands.ask(node.id, "cron_run", payload, app_id=app.id,
+                                   timeout=(app.cron_timeout_seconds or 3600) + BUILD_MARGIN_SECONDS)
     if done.status != "done":
         if "Unsupported command type" in (done.error_message or ""):
             raise RuntimeError(f"Node '{node.name}' runs an older Cloudbase; update it to run cron jobs there")
         raise RuntimeError(done.error_message or f"The run failed on node '{node.name}'")
-    return json.loads(done.result or "{}")
+    return done.result or {}
 
 
 async def _execute(run_id: int) -> None:

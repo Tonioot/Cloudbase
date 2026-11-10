@@ -46,7 +46,7 @@ async def get_db():
 async def init_db():
     import datetime as _dt
     # Importing every model registers its table with Base.metadata for create_all below.
-    from core.models import Application, Node, NodeInvite, NodeCommand, AuditLog, StatsHistory, User, SystemConfig, Role, Permission, role_permissions  # noqa: F401
+    from core.models import Application, Node, NodeInvite, AuditLog, StatsHistory, User, SystemConfig, Role, Permission, role_permissions  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         # Migrate existing DBs: add columns introduced after initial schema.
@@ -122,16 +122,8 @@ async def init_db():
                 f"ALTER TABLE nodes ADD COLUMN {col} {definition}"
             )
 
-        result = await conn.exec_driver_sql("PRAGMA table_info(node_commands)")
-        existing_cmd_cols = {row[1] for row in result.fetchall()}
-        for col, definition in [
-            ("priority", "INTEGER NOT NULL DEFAULT 5"),
-        ]:
-            if col in existing_cmd_cols:
-                continue
-            await conn.exec_driver_sql(
-                f"ALTER TABLE node_commands ADD COLUMN {col} {definition}"
-            )
+        # Commands to nodes live in memory now (nodes/commands.py); the old table's foreign keys would block deletes
+        await conn.exec_driver_sql("DROP TABLE IF EXISTS node_commands")
 
         result = await conn.exec_driver_sql("PRAGMA table_info(databases)")
         existing_db_cols = {row[1] for row in result.fetchall()}

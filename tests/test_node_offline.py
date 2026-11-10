@@ -16,7 +16,7 @@ def world(client):
     """Nodes, an app and instances, removed again afterwards."""
     from sqlalchemy import delete
     from core.database import AsyncSessionLocal
-    from core.models import Application, ApplicationReplica, Node, NodeCommand
+    from core.models import Application, ApplicationReplica, Node
     made = {"nodes": [], "apps": []}
 
     class World:
@@ -68,7 +68,6 @@ def world(client):
 
     async def cleanup():
         async with AsyncSessionLocal() as db:
-            await db.execute(delete(NodeCommand).where(NodeCommand.node_id.in_(made["nodes"])))
             await db.execute(delete(ApplicationReplica).where(ApplicationReplica.app_id.in_(made["apps"])))
             await db.execute(delete(Application).where(Application.id.in_(made["apps"])))
             await db.execute(delete(Node).where(Node.id.in_(made["nodes"])))

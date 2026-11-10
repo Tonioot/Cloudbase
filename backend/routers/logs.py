@@ -13,7 +13,7 @@ from containers import processes as pm
 from containers import naming as containers_naming
 from containers import client as containers_client
 from nodes.registry import ensure_local_node
-from nodes.commands import queue_node_command, wait_for_node_command
+from nodes import commands as node_commands
 from nodes.state import subscribe_node_stream, unsubscribe_node_stream, _node_ws_connections
 from apps.runtime import _get_app_node
 from apps.serializers import _get_or_404
@@ -144,17 +144,11 @@ async def stream_logs(app_id: int, websocket: WebSocket):
             last_snapshot: list[str] = []
             try:
                 while True:
-                    async with AsyncSessionLocal() as poll_db:
-                        cmd = await queue_node_command(
-                            poll_db,
-                            node_id=node_id,
-                            app_id=app_id_val,
-                            command_type="get_logs_tail",
-                            payload={"app_id": app_id_val, "app_name": app_name_val, "limit": 200},
-                        )
-                        done = await wait_for_node_command(poll_db, cmd.id, timeout_seconds=20)
+                    done = await node_commands.ask(node_id, "get_logs_tail",
+                                                   {"app_id": app_id_val, "app_name": app_name_val, "limit": 200},
+                                                   app_id=app_id_val)
                     if done.status == "done":
-                        payload = _json.loads(done.result or "{}") if done.result else {}
+                        payload = done.result or {}
                         lines = payload.get("lines", []) or []
                         if lines != last_snapshot:
                             if last_snapshot and len(lines) >= len(last_snapshot) and lines[:len(last_snapshot)] == last_snapshot:
@@ -253,16 +247,12 @@ async def stream_replica_logs(app_id: int, replica_id: int, websocket: WebSocket
     last: list[str] = []
     try:
         while True:
-            async with AsyncSessionLocal() as poll_db:
-                cmd = await queue_node_command(
-                    poll_db, node_id=node_id, app_id=app_id, command_type="get_replica_logs",
-                    payload={"app_id": app_id, "app_name": app_name, "replica_id": replica_id,
-                             "container_name": cname, "lines": 300},
-                    allow_existing_inflight=True,
-                )
-                done = await wait_for_node_command(poll_db, cmd.id, timeout_seconds=20)
+            done = await node_commands.ask(node_id, "get_replica_logs",
+                                           {"app_id": app_id, "app_name": app_name, "replica_id": replica_id,
+                                            "container_name": cname, "lines": 300},
+                                           app_id=app_id, reuse=True)
             if done.status == "done":
-                lines = (json.loads(done.result or "{}") or {}).get("lines", []) or []
+                lines = (done.result or {}).get("lines", []) or []
                 if lines != last:
                     # Find where the new snapshot continues the previous one
                     delta = lines

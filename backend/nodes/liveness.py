@@ -1,6 +1,5 @@
 """Which nodes are alive: marks silent nodes offline, and runs Docker cleanup on a node."""
 import asyncio
-import json
 import logging
 
 from sqlalchemy import and_, select
@@ -10,7 +9,8 @@ from apps import nginx_sync
 from containers import cleanup as containers_cleanup
 from core.database import AsyncSessionLocal
 from core.models import ApplicationReplica, Node
-from nodes.commands import _commit_with_sqlite_lock_retry, _utcnow, queue_node_command, wait_for_node_command
+from nodes import commands as node_commands
+from nodes.commands import _commit_with_sqlite_lock_retry, _utcnow
 from nodes.state import _node_ws_connections, _push_node_event
 
 log = logging.getLogger("cloudbase.nodes")
@@ -83,14 +83,7 @@ async def run_node_docker_cleanup(node: Node, aggressive: bool = False) -> dict:
         return await asyncio.to_thread(containers_cleanup.cleanup_docker, aggressive)
     if node.id not in _node_ws_connections:
         return {"skipped": "Node agent is not connected"}
-    async with AsyncSessionLocal() as db:
-        cmd = await queue_node_command(
-            db, node_id=node.id, command_type="docker_cleanup",
-            payload={"aggressive": aggressive}, allow_existing_inflight=True,
-        )
-        cmd_id = cmd.id
-    async with AsyncSessionLocal() as wait_db:
-        done = await wait_for_node_command(wait_db, cmd_id, timeout_seconds=300)
+    done = await node_commands.ask(node.id, "docker_cleanup", {"aggressive": aggressive}, timeout=300, reuse=True)
     if done.status != "done":
         return {"errors": [done.error_message or "Cleanup failed"]}
-    return json.loads(done.result) if done.result else {}
+    return done.result or {}

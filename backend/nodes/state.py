@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from fastapi import WebSocket
-from collections import deque
 
 log = logging.getLogger("cloudbase.nodes")
 
@@ -12,10 +11,6 @@ _node_ws_connections: dict[int, WebSocket] = {}
 
 # Per-node event set when a new command is queued.
 _node_command_events: dict[int, asyncio.Event] = {}
-
-
-# Per-command event set when a result arrives.
-_command_done_events: dict[int, asyncio.Event] = {}
 
 
 # --- Streaming infrastructure ---
@@ -29,9 +24,6 @@ _node_event_subscribers: dict[int, list[asyncio.Queue]] = {}
 
 # ping_id -> asyncio.Future awaiting pong from agent
 _pending_pings: dict[str, asyncio.Future] = {}
-
-
-_node_stats_history: dict[int, deque] = {}
 
 
 def subscribe_node_stream(stream_id: str) -> asyncio.Queue:
@@ -59,11 +51,6 @@ def push_node_stream_data(stream_id: str, data: str) -> None:
             q.put_nowait(data)
         except asyncio.QueueFull:
             log.warning("stream queue full for stream_id=%s, dropping frame", stream_id)
-
-
-def _record_node_stats(node_id: int, raw: str) -> None:
-    """Buffer the last 60 stats snapshots for a node (used to replay history on WS connect)."""
-    _node_stats_history.setdefault(node_id, deque(maxlen=60)).append(raw)
 
 
 def _subscribe_node_events(node_id: int) -> asyncio.Queue:
@@ -95,12 +82,4 @@ def _get_node_event(node_id: int) -> asyncio.Event:
     if ev is None:
         ev = asyncio.Event()
         _node_command_events[node_id] = ev
-    return ev
-
-
-def _get_command_event(command_id: int) -> asyncio.Event:
-    ev = _command_done_events.get(command_id)
-    if ev is None:
-        ev = asyncio.Event()
-        _command_done_events[command_id] = ev
     return ev

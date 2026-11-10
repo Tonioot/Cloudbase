@@ -1,4 +1,4 @@
-import { api, wsLogs, wsReplicaLogs, wsStats, wsNodeEvents, wsAppCloudbaseLogs, PermissionError } from './api.js';
+import { api, wsLogs, wsReplicaLogs, wsStats, wsAppCloudbaseLogs, PermissionError } from './api.js';
 import { createLogViewer, fillComponentSelect } from './logviewer.js';
 import { auditTableHTML, cssVar, icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, stripAnsi, ansiToHtml, setBtn, parseDotEnv, pickTextFile, mergeEnvIntoRows, timeAgo } from './utils.js';
 import { pickGitHubToken } from './sidebar.js';
@@ -402,19 +402,11 @@ async function quickAction(action) {
     const fns = { start: api.start, stop: api.stop, restart: api.restart };
     const result = await fns[action](APP_ID);
 
-    // Remote node: subscribe to events and wait for command completion
-    const remoteNodeId = result?.node_id || (app.replicas || []).find(r => r.node_id && !r.node_is_local)?.node_id;
-    if (result?.command_id && remoteNodeId) {
-      btn.innerHTML = `${spinner} Pending on node…`;
-      document.getElementById('app-badge').innerHTML = badge('pending');
-      await _waitForRemoteCommand(result.command_id, remoteNodeId);
-    } else {
-      // Local: clear chart history on start/restart
-      if (action === 'start' || action === 'restart') {
-        cpuData = [];
-        memData = [];
-        await new Promise(r => setTimeout(r, 2500));
-      }
+    // Clear chart history on start/restart
+    if (action === 'start' || action === 'restart') {
+      cpuData = [];
+      memData = [];
+      await new Promise(r => setTimeout(r, 2500));
     }
     app = await api.getApp(APP_ID);
     toast(`${action.charAt(0).toUpperCase() + action.slice(1)} successful`);
@@ -429,56 +421,6 @@ async function quickAction(action) {
     updateHeaderStatus();
     // Keep the current log stream attached so lifecycle output remains visible.
   }
-}
-
-function _waitForRemoteCommand(commandId, nodeId) {
-  return new Promise((resolve, reject) => {
-    let ws = null;
-    let resolved = false;
-
-    let interval = null;
-    const cleanup = () => {
-      resolved = true;
-      if (ws) { ws.close(); ws = null; }
-      if (interval) { clearInterval(interval); interval = null; }
-    };
-
-    const onDone = (cmd) => {
-      if (resolved) return;
-      cleanup();
-      cmd.status === 'done' ? resolve(cmd) : reject(new Error(cmd.error_message || 'Command failed'));
-    };
-
-    ws = wsNodeEvents(nodeId, event => {
-      if (event.type === 'command_update' && event.command_id === commandId) {
-        if (event.status === 'done' || event.status === 'failed') {
-          onDone(event);
-        }
-      }
-    });
-
-    // Immediate check + periodic fallback poll
-    const check = async () => {
-      if (resolved) return;
-      try {
-        const cmd = await api.getNodeCommandStatus(nodeId, commandId);
-        if (cmd.status === 'done' || cmd.status === 'failed') {
-          onDone(cmd);
-        }
-      } catch (e) {}
-    };
-
-    check();
-    interval = setInterval(check, 3000);
-
-    setTimeout(() => {
-      clearInterval(interval);
-      if (!resolved) {
-        cleanup();
-        resolve();
-      }
-    }, 60000);
-  });
 }
 
 /* ─── Tabs ──────────────────────────────────────────────────────────────── */

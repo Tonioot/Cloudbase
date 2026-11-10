@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dbs import lifecycle as dbs_lifecycle
 from core.database import AsyncSessionLocal
 from core.models import DatabaseLink, Database, Application, Node, ApplicationReplica
-from nodes.commands import queue_node_command, wait_for_node_command
+from nodes import commands as node_commands
 from dbs.provision import _spec
 from dbs.state import COMMAND_TIMEOUT_SECONDS, PROVISION_TIMEOUT_SECONDS, _busy
 
@@ -41,12 +41,10 @@ async def _run_on_node(node: Node, local_fn, command_type: str, payload: dict,
         return await asyncio.to_thread(local_fn)
     if not _node_reachable(node):
         raise RuntimeError(f"Node '{node.name}' is offline")
-    async with AsyncSessionLocal() as db:
-        cmd = await queue_node_command(db, node_id=node.id, command_type=command_type, payload=payload)
-        done = await wait_for_node_command(db, cmd.id, timeout_seconds=timeout)
+    done = await node_commands.ask(node.id, command_type, payload, timeout=timeout)
     if done.status != "done":
         raise RuntimeError(done.error_message or f"{command_type} failed on node '{node.name}'")
-    return json.loads(done.result or "{}")
+    return done.result or {}
 
 
 def _state_to_status(state: str) -> tuple[str, Optional[str]]:

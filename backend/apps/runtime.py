@@ -2,7 +2,7 @@ import asyncio
 from typing import Optional
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
-from core.models import Deployment, NodeCommand, StatsHistory, ApplicationReplica, Node, Application, AuditLog
+from core.models import Deployment, StatsHistory, ApplicationReplica, Node, Application, AuditLog
 from containers import processes as pm
 from core import applog
 from dbs import links as db_links
@@ -16,11 +16,6 @@ async def _cleanup_app_dependencies(db: AsyncSession, app_id: int) -> None:
     """Remove or detach rows that can still reference an app in older DB schemas."""
     # App ids can be reused; a new app must not inherit this one's Cloudbase log.
     applog.forget(app_id)
-    await db.execute(
-        update(NodeCommand)
-        .where(NodeCommand.app_id == app_id)
-        .values(app_id=None)
-    )
     await db.execute(
         update(AuditLog)
         .where(AuditLog.app_id == app_id)

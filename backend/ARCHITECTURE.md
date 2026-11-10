@@ -84,7 +84,8 @@ with a growing delay and given up after a few attempts until the spec changes; a
 by itself is reported, not fought; a container made before desired state is adopted, not recreated.
 
 What stays a command (`nodes/commands.py`, over the websocket, answered over HTTP): logs, stats, Docker
-cleanup, database operations and cron runs. Every command runs beside the connection, so a slow one never holds
+cleanup, database operations and cron runs. Commands live in memory (`ask()` waits for the answer); none outlives the
+panel or the agent process, so nothing is stored, and the node page shows the last 100 per node. Every command runs beside the connection, so a slow one never holds
 up the others; a new agent process (new `session` in its hello) fails what the old one was doing.
 
 The agent calls functions, not its own server: there is no local API call and no local agent token. It is also a process of its own (`python node_agent.py`, see `agent/runner.py`): a node runs no web server, no database and none of the panel's code, and shows that it lives by keeping `~/.cloudbase/agent.alive` fresh (`agent/alive.py`), which `start.sh`, `cloudbase doctor` and the installer read.

@@ -107,7 +107,7 @@ def setup(client):
     """A node, an app and a clean-up afterwards."""
     from sqlalchemy import delete
     from core.database import AsyncSessionLocal
-    from core.models import Application, ApplicationReplica, Node, NodeCommand
+    from core.models import Application, ApplicationReplica, Node
     made = {"nodes": [], "apps": []}
 
     def node(name):
@@ -126,7 +126,6 @@ def setup(client):
         async with AsyncSessionLocal() as db:
             await db.execute(delete(ApplicationReplica).where(ApplicationReplica.app_id.in_(made["apps"])))
             await db.execute(delete(Application).where(Application.id.in_(made["apps"])))
-            await db.execute(delete(NodeCommand).where(NodeCommand.node_id.in_(made["nodes"])))
             await db.execute(delete(Node).where(Node.id.in_(made["nodes"])))
             await db.commit()
     _run(cleanup())
@@ -328,9 +327,9 @@ def test_an_instance_that_should_stop_is_not_revived_by_a_late_report(instance):
 # ── the places that used to send commands ─────────────────────────────────────────
 def test_starting_a_remote_instance_writes_the_list_instead_of_sending_a_command(setup):
     from core.database import AsyncSessionLocal
-    from core.models import Application, ApplicationReplica, Node, NodeCommand
-    from sqlalchemy import select
+    from core.models import Application, ApplicationReplica, Node
     from apps import runtime
+    from nodes import commands as node_commands
     node, app = setup
     node_id, _ = node("c-start")
     app_id = app("c-start-app")
@@ -339,9 +338,10 @@ def test_starting_a_remote_instance_writes_the_list_instead_of_sending_a_command
     async def go():
         async with AsyncSessionLocal() as db:
             a, r, n = await db.get(Application, app_id), await db.get(ApplicationReplica, rid), await db.get(Node, node_id)
+            before = {c["id"] for c in node_commands.history(node_id)}
             await runtime._start_replica_runtime(a, r, n, {"A": "1"}, db)
             await db.commit()
-            return (await db.execute(select(NodeCommand).where(NodeCommand.node_id == node_id))).scalars().all()
+            return [c for c in node_commands.history(node_id) if c["id"] not in before]
     commands = _run(go())
     row = _row(rid)
     assert commands == [] and row.status == "starting" and row.desired == "running" and row.spec_hash
@@ -368,22 +368,17 @@ def test_stopping_a_remote_instance_changes_the_list(setup):
 
 
 def test_deleting_an_instance_needs_no_message_to_the_node(admin, setup):
-    from core.models import NodeCommand
-    from core.database import AsyncSessionLocal
-    from sqlalchemy import select
+    from nodes import commands as node_commands
     node, app = setup
     node_id, _ = node("c-delete")
     app_id = app("c-delete-app")
     rid = _replica(app_id, node_id, 9303, status="running")
     _start(node_id, rid)
+    node_commands.forget(node_id)                                   # an earlier test's node may have had this id
     assert admin.delete(f"/api/apps/{app_id}/instances/{rid}").status_code == 200
     assert _row(rid) is None
     assert _snapshot(node_id)["replicas"] == []                     # gone from the list: the node removes the container
-
-    async def commands():
-        async with AsyncSessionLocal() as db:
-            return (await db.execute(select(NodeCommand).where(NodeCommand.node_id == node_id))).scalars().all()
-    assert _run(commands()) == []
+    assert node_commands.history(node_id) == []
 
 
 def test_scaling_to_a_wanted_number_removes_the_newest_instances(admin, setup):
@@ -446,46 +441,49 @@ def test_no_command_for_starting_or_stopping_is_left_in_the_code():
 # ── commands that remain ────────────────────────────────────────────────────────
 def test_a_command_that_was_never_answered_is_not_reused_for_ever(client, setup):
     from datetime import timedelta
-    from core.database import AsyncSessionLocal
-    from core.models import NodeCommand
     from nodes import commands
     node, _ = setup
     node_id, _ = node("k-dedupe")
 
     async def go():
-        async with AsyncSessionLocal() as db:
-            first = await commands.queue_node_command(db, node_id=node_id, command_type="get_stats", payload={}, app_id=None,
-                                                      allow_existing_inflight=True)
-            same = await commands.queue_node_command(db, node_id=node_id, command_type="get_stats", payload={}, app_id=None,
-                                                     allow_existing_inflight=True)
-            first_row = await db.get(NodeCommand, first.id)
-            first_row.created_at = commands._utcnow() - timedelta(seconds=commands.INFLIGHT_REUSE_SECONDS + 5)
-            await db.commit()
-            later = await commands.queue_node_command(db, node_id=node_id, command_type="get_stats", payload={}, app_id=None,
-                                                      allow_existing_inflight=True)
-            return first.id, same.id, later.id
+        first = asyncio.create_task(commands.ask(node_id, "get_stats", {}, reuse=True, timeout=5))
+        same = asyncio.create_task(commands.ask(node_id, "get_stats", {}, reuse=True, timeout=5))
+        await asyncio.sleep(0.05)
+        open_ids = [c.id for c in commands._open.values() if c.node_id == node_id]
+        assert len(open_ids) == 1                                  # the second one waits for the first one's answer
+        old = commands._open[open_ids[0]]
+        old.created_at = commands._utcnow() - timedelta(seconds=commands.REUSE_SECONDS + 5)
+        later = asyncio.create_task(commands.ask(node_id, "get_stats", {}, reuse=True, timeout=5))
+        await asyncio.sleep(0.05)
+        assert len([c for c in commands._open.values() if c.node_id == node_id]) == 2     # too old to share
+        for cmd in list(commands._open.values()):
+            if cmd.node_id == node_id:
+                commands.answer(node_id, cmd.id, "done", {"n": cmd.id})
+        a, b, c = await first, await same, await later
+        return a.id, b.id, c.id
     first, same, later = _run(go())
     assert same == first and later != first
 
 
 def test_a_new_agent_process_fails_what_the_old_one_was_doing(client, setup):
-    from core.database import AsyncSessionLocal
-    from core.models import NodeCommand
     from nodes import commands
     node, _ = setup
     node_id, _ = node("k-session")
 
     async def go():
-        async with AsyncSessionLocal() as db:
-            stuck = await commands.queue_node_command(db, node_id=node_id, command_type="get_replica_stats", payload={})
-            cron = await commands.queue_node_command(db, node_id=node_id, command_type="cron_run", payload={})
-            for c in (stuck, cron):
-                (await db.get(NodeCommand, c.id)).status = "in_progress"
-            await db.commit()
-        await commands.fail_commands_in_flight(node_id)
-        async with AsyncSessionLocal() as db:
-            return (await db.get(NodeCommand, stuck.id)).status, (await db.get(NodeCommand, cron.id)).status
-    assert _run(go()) == ("failed", "in_progress")                  # a cron job outlives a restart
+        stuck = asyncio.create_task(commands.ask(node_id, "get_replica_stats", {}, timeout=5))
+        cron = asyncio.create_task(commands.ask(node_id, "cron_run", {}, timeout=0.5))
+        await asyncio.sleep(0.05)
+        commands.take_queued(node_id)                              # both were sent to the old process
+        commands.fail_in_flight(node_id)
+        done = await stuck
+        cron_status = [c.status for c in commands._open.values() if c.node_id == node_id and c.command_type == "cron_run"]
+        try:
+            await cron
+        except Exception:
+            pass
+        return done.status, cron_status
+    assert _run(go()) == ("failed", ["in_progress"])                # a cron job outlives a restart
 
 
 def test_the_agent_websocket_tells_the_node_when_its_list_changed(admin, setup):

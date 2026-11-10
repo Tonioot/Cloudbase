@@ -1,16 +1,15 @@
 import asyncio
-import json
 from typing import List
 from fastapi import Depends, APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from core.database import AsyncSessionLocal, get_db
+from core.database import get_db
 from core import activity
 from core.models import ApplicationReplica, Node
 from containers import processes as pm
 from nodes import desired
-from nodes.commands import queue_node_command, wait_for_node_command
+from nodes import commands as node_commands
 from core.env_crypto import decrypt_env
 from core.audit import log_audit
 from core import auth as _auth
@@ -60,20 +59,11 @@ async def get_instance_stats(app_id: int, _user: dict = Depends(_auth.require_pe
             if not node or node.is_local or node.status != "online":
                 return
             try:
-                async with AsyncSessionLocal() as fetch_db:
-                    cmd = await queue_node_command(
-                        fetch_db,
-                        node_id=node.id,
-                        app_id=r.app_id,
-                        command_type="get_replica_stats",
-                        payload={"app_id": r.app_id, "app_name": "", "replica_id": r.id},
-                        allow_existing_inflight=True,
-                    )
-                    cmd_id = cmd.id
-                async with AsyncSessionLocal() as wait_db:
-                    done = await wait_for_node_command(wait_db, cmd_id, timeout_seconds=1.5)
+                done = await node_commands.ask(node.id, "get_replica_stats",
+                                               {"app_id": r.app_id, "app_name": "", "replica_id": r.id},
+                                               app_id=r.app_id, timeout=1.5)
                 if done.status == "done" and done.result:
-                    result = json.loads(done.result)
+                    result = done.result
                     if result.get("cpu_percent") is not None:
                         pm.set_replica_stats(r.id, {"replica_id": r.id, **result})
                         snapshots[r.id] = {"replica_id": r.id, **result}

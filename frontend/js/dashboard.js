@@ -1,4 +1,4 @@
-import { api, wsNodeEvents, PermissionError } from './api.js';
+import { api, PermissionError } from './api.js';
 import { icon, toast, confirm, sparkPoints } from './utils.js';
 import { openDeployModal } from './modal.js';
 import { cronSummary } from './cron.js';
@@ -631,24 +631,5 @@ function openAddNodeModal() {
       modal.querySelector('#node-invite-cmd').textContent = 'Failed to generate invite.';
     }
   })();
-}
-
-function _waitForCommand(commandId, nodeId) {
-  return new Promise((resolve, reject) => {
-    const ws = wsNodeEvents(nodeId, event => {
-      if (event.type === 'command_update' && event.command_id === commandId) {
-        ws.close();
-        event.status === 'done' ? resolve(event) : reject(new Error(event.error_message || 'Command failed'));
-      }
-    });
-    // Check current status immediately in case we missed the event
-    api.getNodeCommandStatus(nodeId, commandId).then(cmd => {
-      if (cmd.status === 'done' || cmd.status === 'failed') {
-        ws.close();
-        cmd.status === 'done' ? resolve(cmd) : reject(new Error(cmd.error_message || 'Command failed'));
-      }
-    }).catch(() => {});
-    setTimeout(() => { ws.close(); resolve(); }, 60000);
-  });
 }
 

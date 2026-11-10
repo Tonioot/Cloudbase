@@ -12,7 +12,7 @@ from core.models import Application, Node as _Node, ApplicationReplica as _AR, O
 from containers import processes as pm
 from containers import naming as containers_naming
 from containers import stats_logs as containers_stats_logs
-from nodes.commands import wait_for_node_command, queue_node_command
+from nodes import commands as node_commands
 from nodes.state import _node_ws_connections
 from apps.runtime import has_running_instance
 from apps.stream import _aggregate_frames
@@ -181,29 +181,16 @@ async def _remote_replica_stats_poller():
                     return
                 try:
                     async with AsyncSessionLocal() as db:
-                        app_r = await db.execute(select(_App).where(_App.id == app_id))
-                        app_obj = app_r.scalar_one_or_none()
-                        if not app_obj:
-                            return
-                        app_name = app_obj.name
-                        cmd = await queue_node_command(
-                            db,
-                            node_id=node_id,
-                            app_id=app_id,
-                            command_type="get_stats",
-                            payload={"app_id": app_id, "app_name": app_name},
-                            allow_existing_inflight=True,
-                        )
-                        cmd_id = cmd.id
-                    # wait_for_node_command uses its own sessions internally
-                    async with AsyncSessionLocal() as wait_db:
-                        done = await wait_for_node_command(wait_db, cmd_id, timeout_seconds=20)
+                        app_obj = await db.get(_App, app_id)
+                    if not app_obj:
+                        return
+                    app_name = app_obj.name
+                    done = await node_commands.ask(node_id, "get_stats", {"app_id": app_id, "app_name": app_name},
+                                                   app_id=app_id, reuse=True)
                     _rlog = logging.getLogger("cloudbase.remote_stats")
-                    _rlog.info("poll node=%d app=%d cmd=%d status=%s result_len=%s",
-                               node_id, app_id, cmd_id, done.status,
-                               len(done.result) if done.result else 0)
+                    _rlog.debug("poll node=%d app=%d cmd=%d status=%s", node_id, app_id, done.id, done.status)
                     if done.status == "done" and done.result:
-                        s = json.loads(done.result)
+                        s = done.result
                         _rlog.info("poll node=%d app=%d result keys=%s cpu=%s",
                                    node_id, app_id, list(s.keys()), s.get("cpu_percent"))
                         if s.get("cpu_percent") is not None:
@@ -224,18 +211,12 @@ async def _remote_replica_stats_poller():
                             # app-level aggregate briefly reports stopped.
                             for replica in replicas:
                                 try:
-                                    async with AsyncSessionLocal() as rdb:
-                                        rcmd = await queue_node_command(
-                                            rdb,
-                                            node_id=node_id,
-                                            app_id=app_id,
-                                            command_type="get_replica_stats",
-                                            payload={"app_id": app_id, "app_name": app_name, "replica_id": replica.id},
-                                            allow_existing_inflight=True,
-                                        )
-                                        rdone = await wait_for_node_command(rdb, rcmd.id, timeout_seconds=12)
+                                    rdone = await node_commands.ask(
+                                        node_id, "get_replica_stats",
+                                        {"app_id": app_id, "app_name": app_name, "replica_id": replica.id},
+                                        app_id=app_id, timeout=12)
                                     if rdone.status == "done" and rdone.result:
-                                        rs = json.loads(rdone.result)
+                                        rs = rdone.result
                                         if rs.get("cpu_percent") is not None:
                                             pm.set_replica_stats(replica.id, {"replica_id": replica.id, **rs})
                                 except Exception:

@@ -155,25 +155,6 @@ class NodeInvite(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-class NodeCommand(Base):
-    __tablename__ = "node_commands"
-
-    id = Column(Integer, primary_key=True, index=True)
-    node_id = Column(Integer, ForeignKey("nodes.id"), nullable=False, index=True)
-    app_id = Column(Integer, ForeignKey("applications.id"), nullable=True, index=True)
-    command_type = Column(String(80), nullable=False)
-    payload = Column(Text, nullable=True)  # JSON dict
-    status = Column(String(20), default="queued")  # queued | in_progress | done | failed
-    priority = Column(Integer, default=5)           # 1=high, 5=normal, 10=low
-    idempotency_key = Column(String(100), nullable=False, unique=True, index=True)
-    result = Column(Text, nullable=True)
-    error_message = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    dispatched_at = Column(DateTime, nullable=True)
-    completed_at = Column(DateTime, nullable=True)
-
-
 class ApplicationReplica(Base):
     __tablename__ = "application_replicas"
 

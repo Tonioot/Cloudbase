@@ -3,9 +3,8 @@ import json
 import logging
 import secrets
 from sqlalchemy import select
-from core.database import AsyncSessionLocal
 from core.models import Application, ApplicationReplica, Node
-from nodes.commands import queue_node_command, wait_for_node_command
+from nodes import commands as node_commands
 from nodes.state import _node_ws_connections, unsubscribe_node_stream, subscribe_node_stream
 
 log = logging.getLogger("cloudbase.stats")
@@ -103,19 +102,10 @@ async def _open_remote_stream(node: Node, app_id: int, app_name: str, out_q: asy
                     continue
 
                 # Poll fallback (also used while node websocket is reconnecting)
-                async with AsyncSessionLocal() as poll_db:
-                    cmd = await queue_node_command(
-                        poll_db,
-                        node_id=node.id,
-                        app_id=app_id,
-                        command_type="get_stats",
-                        payload={"app_id": app_id, "app_name": app_name},
-                        allow_existing_inflight=True,
-                    )
-                    done = await wait_for_node_command(poll_db, cmd.id, timeout_seconds=20)
+                done = await node_commands.ask(node.id, "get_stats", {"app_id": app_id, "app_name": app_name},
+                                               app_id=app_id, reuse=True)
                 if done.status == "done":
-                    payload = json.loads(done.result or "{}") if done.result else {}
-                    await out_q.put((node.id, payload))
+                    await out_q.put((node.id, done.result or {}))
                 await asyncio.sleep(2)
             except asyncio.CancelledError:
                 break

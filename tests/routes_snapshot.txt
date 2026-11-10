@@ -51,7 +51,6 @@ GET     /api/nodes/agent/desired
 GET     /api/nodes/mesh
 GET     /api/nodes/{node_id}/agent-logs
 GET     /api/nodes/{node_id}/commands
-GET     /api/nodes/{node_id}/commands/{command_id}
 GET     /api/nodes/{node_id}/metrics/history
 GET     /api/nodes/{node_id}/workloads
 GET     /api/notifications
@@ -184,9 +183,7 @@ WS    /api/nodes/ws/agent
 WS    /api/nodes/ws/db-control
 WS    /api/nodes/ws/db-dial/{token}
 WS    /api/nodes/ws/db-proxy/{database_id}
-WS    /api/nodes/{node_id}/commands/live
 WS    /api/nodes/{node_id}/events
-WS    /api/nodes/{node_id}/stats
 WS    /ws/apps/{app_id}/cloudbase-logs
 WS    /ws/apps/{app_id}/logs
 WS    /ws/apps/{app_id}/replicas/{replica_id}/logs

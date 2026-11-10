@@ -60,7 +60,6 @@ export const api = {
   getMesh:  ()         => request('GET',    '/nodes/mesh'),
   createNodeInvite:(payload) => request('POST', '/nodes/invites', payload),
   listNodeCommands:(nodeId) => request('GET', `/nodes/${nodeId}/commands`),
-  getNodeCommandStatus:(nodeId, cmdId) => request('GET', `/nodes/${nodeId}/commands/${cmdId}`),
   updateNode:(nodeId, data) => request('PATCH', `/nodes/${nodeId}`, data),
   enableNode:(nodeId) => request('POST', `/nodes/${nodeId}/enable`),
   disableNode:(nodeId) => request('POST', `/nodes/${nodeId}/disable`),
@@ -345,30 +344,6 @@ export function wsNodeEvents(nodeId, onEvent) {
   return { close() { closed = true; if (ws) ws.close(); } };
 }
 
-export function wsNodeStats(nodeId, onData) {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  let ws, closed = false;
-  function connect() {
-    ws = new WebSocket(`${proto}//${location.host}/api/nodes/${nodeId}/stats`);
-    ws.onmessage = e => { try { onData(JSON.parse(e.data)); } catch (_) {} };
-    ws.onclose = () => { if (!closed) setTimeout(connect, 3000); };
-  }
-  connect();
-  return { close() { closed = true; if (ws) ws.close(); } };
-}
-
-export function wsLocalNodeStats(onData) {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  let ws, closed = false;
-  function connect() {
-    ws = new WebSocket(`${proto}//${location.host}/ws/system/stats`);
-    ws.onmessage = e => { try { onData(JSON.parse(e.data)); } catch (_) {} };
-    ws.onclose = () => { if (!closed) setTimeout(connect, 3000); };
-  }
-  connect();
-  return { close() { closed = true; if (ws) ws.close(); } };
-}
-
 export function wsSystemLogs(source, onEntries) {
   return _wsEntries(`/ws/system/logs?source=${encodeURIComponent(source)}`, onEntries);
 }
@@ -383,18 +358,6 @@ function _wsEntries(path, onEntries) {
   function connect() {
     ws = new WebSocket(`${proto}//${location.host}${path}`);
     ws.onmessage = e => { try { onEntries(JSON.parse(e.data).entries || []); } catch (_) {} };
-    ws.onclose = () => { if (!closed) setTimeout(connect, 3000); };
-  }
-  connect();
-  return { close() { closed = true; if (ws) ws.close(); } };
-}
-
-export function wsNodeCommands(nodeId, onUpdate) {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  let ws, closed = false;
-  function connect() {
-    ws = new WebSocket(`${proto}//${location.host}/api/nodes/${nodeId}/commands/live`);
-    ws.onmessage = e => { try { onUpdate(JSON.parse(e.data)); } catch (_) {} };
     ws.onclose = () => { if (!closed) setTimeout(connect, 3000); };
   }
   connect();

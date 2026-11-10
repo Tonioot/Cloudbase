@@ -3,38 +3,12 @@ import logging
 import time as _time
 from sqlalchemy import select
 from core.database import AsyncSessionLocal
-from core.models import Node as _Node, NodeCommand as _NC
+from core.models import Node as _Node
 from containers import cleanup as containers_cleanup
 from containers import client as containers_client
 from nodes.liveness import run_node_docker_cleanup
 
 log = logging.getLogger("cloudbase.main")
-
-
-# ── NodeCommand cleanup ───────────────────────────────────────────────────────
-async def _node_command_cleanup():
-    """Delete completed/failed NodeCommands older than 24h every hour.
-    Keeps the table small so scans for 'queued' commands stay fast.
-    """
-    import datetime as _dt
-    from sqlalchemy import delete as _del
-    await asyncio.sleep(60)
-    while True:
-        try:
-            cutoff = _dt.datetime.utcnow() - _dt.timedelta(hours=24)
-            async with AsyncSessionLocal() as db:
-                await db.execute(
-                    _del(_NC).where(
-                        _NC.status.in_(["done", "failed"]),
-                        _NC.completed_at < cutoff,
-                    )
-                )
-                await db.commit()
-        except asyncio.CancelledError:
-            return
-        except Exception:
-            pass
-        await asyncio.sleep(3600)
 
 
 # ── Docker disk cleanup ───────────────────────────────────────────────────────

@@ -13,7 +13,8 @@ from mesh import hub
 from core import config as _cfg, system_config as _syscfg
 from nodes import metrics as node_metrics, observed, snapshot
 from nodes.liveness import node_gone
-from nodes.commands import _apply_command_result, _claim_pending_commands, _commit_with_sqlite_lock_retry, _dispatch_queued_commands_ws, _utcnow, fail_commands_in_flight
+from nodes import commands as node_commands
+from nodes.commands import _commit_with_sqlite_lock_retry, _utcnow
 from nodes.registry import _as_node_dict, get_node_by_token_or_401
 from nodes.state import _get_node_event, _node_event_subscribers, _node_ws_connections, _pending_pings, _push_node_event, push_node_stream_data
 from routers.nodes.schemas import CommandResultRequest, ObservedRequest, RegisterNodeRequest, WireguardEnrollRequest
@@ -136,8 +137,7 @@ async def get_pending_commands(
     if not x_node_token:
         raise HTTPException(401, "Missing node token")
     node = await get_node_by_token_or_401(x_node_token, db)
-    items = await _claim_pending_commands(db, node.id, limit=limit)
-    return {"commands": items}
+    return {"commands": node_commands.take_queued(node.id)[:max(1, limit)]}
 
 
 @router.post("/agent/commands/{command_id}/result")
@@ -150,14 +150,7 @@ async def report_command_result(
     if not x_node_token:
         raise HTTPException(401, "Missing node token")
     node = await get_node_by_token_or_401(x_node_token, db)
-    await _apply_command_result(
-        db,
-        node=node,
-        command_id=command_id,
-        status=req.status,
-        result_payload=req.result,
-        error_message=req.error_message,
-    )
+    node_commands.answer(node.id, command_id, req.status, req.result, req.error_message)
     return {"ok": True}
 
 
@@ -205,7 +198,7 @@ async def agent_ws(websocket: WebSocket):
         # A new agent process cannot answer what the old one was doing; a mere reconnect can still
         session = (hello or {}).get("session")
         if session is None or _node_sessions.get(node_id) != session:
-            await fail_commands_in_flight(node_id)
+            node_commands.fail_in_flight(node_id)
         _node_sessions[node_id] = session
 
         log.info("WS agent authenticated: node '%s' (id=%d) from %s", node.name, node_id, client_addr)
@@ -239,7 +232,7 @@ async def agent_ws(websocket: WebSocket):
 
                 if event_task in done:
                     event.clear()
-                    await _dispatch_queued_commands_ws(node_id, websocket)
+                    await node_commands.send_queued(node_id, websocket)
                     await websocket.send_json({"type": "sync"})        # the list of what to run may have changed
                     event_task = asyncio.create_task(event.wait())
 
@@ -282,19 +275,12 @@ async def agent_ws(websocket: WebSocket):
                         })
                     elif msg_type == "command_result":
                         command_id = int(incoming.get("command_id") or -1)
-                        if command_id == -1:
-                            pass  # streaming commands use id=-1, no DB record to update
-                        else:
-                            async with AsyncSessionLocal() as db:
-                                live_node = await get_node_by_token_or_401(token, db)
-                                await _apply_command_result(
-                                    db,
-                                    node=live_node,
-                                    command_id=command_id,
-                                    status=(incoming.get("status") or "failed"),
-                                    result_payload=incoming.get("result"),
-                                    error_message=incoming.get("error_message"),
-                                )
+                        if command_id != -1:          # streams use -1: nothing waits for an answer
+                            try:
+                                node_commands.answer(node_id, command_id, incoming.get("status") or "failed",
+                                                     incoming.get("result"), incoming.get("error_message"))
+                            except HTTPException as exc:      # unknown (the panel restarted since): not worth the connection
+                                log.debug("command_result %s from node %d ignored: %s", command_id, node_id, exc.detail)
                     elif msg_type == "stream_data":
                         stream_id = incoming.get("stream_id")
                         data = incoming.get("data")
