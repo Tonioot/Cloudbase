@@ -42,7 +42,7 @@ def env(client, monkeypatch):
             async def go():
                 async with AsyncSessionLocal() as db:
                     row = Node(name=name, status=status, auth_token=f"token-{name}", is_local=False, enabled=True,
-                               wg_ip="10.77.0.9", agent_version="3.0.0")
+                               wg_ip="10.77.0.9", agent_version="4.0.0")
                     db.add(row)
                     await db.commit()
                     return row.id

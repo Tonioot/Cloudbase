@@ -69,8 +69,7 @@ async def _scheduler_tick() -> None:
         except Exception:
             pass
         finally:
-            dbs_state._busy.discard(database_id)
-            dbs_state._operation.pop(database_id, None)
+            dbs_state.release(database_id)
 
 
 async def backup_scheduler() -> None:

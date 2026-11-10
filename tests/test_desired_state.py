@@ -24,7 +24,7 @@ def _node(name, token=None, status="online"):
     async def go():
         async with AsyncSessionLocal() as db:
             node = Node(name=name, status=status, auth_token=token or f"token-{name}", is_local=False, enabled=True,
-                        wg_ip="127.0.0.1", wg_public_key="K" * 44, wg_state="up", agent_version="3.0.0")
+                        wg_ip="127.0.0.1", wg_public_key="K" * 44, wg_state="up", agent_version="4.0.0")
             db.add(node)
             await db.commit()
             return node.id, node.auth_token
@@ -193,8 +193,8 @@ def test_an_instance_without_a_spec_is_listed_as_stopped(setup):
     assert entry["desired"] == "stopped" and entry["spec"] is None and entry["spec_hash"] is None
 
 
-def test_an_agent_older_than_3_gets_no_list(client, setup):
-    """It reads the list by older names and would misread it; without a list it removes nothing."""
+def test_an_agent_older_than_4_gets_no_list(client, setup):
+    """It would wait to be asked for its stats; without a list it removes nothing, so it keeps running until updated."""
     from core.database import AsyncSessionLocal
     from core.models import Node
     node, _ = setup
@@ -204,10 +204,10 @@ def test_an_agent_older_than_3_gets_no_list(client, setup):
         async with AsyncSessionLocal() as db:
             (await db.get(Node, node_id)).agent_version = version
             await db.commit()
-    _run(set_version("2.0.0"))
+    _run(set_version("3.0.0"))
     r = client.get("/api/nodes/agent/desired", headers={"X-Node-Token": token})
     assert r.status_code == 409 and "cloudbase update" in r.json()["detail"]
-    _run(set_version("3.0.0"))
+    _run(set_version("4.0.0"))
     assert client.get("/api/nodes/agent/desired", headers={"X-Node-Token": token}).status_code == 200
 
 
@@ -533,10 +533,10 @@ def test_a_node_with_an_old_agent_is_not_given_work_it_would_never_see(setup):
     with pytest.raises(HTTPException, match="older Cloudbase"):
         _start(node_id, rid)
     assert _row(rid).desired is None                                  # nothing was written
-    _run(set_version("2.3.1"))                                         # 2.x reads the list by its old names
+    _run(set_version("3.0.0"))                                         # 3.x waits to be asked for its stats
     with pytest.raises(HTTPException, match="older Cloudbase"):
         _start(node_id, rid)
     _run(set_version(None))                                            # not known yet: let it through
     assert _start(node_id, rid)
-    _run(set_version("3.0.0"))
+    _run(set_version("4.0.0"))
     assert _start(node_id, rid)

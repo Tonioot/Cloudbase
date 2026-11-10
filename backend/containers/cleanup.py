@@ -1,7 +1,9 @@
+import asyncio
 import logging
 import threading
+import time
 from typing import Optional
-from containers.client import _get_client
+from containers.client import _get_client, is_docker_available
 from containers.locks import _build_locks, _build_locks_guard
 from containers.naming import image_name
 
@@ -115,3 +117,37 @@ def remove_image(app_id: int) -> None:
         log.info("[docker] Removed image %s", img)
     except Exception:
         pass
+
+
+# ── Keeping the disk clean on its own ─────────────────────────────────────────
+CLEANUP_EVERY_SECONDS = 86400          # about once a day,
+CLEANUP_FULL_DISK_EVERY_SECONDS = 3600  # at most hourly when the disk is 80% full,
+CLEANUP_HIGH_PERCENT, CLEANUP_AGGRESSIVE_PERCENT = 80, 90   # and with the aggressive settings from 90%
+
+
+def cleanup_due(disk: Optional[float], since_last: float) -> Optional[bool]:
+    """None when it is not time yet; otherwise whether to clean aggressively."""
+    high = disk is not None and disk >= CLEANUP_HIGH_PERCENT
+    if since_last < (CLEANUP_FULL_DISK_EVERY_SECONDS if high else CLEANUP_EVERY_SECONDS):
+        return None
+    return disk is not None and disk >= CLEANUP_AGGRESSIVE_PERCENT
+
+
+async def cleanup_forever(first_delay: float = 600, check_every: float = 900) -> None:
+    """Keep this machine's disk from filling up with old images and build cache. The primary and every node's
+    agent run this for themselves: each knows its own disk best, and nobody has to ask."""
+    await asyncio.sleep(first_delay)
+    last = float("-inf")
+    while True:
+        try:
+            if await asyncio.to_thread(is_docker_available):
+                aggressive = cleanup_due(await asyncio.to_thread(disk_percent), time.monotonic() - last)
+                if aggressive is not None:
+                    last = time.monotonic()
+                    result = await asyncio.to_thread(cleanup_docker, aggressive)
+                    log.info("[docker-cleanup] %s", result.get("summary") or result.get("errors") or result)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.warning("[docker-cleanup] error: %s", e)
+        await asyncio.sleep(check_every)

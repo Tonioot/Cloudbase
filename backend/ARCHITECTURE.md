@@ -85,8 +85,13 @@ Safety rules: a node removes nothing before it has received the list in this run
 with a growing delay and given up after a few attempts until the spec changes; a container Docker is restarting
 by itself is reported, not fought.
 
-What stays a command (`nodes/commands.py`, over the websocket, answered over HTTP): logs, stats, Docker
-cleanup, database operations and cron runs. Commands live in memory (`ask()` waits for the answer); none outlives the
+What a node sends by itself, unasked (`agent/report.py`, stored by `nodes/reports.py`): the stats of its instances
+every 10 s (every 2 s for an app somebody looks at: the primary sends a `watch` for it) and the state and usage of its
+databases every 30 s. The stats collector and the database monitor read that instead of asking. Every machine also
+cleans its own Docker disk (`containers/cleanup.py` `cleanup_forever`).
+
+What stays a command (`nodes/commands.py`, over the websocket, answered over HTTP): one-off things only — logs,
+database operations and backups, cron runs, update checks and a Docker cleanup somebody starts by hand. Commands live in memory (`ask()` waits for the answer); none outlives the
 panel or the agent process, so nothing is stored, and the node page shows the last 100 per node. Every command runs beside the connection, so a slow one never holds
 up the others; a new agent process (new `session` in its hello) fails what the old one was doing.
 

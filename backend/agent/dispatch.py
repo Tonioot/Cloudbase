@@ -3,8 +3,8 @@ import secrets
 import asyncio
 from typing import Optional, Callable, Dict, Any
 import httpx
-from agent.commands.apps import cmd_cron_run, cmd_docker_cleanup, cmd_get_agent_logs, cmd_get_instance_logs, cmd_get_instance_stats
-from agent.commands.databases import cmd_db_backup, cmd_db_check_updates, cmd_db_ensure, cmd_db_logs, cmd_db_recreate, cmd_db_remove, cmd_db_restart, cmd_db_restore, cmd_db_rotate_password, cmd_db_states, cmd_db_stats, cmd_db_stats_many, cmd_db_stop, cmd_db_update
+from agent.commands.apps import cmd_cron_run, cmd_docker_cleanup, cmd_get_agent_logs, cmd_get_instance_logs
+from agent.commands.databases import cmd_db_backup, cmd_db_check_updates, cmd_db_ensure, cmd_db_logs, cmd_db_recreate, cmd_db_remove, cmd_db_restart, cmd_db_restore, cmd_db_rotate_password, cmd_db_stats, cmd_db_stop, cmd_db_update
 from agent.log import _agent_log
 from agent.registration import _report_result
 from agent.state import AgentState
@@ -18,18 +18,15 @@ COMMAND_HANDLERS: Dict[str, Callable] = {
     "db_restart": cmd_db_restart,
     "db_stop": cmd_db_stop,
     "db_remove": cmd_db_remove,
-    "db_states": cmd_db_states,
     "db_stats": cmd_db_stats,
     "db_logs": cmd_db_logs,
     "db_backup": cmd_db_backup,
     "db_restore": cmd_db_restore,
     "db_rotate_password": cmd_db_rotate_password,
-    "db_stats_many": cmd_db_stats_many,
     "db_check_updates": cmd_db_check_updates,
     "db_update": cmd_db_update,
     "get_instance_logs": cmd_get_instance_logs,
     "docker_cleanup": cmd_docker_cleanup,
-    "get_instance_stats": cmd_get_instance_stats,
     "get_agent_logs": cmd_get_agent_logs,
     "cron_run": cmd_cron_run,
 }

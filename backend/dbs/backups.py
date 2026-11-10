@@ -275,8 +275,7 @@ def _start_in_background(database_id: int, operation: str, coro_fn) -> None:
         except Exception:
             pass
         finally:
-            dbs_state._busy.discard(database_id)
-            dbs_state._operation.pop(database_id, None)
+            dbs_state.release(database_id)
 
     asyncio.create_task(runner())
 

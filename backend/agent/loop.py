@@ -7,7 +7,8 @@ import httpx
 import websockets
 from agent.db_control import _db_control_loop
 from agent.dispatch import _active_streams, _execute_command, _execute_in_background
-from agent import alive, mesh as agent_mesh
+from agent import alive, mesh as agent_mesh, report as agent_report
+from containers.cleanup import cleanup_forever
 from agent.log import _agent_log
 from agent.reconcile import Reconciler
 from agent.registration import _build_capabilities, _collect_node_metrics, _collect_system_info, _register
@@ -71,7 +72,11 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState, reco
                             "capabilities": _build_capabilities()
                         }))
 
+                async def _send(message: dict):
+                    await _ws_send(json.dumps(message))
+
                 hb_task = asyncio.create_task(_heartbeat_task())
+                report_task = asyncio.create_task(agent_report.report_forever(_send))   # stats and databases, unasked
                 try:
                     async for message in ws:
                         data = json.loads(message)
@@ -85,6 +90,8 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState, reco
                                 asyncio.create_task(_execute_in_background(client, state, cmd))
                         elif mtype == "sync":
                             reconciler.nudge()          # the list of what to run changed
+                        elif mtype == "watch":
+                            agent_report.watch(data.get("app_id") or 0)    # somebody looks at this app's stats
                         elif mtype == "cancel_stream":
                             sid = data.get("stream_id")
                             if sid and sid in _active_streams:
@@ -97,11 +104,12 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState, reco
                                 break  # reconnect on the new address
                 finally:
                     alive.set_connected(False)
-                    hb_task.cancel()
-                    try:
-                        await hb_task
-                    except asyncio.CancelledError:
-                        pass
+                    for task in (hb_task, report_task):
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
         except Exception as e:
             backoff = min(0.5 * (2 ** attempt), 60)
             _agent_log(f"[agent] websocket loop error (attempt {attempt}): {type(e).__name__}: {e} — retrying in {backoff:.1f}s")
@@ -132,7 +140,8 @@ async def start_agent(main_url=None, invite_code=None, node_name=None, public_ho
     try:
         async with httpx.AsyncClient() as client:
             reconciler = Reconciler(client, state)
-            background = [asyncio.create_task(agent_mesh.join_forever(client, state)), asyncio.create_task(reconciler.run())]
+            background = [asyncio.create_task(agent_mesh.join_forever(client, state)), asyncio.create_task(reconciler.run()),
+                          asyncio.create_task(cleanup_forever())]
             try:
                 await _run_websocket_loop(client, state, reconciler)
             finally:

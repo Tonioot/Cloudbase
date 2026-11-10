@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Optional
 from dbs import engines as db_engines
 from containers import stats_logs as containers_stats_logs
@@ -116,6 +117,33 @@ def states(database_ids: list[int]) -> dict[str, dict]:
         container = _get_container(client, int(db_id))
         state = _container_state(container) if container is not None else "missing"
         out[str(db_id)] = {"state": state, "volume": _volume_exists(client, int(db_id))}
+    return out
+
+
+def report_all(with_stats: bool, with_disk: bool) -> dict[str, dict]:
+    """{id: {state, volume, stats?}} for every database whose container or data volume is on this machine.
+    What a node reports on its own (agent/report.py); a database missing from it has neither."""
+    client = _client()
+    ids = {int(m.group(1)) for c in client.containers.list(all=True, filters={"name": "cloudbase-db-"})
+           if (m := re.match(r"^cloudbase-db-(\d+)$", c.name))}
+    ids |= {int(m.group(1)) for v in client.volumes.list(filters={"name": "cloudbase-db-"})
+            if (m := re.match(r"^cloudbase-db-(\d+)-data$", v.name))}
+    out = states(sorted(ids))
+    for db_id, info in out.items() if with_stats else ():
+        if info["state"] not in ("running", "starting", "unhealthy"):
+            continue
+        data_dir = None
+        if with_disk:
+            container = _get_container(client, int(db_id))
+            labels = (container.labels or {}) if container is not None else {}
+            try:
+                data_dir = db_engines.get_engine(labels.get("cloudbase.engine", "")).data_dir(labels.get("cloudbase.version", ""))
+            except Exception:
+                data_dir = None
+        try:
+            info["stats"] = stats(int(db_id), data_dir) or {}
+        except Exception:
+            info["stats"] = {}
     return out
 
 

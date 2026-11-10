@@ -24,7 +24,7 @@ def world(client):
             async def go():
                 async with AsyncSessionLocal() as db:
                     node = Node(name=name, status=kw.pop("status", "online"), auth_token=f"token-{name}", is_local=False,
-                                enabled=True, agent_version="3.0.0", last_seen=datetime.utcnow(), **kw)
+                                enabled=True, agent_version="4.0.0", last_seen=datetime.utcnow(), **kw)
                     db.add(node)
                     await db.commit()
                     return node.id

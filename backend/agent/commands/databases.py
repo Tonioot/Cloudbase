@@ -30,10 +30,6 @@ async def cmd_db_remove(_client, _state, _main_id, payload):
     )
 
 
-async def cmd_db_states(_client, _state, _main_id, payload):
-    return {"states": await asyncio.to_thread(dbs_lifecycle.states, payload.get("database_ids") or [])}
-
-
 async def cmd_db_stats(_client, _state, _main_id, payload):
     return await asyncio.to_thread(dbs_lifecycle.stats, int(payload["database_id"]), payload.get("data_dir"))
 
@@ -88,10 +84,6 @@ async def cmd_db_restore(client, state, _main_id, payload):
 
 async def cmd_db_rotate_password(_client, _state, _main_id, payload):
     return await asyncio.to_thread(dbs_backup_restore.rotate_password, payload["spec"], payload["new_password"])
-
-
-async def cmd_db_stats_many(_client, _state, _main_id, payload):
-    return {"stats": await asyncio.to_thread(dbs_lifecycle.stats_many, payload.get("items") or [])}
 
 
 async def cmd_db_check_updates(_client, _state, _main_id, payload):

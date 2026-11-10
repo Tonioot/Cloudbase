@@ -45,8 +45,8 @@ def nudge(node_id: int) -> None:
     asyncio.get_running_loop().call_later(NUDGE_DELAY_SECONDS, _get_node_event(node_id).set)
 
 
-# The oldest agent that understands the list as this panel writes it (3.0 renamed what the list calls things)
-MIN_AGENT_MAJOR = 3
+# The oldest agent this panel works with: 4.0 sends its stats by itself, the panel no longer asks for them
+MIN_AGENT_MAJOR = 4
 
 
 def agent_too_old(node: Node | None) -> bool:

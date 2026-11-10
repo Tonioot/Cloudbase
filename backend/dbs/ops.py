@@ -11,7 +11,7 @@ from core.database import AsyncSessionLocal
 from core.models import DatabaseLink, Database, Application, Node, Instance
 from nodes import commands as node_commands
 from dbs.provision import _spec
-from dbs.state import COMMAND_TIMEOUT_SECONDS, PROVISION_TIMEOUT_SECONDS, _busy
+from dbs.state import COMMAND_TIMEOUT_SECONDS, PROVISION_TIMEOUT_SECONDS, _busy, release
 
 log = logging.getLogger("cloudbase.databases")
 
@@ -78,7 +78,7 @@ def _spawn(database_id: int, coro_fn) -> None:
             log.warning("[db] operation on database %s failed: %s", database_id, e)
             await _set_status(database_id, "error", str(e))
         finally:
-            _busy.discard(database_id)
+            release(database_id)
 
     asyncio.create_task(runner())
 

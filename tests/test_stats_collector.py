@@ -182,47 +182,56 @@ def test_there_is_one_collector_for_every_instance():
     assert "_remote_instance_stats_poller" not in open(lifespan.__file__, encoding="utf-8").read()
 
 
-def test_instances_on_other_nodes_are_asked_through_their_agent_and_make_one_frame_with_the_rest(docker, monkeypatch):
-    """One frame per app over all its instances: a frame of only the local ones (or only the remote ones) would
-    give the autoscaler and the charts half the picture."""
+def test_instances_on_other_nodes_use_what_their_node_sent_and_make_one_frame_with_the_rest(docker):
+    """One frame per app over all its instances. Nothing is asked of the other node: it sends its numbers itself."""
     from containers import processes as pm
     from workers import stats
-    asked = []
-
-    async def fake_ask(node_id, command_type, payload, *, app_id=None, timeout=20.0, reuse=False):
-        asked.append((node_id, command_type, payload["instance_id"]))
-        return N(status="done", result={"status": "running", "cpu_percent": 30.0, "memory_mb": 100.0})
-    monkeypatch.setattr(stats.node_commands, "ask", fake_ask)
     app_id = 900020
-    here = N(id=1, app_id=app_id, node_id=1)
-    there = N(id=2, app_id=app_id, node_id=5)
+    here = N(id=9000201, app_id=app_id, node_id=1)
+    there = N(id=9000202, app_id=app_id, node_id=5)
+    pm.set_instance_stats(there.id, {"instance_id": there.id, "cpu_percent": 30.0, "memory_mb": 100.0, "received": time.monotonic()})
 
     async def go():
         _MINE.set(True)
         return await stats.sample_due_apps([_app(app_id)], {app_id: [here, there]}, 1000.0, {}, local_node_id=1)
     assert _run(go()) == 2
-    assert asked == [(5, "get_instance_stats", 2)] and len(docker.asked_for(app_id)) == 1
+    assert len(docker.asked_for(app_id)) == 1                                                  # Docker only for the local one
     frame = pm.get_recent_stats(app_id)[-1]
     assert frame["cpu_percent"] == 20.0 and frame["memory_mb"] == 150.0 and frame["_instance_count"] == 2   # (10+30)/2, 50+100
-    assert pm.get_all_instance_stats(app_id, [2])[2]["cpu_percent"] == 30.0                                 # its own numbers
+    assert pm.get_instance_stats(there.id)["received"]                                            # kept as its node sent it
 
 
-def test_a_node_that_does_not_answer_leaves_its_instance_out_of_this_round(docker, monkeypatch):
-    from fastapi import HTTPException
+def test_numbers_a_node_sent_too_long_ago_are_not_used(docker):
     from containers import processes as pm
+    from nodes import reports
     from workers import stats
-
-    async def slow(*a, **k):
-        raise HTTPException(504, "Timed out waiting for node command result")
-    monkeypatch.setattr(stats.node_commands, "ask", slow)
     app_id = 900021
+    old = N(id=9000211, app_id=app_id, node_id=5)
+    pm.set_instance_stats(old.id, {"cpu_percent": 99.0, "memory_mb": 1.0, "received": time.monotonic() - reports.MAX_AGE_SECONDS - 1})
 
     async def go():
         _MINE.set(True)
-        return await stats.sample_due_apps([_app(app_id)], {app_id: [N(id=1, app_id=app_id, node_id=1), N(id=2, app_id=app_id, node_id=5)]},
-                                           1000.0, {}, local_node_id=1)
+        return await stats.sample_due_apps([_app(app_id)], {app_id: [N(id=9000212, app_id=app_id, node_id=1), old]}, 1000.0, {}, local_node_id=1)
     _run(go())
     assert pm.get_recent_stats(app_id)[-1]["_instance_count"] == 1
+
+
+def test_a_watched_app_makes_its_nodes_send_faster(monkeypatch):
+    from containers import processes as pm
+    from workers import stats
+    sent = []
+
+    class WS:
+        async def send_json(self, message):
+            sent.append(message)
+    monkeypatch.setattr(stats, "_node_ws_connections", {5: WS(), 6: WS()})
+    monkeypatch.setattr(stats, "_hinted", {})
+    monkeypatch.setattr(pm, "_watched_until", {900023: time.monotonic() + 10})
+    instances = {900023: [N(id=1, app_id=900023, node_id=5), N(id=2, app_id=900023, node_id=1)],
+                 900024: [N(id=3, app_id=900024, node_id=6)]}                                     # nobody watches this one
+    _run(stats._hint_watchers(instances, 1, 1000.0))
+    _run(stats._hint_watchers(instances, 1, 1001.0))                                              # not again this soon
+    assert sent == [{"type": "watch", "app_id": 900023}]
 
 
 def test_the_app_stream_only_gets_app_frames(docker):

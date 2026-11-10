@@ -1,4 +1,5 @@
 import asyncio
+import time
 from fastapi import WebSocket
 
 # Pulling an image on a slow node can take minutes.
@@ -19,6 +20,15 @@ DIAL_TIMEOUT_SECONDS = 10
 
 # Databases with an operation in flight; the monitor leaves them alone.
 _busy: set[int] = set()
+# When each database's last operation ended: a node's report from before then no longer says how it is.
+_released_at: dict[int, float] = {}
+
+
+def release(database_id: int) -> None:
+    """An operation on the database is over."""
+    _busy.discard(database_id)
+    _operation.pop(database_id, None)
+    _released_at[database_id] = time.monotonic()
 
 
 _operation: dict[int, str] = {}  # what a busy database is doing, e.g. "Backing up…"

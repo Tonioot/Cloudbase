@@ -86,6 +86,10 @@ def set_instance_stats(instance_id: int, data: dict) -> None:
     _instance_stats[instance_id] = data
 
 
+def get_instance_stats(instance_id: int) -> dict | None:
+    return _instance_stats.get(instance_id)
+
+
 def get_all_instance_stats(app_id: int, instance_ids: list[int]) -> dict[int, dict]:
     return {rid: _instance_stats[rid] for rid in instance_ids if rid in _instance_stats}
 

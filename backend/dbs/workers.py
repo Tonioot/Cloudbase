@@ -12,7 +12,8 @@ from core.models import DatabaseStatsHistory, Database, Node
 from dbs.ops import _node_reachable, _run_on_node, _set_status, _spawn, _start_operation, _state_to_status
 from dbs.provision import _data_dir
 from dbs.relay import open_db_stream, push_proxies
-from dbs.state import HEAL_BACKOFF_SECONDS, MONITOR_INTERVAL_SECONDS, _busy, _last_heal, _update_info
+from dbs.state import HEAL_BACKOFF_SECONDS, MONITOR_INTERVAL_SECONDS, _busy, _last_heal, _released_at, _update_info
+from nodes import reports as node_reports
 
 log = logging.getLogger("cloudbase.databases")
 
@@ -20,14 +21,16 @@ log = logging.getLogger("cloudbase.databases")
 # ── Monitor ───────────────────────────────────────────────────────────────────
 
 async def _fetch_states(node: Node, ids: list[int]) -> dict[str, dict]:
-    result = await _run_on_node(
-        node,
-        lambda: {"states": dbs_lifecycle.states(ids)},
-        "db_states",
-        {"database_ids": ids},
-        timeout=30,
-    )
-    return result.get("states") or {}
+    """{id: {state, volume}}: looked at here for the primary's own databases, from the node's report for the others.
+    A database whose operation ended after that report is left out: the report no longer says how it is."""
+    if node.is_local:
+        return await asyncio.to_thread(dbs_lifecycle.states, ids)
+    sent = node_reports.databases(node.id)
+    if sent is None:
+        raise RuntimeError(f"no recent report from node '{node.name}'")
+    when, report = sent
+    return {str(i): report.get(str(i), {"state": "missing", "volume": False})
+            for i in ids if _released_at.get(i, float("-inf")) < when}
 
 
 async def _monitor_tick() -> None:
@@ -58,7 +61,9 @@ async def _monitor_tick() -> None:
         for d in idle:
             if d.id in _busy:
                 continue
-            info = states.get(str(d.id)) or {}
+            if str(d.id) not in states:
+                continue                                    # nothing up to date about it yet
+            info = states[str(d.id)]
             state = info.get("state", "missing")
 
             if d.desired_state == "stopped":
@@ -136,13 +141,11 @@ async def _stats_tick(with_disk: bool) -> None:
         node = nodes.get(node_id)
         if node is None or not _node_reachable(node):
             continue
-        try:
-            result = await _run_on_node(node, lambda items=items: {"stats": dbs_lifecycle.stats_many(items)},
-                                        "db_stats_many", {"items": items}, timeout=60)
-        except Exception as e:
-            log.debug("[db-stats] node %s: %s", node.name, e)
-            continue
-        for db_id, s in (result.get("stats") or {}).items():
+        if node.is_local:
+            stats = await asyncio.to_thread(dbs_lifecycle.stats_many, items)
+        else:                                               # sent by the node itself (agent/report.py)
+            stats = {str(i["database_id"]): s for i in items if (s := node_reports.database_stats(i["database_id"]))}
+        for db_id, s in stats.items():
             rows.append(DatabaseStatsHistory(
                 database_id=int(db_id), timestamp=now,
                 cpu_percent=s.get("cpu_percent"), memory_mb=s.get("memory_mb"), disk_mb=s.get("disk_mb"),

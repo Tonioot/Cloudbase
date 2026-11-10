@@ -11,7 +11,7 @@ from core.models import Node, NodeInvite
 from core.audit import log_audit
 from mesh import hub
 from core import config as _cfg, system_config as _syscfg
-from nodes import desired, metrics as node_metrics, observed, snapshot
+from nodes import desired, metrics as node_metrics, observed, reports as node_reports, snapshot
 from nodes.liveness import node_gone
 from nodes import commands as node_commands
 from nodes.commands import _commit_with_sqlite_lock_retry, _utcnow
@@ -263,6 +263,10 @@ async def agent_ws(websocket: WebSocket):
                             "memory_percent": incoming.get("node_metrics", {}).get("memory_percent"),
                             "disk_percent": incoming.get("node_metrics", {}).get("disk_percent"),
                         })
+                    elif msg_type == "instance_stats":
+                        await node_reports.store_instance_stats(node_id, incoming.get("stats") or {})
+                    elif msg_type == "database_report":
+                        node_reports.store_databases(node_id, incoming.get("databases") or {})
                     elif msg_type == "stream_data":
                         stream_id = incoming.get("stream_id")
                         data = incoming.get("data")

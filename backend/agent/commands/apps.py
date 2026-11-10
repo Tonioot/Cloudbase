@@ -1,8 +1,7 @@
 import os
 import asyncio
 import subprocess
-import time
-from containers import naming as containers_naming, cleanup as containers_cleanup, jobs as containers_jobs, stats_logs as containers_stats_logs
+from containers import naming as containers_naming, cleanup as containers_cleanup, jobs as containers_jobs
 from agent.log import AGENT_LOG_FILE, _agent_log
 from agent.source import ensure_image
 
@@ -14,19 +13,6 @@ from agent.source import ensure_image
 async def cmd_docker_cleanup(_client, _state, _main_id, payload):
     """Remove superseded images and trim the build cache on this node."""
     return await asyncio.to_thread(containers_cleanup.cleanup_docker, bool(payload.get("aggressive")))
-
-
-async def cmd_get_instance_stats(_client, _state, main_id, payload):
-    instance_id = payload.get("instance_id")
-    if instance_id is None:
-        return {"status": "stopped", "docker": True, "error": "missing instance_id"}
-    cname = containers_naming.instance_container_name(int(main_id), int(instance_id))
-    stats = await asyncio.to_thread(containers_stats_logs.get_container_stats_by_name, cname)
-    if not stats or stats.get("status") != "running":
-        return {"status": "stopped", "docker": True}
-    stats["timestamp"] = int(time.time() * 1000)
-    stats["instance_id"] = int(instance_id)
-    return stats
 
 
 async def cmd_get_agent_logs(_client, _state, _main_id, payload):
