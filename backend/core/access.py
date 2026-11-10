@@ -7,7 +7,7 @@ from core import auth, system_config as _syscfg
 from nginx import pages as nginx_pages
 from agent import state as agent_state
 from core.models import Node as _Node
-from core.runtime import IS_NODE, _COOKIE_NAME
+from core.runtime import IS_NODE
 
 # Auth middleware — blocks all /api/ and /ws/ except public paths
 _PUBLIC = {
@@ -16,121 +16,6 @@ _PUBLIC = {
     "/api/auth/logout",
     "/api/auth/check",
 }
-
-
-# Permission prefix maps — second line of defence (explicit Depends on each endpoint is primary).
-# Order matters: more specific prefixes first.
-# Write map: fallback permission required for any write to a prefix.
-_PERMISSION_WRITE_MAP = (
-    ("/api/apps",      "apps.configure"),  # safest fallback; granular checks on endpoints
-    ("/api/nodes",     "nodes.configure"),
-    ("/api/databases", "databases.manage"),
-    ("/api/system",    "system.manage"),
-    ("/api/users",     "users.manage"),
-    ("/api/roles",     "roles.manage"),
-    ("/api/audit-log", "audit.view"),
-    ("/api/notifications", "notifications.manage"),
-)
-
-
-_PERMISSION_READ_MAP = (
-    ("/api/apps",      "apps.view"),
-    ("/api/nodes",     "nodes.view"),
-    ("/api/databases", "databases.view"),
-    ("/api/system",    "system.manage"),
-    ("/api/users",     "users.manage"),
-    ("/api/roles",     "roles.manage"),
-    ("/api/audit-log", "audit.view"),
-    ("/api/notifications", "notifications.view"),
-)
-
-
-# Per-path overrides — used when the prefix default doesn't fit the endpoint's semantics.
-_PERMISSION_EXACT_OVERRIDES: dict[tuple[str, str], str] = {
-    ("POST", "/api/nodes/invites"): "nodes.add",
-    # /api/roles/permissions and /api/roles list are read by any authenticated user (UI needs it)
-    ("GET",  "/api/roles"): None,
-    ("GET",  "/api/roles/permissions"): None,
-}
-
-
-_PERMISSION_PREFIX_OVERRIDES: tuple[tuple[str, str, str | None], ...] = (
-    # (METHOD, path prefix, required permission OR None to allow any authenticated user)
-    ("GET",    "/api/roles/",                None),
-    ("GET",    "/api/apps/system/certs",     "apps.view"),
-    # GitHub token endpoints — under /api/system but use tokens.manage instead
-    ("GET",    "/api/system/github-tokens",  "tokens.manage"),
-    ("POST",   "/api/system/github-tokens",  "tokens.manage"),
-    ("DELETE", "/api/system/github-tokens",  "tokens.manage"),
-    # Apps write/delete: each endpoint has its own granular Depends() check.
-    # Middleware only requires apps.view as a backstop so it never over-blocks.
-    ("POST",   "/api/apps",                  "apps.view"),
-    # Export/import: each endpoint checks apps.configure / apps.deploy, and secrets.export for secrets
-    ("POST",   "/api/transfer",              "apps.view"),
-    ("PUT",    "/api/apps/",                 "apps.view"),
-    ("DELETE", "/api/apps/",                 "apps.view"),
-    ("PATCH",  "/api/apps/",                 "apps.view"),
-    # Nodes write/delete: same pattern
-    ("POST",   "/api/nodes/",                "nodes.view"),
-    ("PUT",    "/api/nodes/",                "nodes.view"),
-    ("DELETE", "/api/nodes/",                "nodes.view"),
-    ("PATCH",  "/api/nodes/",                "nodes.view"),
-    # Databases: create / manage / delete are checked per endpoint
-    ("POST",   "/api/databases",             "databases.view"),
-    ("PATCH",  "/api/databases/",            "databases.view"),
-    ("DELETE", "/api/databases/",            "databases.view"),
-    # Notifications: marking the inbox read is part of viewing; per-app muting is app config
-    ("POST",   "/api/notifications/read",    "notifications.view"),
-    ("GET",    "/api/notifications/apps/",   "apps.view"),
-    ("PUT",    "/api/notifications/apps/",   "apps.configure"),
-    ("GET",    "/api/notifications/channels", "notifications.manage"),
-    ("GET",    "/api/notifications/deliveries", "notifications.manage"),
-    ("GET",    "/api/notifications/settings", "notifications.manage"),
-)
-
-
-# Sub-path → permission overrides for /api/apps/* endpoints based on URL segments.
-# These run AFTER prefix matching and let us require fine-grained read perms
-# (logs.view, stats.view) for specific app sub-resources.
-def _resolve_apps_get_permission(path: str) -> str:
-    """For GET /api/apps/* paths, return the required permission."""
-    # /logs, /logs/tail → apps.view
-    if "/logs" in path:
-        return "apps.view"
-    # /stats, /stats-remote, /aggregate-stats, /stats/history → apps.view
-    if "/stats" in path or "stats-remote" in path:
-        return "apps.view"
-    # Everything else under /api/apps/ → apps.view
-    return "apps.view"
-
-
-def _resolve_required_permission(method: str, path: str) -> tuple[bool, str | None]:
-    """
-    Return (has_rule, required_permission).
-      has_rule=False  → no permission rule applies to this path (allow if authenticated)
-      has_rule=True, required_permission=None → explicitly allow any authenticated user
-      has_rule=True, required_permission="X"  → require permission X
-    """
-    # 1. Exact overrides
-    if (method, path) in _PERMISSION_EXACT_OVERRIDES:
-        return True, _PERMISSION_EXACT_OVERRIDES[(method, path)]
-
-    # 2. Prefix overrides
-    for m, prefix, perm in _PERMISSION_PREFIX_OVERRIDES:
-        if m == method and path.startswith(prefix) and perm is not None:
-            return True, perm
-
-    # 3. Method-based prefix maps
-    is_write = method not in ("GET", "HEAD", "OPTIONS")
-    table = _PERMISSION_WRITE_MAP if is_write else _PERMISSION_READ_MAP
-    for prefix, perm in table:
-        if path.startswith(prefix):
-            # Special-case GET /api/apps/* — resolve to fine-grained perm
-            if not is_write and prefix == "/api/apps":
-                return True, _resolve_apps_get_permission(path)
-            return True, perm
-
-    return False, None
 
 
 _NODE_AGENT_PATHS = re.compile(r"/api/apps/\d+/source-archive")
@@ -202,19 +87,10 @@ class _AuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if path.startswith("/api/") and path not in _PUBLIC:
-            token = request.cookies.get(_COOKIE_NAME)
-            if token:
-                user = await auth.session_user(token)
-                if user:
-                    # Root (built-in admin) bypasses permission checks entirely
-                    if user["username"] == "admin":
-                        return await call_next(request)
-                    has_rule, required_perm = _resolve_required_permission(method, path)
-                    if has_rule and required_perm is not None:
-                        perms = await auth.get_user_permissions(user["username"])
-                        if required_perm not in perms:
-                            return JSONResponse({"detail": "Permission denied"}, status_code=403)
-                    return await call_next(request)
+            # Signed in? Looked up once and kept for the endpoint, whose own dependency decides the permission
+            # (auth.require_permission; tests/test_security.py checks that every endpoint has one).
+            if await auth.request_user(request):
+                return await call_next(request)
 
             # Node agents (X-Node-Token) only reach the app endpoint they call;
             # it checks that the node runs the app.

@@ -113,7 +113,7 @@ def test_the_monitor_does_not_start_a_database_somebody_else_holds(database, mon
 def test_a_database_the_monitor_starts_is_held_while_it_starts(database, monkeypatch):
     """Otherwise a click could start a second operation on it in the meantime."""
     from dbs import workers
-    db_id = database("lock-heal")
+    database("lock-heal")
     held_while_started = []
     monkeypatch.setattr(workers, "_spawn", lambda i, fn: held_while_started.append(i in state._busy))
 

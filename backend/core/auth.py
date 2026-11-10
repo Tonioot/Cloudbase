@@ -16,7 +16,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import bcrypt as _bcrypt
-from fastapi import Cookie, HTTPException, status
+from fastapi import Cookie, HTTPException, Request, status
 import jwt
 from jwt import PyJWTError as JWTError
 from core import config as _cfg
@@ -113,40 +113,47 @@ def decode_token(token: str) -> Optional[dict]:
 
 
 async def session_user(token: Optional[str]) -> Optional[dict]:
-    """Like decode_token, but also requires the user to still exist and the
-    session not to be revoked (logout / password change since it was issued)."""
+    """The signed-in user, looked up in one go: {username, role, sv, db_user, permissions}, where permissions is None
+    for the root account (everything) and a set otherwise. None when the token is invalid, the user is gone or the
+    session was revoked (logout / password change since it was issued)."""
     user = decode_token(token) if token else None
     if not user:
         return None
-    db_user = await _get_db_user(user["username"])
-    if db_user is None or int(db_user.session_version or 0) != user["sv"]:
-        return None
-    return {**user, "db_user": db_user}
-
-
-async def get_user_permissions(username: str) -> set[str]:
-    """Return the set of permission names for a user, loaded live from the DB."""
     from sqlalchemy import select
     try:
         async with AsyncSessionLocal() as db:
-            result = await db.execute(select(User).where(User.username == username))
-            user = result.scalar_one_or_none()
-            if user is None:
-                return set()
-            # Superadmin always has all permissions
-            if username == "admin":
-                res = await db.execute(select(Permission.name))
-                return {row[0] for row in res.fetchall()}
-            if user.role_id is None:
-                return set()
-            res = await db.execute(
-                select(Permission.name)
-                .join(role_permissions, Permission.id == role_permissions.c.permission_id)
-                .where(role_permissions.c.role_id == user.role_id)
-            )
-            return {row[0] for row in res.fetchall()}
+            db_user = (await db.execute(select(User).where(User.username == user["username"]))).scalar_one_or_none()
+            if db_user is None or int(db_user.session_version or 0) != user["sv"]:
+                return None
+            if db_user.username == "admin":
+                permissions = None                                  # the root account has every permission
+            elif db_user.role_id is None:
+                permissions = set()
+            else:
+                permissions = set((await db.execute(
+                    select(Permission.name)
+                    .join(role_permissions, Permission.id == role_permissions.c.permission_id)
+                    .where(role_permissions.c.role_id == db_user.role_id)
+                )).scalars())
     except Exception:
-        return set()
+        return None
+    return {**user, "db_user": db_user, "permissions": permissions}
+
+
+_UNSET = object()
+
+
+async def request_user(request) -> Optional[dict]:
+    """session_user for this request, looked up once: the middleware does it, the endpoint's checks reuse it."""
+    cached = getattr(request.state, "user", _UNSET)
+    if cached is _UNSET:
+        cached = await session_user(request.cookies.get(_COOKIE_NAME))
+        request.state.user = cached
+    return cached
+
+
+def has_permission(user: dict, permission: str) -> bool:
+    return user["permissions"] is None or permission in user["permissions"]
 
 
 def get_token_expires_in(token: str) -> Optional[int]:
@@ -207,53 +214,40 @@ def origin_allowed(origin: Optional[str], headers) -> bool:
 _COOKIE_NAME = "cloudbase_token"
 
 
-async def require_auth(cloudbase_token: Optional[str] = Cookie(default=None)) -> dict:
+async def require_auth(request: Request) -> dict:
     """Require a valid session. Returns {"username": str, "role": str}."""
-    user = await session_user(cloudbase_token)
+    user = await request_user(request)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     return {"username": user["username"], "role": user["role"]}
 
 
-async def _get_db_user(username: str):
-    """Return the live DB User object or None."""
-    from sqlalchemy import select
-    try:
-        async with AsyncSessionLocal() as db:
-            result = await db.execute(select(User).where(User.username == username))
-            return result.scalar_one_or_none()
-    except Exception:
-        return None
+def _as_principal(user: dict) -> dict:
+    db_user = user["db_user"]
+    return {"username": user["username"], "sv": user["sv"], "role": db_user.role, "role_id": db_user.role_id,
+            "permissions": user["permissions"]}
 
 
-async def require_superadmin(cloudbase_token: Optional[str] = Cookie(default=None)) -> dict:
+async def require_superadmin(request: Request) -> dict:
     """Require the built-in 'admin' superuser account. Only this account may manage users and roles."""
-    user = await session_user(cloudbase_token)
+    user = await request_user(request)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    db_user = user.pop("db_user")
-    if db_user.username != "admin":
+    if user["username"] != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only the superadmin account can manage users and roles")
-    return {**user, "role": db_user.role, "role_id": db_user.role_id, "permissions": None}
+    return _as_principal(user)
 
 
 def require_permission(permission: str):
-    """Return a FastAPI dependency that requires the user to have a specific permission."""
-    async def _dep(cloudbase_token: Optional[str] = Cookie(default=None)) -> dict:
-        user = await session_user(cloudbase_token)
+    """A FastAPI dependency that requires the user to have this permission. This is the one place an endpoint's
+    permission is decided; the middleware only checks that somebody is signed in."""
+    async def _dep(request: Request) -> dict:
+        user = await request_user(request)
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-        db_user = user.pop("db_user")
-        # Superadmin bypasses all permission checks
-        if db_user.username == "admin":
-            return {**user, "role": db_user.role, "role_id": db_user.role_id, "permissions": None}
-        perms = await get_user_permissions(db_user.username)
-        if permission not in perms:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permission '{permission}' required",
-            )
-        return {**user, "role": db_user.role, "role_id": db_user.role_id, "permissions": perms}
+        if not has_permission(user, permission):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Permission '{permission}' required")
+        return _as_principal(user)
     return _dep
 
 
@@ -297,11 +291,7 @@ async def authorize_websocket(websocket, required_permission: str | None = None)
     if not user:
         await websocket.close(code=1008, reason="Not authenticated")
         return False
-    if user.get("username") == "admin":
-        return True
-    if required_permission is not None:
-        perms = await get_user_permissions(user["username"])
-        if required_permission not in perms:
-            await websocket.close(code=1008, reason="Permission denied")
-            return False
+    if required_permission is not None and not has_permission(user, required_permission):
+        await websocket.close(code=1008, reason="Permission denied")
+        return False
     return True

@@ -3,8 +3,8 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from core.database import get_db, AsyncSessionLocal
-from core.models import User, Permission, Role, role_permissions
+from core.database import ALL_PERMISSIONS, get_db, AsyncSessionLocal
+from core.models import User, Role
 from core.audit import log_audit
 from core import auth
 from core.runtime import _COOKIE_NAME, _COOKIE_OPTS
@@ -20,45 +20,16 @@ class LoginRequest(BaseModel):
 
 @router.get("/api/auth/check")
 async def auth_check(request: Request, db: AsyncSession = Depends(get_db)):
-    user = await auth.session_user(request.cookies.get(_COOKIE_NAME))
+    user = await auth.request_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
     db_user = user["db_user"]
-    is_root = db_user.username == "admin"
-    perms: list[str] = []
-    if is_root:
-        perm_res = await db.execute(select(Permission.name))
-        perms = [row[0] for row in perm_res.fetchall()]
-        return {
-            "authenticated": True,
-            "username": db_user.username,
-            "role": "Root",
-            "role_id": None,
-            "is_root": True,
-            "permissions": perms,
-        }
-    if db_user.role_id:
-        perm_res = await db.execute(
-            select(Permission.name)
-            .join(role_permissions, Permission.id == role_permissions.c.permission_id)
-            .where(role_permissions.c.role_id == db_user.role_id)
-        )
-        perms = [row[0] for row in perm_res.fetchall()]
-    # Fetch role name
-    role_name = db_user.role
-    if db_user.role_id:
-        role_res = await db.execute(select(Role).where(Role.id == db_user.role_id))
-        role_obj = role_res.scalar_one_or_none()
-        if role_obj:
-            role_name = role_obj.name
-    return {
-        "authenticated": True,
-        "username": db_user.username,
-        "role": role_name,
-        "role_id": db_user.role_id,
-        "is_root": False,
-        "permissions": perms,
-    }
+    if user["permissions"] is None:                 # the root account
+        return {"authenticated": True, "username": db_user.username, "role": "Root", "role_id": None,
+                "is_root": True, "permissions": [name for name, _ in ALL_PERMISSIONS]}
+    role = await db.get(Role, db_user.role_id) if db_user.role_id else None
+    return {"authenticated": True, "username": db_user.username, "role": role.name if role else db_user.role,
+            "role_id": db_user.role_id, "is_root": False, "permissions": sorted(user["permissions"])}
 
 
 @router.post("/api/auth/login")

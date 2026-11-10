@@ -7,14 +7,8 @@ from core import auth as _auth
 
 async def _request_can_manage_apps(request: Request) -> bool:
     """Return True if the requester has apps.configure (or is superadmin)."""
-    token = request.cookies.get("cloudbase_token")
-    user = await _auth.session_user(token)
-    if not user:
-        return False
-    if user.get("username") == "admin":
-        return True
-    perms = await _auth.get_user_permissions(user["username"])
-    return "apps.configure" in perms
+    user = await _auth.request_user(request)
+    return bool(user) and _auth.has_permission(user, "apps.configure")
 
 
 async def _source_archive_auth(request: Request, app_id: int, db: AsyncSession = Depends(get_db)):

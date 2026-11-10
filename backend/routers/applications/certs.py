@@ -1,13 +1,14 @@
+import glob
 import os
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from core import auth as _auth
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
 
 @router.get("/system/certs")
-async def discover_certs():
-    """Scan common certificate and key locations on this machine."""
-    import glob
+async def discover_certs(_user: dict = Depends(_auth.require_permission("apps.view"))):
+    """Scan common certificate and key locations on this machine (for picking a certificate for an app's domain)."""
 
     cert_patterns = [
         "/etc/letsencrypt/live/*/fullchain.pem",
