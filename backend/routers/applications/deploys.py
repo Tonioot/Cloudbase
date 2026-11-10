@@ -14,11 +14,9 @@ from core.models import Deployment
 from containers import processes as pm
 from containers import naming as containers_naming
 from containers import build as containers_build
-from nodes.registry import ensure_local_node
 from core.audit import log_audit
 from core import auth as _auth
-from apps.rolling import _do_rolling_deploy
-from apps.bluegreen import _do_zero_downtime_deploy
+from apps.rollout import replace_instances
 from apps.git import _build_clone_url, _current_branch, _decrypt_github_token, _deploy_app, _fetch_origin, _refresh_app_source_revision, _resolve_source_revision, _sync_app_source
 from apps.images import _image_build_kwargs, _image_port
 from apps.runtime import _has_live_replicas, _load_app_replicas
@@ -187,15 +185,13 @@ async def rebuild_docker_image(app_id: int, db: AsyncSession = Depends(get_db), 
 @router.post("/{app_id}/deploy-rolling")
 async def deploy_rolling(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
     with app_lock(app_id, "deploying"):
-        return await _do_rolling_deploy(app_id, db, actor)
+        return await replace_instances(app_id, db, actor, batch=1)
 
 
 @router.post("/{app_id}/deploy-blue-green")
 async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
-    await _get_or_404(app_id, db)
-    local_node = await ensure_local_node(db)
     with app_lock(app_id, "deploying"):
-        return await _do_zero_downtime_deploy(app_id, db, local_node, actor)
+        return await replace_instances(app_id, db, actor, batch=None)
 
 
 @router.post("/{app_id}/pull/stream")

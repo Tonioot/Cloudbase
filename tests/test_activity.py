@@ -120,8 +120,7 @@ def test_every_operation_that_changes_an_app_is_tracked():
     expected = {
         "apps/lifecycle.py": ['@activity.tracked("restarting")', '@activity.tracked("starting")'],
         "apps/deployments.py": ['@activity.tracked("deploying")'],
-        "apps/rolling.py": ['@activity.tracked("deploying")'],
-        "apps/bluegreen.py": ['@activity.tracked("deploying")'],
+        "apps/rollout.py": ['@activity.tracked("deploying")'],
         "routers/applications/lifecycle.py": ['@activity.tracked("stopping")'],
         "routers/applications/scale.py": ['@activity.tracked("scaling")'],
         "routers/applications/instances.py": ['@activity.tracked("restarting")'],

@@ -4,15 +4,6 @@ from typing import Optional
 
 from fastapi import HTTPException
 
-# New instances during rolling / blue-green deploys. Generous because some start
-# commands build at boot (e.g. `next build && next start`), which takes minutes
-# on small nodes like a Raspberry Pi. A crashed container fails fast regardless.
-DEPLOY_HEALTH_TIMEOUT_SECONDS = 600
-
-
-DEPLOY_HEALTH_PROGRESS_SECONDS = 30
-
-
 # One action at a time per app. Whoever changes an app's instances (deploy, start, stop, restart, scale,
 # removing an instance, delete, the autoscaler) holds the app for the duration; a second one is refused
 # with a 409 instead of racing the first. The panel is one process with one event loop and the check and

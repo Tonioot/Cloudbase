@@ -10,9 +10,8 @@ from containers import processes as pm, naming as containers_naming, build as co
 from core.database import AsyncSessionLocal
 from core import activity
 from core.models import Application, Deployment
-from apps import state as apps_state, rolling as apps_rolling, bluegreen as apps_bluegreen, git as apps_git, nginx_sync as apps_nginx_sync, runtime as apps_runtime, images as apps_images
+from apps import state as apps_state, rollout as apps_rollout, git as apps_git, nginx_sync as apps_nginx_sync, runtime as apps_runtime, images as apps_images
 from core.audit import log_audit as apps_log_audit
-from nodes.registry import ensure_local_node as apps_ensure_local_node
 from apps.lifecycle import restart_locked
 
 log = logging.getLogger("cloudbase.deploys")
@@ -100,15 +99,11 @@ async def run_deploy(
                 dep.branch = await asyncio.to_thread(apps_git._current_branch, app.working_dir)
                 await db.commit()
 
-                if strategy == "rolling":
-                    push("[Deploy] Starting rolling deploy…")
-                    res = await apps_rolling._do_rolling_deploy(app_id, db, actor)
-                    message = f"Rolled out {commit_info}"
-                elif strategy == "blue_green":
-                    push("[Deploy] Starting blue/green deploy…")
-                    local_node = await apps_ensure_local_node(db)
-                    res = await apps_bluegreen._do_zero_downtime_deploy(app_id, db, local_node, actor)
-                    message = f"Switched to {commit_info}"
+                if strategy in ("rolling", "blue_green"):
+                    push("[Deploy] Replacing the instances one at a time…" if strategy == "rolling"
+                         else "[Deploy] Starting new instances next to the old ones…")
+                    res = await apps_rollout.replace_instances(app_id, db, actor, batch=1 if strategy == "rolling" else None)
+                    message = f"Rolled out {commit_info}" if strategy == "rolling" else f"Switched to {commit_info}"
                 else:
                     res = await _rebuild(app, db, source_revision, push, restart=(strategy == "restart"), actor=actor)
                     message = (f"Deployed {commit_info}" if strategy == "restart" and res.get("restarted")

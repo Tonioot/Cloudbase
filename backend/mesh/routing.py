@@ -63,11 +63,8 @@ async def wait_reachable(replica_id: int, timeout: float) -> str:
         if replica.status == "error":
             raise Unreachable(f"node reported an error: {replica.last_error or 'unknown'}")
         if await _publishes_no_port(replica):
-            if replica.status == "running":
-                return ""
-            backend = None
-        else:
-            backend = backend_for(replica, node)
+            return ""                       # a worker is live once its node runs it, and promote asks only after that
+        backend = backend_for(replica, node)
         if backend and await asyncio.to_thread(port_open, *split(backend)):
             return backend
         if loop.time() >= deadline:

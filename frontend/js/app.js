@@ -231,7 +231,7 @@ function _syncZeroDowntimeButton() {
       zdBtn.onclick = async () => {
         const ok = await confirm(
           'Blue/Green Deploy',
-          'Builds a new image for every instance simultaneously, starts them on new ports, verifies health, then atomically swaps nginx. Old containers stop only after all new ones are live.'
+          'Starts a new instance next to every running one. Each new one gets traffic once it passes the health check; the old ones are removed only after all new ones are live. If one fails, the new ones are removed and the old ones keep serving.'
         );
         if (!ok) return;
         zdBtn.disabled = true;
