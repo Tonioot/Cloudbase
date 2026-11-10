@@ -33,6 +33,9 @@ REPLICAS_WITHOUT_NODE_SQL = (
     "WHERE node_id IS NULL AND EXISTS (SELECT 1 FROM nodes WHERE is_local = 1)"
 )
 
+# Statuses older versions wrote that nothing understands any more: the instance is on its way up
+OLD_INSTANCE_STATUSES_SQL = "UPDATE application_replicas SET status = 'starting' WHERE status IN ('restarting', 'deploying')"
+
 
 class Base(DeclarativeBase):
     pass
@@ -215,6 +218,7 @@ async def init_db():
                 f"ALTER TABLE application_replicas ADD COLUMN {col} {definition}"
             )
         await conn.exec_driver_sql(REPLICAS_WITHOUT_NODE_SQL)
+        await conn.exec_driver_sql(OLD_INSTANCE_STATUSES_SQL)
         # Instances on other nodes written before nodes were driven by desired state: what they were doing
         # is what they should keep doing (nodes/desired.py writes their spec the first time a node asks)
         await conn.exec_driver_sql(

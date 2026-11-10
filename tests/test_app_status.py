@@ -16,7 +16,6 @@ class _App:
     (["running"], "running"),
     (["running", "error", "stopped"], "running"),            # one running instance is enough
     (["starting", "stopped"], "starting"),
-    (["restarting"], "restarting"),
     (["stopping", "stopped"], "stopping"),
     (["stopped", "stopped"], "stopped"),
     (["error"], "error"),
@@ -104,3 +103,15 @@ def test_background_workers_pick_apps_by_their_running_instances(client):
             return {a.id for a in (await db.execute(select(Application).where(has_running_instance()))).scalars().all()}
     ids = asyncio.run(go())
     assert up in ids and down not in ids and none not in ids
+
+
+def test_an_instance_only_takes_a_known_status():
+    """A typo in a status (or a status nothing understands) fails where it is written, not later in nginx or the panel."""
+    from core.models import INSTANCE_STATUSES, ApplicationReplica
+    row = ApplicationReplica(app_id=1, node_id=1)
+    for status in INSTANCE_STATUSES:
+        row.status = status
+    with pytest.raises(ValueError, match="unknown instance status"):
+        row.status = "runing"
+    with pytest.raises(ValueError):
+        ApplicationReplica(app_id=1, node_id=1, status="restarting")

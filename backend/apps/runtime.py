@@ -80,7 +80,7 @@ def _remote_replica_command_payload(app: Application, env_vars: dict, external_p
 def status_of_instances(statuses) -> str:
     """The status of a (non-cron) app from the statuses of its instances."""
     statuses = set(statuses)
-    for status in ("running", "starting", "restarting", "stopping", "deploying"):
+    for status in ("running", "starting", "stopping"):
         if status in statuses:
             return status
     if "error" in statuses and statuses <= {"stopped", "error", "pending"}:
@@ -160,7 +160,7 @@ async def _stop_replica_runtime(
 
 
 def _has_live_replicas(replicas: list[ApplicationReplica]) -> bool:
-    return any(r.status in ("running", "starting", "restarting") for r in replicas)
+    return any(r.status in ("running", "starting") for r in replicas)
 
 
 async def _get_app_node(app: Application, db: AsyncSession, local_node: Optional[Node] = None) -> Node:

@@ -85,7 +85,7 @@ async def _write_app_nginx_config(app: Application, db: AsyncSession) -> None:
 
 
 # Instances on their way up: while none of the app's instances is live yet, visitors see the start or restart page
-_COMING_UP = ("pending", "starting", "restarting")
+_COMING_UP = ("pending", "starting")
 
 
 async def _nginx_mode(app: Application, db: AsyncSession, backends: list[str]) -> str:

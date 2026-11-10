@@ -37,7 +37,7 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict 
 
     node_map = await _load_node_map(db)
     for replica in replicas:
-        if replica.status not in ("running", "starting", "restarting", "stopping", "node_offline"):
+        if replica.status not in ("running", "starting", "stopping", "node_offline"):
             continue
         replica_node = node_map.get(replica.node_id)
         await _stop_replica_runtime(app, replica, replica_node, db)

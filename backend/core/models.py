@@ -1,5 +1,6 @@
 from datetime import datetime
 from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, Float, Table, UniqueConstraint
+from sqlalchemy.orm import validates
 from core.database import Base
 
 
@@ -155,6 +156,19 @@ class NodeInvite(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+# What an instance can be. Only nodes/observed.py, nodes/promote.py and nodes/liveness.py decide it once the instance
+# exists; the start/stop code sets the first step (starting, stopping) and writes `desired`.
+INSTANCE_STATUSES = (
+    "pending",        # added, not started yet
+    "starting",       # on its node's list; being built or started, or waiting for the health check
+    "running",        # live: in nginx
+    "stopping",       # should stop; until its node reports the container gone
+    "stopped",
+    "error",          # its node could not run it, or it failed the health check
+    "node_offline",   # its node or the node network is down; picked up again when the node reports
+)
+
+
 class ApplicationReplica(Base):
     __tablename__ = "application_replicas"
 
@@ -163,7 +177,7 @@ class ApplicationReplica(Base):
     node_id       = Column(Integer, ForeignKey("nodes.id"), nullable=False, index=True)   # the primary is a node too
     external_port = Column(Integer, nullable=True)
     container_id  = Column(String(200), nullable=True)
-    status        = Column(String(20), default="stopped")  # pending|starting|running|stopping|stopped|error
+    status        = Column(String(20), default="stopped")  # one of INSTANCE_STATUSES
     substatus     = Column(String(40), nullable=True)       # building_image|creating_container|waiting — only set during starting
     last_error    = Column(Text, nullable=True)
     # What the primary wants a node to run (instances on other nodes only; see nodes/desired.py).
@@ -179,6 +193,12 @@ class ApplicationReplica(Base):
     docker_tmpfs_size_mb    = Column(Integer, nullable=True)
     created_at    = Column(DateTime, default=datetime.utcnow)
     updated_at    = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @validates("status")
+    def _known_status(self, _key, value):
+        if value not in INSTANCE_STATUSES:
+            raise ValueError(f"unknown instance status {value!r}")
+        return value
 
 
 class AuditLog(Base):
