@@ -52,7 +52,7 @@ async def _compute_desired_proxies() -> dict[int, set[int]]:
             select(Instance.app_id, Instance.node_id).where(Instance.app_id.in_(app_ids))
         )).all()
         app_rows = (await db.execute(
-            select(Application.id, Application.node_id).where(Application.id.in_(app_ids))
+            select(Application.id, Application.node_id).where(Application.id.in_(app_ids), Application.cron_schedule.isnot(None))
         )).all()
     nodes_by_app: dict[int, set[int]] = {}
     for app_id, node_id in instance_rows:

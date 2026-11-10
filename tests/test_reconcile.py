@@ -219,14 +219,15 @@ def test_a_container_that_is_up_to_date_is_left_alone(monkeypatch):
     assert docker.removed == [] and docker.started == [] and docker.built == [] and state_of(rec, 1) == "running"
 
 
-def test_a_container_from_before_desired_state_is_adopted_not_recreated(monkeypatch):
+def test_a_container_without_a_spec_is_recreated(monkeypatch):
+    """Nothing says how it was started, so it cannot be up to date."""
     rec, _, docker = make(monkeypatch, [entry(1)], containers=[container(1, spec=None)])
 
     async def go():
         await rec.pull()
         await converge(rec)
     _run(go())
-    assert docker.removed == [] and docker.started == [] and state_of(rec, 1) == "running"
+    assert docker.removed == [1] and [s["instance_id"] for s in docker.started] == [1] and state_of(rec, 1) == "running"
 
 
 def test_a_new_spec_recreates_the_container(monkeypatch):

@@ -123,7 +123,7 @@ async def _links_for(database_id: int, db: AsyncSession) -> list[dict]:
     database = await db.get(Database, database_id)
     links = []
     for link, app in rows:
-        app_nodes = nodes_by_app.get(app.id) or ({app.node_id} if app.node_id else set())
+        app_nodes = nodes_by_app.get(app.id) or ({app.node_id} if app.cron_schedule and app.node_id else set())   # a cron job runs on its node
         links.append({
             "id": link.id,
             "app_id": app.id,

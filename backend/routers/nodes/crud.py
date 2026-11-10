@@ -97,7 +97,7 @@ async def delete_node(node_id: int, db: AsyncSession = Depends(get_db), _user: d
     if node.is_local:
         raise HTTPException(400, "Local node cannot be deleted")
     app_count_result = await db.execute(
-        select(func.count()).where(Application.node_id == node_id)
+        select(func.count()).where(Application.node_id == node_id, Application.cron_schedule.isnot(None))   # cron jobs that run there
     )
     app_count = app_count_result.scalar() or 0
     instance_count_result = await db.execute(
@@ -111,7 +111,7 @@ async def delete_node(node_id: int, db: AsyncSession = Depends(get_db), _user: d
     if app_count > 0 or instance_count > 0 or database_count > 0:
         details = []
         if app_count > 0:
-            details.append(f"{app_count} app{'s' if app_count != 1 else ''}")
+            details.append(f"{app_count} cron job{'s' if app_count != 1 else ''}")
         if instance_count > 0:
             details.append(f"{instance_count} instance{'s' if instance_count != 1 else ''}")
         if database_count > 0:

@@ -191,7 +191,7 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
         docker_tmpfs_size_mb=entry.get("docker_tmpfs_size_mb"),
         source_revision=entry.get("source_revision"),
         image_revision=entry.get("image_revision"),
-        node_id=target_id if not target_is_local else None,
+        node_id=target_id if cron_schedule and not target_is_local else None,   # only a cron job has a node of its own
         maintenance_mode=bool(entry.get("maintenance_mode")),
         update_mode=bool(entry.get("update_mode")),
         downtime_page=json.dumps(entry.get("downtime_page") or {}),

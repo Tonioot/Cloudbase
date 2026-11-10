@@ -21,7 +21,7 @@
   apply(read());
 
   // Nothing remembered about the sidebar may outlive a session: the next person to log in must not see it.
-  if (location.pathname === '/login' || location.pathname === '/login.html') {
+  if (location.pathname === '/login') {
     try { sessionStorage.removeItem('cb-index'); sessionStorage.removeItem('cb-hidden-perms'); } catch (e) {}
   }
 

@@ -73,7 +73,7 @@ class Application(Base):
     auto_deploy_interval = Column(Integer, default=60, nullable=False)  # seconds between checks
     port          = Column(Integer, nullable=True)   # internal port (inside container)
     # No status column: what an app is doing follows from its instances (apps/serializers.py app_status)
-    node_id = Column(Integer, ForeignKey("nodes.id"), nullable=True, index=True)
+    node_id = Column(Integer, ForeignKey("nodes.id"), nullable=True, index=True)   # a cron job: the node it runs on (None = the primary)
     working_dir = Column(String(500), nullable=True)
     last_error = Column(Text, nullable=True)
     env_vars = Column(Text, nullable=True)

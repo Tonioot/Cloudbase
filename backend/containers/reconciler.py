@@ -183,7 +183,7 @@ class Reconciler:
         if running:
             self._cancel_start(instance_id)
 
-        up_to_date = container is not None and (container["spec"] in (None, wanted))   # no label: made before desired state
+        up_to_date = container is not None and container["spec"] == wanted
         if container and container["status"] == "running" and up_to_date:
             self.attempts.pop(instance_id, None)
             self._set(instance_id, "running", container_id=container["id"], spec_hash=wanted)

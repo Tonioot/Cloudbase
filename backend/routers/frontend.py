@@ -77,41 +77,33 @@ def register(app: FastAPI) -> None:
             return FileResponse(os.path.join(FRONTEND_DIR, "cloudbase.png"), media_type="image/png")
 
         @app.get("/login", include_in_schema=False)
-        @app.get("/login.html", include_in_schema=False)
         async def login_page(request: Request):
             return _page(request, "login.html")
 
-        @app.get("/app.html", include_in_schema=False)
         @app.get("/app", include_in_schema=False)
         async def app_page(request: Request):
             return _page(request, "app.html")
 
-        @app.get("/node.html", include_in_schema=False)
         @app.get("/node", include_in_schema=False)
         async def node_page(request: Request):
             return _page(request, "node.html")
 
-        @app.get("/database.html", include_in_schema=False)
         @app.get("/database", include_in_schema=False)
         async def database_page(request: Request):
             return _page(request, "database.html")
 
-        @app.get("/audit.html", include_in_schema=False)
         @app.get("/audit", include_in_schema=False)
         async def audit_page(request: Request):
             return _page(request, "audit.html")
 
-        @app.get("/notifications.html", include_in_schema=False)
         @app.get("/notifications", include_in_schema=False)
         async def notifications_page(request: Request):
             return _page(request, "notifications.html")
 
-        @app.get("/settings.html", include_in_schema=False)
         @app.get("/settings", include_in_schema=False)
         async def settings_page(request: Request):
             return _page(request, "settings.html")
 
-        @app.get("/guides.html", include_in_schema=False)
         @app.get("/guides", include_in_schema=False)
         async def guides_page(request: Request):
             return _page(request, "guides.html")

@@ -83,7 +83,7 @@ started with another spec, remove what is not on the list. It reports what it se
 
 Safety rules: a node removes nothing before it has received the list in this run; a failing start is retried
 with a growing delay and given up after a few attempts until the spec changes; a container Docker is restarting
-by itself is reported, not fought; a container made before desired state is adopted, not recreated.
+by itself is reported, not fought.
 
 What stays a command (`nodes/commands.py`, over the websocket, answered over HTTP): logs, stats, Docker
 cleanup, database operations and cron runs. Commands live in memory (`ask()` waits for the answer); none outlives the

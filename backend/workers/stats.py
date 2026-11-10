@@ -67,15 +67,13 @@ async def collect_local_stats_once(now: float | None = None) -> int:
     instances_by_app: dict[int, list] = {}
     for r in running_instances:
         instances_by_app.setdefault(r.app_id, []).append(r)
-    return await sample_due_apps(apps, instances_by_app, local_node_id, now)
+    return await sample_due_apps(apps, instances_by_app, now)
 
 
-async def sample_due_apps(apps, instances_by_app: dict[int, list], local_node_id, now: float, last_sample: dict | None = None) -> int:
+async def sample_due_apps(apps, instances_by_app: dict[int, list], now: float, last_sample: dict | None = None) -> int:
     """Ask Docker about the running instances of the apps that are due. Returns the number of calls made."""
     last_sample = _last_sample if last_sample is None else last_sample
-    due = [a for a in apps
-           if not (a.node_id and a.node_id != local_node_id)          # apps on other nodes stream their own stats
-           and instances_by_app.get(a.id) and _wants_sample(a.id, now, last_sample)]
+    due = [a for a in apps if instances_by_app.get(a.id) and _wants_sample(a.id, now, last_sample)]   # only this server's instances are in it
     gate = asyncio.Semaphore(STATS_CONCURRENCY)
     calls = 0
 

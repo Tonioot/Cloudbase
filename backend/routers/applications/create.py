@@ -94,7 +94,7 @@ async def deploy_app(
         docker_tmpfs_size_mb=req.docker_tmpfs_size_mb,
         source_revision=req.source_revision,
         image_revision=req.image_revision,
-        node_id=target_node.id if not target_node.is_local else None,
+        node_id=target_node.id if is_cron and not target_node.is_local else None,   # only a cron job has a node of its own
         cron_schedule=" ".join(req.cron_schedule.split()) if is_cron else None,
         cron_timezone=(req.cron_timezone or None) if is_cron else None,
         cron_timeout_seconds=req.cron_timeout_seconds or 3600,

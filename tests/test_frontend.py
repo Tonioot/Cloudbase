@@ -158,3 +158,10 @@ def test_a_session_ends_what_the_sidebar_remembered():
     """The lists and hidden menu items are kept per tab; they must go when someone logs out or in."""
     for name, needle in (("sidebar.js", "removeItem('cb-index')"), ("theme.js", "removeItem('cb-index')")):
         assert needle in (FRONTEND / "js" / name).read_text(encoding="utf-8"), name
+
+
+def test_each_page_has_one_address_and_there_are_no_api_docs(admin):
+    for path in ("/app?id=1", "/node?id=1", "/settings", "/login"):
+        assert admin.get(path).status_code == 200, path
+    for path in ("/app.html", "/settings.html", "/docs", "/redoc", "/openapi.json"):
+        assert admin.get(path).status_code == 404, path

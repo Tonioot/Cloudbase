@@ -21,7 +21,7 @@ applog.install()
 
 _cfg.validate()
 
-app = FastAPI(title="Cloudbase", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Cloudbase", version="1.0.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
 app.add_middleware(_AuthMiddleware)
 # No CORS middleware: the panel is only used from its own origin, so browsers

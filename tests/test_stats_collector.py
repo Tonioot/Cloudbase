@@ -75,7 +75,7 @@ class Round:
 
         async def go():
             _MINE.set(True)
-            return await stats.sample_due_apps(self.apps, self.instances, None, now, self.last)
+            return await stats.sample_due_apps(self.apps, self.instances, now, self.last)
         return _run(go())
 
 
@@ -143,16 +143,11 @@ def test_the_instances_tab_marks_the_app_as_watched(admin):
     assert not pm.is_watched(app_id, now=time.monotonic() + 60)           # and it lapses when the tab is gone
 
 
-def test_apps_on_other_nodes_are_left_to_their_own_node(docker):
-    from workers import stats
+def test_what_runs_here_is_sampled_wherever_else_the_app_runs(docker):
+    """Only this server's instances are handed in; an app with instances elsewhere too is no reason to skip them."""
     app_id = 900005
-    remote = _app(app_id, node_id=77)
-    last = {}
-
-    async def go():
-        _MINE.set(True)
-        return await stats.sample_due_apps([remote], {app_id: _instances(app_id, 2)}, 1, 1000.0, last)
-    assert _run(go()) == 0 and docker.asked_for(app_id) == []
+    assert Round([(_app(app_id, node_id=77), _instances(app_id, 2))]).at(1000.0) == 2
+    assert len(docker.asked_for(app_id)) == 2
 
 
 def test_an_app_without_running_instances_here_is_not_asked_about(docker):
@@ -174,7 +169,7 @@ def test_apps_that_stopped_running_here_are_forgotten():
     last = {900008: 1.0, 900009: 2.0}
 
     async def go():
-        return await stats.sample_due_apps([], {900009: []}, None, 1000.0, last)
+        return await stats.sample_due_apps([], {900009: []}, 1000.0, last)
     _run(go())
     assert last == {900009: 2.0}
 
