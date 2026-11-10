@@ -1,18 +1,8 @@
-"""Database connections across nodes. Runs on the primary and on every node.
+"""Database connections: what an app container gets as its database URL, and public access on the primary.
 
-An app instance on the database's own node connects straight to the database
-container over the `cloudbase` Docker network. An instance on any other node
-connects to a small TCP proxy on its own node instead:
-
-    app container ─► <gateway of the cloudbase network>:<proxy port>   (this module)
-        ─► upstream connector:
-             on a node:    one binary WebSocket to the primary per connection
-             on primary:   the database container directly, or a dial to its node
-
-The primary decides which proxies each node runs and pushes that list over the
-agent's database control channel; this module only opens and closes listeners.
-Every connection gets its own WebSocket, so there is no multiplexing protocol and
-the bytes travel as binary frames.
+An app on the database's own node connects to the container over the `cloudbase` Docker network. An app on any
+other node connects to <database node's address on the node network>:<published port>: the database publishes its
+port on that address only (dbs/docker.py), like instances do, so it is reachable from the nodes and nowhere else.
 """
 
 import asyncio
@@ -31,15 +21,12 @@ logging.getLogger("asyncio").addFilter(lambda record: "eof_received" not in reco
 
 CHUNK = 65536
 
-_loop: Optional[asyncio.AbstractEventLoop] = None
-_connector: Optional[Callable[[int], Awaitable["Stream"]]] = None
+_connector: Optional[Callable[[int], Awaitable["Stream"]]] = None   # the primary: a stream to a database, wherever it runs
 _local_node_id: Optional[int] = None
-_listeners: dict[int, asyncio.base_events.Server] = {}
 _listener_lock = asyncio.Lock()
 # Public access (primary only): database id → server, and its allowed networks.
 _public: dict[int, asyncio.base_events.Server] = {}
 _public_allow: dict[int, list] = {}
-_gateway_ip: Optional[str] = None
 
 
 # ── Byte streams ──────────────────────────────────────────────────────────────
@@ -74,58 +61,6 @@ class TcpStream(Stream):
             pass
 
 
-class ClientWebSocketStream(Stream):
-    """A `websockets` client connection (used by node agents)."""
-
-    def __init__(self, ws):
-        self.ws = ws
-
-    async def recv(self) -> Optional[bytes]:
-        try:
-            data = await self.ws.recv()
-        except Exception:
-            return None
-        return data if isinstance(data, bytes) else data.encode()
-
-    async def send(self, data: bytes) -> None:
-        await self.ws.send(data)
-
-    async def close(self) -> None:
-        try:
-            await self.ws.close()
-        except Exception:
-            pass
-
-
-class ServerWebSocketStream(Stream):
-    """A Starlette WebSocket (used by the primary). `closed` is set when it ends,
-    so the endpoint handler can return at the right moment."""
-
-    def __init__(self, ws):
-        self.ws = ws
-        self.closed = asyncio.Event()
-
-    async def recv(self) -> Optional[bytes]:
-        try:
-            msg = await self.ws.receive()
-        except Exception:
-            return None
-        if msg.get("type") == "websocket.disconnect":
-            return None
-        return msg.get("bytes") or (msg.get("text") or "").encode() or b""
-
-    async def send(self, data: bytes) -> None:
-        await self.ws.send_bytes(data)
-
-    async def close(self) -> None:
-        if not self.closed.is_set():
-            try:
-                await self.ws.close()
-            except Exception:
-                pass
-        self.closed.set()
-
-
 async def pipe(a: Stream, b: Stream) -> None:
     """Copy bytes both ways until either side ends, then close both."""
     async def copy(src: Stream, dst: Stream) -> None:
@@ -151,13 +86,10 @@ async def pipe(a: Stream, b: Stream) -> None:
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-def configure(loop: asyncio.AbstractEventLoop, connector: Callable[[int], Awaitable[Stream]],
-              local_node_id: Optional[int] = None) -> None:
-    """Called once per process: by the node agent, or by the primary's monitor."""
-    global _loop, _connector
-    _loop, _connector = loop, connector
-    if local_node_id is not None:
-        set_local_node_id(local_node_id)
+def configure(connector: Callable[[int], Awaitable[Stream]]) -> None:
+    """Called once by the primary's database monitor."""
+    global _connector
+    _connector = connector
 
 
 def set_local_node_id(node_id: Optional[int]) -> None:
@@ -175,46 +107,6 @@ def local_node_id() -> Optional[int]:
         return None
 
 
-def proxy_port(database_id: int) -> int:
-    port = _cfg.get_port("db_proxy_min") + int(database_id)
-    if port > _cfg.get_port("db_proxy_max"):
-        raise RuntimeError(f"Database id {database_id} is outside the db_proxy port range in config.yaml")
-    return port
-
-
-def gateway_ip() -> str:
-    """Address of this host on the cloudbase network: reachable by containers, not from outside."""
-    global _gateway_ip
-    if _gateway_ip:
-        return _gateway_ip
-    from dbs import docker as dbs_docker
-    from containers import client as containers_client
-    containers_client.ensure_network(dbs_docker.NETWORK)
-    net = containers_client._get_client().networks.get(dbs_docker.NETWORK)
-    _gateway_ip = net.attrs["IPAM"]["Config"][0]["Gateway"]
-    return _gateway_ip
-
-
-# ── Listeners ─────────────────────────────────────────────────────────────────
-
-WARN_EVERY_SECONDS = 30
-_last_warned: dict[int, float] = {}
-_not_logged: dict[int, int] = {}
-
-
-def _warn_upstream_failed(database_id: int, error: Exception) -> None:
-    """While the primary is away every client that connects fails: say so once in a while, not for each of them."""
-    import time
-    now = time.monotonic()
-    if now - _last_warned.get(database_id, -WARN_EVERY_SECONDS) < WARN_EVERY_SECONDS:
-        _not_logged[database_id] = _not_logged.get(database_id, 0) + 1
-        return
-    more = _not_logged.pop(database_id, 0)
-    _last_warned[database_id] = now
-    log.warning("[db-proxy] database %s: upstream connection failed: %s%s", database_id, error,
-                f" ({more} more connections failed in the last {WARN_EVERY_SECONDS}s)" if more else "")
-
-
 async def _serve(database_id: int, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     client = TcpStream(reader, writer)
     if _connector is None:
@@ -223,41 +115,10 @@ async def _serve(database_id: int, reader: asyncio.StreamReader, writer: asyncio
     try:
         upstream = await _connector(database_id)
     except Exception as e:
-        _warn_upstream_failed(database_id, e)
+        log.warning("[db-public] database %s: cannot reach it: %s", database_id, e)
         await client.close()
         return
     await pipe(client, upstream)
-
-
-async def _open_listener(database_id: int) -> None:
-    if database_id in _listeners:
-        return
-    host = await asyncio.to_thread(gateway_ip)
-    port = proxy_port(database_id)
-    server = await asyncio.start_server(lambda r, w: _serve(database_id, r, w), host, port)
-    _listeners[database_id] = server
-    log.info("[db-proxy] database %s: listening on %s:%s", database_id, host, port)
-
-
-async def reconcile(database_ids: list[int]) -> None:
-    """Run exactly the proxies in `database_ids` on this server."""
-    wanted = {int(i) for i in database_ids}
-    async with _listener_lock:
-        for db_id in list(_listeners):
-            if db_id not in wanted:
-                server = _listeners.pop(db_id)
-                server.close()
-                log.info("[db-proxy] database %s: listener closed", db_id)
-        for db_id in wanted:
-            try:
-                await _open_listener(db_id)
-            except Exception as e:
-                log.warning("[db-proxy] database %s: cannot listen: %s", db_id, e)
-
-
-async def _ensure(database_id: int) -> None:
-    async with _listener_lock:
-        await _open_listener(database_id)
 
 
 def _container_here(database_id: int) -> bool:
@@ -472,26 +333,13 @@ def public_listening(database_id: int) -> bool:
     return database_id in _public
 
 
-def resolve_links(linked: list[dict]) -> tuple[dict, dict]:
-    """For a container about to start here: env vars and /etc/hosts entries for its
-    linked databases. Called from a worker thread (docker_manager)."""
+def resolve_links(linked: list[dict]) -> dict:
+    """For a container about to start here: the env vars of its linked databases. Called from a worker thread."""
     me = local_node_id()
     env: dict[str, str] = {}
-    hosts: dict[str, str] = {}
     for link in linked:
         # Node id unknown (e.g. right after the primary starts): the database is
         # local exactly when its container exists on this host.
         local = link["node_id"] == me if me is not None else _container_here(int(link["database_id"]))
-        if local:
-            env[link["env_var"]] = link["direct_url"]
-            continue
-        env[link["env_var"]] = link["proxy_url"]
-        hosts[link["host"]] = gateway_ip()
-        # Make sure the proxy is up before the app tries to connect; the primary's
-        # periodic push would otherwise add it within half a minute.
-        if _loop is not None and _loop.is_running():
-            try:
-                asyncio.run_coroutine_threadsafe(_ensure(int(link["database_id"])), _loop).result(timeout=10)
-            except Exception as e:
-                log.warning("[db-proxy] database %s: listener not ready: %s", link["database_id"], e)
-    return env, hosts
+        env[link["env_var"]] = link["direct_url"] if local or not link.get("remote_url") else link["remote_url"]
+    return env

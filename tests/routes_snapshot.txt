@@ -160,9 +160,6 @@ PUT     /api/roles/{role_id}
 PUT     /api/system/backup-storage
 PUT     /api/users/{user_id}
 WS    /api/nodes/ws/agent
-WS    /api/nodes/ws/db-control
-WS    /api/nodes/ws/db-dial/{token}
-WS    /api/nodes/ws/db-proxy/{database_id}
 WS    /api/nodes/{node_id}/events
 WS    /ws/apps/{app_id}/cloudbase-logs
 WS    /ws/apps/{app_id}/instances/{instance_id}/logs

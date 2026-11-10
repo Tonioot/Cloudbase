@@ -86,9 +86,16 @@ with a growing delay and given up after a few attempts until the spec changes; a
 by itself is reported, not fought.
 
 What a node sends by itself, unasked (`agent/report.py`, stored by `nodes/reports.py`): the stats of its instances
-every 5 s and the state and usage of its databases every 30 s. The primary samples its own instances at the same pace
+every 5 s (with what its databases are doing before their container exists, such as an image pull) and the state and usage of its databases every 30 s. The primary samples its own instances at the same pace
 (`workers/stats.py`), whether anybody looks or not. The stats collector and the database monitor read that instead of asking. Every machine also
 cleans its own Docker disk (`containers/cleanup.py` `cleanup_forever`).
+
+Databases across nodes use the node network, like instances do: a database publishes its port only on its node's
+node-network address (`dbs/docker.publish_address`; the primary's is the hub address), and an app on another node gets
+`<that address>:<published port>` as its URL (`dbs/links.py`, `dbs/proxy.resolve_links`). The hub forwards between
+nodes (`scripts/cloudbase-wireguard`), so a node reaches another node's database through it. The primary's public
+database ports (`dbs/proxy.py`, TLS and allowlist) connect the same way (`dbs/relay.open_db_stream`). A container that
+publishes on another address than the node's current one is replaced on its next start; the data volume stays.
 
 What stays a command (`nodes/commands.py`, over the websocket, answered over HTTP): one-off things only — logs,
 database operations and backups, cron runs, update checks and a Docker cleanup somebody starts by hand. Commands live in memory (`ask()` waits for the answer); none outlives the

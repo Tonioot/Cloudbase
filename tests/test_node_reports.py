@@ -61,7 +61,7 @@ def test_a_failing_part_does_not_stop_the_other(node_side, monkeypatch):
     monkeypatch.setattr(report.containers_instances, "list_instance_containers", broken)
     messages = []
     _run(report.report_once(0, _send_into(messages)))
-    assert [m["type"] for m in messages] == ["database_report"]
+    assert [m["type"] for m in messages] == ["database_progress", "database_report"]
 
 
 # ── the primary's side ───────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ def world(client):
         def node(self, name):
             async def go():
                 async with AsyncSessionLocal() as db:
-                    row = Node(name=name, status="online", auth_token=f"token-{name}", is_local=False, enabled=True, agent_version="4.0.0")
+                    row = Node(name=name, status="online", auth_token=f"token-{name}", is_local=False, enabled=True, agent_version="5.0.0")
                     db.add(row)
                     await db.commit()
                     return row.id

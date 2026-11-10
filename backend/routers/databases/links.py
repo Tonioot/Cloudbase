@@ -9,7 +9,7 @@ from core.env_crypto import decrypt_env
 from core.models import DatabaseLink, Application
 from dbs.ops import _get_or_404
 from dbs.provision import ENV_VAR_RE
-from dbs.relay import push_proxies
+from dbs.relay import sync_public_access
 from routers.databases.schemas import LinkRequest
 
 router = APIRouter(prefix="/api/databases", tags=["databases"])
@@ -46,7 +46,7 @@ async def create_link(
     })
     await db.commit()
     await db_links.refresh(db)
-    await push_proxies()
+    await sync_public_access()
     return {"ok": True, "id": link.id, "env_var_name": env_var, "restart_required": True}
 
 
@@ -67,5 +67,5 @@ async def delete_link(
     })
     await db.commit()
     await db_links.refresh(db)
-    await push_proxies()
+    await sync_public_access()
     return {"ok": True, "restart_required": True}

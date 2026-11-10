@@ -12,7 +12,7 @@ from core.models import DatabaseStatsHistory, Database, Node
 from fastapi import HTTPException
 from dbs.ops import _node_reachable, _run_on_node, _set_status, _spawn, _start_operation, _state_to_status
 from dbs.provision import _data_dir
-from dbs.relay import open_db_stream, push_proxies
+from dbs.relay import open_db_stream, sync_public_access
 from dbs.state import HEAL_BACKOFF_SECONDS, MONITOR_INTERVAL_SECONDS, _busy, _last_heal, _released_at, _update_info, claim
 from nodes import reports as node_reports
 
@@ -106,12 +106,12 @@ async def database_monitor() -> None:
     """Keep database statuses in sync with Docker on every node (primary only)."""
     async with AsyncSessionLocal() as db:
         await db_links.refresh(db)
-    db_proxy.configure(asyncio.get_running_loop(), open_db_stream)
+    db_proxy.configure(open_db_stream)
     await asyncio.sleep(10)
     while True:
         try:
             await _monitor_tick()
-            await push_proxies()
+            await sync_public_access()
         except asyncio.CancelledError:
             return
         except Exception as e:

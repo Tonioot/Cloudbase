@@ -5,7 +5,6 @@ import asyncio
 from typing import Optional
 import httpx
 import websockets
-from agent.db_control import _db_control_loop
 from agent.dispatch import _active_streams, _execute_command, _execute_in_background
 from agent import alive, mesh as agent_mesh, report as agent_report
 from containers.cleanup import cleanup_forever
@@ -134,16 +133,12 @@ async def start_agent(main_url=None, invite_code=None, node_name=None, public_ho
         _agent_log(f"[agent] Already registered as '{state.node_name}' (id={state.node_id}), skipping re-registration")
         return
     
-    db_control = asyncio.create_task(_db_control_loop(state))
-    try:
-        async with httpx.AsyncClient() as client:
-            reconciler = Reconciler(client, state)
-            background = [asyncio.create_task(agent_mesh.join_forever(client, state)), asyncio.create_task(reconciler.run()),
-                          asyncio.create_task(cleanup_forever())]
-            try:
-                await _run_websocket_loop(client, state, reconciler)
-            finally:
-                for task in background:
-                    task.cancel()
-    finally:
-        db_control.cancel()
+    async with httpx.AsyncClient() as client:
+        reconciler = Reconciler(client, state)
+        background = [asyncio.create_task(agent_mesh.join_forever(client, state)), asyncio.create_task(reconciler.run()),
+                      asyncio.create_task(cleanup_forever())]
+        try:
+            await _run_websocket_loop(client, state, reconciler)
+        finally:
+            for task in background:
+                task.cancel()

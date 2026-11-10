@@ -64,14 +64,12 @@ def _host_port(external_port: int, docker_options: dict):
 
 def _apply_linked_databases(run_kwargs: dict, docker_options: dict) -> None:
     """Attach the container to the database network and add the URLs of linked
-    databases: direct on the database's node, through a local proxy elsewhere.
+    databases: direct on the database's node, over the node network elsewhere.
     The app's own env vars win when a name is set in both places."""
     linked = docker_options.get("linked_databases") or []
     if linked:
-        linked_env, hosts = db_proxy.resolve_links(linked)
+        linked_env = db_proxy.resolve_links(linked)
         run_kwargs["environment"] = {**linked_env, **(run_kwargs.get("environment") or {})}
-        if hosts:
-            run_kwargs["extra_hosts"] = hosts
     network = docker_options.get("network")
     if network:
         ensure_network(network)

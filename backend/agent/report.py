@@ -1,5 +1,5 @@
 """What a node tells the primary on its own, without being asked: the stats of its instances and the state (and
-stats) of its databases. Sent over the agent's websocket; the primary only stores it (nodes/reports.py).
+stats) of its databases, and what a database is doing before its container exists (an image pull takes minutes). Sent over the agent's websocket; the primary only stores it (nodes/reports.py).
 
 Instances every TICK_SECONDS; databases every DB_EVERY-th tick, with their usage every DB_STATS_EVERY-th of those
 and the size of their data now and then (du is slow).
@@ -9,7 +9,7 @@ import time
 from typing import Awaitable, Callable
 
 from containers import instances as containers_instances, stats_logs as containers_stats_logs
-from dbs import lifecycle as dbs_lifecycle
+from dbs import docker as dbs_docker, lifecycle as dbs_lifecycle
 from agent.log import _agent_log
 
 TICK_SECONDS = 5
@@ -30,6 +30,7 @@ async def instance_stats() -> dict[str, dict]:
 async def report_once(tick: int, send: Callable[[dict], Awaitable[None]]) -> None:
     """One round: the instances, and the databases when it is their turn."""
     try:
+        await send({"type": "database_progress", "progress": {str(k): v for k, v in dbs_docker.all_progress().items()}})
         await send({"type": "instance_stats", "stats": await instance_stats()})
     except Exception as e:
         _agent_log(f"[report] instance stats: {type(e).__name__}: {e}")

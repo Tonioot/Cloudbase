@@ -46,7 +46,7 @@ def nudge(node_id: int) -> None:
 
 
 # The oldest agent this panel works with: 4.0 sends its stats by itself, the panel no longer asks for them
-MIN_AGENT_MAJOR = 4
+MIN_AGENT_MAJOR = 5
 
 
 def agent_too_old(node: Node | None) -> bool:

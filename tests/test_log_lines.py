@@ -27,7 +27,7 @@ def make(client):
     def node(name):
         async def go():
             async with AsyncSessionLocal() as db:
-                row = Node(name=name, status="online", auth_token=f"token-{name}", is_local=False, enabled=True, agent_version="4.0.0", wg_state="up")
+                row = Node(name=name, status="online", auth_token=f"token-{name}", is_local=False, enabled=True, agent_version="5.0.0", wg_state="up")
                 db.add(row)
                 await db.commit()
                 return row.id

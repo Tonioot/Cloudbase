@@ -16,7 +16,7 @@ from core.database import get_db
 from core.models import DatabaseStatsHistory, DatabaseLink, Database, Node
 from dbs.ops import _get_or_404, _links_for, _node_for, _node_reachable, _run_on_node, _spawn, _start_operation
 from dbs.provision import _data_dir, _validate_limits
-from dbs.relay import _public_host, push_proxies
+from dbs.relay import _public_host, sync_public_access
 from dbs.state import _busy, _operation, claim, release
 from dbs.view import _as_dict, _client_ip, _safe_public_port
 from routers.databases.schemas import CreateDatabaseRequest, PublicAccessRequest, UpdateDatabaseRequest
@@ -181,7 +181,7 @@ async def delete_database(
     })
     await db.commit()
     await db_links.refresh(db)
-    await push_proxies()
+    await sync_public_access()
     return {"ok": True}
 
 
@@ -241,7 +241,7 @@ async def set_public_access(
         "tls": bool(database.public_tls),
     })
     await db.commit()
-    await push_proxies()
+    await sync_public_access()
     node = await db.get(Node, database.node_id)
     links = await _links_for(database.id, db)
     return {**_as_dict(database, node, len(links)), "links": links}

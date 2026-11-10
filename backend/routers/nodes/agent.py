@@ -2,6 +2,7 @@ import json
 import asyncio
 import logging
 import secrets
+from dbs import state as db_state
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Header, WebSocket, WebSocketDisconnect, Depends
 from sqlalchemy import select, func
@@ -265,6 +266,8 @@ async def agent_ws(websocket: WebSocket):
                         })
                     elif msg_type == "instance_stats":
                         await node_reports.store_instance_stats(node_id, incoming.get("stats") or {})
+                    elif msg_type == "database_progress":
+                        db_state._remote_progress[node_id] = {str(k): str(v) for k, v in (incoming.get("progress") or {}).items()}
                     elif msg_type == "database_report":
                         node_reports.store_databases(node_id, incoming.get("databases") or {})
                     elif msg_type == "stream_data":

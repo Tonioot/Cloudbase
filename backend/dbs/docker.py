@@ -3,6 +3,8 @@ import threading
 from typing import Optional
 from dbs import engines as db_engines
 from containers import client as containers_client
+from core import config as _cfg
+from agent import state as agent_state
 
 log = logging.getLogger("cloudbase.databases")
 
@@ -140,6 +142,32 @@ def _pull(client, ref: str, database_id: int) -> None:
     log.info("[db] Pulled %s", ref)
 
 
+def published_port(database_id: int) -> int:
+    """The port a database publishes on its node's address on the node network."""
+    port = _cfg.get_port("db_proxy_min") + int(database_id)
+    if port > _cfg.get_port("db_proxy_max"):
+        raise RuntimeError(f"Database id {database_id} is outside the db_proxy port range in config.yaml")
+    return port
+
+
+def publish_address() -> Optional[str]:
+    """This machine's address on the node network, where its databases publish their port: reachable by the other
+    nodes and nowhere else. None while there is none (no node network); apps on other nodes cannot connect then."""
+    state = agent_state._load_state()
+    if state is not None:
+        return state.wg_ip or None
+    from mesh import hub, addressing
+    return addressing.hub_ip(_cfg.get_wireguard()["subnet"]) if hub._hub["up"] else None
+
+
+def published_binding(container) -> Optional[tuple[str, int]]:
+    """(address, port) the container publishes its database port on, or None."""
+    for bindings in ((container.attrs.get("HostConfig") or {}).get("PortBindings") or {}).values():
+        for b in bindings or []:
+            return b.get("HostIp") or "", int(b.get("HostPort") or 0)
+    return None
+
+
 def _run_container(client, spec: dict):
     engine = db_engines.get_engine(spec["engine"])
     version = spec["version"]
@@ -159,7 +187,6 @@ def _run_container(client, spec: dict):
         "environment": engine.container_env(creds),
         "volumes": {volume_name(db_id): {"bind": engine.data_dir(version), "mode": "rw"}},
         "network": NETWORK,
-        # No published ports: apps reach the database over the cloudbase network.
         "restart_policy": {"Name": "unless-stopped"},
         "stop_signal": "SIGTERM",
         "healthcheck": {
@@ -181,6 +208,9 @@ def _run_container(client, spec: dict):
             "cloudbase.version": version,
         },
     }
+    address = publish_address()
+    if address:      # apps on other nodes (and the primary's public access) connect here; see dbs/proxy.py
+        run_kwargs["ports"] = {f"{engine.port}/tcp": (address, published_port(db_id))}
     command = engine.command(creds, mem_mb)
     if command:
         run_kwargs["command"] = command

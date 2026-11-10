@@ -3,7 +3,7 @@ import re
 from typing import Optional
 from dbs import engines as db_engines
 from containers import stats_logs as containers_stats_logs
-from dbs.docker import NETWORK, STOP_TIMEOUT_SECONDS, VolumeConflictError, VolumeMissingError, _client, _container_state, _get_container, _progress, _run_container, _volume_exists, container_name, volume_name
+from dbs.docker import NETWORK, STOP_TIMEOUT_SECONDS, VolumeConflictError, VolumeMissingError, _client, _container_state, _get_container, _progress, _run_container, publish_address, published_binding, published_port, _volume_exists, container_name, volume_name
 
 log = logging.getLogger("cloudbase.databases")
 
@@ -18,6 +18,10 @@ def ensure_running(spec: dict) -> dict:
     db_id = int(spec["database_id"])
 
     container = _get_container(client, db_id)
+    if container is not None and _publishes_elsewhere(container, db_id):
+        log.info("[db] %s publishes on another address than this node's; replacing it (the data stays)", container_name(db_id))
+        container.remove(force=True, v=True)
+        container = None
     if container is not None:
         if _container_state(container) == "stopped":
             container.start()
@@ -52,6 +56,13 @@ def ensure_running(spec: dict) -> dict:
         _progress.pop(db_id, None)
     log.info("[db] Started %s (%s %s)", container_name(db_id), spec["engine"], spec["version"])
     return {"container_id": container.id, "state": _container_state(container)}
+
+
+def _publishes_elsewhere(container, database_id: int) -> bool:
+    """Made before this node had its address on the node network, or for another one. Without an address now
+    (the network is not up yet) the container is left as it is."""
+    address = publish_address()
+    return bool(address) and published_binding(container) != (address, published_port(database_id))
 
 
 def recreate(spec: dict) -> dict:

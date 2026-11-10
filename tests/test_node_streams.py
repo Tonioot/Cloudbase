@@ -122,24 +122,3 @@ def test_empty_stats_while_a_container_starts_are_not_a_warning(monkeypatch, cap
     with caplog.at_level(logging.WARNING, logger="cloudbase.docker"):
         assert stats_logs.get_container_stats_by_name("cloudbase-app-1-instance-85") == {}
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
-
-
-def test_a_primary_that_is_away_gives_one_warning_not_one_per_connection(monkeypatch, caplog):
-    import logging
-    from dbs import proxy
-    clock = {"now": 1000.0}
-    import time
-    monkeypatch.setattr(time, "monotonic", lambda: clock["now"])
-    monkeypatch.setattr(proxy, "_last_warned", {})
-    monkeypatch.setattr(proxy, "_not_logged", {})
-    with caplog.at_level(logging.WARNING, logger="cloudbase.db-proxy"):
-        for _ in range(40):
-            proxy._warn_upstream_failed(8, RuntimeError("HTTP 503"))
-            clock["now"] += 0.6
-        first = [r.getMessage() for r in caplog.records]
-        assert len(first) == 1 and "HTTP 503" in first[0]
-        clock["now"] += proxy.WARN_EVERY_SECONDS
-        proxy._warn_upstream_failed(8, RuntimeError("HTTP 503"))
-        assert "more connections failed" in caplog.records[-1].getMessage()
-        proxy._warn_upstream_failed(9, RuntimeError("HTTP 503"))            # another database has its own
-        assert len(caplog.records) == 3

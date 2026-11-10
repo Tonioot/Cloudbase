@@ -14,7 +14,8 @@ while Cloudbase itself does not run as root. So the rule here is: the caller is 
 Commands (all print JSON or a public key on stdout; errors go to stderr with exit status 1):
 
   keygen                                   make a key pair if there is none, print the public key
-  hub <address/prefix> <port>              be the hub: listen on <port>, own <address> (10.77.0.1/16)
+  hub <address/prefix> <port>              be the hub: listen on <port>, own <address> (10.77.0.1/16),
+                                           and forward between nodes
   node <address/32> <hub-key> <host:port> <allowed/cidr>
                                            be a spoke: connect to the hub, own <address>
   peers                                    hub only: JSON list [{"public_key", "ip"}] on stdin
@@ -231,6 +232,17 @@ def apply(state: dict, previous: dict | None = None) -> None:
     run(["wg-quick", "up", conf])
 
 
+def forward_between_nodes() -> None:
+    """Hub only: let nodes reach each other through the hub (an app on one node, its database on another).
+    Only traffic that comes in on the node network and goes out on it again; nothing else is forwarded."""
+    run(["sysctl", "-q", "-w", "net.ipv4.ip_forward=1"])
+    rule = ["FORWARD", "-i", IFACE, "-o", IFACE, "-j", "ACCEPT"]
+    try:
+        run(["iptables", "-C", *rule])
+    except HelperError:
+        run(["iptables", "-I", *rule])          # first, before Docker's chains drop it
+
+
 # ── commands ───────────────────────────────────────────────────────────────────
 def cmd_keygen(_args) -> str:
     return keygen()
@@ -244,6 +256,7 @@ def cmd_hub(args) -> str:
     previous = load_state()
     peers = previous.get("peers", []) if previous.get("role") == "hub" else []
     apply({"role": "hub", "address": address, "listen_port": port, "peers": peers}, previous)
+    forward_between_nodes()
     return json.dumps({"public_key": public_key()})
 
 
@@ -315,6 +328,8 @@ def cmd_boot(_args) -> str:
     if not state or interface_exists():
         return json.dumps({"up": interface_exists()})
     run(["wg-quick", "up", _path(f"{IFACE}.conf")])
+    if state.get("role") == "hub":
+        forward_between_nodes()
     return json.dumps({"up": True})
 
 

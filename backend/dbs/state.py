@@ -1,9 +1,7 @@
-import asyncio
 import contextlib
 import time
 
 from fastapi import HTTPException
-from fastapi import WebSocket
 
 # Pulling an image on a slow node can take minutes.
 PROVISION_TIMEOUT_SECONDS = 900
@@ -18,7 +16,7 @@ MONITOR_INTERVAL_SECONDS = 30
 HEAL_BACKOFF_SECONDS = 120
 
 
-DIAL_TIMEOUT_SECONDS = 10
+
 
 
 # Databases with an operation in flight; the monitor leaves them alone. One operation at a time per database:
@@ -63,11 +61,8 @@ _update_info: dict[int, dict] = {}
 _last_heal: dict[int, float] = {}
 
 
-# Cross-node connections: control channel per node, dials waiting for their node.
-_control: dict[int, tuple[WebSocket, asyncio.Lock]] = {}
 
 
-_pending_dials: dict[str, tuple[asyncio.Future, int]] = {}
 
 
 _remote_progress: dict[int, dict[str, str]] = {}  # node id -> {database id: progress}

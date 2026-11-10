@@ -2,6 +2,7 @@
   "upward_imports": [],
   "function_level_imports": {
     "core.database": 1,
-    "dbs.proxy": 4
+    "dbs.docker": 1,
+    "dbs.proxy": 2
   }
 }

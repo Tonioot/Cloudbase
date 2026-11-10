@@ -28,7 +28,7 @@ from dbs import links as db_links
 from dbs.backups import SCHEDULES, _path, _restore
 from dbs.create import create_database_now
 from dbs.provision import ENV_VAR_RE
-from dbs.relay import push_proxies
+from dbs.relay import sync_public_access
 from transfer import archive
 
 log = logging.getLogger("cloudbase.transfer")
@@ -84,7 +84,7 @@ async def import_databases(
         linked_any = linked_any or result.links > 0
     if linked_any:
         await db_links.refresh(db)
-        await push_proxies()
+        await sync_public_access()
     return imported, skipped
 
 
