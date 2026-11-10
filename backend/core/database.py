@@ -27,6 +27,13 @@ def _set_sqlite_pragmas(conn, _):
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
+# Instances from before the primary was a node row of its own belong to it
+REPLICAS_WITHOUT_NODE_SQL = (
+    "UPDATE application_replicas SET node_id = (SELECT id FROM nodes WHERE is_local = 1 LIMIT 1) "
+    "WHERE node_id IS NULL AND EXISTS (SELECT 1 FROM nodes WHERE is_local = 1)"
+)
+
+
 class Base(DeclarativeBase):
     pass
 
@@ -215,6 +222,7 @@ async def init_db():
             await conn.exec_driver_sql(
                 f"ALTER TABLE application_replicas ADD COLUMN {col} {definition}"
             )
+        await conn.exec_driver_sql(REPLICAS_WITHOUT_NODE_SQL)
         # Instances on other nodes written before nodes were driven by desired state: what they were doing
         # is what they should keep doing (nodes/desired.py writes their spec the first time a node asks)
         await conn.exec_driver_sql(

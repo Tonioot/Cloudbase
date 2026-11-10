@@ -79,7 +79,7 @@ async def _give_up(replica_id: int, reason: str) -> None:
         replica = await db.get(ApplicationReplica, replica_id)
         if replica is None or replica.status != "starting":
             return
-        node = await db.get(Node, replica.node_id) if replica.node_id else None
+        node = await db.get(Node, replica.node_id)
         # With the link down the node may simply be unreachable for a while: recovery retries later
         link_is_down = node is not None and not node.is_local and node.wg_state != "up"
         replica.status = "node_offline" if link_is_down else "error"

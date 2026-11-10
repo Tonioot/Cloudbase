@@ -8,7 +8,7 @@ from core.audit import log_audit
 from core import auth as _auth
 from apps.lifecycle import restart_app_now, start_app_now
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
-from apps.runtime import _load_app_replicas, _load_node_map, _resolve_replica_node, _stop_replica_runtime
+from apps.runtime import _load_app_replicas, _load_node_map, _stop_replica_runtime
 from apps.serializers import _get_or_404, app_status
 from apps.state import locked
 
@@ -41,7 +41,7 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict 
     for replica in replicas:
         if replica.status not in ("running", "starting", "restarting", "stopping", "node_offline"):
             continue
-        replica_node = _resolve_replica_node(replica, node_map, local_node)
+        replica_node = node_map.get(replica.node_id)
         await _stop_replica_runtime(app, replica, replica_node, db)
 
     if _has_public_nginx_domain(app):

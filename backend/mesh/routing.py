@@ -57,7 +57,7 @@ async def wait_reachable(replica_id: int, timeout: float) -> str:
     while True:
         async with AsyncSessionLocal() as db:
             replica = await db.get(ApplicationReplica, replica_id)
-            node = await db.get(Node, replica.node_id) if replica and replica.node_id else None
+            node = await db.get(Node, replica.node_id) if replica else None
         if replica is None:
             raise Unreachable("instance was removed")
         if replica.status == "error":

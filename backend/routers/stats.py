@@ -37,17 +37,16 @@ async def stream_stats(app_id: int, websocket: WebSocket):
         )
         replicas = rep_result.scalars().all()
 
-        # Unique node IDs; None / local node are treated as local
-        remote_node_ids = {r.node_id for r in replicas if r.node_id}
+        # The primary's own instances are keyed None, those on other nodes by their node id
+        remote_node_ids = {r.node_id for r in replicas if r.node_id != local_node.id}
         nodes_result = await db.execute(select(Node).where(Node.id.in_(remote_node_ids)))
-        all_nodes: dict[int, Node] = {n.id: n for n in nodes_result.scalars().all()}
-        remote_nodes = [n for n in all_nodes.values() if not n.is_local]
-        has_local = any(r.node_id is None or all_nodes.get(r.node_id, local_node).is_local for r in replicas)
+        remote_nodes = list(nodes_result.scalars().all())
+        has_local = any(r.node_id == local_node.id for r in replicas)
 
         # Map node_id → list of replica IDs (for feeding per-replica stats on remote frames)
         replicas_per_node: dict[int | None, list[int]] = {}
         for r in replicas:
-            key = r.node_id if r.node_id and not all_nodes.get(r.node_id, local_node).is_local else None
+            key = None if r.node_id == local_node.id else r.node_id
             replicas_per_node.setdefault(key, []).append(r.id)
 
     app_id_val = app.id

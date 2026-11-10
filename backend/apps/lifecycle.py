@@ -12,7 +12,6 @@ from apps.runtime import (
     _has_live_replicas,
     _load_app_replicas,
     _load_node_map,
-    _resolve_replica_node,
     _start_replica_runtime,
 )
 from apps.serializers import _get_or_404, app_status
@@ -58,7 +57,7 @@ async def restart_locked(app_id: int, db: AsyncSession, actor: str):
     source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
     for replica in replicas:
         # A new spec makes the node recreate the container: that is the restart
-        await _start_replica_runtime(app, replica, _resolve_replica_node(replica, node_map, local_node),
+        await _start_replica_runtime(app, replica, node_map.get(replica.node_id),
                                      env_vars, db, source_revision)
 
     if _has_public_nginx_domain(app) and not show_restart_page:
@@ -110,7 +109,7 @@ async def start_app_now(app_id: int, db: AsyncSession, actor: str):
             continue
         if replica.status not in ("stopped", "error", "pending", "node_offline"):
             continue
-        replica_node = _resolve_replica_node(replica, node_map, local_node)
+        replica_node = node_map.get(replica.node_id)
         await _start_replica_runtime(app, replica, replica_node, env_vars, db, source_revision)
 
     if _has_public_nginx_domain(app) and not show_start_page:

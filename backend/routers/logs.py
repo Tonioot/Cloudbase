@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import secrets
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException, Query
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Query
 
 from core import auth
 from core.database import AsyncSessionLocal, get_db
@@ -15,6 +15,8 @@ from containers import client as containers_client
 from nodes.registry import ensure_local_node
 from nodes.commands import queue_node_command, wait_for_node_command
 from nodes.state import subscribe_node_stream, unsubscribe_node_stream, _node_ws_connections
+from apps.runtime import _get_app_node
+from apps.serializers import _get_or_404
 
 from core import system_logs
 
@@ -201,9 +203,7 @@ async def stream_replica_logs(app_id: int, replica_id: int, websocket: WebSocket
             await websocket.send_text("Instance not found\n")
             await websocket.close()
             return
-        node = None
-        if replica.node_id:
-            node = (await db.execute(select(Node).where(Node.id == replica.node_id))).scalar_one_or_none()
+        node = await db.get(Node, replica.node_id)
         app_name = app.name
 
     cname = containers_naming.replica_container_name(app_id, replica_id)
@@ -280,27 +280,3 @@ async def stream_replica_logs(app_id: int, replica_id: int, websocket: WebSocket
             await asyncio.sleep(2)
     except (WebSocketDisconnect, Exception):
         pass
-
-
-async def _get_or_404(app_id: int, db: AsyncSession) -> Application:
-    result = await db.execute(select(Application).where(Application.id == app_id))
-    app = result.scalar_one_or_none()
-    if not app:
-        raise HTTPException(404, "App not found")
-    return app
-
-
-async def _get_app_node(app: Application, db: AsyncSession, local_node: Node) -> Node:
-    rep_result = await db.execute(
-        select(ApplicationReplica).where(ApplicationReplica.app_id == app.id)
-        .order_by(ApplicationReplica.status.desc()).limit(5)
-    )
-    replicas = rep_result.scalars().all()
-    running = next((r for r in replicas if r.status in ("running", "starting") and r.node_id), None)
-    candidate = running or next((r for r in replicas if r.node_id), None)
-    if candidate and candidate.node_id:
-        node_result = await db.execute(select(Node).where(Node.id == candidate.node_id))
-        node = node_result.scalar_one_or_none()
-        if node:
-            return node
-    return local_node

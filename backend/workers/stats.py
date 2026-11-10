@@ -59,7 +59,7 @@ async def collect_local_stats_once(now: float | None = None) -> int:
         running_replicas = (await db.execute(
             select(_AppReplica).where(
                 _AppReplica.status == "running",
-                (_AppReplica.node_id == local_node_id) | (_AppReplica.node_id.is_(None)),
+                _AppReplica.node_id == local_node_id,
             )
         )).scalars().all()
     # The session is closed here: Docker is asked with no database lock held.

@@ -3,7 +3,7 @@ import json
 import re
 from typing import Optional
 from fastapi import HTTPException
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.models import Application, ApplicationReplica
 from nginx import paths as nginx_paths
@@ -13,7 +13,7 @@ async def _assign_external_port(requested: Optional[int], node_id: int, db: Asyn
     """Return requested port if free, else the next free port of the instance range, for an instance on this node."""
     replica_result = await db.execute(
         select(ApplicationReplica.external_port).where(
-            or_(ApplicationReplica.node_id == node_id, ApplicationReplica.node_id.is_(None)),
+            ApplicationReplica.node_id == node_id,
             ApplicationReplica.external_port.isnot(None),
         )
     )

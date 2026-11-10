@@ -63,7 +63,7 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
         candidates = [n for n in nodes if n.is_local or n.status == "online"] or [local_node]
     counts = {}
     for r in current:
-        counts[r.node_id or local_node.id] = counts.get(r.node_id or local_node.id, 0) + 1
+        counts[r.node_id] = counts.get(r.node_id, 0) + 1
 
     started = []
     error = None
@@ -99,9 +99,9 @@ def pick_removals(replicas, n, local_node_id):
     for _ in range(n):
         counts = {}
         for r in left:
-            counts[r.node_id or local_node_id] = counts.get(r.node_id or local_node_id, 0) + 1
+            counts[r.node_id] = counts.get(r.node_id, 0) + 1
         health = lambda r: {"running": 2, "starting": 1}.get(r.status, 0)
-        victim = min(left, key=lambda r: (health(r), -counts[r.node_id or local_node_id], -r.id))
+        victim = min(left, key=lambda r: (health(r), -counts[r.node_id], -r.id))
         left.remove(victim)
         gone.append(victim)
     return gone

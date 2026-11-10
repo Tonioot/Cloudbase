@@ -51,7 +51,7 @@ async def get_instance_stats(app_id: int, _user: dict = Depends(_auth.require_pe
     # We fire all commands concurrently so the total wait is bounded by one timeout, not N×timeout.
     missing_remote_running = [
         r for r in replicas
-        if r.id not in snapshots and r.status in ("running", "starting") and r.node_id is not None
+        if r.id not in snapshots and r.status in ("running", "starting")
     ]
     if missing_remote_running:
         node_map = await _load_node_map(db)
@@ -124,12 +124,10 @@ async def restart_instance(
 
 
 async def _restart_replica(app, replica, db, actor):
-    node_result = await db.execute(select(Node).where(Node.id == replica.node_id)) if replica.node_id else None
-    replica_node = node_result.scalar_one_or_none() if node_result else None
-
+    replica_node = await db.get(Node, replica.node_id)
     local_node = await ensure_local_node(db)
     if replica_node is None:
-        replica_node = local_node
+        raise HTTPException(409, "The node of this instance no longer exists")
     if not replica_node.is_local and replica_node.status != "online":
         raise HTTPException(400, f"Node '{replica_node.name}' is offline")
 
@@ -225,7 +223,7 @@ async def _remove_replicas(app, replicas, db, actor):
     local_node = await ensure_local_node(db)
     removed = []
     for replica in replicas:
-        desired.nudge(replica.node_id or local_node.id)
+        desired.nudge(replica.node_id)
         # Always delete the DB row regardless of container state or node availability
         removed.append(replica.id)
         await db.delete(replica)

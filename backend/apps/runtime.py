@@ -56,16 +56,6 @@ async def _load_app_replicas(app_id: int, db: AsyncSession) -> list[ApplicationR
     return result.scalars().all()
 
 
-def _resolve_replica_node(
-    replica: ApplicationReplica,
-    node_map: dict[int, Node],
-    local_node: Node,
-) -> Optional[Node]:
-    if replica.node_id is None or replica.node_id == local_node.id:
-        return local_node
-    return node_map.get(replica.node_id)
-
-
 def _remote_replica_command_payload(app: Application, env_vars: dict, external_port: int, source_revision: Optional[str] = None) -> dict:
     if source_revision is None:
         source_revision = _refresh_app_source_revision(app)
@@ -189,11 +179,9 @@ async def _get_app_node(app: Application, db: AsyncSession, local_node: Optional
         .limit(5)
     )
     replicas = rep_result.scalars().all()
-    running = next((r for r in replicas if r.status in ("running", "starting") and r.node_id), None)
-    candidate = running or next((r for r in replicas if r.node_id), None)
-    if candidate and candidate.node_id:
-        node_result = await db.execute(select(Node).where(Node.id == candidate.node_id))
-        node = node_result.scalar_one_or_none()
+    candidate = next((r for r in replicas if r.status in ("running", "starting")), None) or next(iter(replicas), None)
+    if candidate:
+        node = await db.get(Node, candidate.node_id)
         if node:
             return node
     if local_node is not None:

@@ -179,7 +179,7 @@ class ApplicationReplica(Base):
 
     id            = Column(Integer, primary_key=True, index=True)
     app_id        = Column(Integer, ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True)
-    node_id       = Column(Integer, ForeignKey("nodes.id"), nullable=True, index=True)
+    node_id       = Column(Integer, ForeignKey("nodes.id"), nullable=False, index=True)   # the primary is a node too
     external_port = Column(Integer, nullable=True)
     container_id  = Column(String(200), nullable=True)
     status        = Column(String(20), default="stopped")  # pending|starting|running|stopping|stopped|error
