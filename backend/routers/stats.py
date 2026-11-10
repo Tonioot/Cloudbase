@@ -1,14 +1,9 @@
-import asyncio
-import collections
 from fastapi import WebSocket, WebSocketDisconnect, APIRouter
-from sqlalchemy import select
 from core import auth
 from containers import processes as pm
 from core.database import AsyncSessionLocal
-from core.models import Application, Instance, Node
-from nodes.registry import ensure_local_node
+from core.models import Application
 from apps.node_streams import stream_system_stats
-from apps.stream import _aggregate_frames, _open_remote_stream
 
 router = APIRouter(tags=["stats"])
 
@@ -16,146 +11,25 @@ router = APIRouter(tags=["stats"])
 
 @router.websocket("/ws/apps/{app_id}/stats")
 async def stream_stats(app_id: int, websocket: WebSocket):
+    """The app's stats as the collector (workers/stats.py) makes them: one frame for all its instances, wherever they run.
+    While this is open the app counts as watched, so it is sampled every 2 s."""
     if not await auth.authorize_websocket(websocket, "apps.view"):
         return
     await websocket.accept()
-
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Application).where(Application.id == app_id))
-        app = result.scalar_one_or_none()
-        if not app:
+        if await db.get(Application, app_id) is None:
             await websocket.close(code=1008, reason="Unknown app")
             return
-        local_node = await ensure_local_node(db)
-
-        # Collect all distinct nodes that have running instances for this app
-        rep_result = await db.execute(
-            select(Instance).where(
-                Instance.app_id == app_id,
-                Instance.status.in_(["running", "starting"]),
-            )
-        )
-        instances = rep_result.scalars().all()
-
-        # The primary's own instances are keyed None, those on other nodes by their node id
-        remote_node_ids = {r.node_id for r in instances if r.node_id != local_node.id}
-        nodes_result = await db.execute(select(Node).where(Node.id.in_(remote_node_ids)))
-        remote_nodes = list(nodes_result.scalars().all())
-        has_local = any(r.node_id == local_node.id for r in instances)
-
-        # Map node_id → list of instance IDs (for feeding per-instance stats on remote frames)
-        instances_per_node: dict[int | None, list[int]] = {}
-        for r in instances:
-            key = None if r.node_id == local_node.id else r.node_id
-            instances_per_node.setdefault(key, []).append(r.id)
-
-    app_id_val = app.id
-    app_name_val = app.name
-    instance_count = len(instances) if instances else 1
-
-    # ── Pure local case (fast path) ──────────────────────────────────────────
-    local_instance_ids = instances_per_node.get(None, [])
-    if not remote_nodes and has_local:
-        q = pm.subscribe_stats(app_id_val)
-        for point in pm.get_recent_stats(app_id_val):
-            if "cpu_percent" in point:
-                point.setdefault("_instance_count", instance_count)
-            try:
-                await websocket.send_json(point)
-            except Exception:
-                pm.unsubscribe_stats(app_id_val, q)
-                return
-        try:
-            while True:
-                data = await q.get()
-                if "cpu_percent" in data:
-                    data.setdefault("_instance_count", instance_count)
-                    # Keep per-instance stats fresh for single-instance local apps
-                    if len(local_instance_ids) == 1:
-                        pm.set_instance_stats(local_instance_ids[0], {**data, "instance_id": local_instance_ids[0]})
-                await websocket.send_json(data)
-        except (WebSocketDisconnect, Exception):
-            pass
-        finally:
-            pm.unsubscribe_stats(app_id_val, q)
-        return
-
-    # ── Mixed / remote case — aggregate across nodes ─────────────────────────
-    # latest frame per node; local node uses key None
-    latest: dict = {}
-    remote_q: asyncio.Queue = asyncio.Queue()
-    tasks: list[asyncio.Task] = []
-
-    for rn in remote_nodes:
-        tasks.append(await _open_remote_stream(rn, app_id_val, app_name_val, remote_q))
-
-    # Local node stats subscriber (if any local instances)
-    local_q = pm.subscribe_stats(app_id_val) if has_local else None
-
-    # Flush local history to client immediately
-    if local_q:
-        for point in pm.get_recent_stats(app_id_val):
-            if "cpu_percent" in point:
-                latest[None] = point
-        if latest:
-            merged = _aggregate_frames(list(latest.values()))
-            merged["_instance_count"] = instance_count
-            pm._stats_history.setdefault(app_id_val, collections.deque(maxlen=60)).append(merged)
-            try:
-                await websocket.send_json(merged)
-            except Exception:
-                pass
-
-    async def _drain_local():
-        """Feed local stats queue into remote_q under key None."""
-        if not local_q:
-            return
-        try:
-            while True:
-                data = await local_q.get()
-                await remote_q.put((None, data))
-        except asyncio.CancelledError:
-            pass
-
-    drain_task = asyncio.create_task(_drain_local())
-
+    q = pm.subscribe_stats(app_id)
     try:
+        for point in pm.get_recent_stats(app_id):
+            await websocket.send_json(point)
         while True:
-            try:
-                node_id, frame = await asyncio.wait_for(remote_q.get(), timeout=10.0)
-            except asyncio.TimeoutError:
-                continue
-
-            if frame.get("status") == "stopped":
-                # Only propagate stopped if ALL nodes report stopped
-                latest.pop(node_id, None)
-                if not latest:
-                    await websocket.send_json({"status": "stopped"})
-                continue
-
-            if "cpu_percent" not in frame:
-                # Per-instance frame or metadata — pass through as-is
-                await websocket.send_json(frame)
-                continue
-
-            latest[node_id] = frame
-            # Store per-instance so the instances/stats endpoint can serve live data
-            for rid in instances_per_node.get(node_id, []):
-                pm.set_instance_stats(rid, {**frame, "instance_id": rid})
-            merged = _aggregate_frames(list(latest.values()))
-            merged["_instance_count"] = instance_count
-            # Buffer for history writer
-            pm._stats_history.setdefault(app_id_val, collections.deque(maxlen=60)).append(merged)
-            await websocket.send_json(merged)
-
+            await websocket.send_json(await q.get())
     except (WebSocketDisconnect, Exception):
         pass
     finally:
-        drain_task.cancel()
-        for t in tasks:
-            t.cancel()
-        if local_q:
-            pm.unsubscribe_stats(app_id_val, local_q)
+        pm.unsubscribe_stats(app_id, q)
 
 
 @router.websocket("/ws/system/stats")

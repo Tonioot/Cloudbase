@@ -1,4 +1,3 @@
-import asyncio
 from typing import List
 from fastapi import Depends, APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -9,7 +8,6 @@ from core import activity
 from core.models import Instance, Node
 from containers import processes as pm
 from nodes import desired
-from nodes import commands as node_commands
 from core.env_crypto import decrypt_env
 from core.audit import log_audit
 from core import auth as _auth
@@ -44,33 +42,6 @@ async def get_instance_stats(app_id: int, _user: dict = Depends(_auth.require_pe
     instances = rep_result.scalars().all()
     instance_ids = [r.id for r in instances]
     snapshots = pm.get_all_instance_stats(app_id, instance_ids)
-
-    # On-demand fallback: remote instances without a cached snapshot get fetched in parallel.
-    # We fire all commands concurrently so the total wait is bounded by one timeout, not N×timeout.
-    missing_remote_running = [
-        r for r in instances
-        if r.id not in snapshots and r.status in ("running", "starting")
-    ]
-    if missing_remote_running:
-        node_map = await _load_node_map(db)
-
-        async def _fetch_one(r):
-            node = node_map.get(r.node_id)
-            if not node or node.is_local or node.status != "online":
-                return
-            try:
-                done = await node_commands.ask(node.id, "get_instance_stats",
-                                               {"app_id": r.app_id, "app_name": "", "instance_id": r.id},
-                                               app_id=r.app_id, timeout=1.5)
-                if done.status == "done" and done.result:
-                    result = done.result
-                    if result.get("cpu_percent") is not None:
-                        pm.set_instance_stats(r.id, {"instance_id": r.id, **result})
-                        snapshots[r.id] = {"instance_id": r.id, **result}
-            except Exception:
-                pass
-
-        await asyncio.gather(*[_fetch_one(r) for r in missing_remote_running])
 
     return {
         str(rid): {

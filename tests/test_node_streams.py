@@ -47,23 +47,7 @@ def test_system_stats_replay_the_history_and_then_keep_coming(monkeypatch):
     assert len(node_streams._system_history) >= 2                          # and is remembered for the next viewer
 
 
-def test_container_stats_are_sent_with_a_timestamp(monkeypatch):
-    async def aggregate(app_id):
-        return {"status": "running", "app": app_id, "cpu_percent": 3.0}
-    monkeypatch.setattr(node_streams.containers_stats_logs, "app_aggregate_stats", aggregate)
-    monkeypatch.setattr(node_streams.asyncio, "sleep", _quick_sleep)
-    frames = []
-
-    async def send(frame):
-        frames.append(frame)
-
-    async def go():
-        await _until_cancelled(asyncio.ensure_future(node_streams.stream_container_stats(7, send)), frames, 2)
-    _run(go())
-    assert frames[0]["app"] == 7 and frames[0]["timestamp"] > 0
-
-
-def test_the_relay_wraps_every_frame_for_the_primary(monkeypatch):
+def test_the_relay_wraps_every_line_for_the_primary(monkeypatch):
     sent = []
 
     async def send(text):
@@ -74,19 +58,13 @@ def test_the_relay_wraps_every_frame_for_the_primary(monkeypatch):
         await send_text("line two\n")
         raise asyncio.CancelledError
 
-    async def fake_stats(app_id, send_frame):
-        await send_frame({"cpu_percent": 1.5})
-        raise asyncio.CancelledError
-
     monkeypatch.setattr(dispatch.node_streams, "follow_container_logs", fake_logs)
-    monkeypatch.setattr(dispatch.node_streams, "stream_container_stats", fake_stats)
 
     async def go():
-        for kind in ("stream_logs", "stream_stats"):
-            with pytest.raises(asyncio.CancelledError):
-                await dispatch._stream_relay(send, f"id-{kind}", kind, 7)
+        with pytest.raises(asyncio.CancelledError):
+            await dispatch._stream_relay(send, "id-stream_logs", "stream_logs", 7)
     _run(go())
-    assert [m["data"] for m in sent] == ["line one\n", "line two\n", json.dumps({"cpu_percent": 1.5})]
+    assert [m["data"] for m in sent] == ["line one\n", "line two\n"]
     assert {m["type"] for m in sent} == {"stream_data"} and sent[0]["stream_id"] == "id-stream_logs"
 
 
@@ -104,13 +82,13 @@ def test_a_stream_command_starts_a_relay_and_can_be_cancelled(monkeypatch):
             pass
 
     async def go():
-        result = await dispatch._execute_command(None, None, {"command_type": "stream_stats", "app_id": 4, "payload": {"stream_id": "s1"}}, ws_main=WS())
+        result = await dispatch._execute_command(None, None, {"command_type": "stream_logs", "app_id": 4, "payload": {"stream_id": "s1"}}, ws_main=WS())
         await asyncio.sleep(0)
         task = dispatch._active_streams["s1"]
         task.cancel()
         return result
     status, res, err = _run(go())
-    assert (status, res, err) == ("streaming", {"stream_id": "s1"}, None) and seen == [("stream_stats", 4)]
+    assert (status, res, err) == ("streaming", {"stream_id": "s1"}, None) and seen == [("stream_logs", 4)]
     assert _run(dispatch._execute_command(None, None, {"command_type": "stream_logs", "app_id": 4, "payload": {}}))[0] == "failed"
 
 

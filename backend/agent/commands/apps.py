@@ -11,11 +11,6 @@ from agent.source import ensure_image
 # see reconcile.py. Everything here calls the functions directly, not the local API.
 
 
-async def cmd_get_stats(_client, _state, main_id, _payload):
-    """Aggregate stats across all instance containers for this app on this node."""
-    return await containers_stats_logs.app_aggregate_stats(int(main_id))
-
-
 async def cmd_docker_cleanup(_client, _state, _main_id, payload):
     """Remove superseded images and trim the build cache on this node."""
     return await asyncio.to_thread(containers_cleanup.cleanup_docker, bool(payload.get("aggressive")))

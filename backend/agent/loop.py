@@ -39,7 +39,7 @@ async def _maybe_upgrade_to_https(client: httpx.AsyncClient, state: AgentState, 
 # the old process was working on will never be answered
 SESSION = secrets.token_hex(8)
 
-_STREAM_COMMANDS = ("stream_logs", "stream_stats", "node_stats_stream")
+_STREAM_COMMANDS = ("stream_logs",)
 
 
 async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState, reconciler: Reconciler):

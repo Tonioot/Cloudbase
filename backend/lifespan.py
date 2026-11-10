@@ -26,7 +26,7 @@ from workers.demo import _dev_demo_logs
 from workers.health import _node_health_monitor
 from workers.mesh import _mesh_monitor
 from workers.recovery import _startup_recovery
-from workers.stats import _overview_sampler, _remote_instance_stats_poller, _stats_collector, _stats_history_writer
+from workers.stats import _overview_sampler, _stats_collector, _stats_history_writer
 
 log = logging.getLogger("cloudbase.main")
 
@@ -59,7 +59,6 @@ async def _start_panel_tasks() -> list[asyncio.Task]:
         asyncio.create_task(_node_health_monitor()),
         asyncio.create_task(_mesh_monitor()),
         asyncio.create_task(_stats_history_writer()),
-        asyncio.create_task(_remote_instance_stats_poller()),
         asyncio.create_task(_autoscaler()),
         asyncio.create_task(_docker_cleanup_loop()),
         asyncio.create_task(_overview_sampler()),

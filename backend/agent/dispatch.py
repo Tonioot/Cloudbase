@@ -3,7 +3,7 @@ import secrets
 import asyncio
 from typing import Optional, Callable, Dict, Any
 import httpx
-from agent.commands.apps import cmd_cron_run, cmd_docker_cleanup, cmd_get_agent_logs, cmd_get_instance_logs, cmd_get_instance_stats, cmd_get_stats
+from agent.commands.apps import cmd_cron_run, cmd_docker_cleanup, cmd_get_agent_logs, cmd_get_instance_logs, cmd_get_instance_stats
 from agent.commands.databases import cmd_db_backup, cmd_db_check_updates, cmd_db_ensure, cmd_db_logs, cmd_db_recreate, cmd_db_remove, cmd_db_restart, cmd_db_restore, cmd_db_rotate_password, cmd_db_states, cmd_db_stats, cmd_db_stats_many, cmd_db_stop, cmd_db_update
 from agent.log import _agent_log
 from agent.registration import _report_result
@@ -28,7 +28,6 @@ COMMAND_HANDLERS: Dict[str, Callable] = {
     "db_check_updates": cmd_db_check_updates,
     "db_update": cmd_db_update,
     "get_instance_logs": cmd_get_instance_logs,
-    "get_stats": cmd_get_stats,
     "docker_cleanup": cmd_docker_cleanup,
     "get_instance_stats": cmd_get_instance_stats,
     "get_agent_logs": cmd_get_agent_logs,
@@ -64,7 +63,7 @@ async def _execute_command(
 
     try:
         # Streams run beside the connection and send their frames over it
-        if command_type in ("stream_logs", "stream_stats", "node_stats_stream"):
+        if command_type == "stream_logs":
             if not ws_main: return "failed", None, "Streaming requires WebSocket"
             stream_id = payload.get("stream_id") or secrets.token_hex(8)
             _agent_log(f"[agent] starting {command_type} relay: stream_id={stream_id}")
@@ -107,16 +106,8 @@ async def _stream_relay(send_fn, stream_id: str, kind: str, app_id: int) -> None
         if frames == 1:
             _agent_log(f"[stream] {stream_id} first frame sent")
 
-    async def send_frame(frame: dict) -> None:
-        await send_text(json.dumps(frame))
-
     try:
-        if kind == "stream_logs":
-            await node_streams.follow_container_logs(app_id, send_text)
-        elif kind == "stream_stats":
-            await node_streams.stream_container_stats(app_id, send_frame)
-        else:
-            await node_streams.stream_system_stats(send_frame)
+        await node_streams.follow_container_logs(app_id, send_text)      # the one stream there is: an app's logs
     except asyncio.CancelledError:
         raise
     except Exception as e:

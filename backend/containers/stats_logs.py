@@ -1,6 +1,4 @@
-import asyncio
 import logging
-import re
 import threading
 import time
 from collections import deque
@@ -194,19 +192,3 @@ def aggregate_stats_frames(frames: list[dict]) -> dict:
         "disk_write_mb": _sum("disk_write_mb"),
         "uptime_seconds": _max("uptime_seconds"),
     }
-
-
-async def app_aggregate_stats(app_id: int) -> dict:
-    """Stats of all instance containers of app_id on this host, added up. Needs no database."""
-    pattern = re.compile(rf"^cloudbase-app-{app_id}-instance-(\d+)$")
-    try:
-        containers = _get_client().containers.list(filters={"name": f"cloudbase-app-{app_id}-instance-"})
-    except Exception:
-        return {"status": "stopped", "docker": True}
-    frames = []
-    for c in containers:
-        if pattern.match(c.name) and c.status == "running":
-            frame = await asyncio.to_thread(get_container_stats_by_name, c.name)
-            if frame:
-                frames.append(frame)
-    return aggregate_stats_frames(frames)

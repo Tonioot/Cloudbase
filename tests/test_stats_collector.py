@@ -26,7 +26,7 @@ def _app(app_id, node_id=None):
 
 
 def _instances(app_id, count):
-    return [N(id=app_id * 1000 + i, app_id=app_id) for i in range(count)]
+    return [N(id=app_id * 1000 + i, app_id=app_id, node_id=None) for i in range(count)]
 
 
 @pytest.fixture
@@ -174,7 +174,67 @@ def test_apps_that_stopped_running_here_are_forgotten():
     assert last == {900009: 2.0}
 
 
-def test_the_poller_no_longer_samples_local_instances_a_third_time():
-    import inspect
+def test_there_is_one_collector_for_every_instance():
+    """No separate poller for other nodes, no stream per open stats tab: one round samples everything."""
     from workers import stats
-    assert "get_container_stats_by_name" not in inspect.getsource(stats._remote_instance_stats_poller)
+    import lifespan
+    assert not hasattr(stats, "_remote_instance_stats_poller")
+    assert "_remote_instance_stats_poller" not in open(lifespan.__file__, encoding="utf-8").read()
+
+
+def test_instances_on_other_nodes_are_asked_through_their_agent_and_make_one_frame_with_the_rest(docker, monkeypatch):
+    """One frame per app over all its instances: a frame of only the local ones (or only the remote ones) would
+    give the autoscaler and the charts half the picture."""
+    from containers import processes as pm
+    from workers import stats
+    asked = []
+
+    async def fake_ask(node_id, command_type, payload, *, app_id=None, timeout=20.0, reuse=False):
+        asked.append((node_id, command_type, payload["instance_id"]))
+        return N(status="done", result={"status": "running", "cpu_percent": 30.0, "memory_mb": 100.0})
+    monkeypatch.setattr(stats.node_commands, "ask", fake_ask)
+    app_id = 900020
+    here = N(id=1, app_id=app_id, node_id=1)
+    there = N(id=2, app_id=app_id, node_id=5)
+
+    async def go():
+        _MINE.set(True)
+        return await stats.sample_due_apps([_app(app_id)], {app_id: [here, there]}, 1000.0, {}, local_node_id=1)
+    assert _run(go()) == 2
+    assert asked == [(5, "get_instance_stats", 2)] and len(docker.asked_for(app_id)) == 1
+    frame = pm.get_recent_stats(app_id)[-1]
+    assert frame["cpu_percent"] == 20.0 and frame["memory_mb"] == 150.0 and frame["_instance_count"] == 2   # (10+30)/2, 50+100
+    assert pm.get_all_instance_stats(app_id, [2])[2]["cpu_percent"] == 30.0                                 # its own numbers
+
+
+def test_a_node_that_does_not_answer_leaves_its_instance_out_of_this_round(docker, monkeypatch):
+    from fastapi import HTTPException
+    from containers import processes as pm
+    from workers import stats
+
+    async def slow(*a, **k):
+        raise HTTPException(504, "Timed out waiting for node command result")
+    monkeypatch.setattr(stats.node_commands, "ask", slow)
+    app_id = 900021
+
+    async def go():
+        _MINE.set(True)
+        return await stats.sample_due_apps([_app(app_id)], {app_id: [N(id=1, app_id=app_id, node_id=1), N(id=2, app_id=app_id, node_id=5)]},
+                                           1000.0, {}, local_node_id=1)
+    _run(go())
+    assert pm.get_recent_stats(app_id)[-1]["_instance_count"] == 1
+
+
+def test_the_app_stream_only_gets_app_frames(docker):
+    """The charts draw what comes over the app's stream: an instance's own numbers in between would make them jump."""
+    from containers import processes as pm
+    app_id = 900022
+    q = pm.subscribe_stats(app_id)
+    try:
+        Round([(_app(app_id), _instances(app_id, 2))]).at(1000.0)
+        frames = []
+        while not q.empty():
+            frames.append(q.get_nowait())
+    finally:
+        pm.unsubscribe_stats(app_id, q)
+    assert len(frames) == 1 and "instance_id" not in frames[0] and frames[0]["_instance_count"] == 2
