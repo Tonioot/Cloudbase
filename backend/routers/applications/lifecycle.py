@@ -10,6 +10,7 @@ from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
 from apps.runtime import _load_app_instances, _load_node_map, _stop_instance_runtime
 from apps.serializers import _get_or_404, app_status
 from apps.state import locked
+from containers import processes as pm
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
@@ -36,11 +37,10 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict 
         return {"status": "stopped", "instance_count": 0}
 
     node_map = await _load_node_map(db)
-    for instance in instances:
-        if instance.status not in ("running", "starting", "stopping", "node_offline"):
-            continue
-        instance_node = node_map.get(instance.node_id)
-        await _stop_instance_runtime(app, instance, instance_node, db)
+    stopping = [i for i in instances if i.status in ("running", "starting", "stopping", "node_offline")]
+    pm._push_line(app_id, f"[Stop] Stopping {len(stopping)} instance(s) by {actor}")
+    for instance in stopping:
+        await _stop_instance_runtime(app, instance, node_map.get(instance.node_id), db)
 
     if _has_public_nginx_domain(app):
         await _write_app_nginx_config(app, db)

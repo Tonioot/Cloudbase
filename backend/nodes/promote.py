@@ -5,6 +5,7 @@ import logging
 
 from apps import health as app_health
 from apps import nginx_sync
+from containers import processes as pm
 from core.database import AsyncSessionLocal
 from core.models import Application, Instance, Node
 from mesh import routing
@@ -38,6 +39,7 @@ async def promote_when_reachable(instance_id: int) -> None:
             instance.updated_at = _utcnow()
             app_id = instance.app_id
             await db.commit()
+        pm.instance_line(app_id, instance_id, "running")
         log.info("[mesh] instance %d reachable, live", instance_id)
         await nginx_sync.refresh_app_nginx(app_id)
     except Exception as exc:
@@ -56,6 +58,7 @@ async def _passes_health_check(instance_id: int, backend: str) -> bool:
             return False
         instance.substatus = "health_check"
         await db.commit()
+    pm.instance_line(app.id, instance_id, "starting", "health_check")
 
     async def taken_over() -> str:
         async with AsyncSessionLocal() as db:
@@ -84,9 +87,10 @@ async def _give_up(instance_id: int, reason: str) -> None:
         instance.substatus = None
         instance.last_error = reason
         instance.updated_at = _utcnow()
-        app_id = instance.app_id
+        app_id, status = instance.app_id, instance.status
         await db.commit()
     log.warning("[mesh] instance %d: %s", instance_id, reason)
+    pm.instance_line(app_id, instance_id, status, error=reason)
     await nginx_sync.refresh_app_nginx(app_id)                  # no longer coming up: no start page for it
 
 

@@ -11,6 +11,7 @@ from sqlalchemy import select
 from core.database import AsyncSessionLocal
 from core.models import Instance
 from apps import nginx_sync
+from containers import processes as pm
 from nodes import promote
 from nodes.commands import _utcnow
 
@@ -57,13 +58,15 @@ async def apply(node_id: int, reports: dict) -> None:
     ids = [int(k) for k in reports if str(k).isdigit()]
     if not ids:
         return
-    to_check, rewrite = [], set()
+    to_check, rewrite, lines = [], set(), []
     async with AsyncSessionLocal() as db:
         rows = (await db.execute(select(Instance).where(
             Instance.node_id == node_id, Instance.id.in_(ids)))).scalars().all()
         for instance in rows:
-            before = instance.status
+            before, step = instance.status, instance.substatus
             check, regen = _apply_one(instance, reports.get(str(instance.id)) or {})
+            if (instance.status, instance.substatus) != (before, step):
+                lines.append((instance.app_id, instance.id, instance.status, instance.substatus, instance.last_error))
             if check:
                 to_check.append(instance.id)
             if regen or instance.status != before:          # nginx shows what the instances do (apps/nginx_sync.py)
@@ -71,6 +74,8 @@ async def apply(node_id: int, reports: dict) -> None:
             if db.is_modified(instance):
                 instance.updated_at = _utcnow()
         await db.commit()
+    for line in lines:
+        pm.instance_line(*line)
     for instance_id in to_check:
         promote.start_promotion(instance_id)
     for app_id in rewrite:

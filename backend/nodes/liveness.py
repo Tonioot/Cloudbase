@@ -6,7 +6,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps import nginx_sync
-from containers import cleanup as containers_cleanup
+from containers import cleanup as containers_cleanup, processes as pm
 from core.database import AsyncSessionLocal
 from core.models import Instance, Node
 from nodes import commands as node_commands
@@ -25,6 +25,7 @@ async def mark_instances_offline(db: AsyncSession, node_id: int) -> set[int]:
     for instance in rows.scalars().all():
         instance.status, instance.substatus = "node_offline", None
         app_ids.add(instance.app_id)
+        pm.instance_line(instance.app_id, instance.id, "node_offline")
     return app_ids
 
 

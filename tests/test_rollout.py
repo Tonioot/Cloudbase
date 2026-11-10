@@ -223,7 +223,7 @@ def test_waiting_stops_when_the_instance_cannot_get_live(env, status, needle):
     remote = env.node(f"ro-wait-{status}")
     app_id, (rid,) = env.app(f"ro-wait-{status}-app", [(remote, status, None)])
     with pytest.raises(rollout.RolloutFailed, match=needle):
-        _run(rollout.wait_until_live(app_id, rid, lambda line: None))
+        _run(rollout.wait_until_live(app_id, rid))
 
 
 def test_waiting_has_a_limit(env, monkeypatch):
@@ -232,13 +232,13 @@ def test_waiting_has_a_limit(env, monkeypatch):
     remote = env.node("ro-wait-slow")
     app_id, (rid,) = env.app("ro-wait-slow-app", [(remote, "starting", None)], health_timeout_seconds=1)
     with pytest.raises(rollout.RolloutFailed, match="not live"):
-        _run(rollout.wait_until_live(app_id, rid, lambda line: None))
+        _run(rollout.wait_until_live(app_id, rid))
 
 
 def test_waiting_for_a_removed_instance_stops(env):
     from apps import rollout
     with pytest.raises(rollout.RolloutFailed, match="removed"):
-        _run(rollout.wait_until_live(env.app("ro-wait-gone-app", [])[0], 999999, lambda line: None))
+        _run(rollout.wait_until_live(env.app("ro-wait-gone-app", [])[0], 999999))
 
 
 def test_a_worker_goes_live_once_its_node_runs_it(env):

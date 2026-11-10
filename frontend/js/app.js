@@ -329,7 +329,6 @@ function updateHeaderStatus() {
   btnStart.disabled   = (s === 'running') || busy;
   btnStop.disabled    = (s === 'stopped') || busy;
   btnRestart.disabled = busy;
-  for (const b of [btnStart, btnStop, btnRestart]) b.style.opacity = '';   // quickAction dims the others while it runs
 
   if (app.cron) {
     document.getElementById('btn-cron-toggle').textContent = app.cron.enabled ? 'Pause' : 'Resume';
@@ -382,45 +381,23 @@ async function toggleMode(type) {
 }
 
 async function quickAction(action) {
+  // The server says what happens: the status and the badge come from it, and every step of the instances shows
+  // up in the log (nodes/observed.py, nodes/promote.py). Here only: no second click while the request runs.
   const btn = document.getElementById(`btn-${action}`);
   const prev = btn.innerHTML;
-  const transitional = action === 'start' ? 'starting' : action === 'stop' ? 'stopping' : 'restarting';
   const labels = { start: 'Starting…', stop: 'Stopping…', restart: 'Restarting…' };
-
-  // Lock all three buttons and show transitional badge
-  ['start','stop','restart'].forEach(a => {
-    const b = document.getElementById(`btn-${a}`);
-    b.disabled = true;
-    b.style.opacity = a === action ? '1' : '0.4';
-  });
+  ['start', 'stop', 'restart'].forEach(a => { document.getElementById(`btn-${a}`).disabled = true; });
   btn.innerHTML = `${spinner} ${labels[action]}`;
-  document.getElementById('app-badge').innerHTML = badge(transitional);
-
-  // Show action banner in terminal immediately
-  if (activeTab === 'logs') _logAction(action, 'begin');
 
   try {
-    const fns = { start: api.start, stop: api.stop, restart: api.restart };
-    const result = await fns[action](APP_ID);
-
-    // Clear chart history on start/restart
-    if (action === 'start' || action === 'restart') {
-      cpuData = [];
-      memData = [];
-      await new Promise(r => setTimeout(r, 2500));
-    }
-    app = await api.getApp(APP_ID);
-    toast(`${action.charAt(0).toUpperCase() + action.slice(1)} successful`);
-
-    if (activeTab === 'logs') _logAction(action, 'done');
+    await ({ start: api.start, stop: api.stop, restart: api.restart })[action](APP_ID);
+    if (action !== 'stop') { cpuData = []; memData = []; }      // new containers: the charts start over
   } catch (e) {
     toast(e.message, 'error');
-    if (activeTab === 'logs') _logAction(action, 'fail', e.message);
-    try { app = await api.getApp(APP_ID); } catch {}
   } finally {
     btn.innerHTML = prev;
+    try { app = await api.getApp(APP_ID); } catch {}
     updateHeaderStatus();
-    // Keep the current log stream attached so lifecycle output remains visible.
   }
 }
 
@@ -642,30 +619,6 @@ function _appendLogLine(line) {
   terminal.appendChild(div);
   if (atBottom) terminal.scrollTop = terminal.scrollHeight;
   if (terminal.childElementCount > 2000) terminal.removeChild(terminal.firstChild);
-}
-
-function _logAction(action, phase, reason = '') {
-  const terminal = document.getElementById('log-terminal');
-  if (!terminal) return;
-  if (terminal.querySelector('.log-empty')) terminal.innerHTML = '';
-
-  const ts = new Date().toLocaleTimeString('nl', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  const colors = { start: 'var(--green)', stop: 'var(--red)', restart: 'var(--yellow)' };
-  const color  = colors[action] || 'var(--accent)';
-
-  const labels = {
-    // 'done' is when the server took it on: the instances follow on their nodes, and the status shows how far they are
-    start:   { begin: '▶  Starting app…',   done: '▶  Instances are starting',       fail: '▶  Start failed' },
-    stop:    { begin: '■  Stopping app…',   done: '■  Instances are stopping',       fail: '■  Stop failed' },
-    restart: { begin: '↺  Restarting app…', done: '↺  Instances are restarting',     fail: '↺  Restart failed' },
-  };
-  const text = (labels[action]?.[phase] ?? `${action} ${phase}`) + (reason ? `: ${reason}` : '');
-
-  const sep = document.createElement('div');
-  sep.className = 'log-line log-action';
-  sep.innerHTML = `<span class="log-num">    </span><span class="log-text" style="color:${color};font-weight:600;letter-spacing:.02em">── ${escHtml(text)} ── ${ts} ──</span>`;
-  terminal.appendChild(sep);
-  terminal.scrollTop = terminal.scrollHeight;
 }
 
 function escHtml(s) {

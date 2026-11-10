@@ -31,7 +31,7 @@ async def restart_locked(app_id: int, db: AsyncSession, actor: str):
     instances = await _load_app_instances(app_id, db)
     if not instances:
         raise HTTPException(400, "No instances configured. Add an instance first before restarting the app.")
-    pm._push_line(app_id, "Restarting instances...")
+    pm._push_line(app_id, f"[Restart] Restarting {len(instances)} instance(s) by {actor}")
     # A new spec makes the node recreate the container: that is the restart
     await _start(app, instances, db)
     await log_audit(db, "app.restart", actor=actor, app_id=app_id, detail={"name": app.name})
@@ -48,8 +48,10 @@ async def start_app_now(app_id: int, db: AsyncSession, actor: str):
     instances = await _load_app_instances(app_id, db)
     if not instances:
         raise HTTPException(400, "No instances configured. Add an instance first before starting the app.")
-    pm._push_line(app_id, "Starting instances...")
-    await _start(app, [r for r in instances if r.status in ("stopped", "error", "pending", "node_offline")], db)
+    stopped = [r for r in instances if r.status in ("stopped", "error", "pending", "node_offline")]
+    pm._push_line(app_id, f"[Start] Starting {len(stopped)} instance(s) by {actor}" if stopped
+                  else "[Start] Every instance already runs or is starting")
+    await _start(app, stopped, db)
     await log_audit(db, "app.start", actor=actor, app_id=app_id, detail={"name": app.name})
     await db.commit()
     return {"status": app_status(app, [r.status for r in instances]), "instance_count": len(instances)}

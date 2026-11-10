@@ -117,6 +117,31 @@ def _push_line(app_id: int, line: str) -> None:
     _push_container_line(app_id, line)
 
 
+_STEPS = {
+    "downloading": "downloading the source",
+    "building_image": "building the image",
+    "creating_container": "creating the container",
+    "waiting_for_network": "waiting for the node network",
+    "waiting": "waiting until it can be reached",
+    "health_check": "health check",
+}
+
+
+def describe_instance(status: str, substatus: str | None = None, error: str | None = None) -> str:
+    if status == "starting":
+        return _STEPS.get(substatus or "", "starting")
+    if status == "node_offline" and error:
+        return f"its node cannot be reached ({error})"
+    return {"running": "is live", "stopping": "stopping", "stopped": "stopped", "pending": "added",
+            "node_offline": "its node cannot be reached",
+            "error": f"failed: {error or 'unknown error'}"}.get(status, status)
+
+
+def instance_line(app_id: int, instance_id: int, status: str, substatus: str | None = None, error: str | None = None) -> None:
+    """What an instance is doing now, as the primary knows it (from its node's report or its own checks)."""
+    _push_line(app_id, f"[Instance {instance_id}] {describe_instance(status, substatus, error)}")
+
+
 def _push_container_line(app_id: int, line: str) -> None:
     """Push a line to the app's live log only (the app's own container output)."""
     if _main_loop is None or _main_loop.is_closed():

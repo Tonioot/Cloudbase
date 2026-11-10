@@ -32,7 +32,6 @@ from nodes import desired
 log = logging.getLogger("cloudbase.apps")
 
 START_TIMEOUT_SECONDS = 900      # before the health check: the node may first download the source and build the image
-PROGRESS_SECONDS = 30
 POLL_SECONDS = 1.0
 _OWN_LIMITS = ("docker_cpu_limit", "docker_memory_limit_mb", "docker_read_only_root", "docker_tmpfs_enabled", "docker_tmpfs_size_mb")
 
@@ -55,14 +54,14 @@ async def add_instance(app: Application, node: Node, db: AsyncSession, *, like: 
     return instance
 
 
-async def wait_until_live(app_id: int, instance_id: int, push: Callable[[str], None]) -> None:
-    """Wait until promote put the instance live. RolloutFailed when it fails, disappears or takes too long."""
+async def wait_until_live(app_id: int, instance_id: int) -> None:
+    """Wait until promote put the instance live. RolloutFailed when it fails, disappears or takes too long.
+    (How far it is shows in the app's log: nodes/observed.py and nodes/promote.py write a line for every step.)"""
     async with AsyncSessionLocal() as db:
         app = await db.get(Application, app_id)
     limit = START_TIMEOUT_SECONDS + app_health.settings_of(app)[2]
     loop = asyncio.get_running_loop()
     started = loop.time()
-    next_progress = started + PROGRESS_SECONDS
     while True:
         async with AsyncSessionLocal() as db:
             instance = await db.get(Instance, instance_id)
@@ -74,13 +73,8 @@ async def wait_until_live(app_id: int, instance_id: int, push: Callable[[str], N
             raise RolloutFailed(f"instance {instance_id} failed: {instance.last_error or 'unknown error'}")
         if instance.status == "node_offline":
             raise RolloutFailed(f"the node of instance {instance_id} went offline")
-        now = loop.time()
-        if now - started > limit:
+        if loop.time() - started > limit:
             raise RolloutFailed(f"instance {instance_id} was not live after {int(limit)}s")
-        if now >= next_progress:
-            what = (instance.substatus or "starting").replace("_", " ")
-            push(f"[Deploy] Instance {instance_id}: {what} ({int(now - started)}s)…")
-            next_progress += PROGRESS_SECONDS
         await asyncio.sleep(POLL_SECONDS)
 
 
@@ -152,8 +146,7 @@ async def replace_instances(app_id: int, db: AsyncSession, actor: str, *, batch:
             push(f"[Deploy] Starting instance {instance.id} on '{node.name}'" + (f" to replace {old.id}…" if old else "…"))
         try:
             for instance in new:
-                await wait_until_live(app_id, instance.id, push)
-                push(f"[Deploy] Instance {instance.id} is live.")
+                await wait_until_live(app_id, instance.id)
         except RolloutFailed as exc:
             push(f"[Deploy] {exc} — removing the new instance(s); the previous version keeps serving.")
             await remove_instances(app_id, [r.id for r in new])

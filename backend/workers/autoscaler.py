@@ -90,7 +90,7 @@ async def _autoscaler():
             instance = await rollout.add_instance(app, node, s)
         _say(app_id, f"CPU {avg_cpu:.1f}% > {target:.0f}% over the last {UP_WINDOW}s — adding instance {instance.id} on '{node.name}' ({count} → {count + 1})…")
         try:
-            await rollout.wait_until_live(app_id, instance.id, lambda line: pm._push_line(app_id, line))
+            await rollout.wait_until_live(app_id, instance.id)
         except rollout.RolloutFailed as e:
             _say(app_id, f"Scale up failed on '{node.name}': {e} — instance {instance.id} removed.", logging.WARNING)
             await rollout.remove_instances(app_id, [instance.id])
