@@ -2210,10 +2210,44 @@ async function _waitForInstanceSync(predicate, timeoutMs = 15000, intervalMs = 7
   return false;
 }
 
+// Starting up: the steps an instance goes through on its node, as one line that fills over the whole row
+const STARTUP_STEPS = [
+  { key: 'downloading',        label: 'Source' },
+  { key: 'building_image',     label: 'Image' },
+  { key: 'creating_container', label: 'Container' },
+  { key: 'waiting',            label: 'Starting' },
+  { key: 'health_check',       label: 'Health check' },
+];
+const STARTUP_LIVE_MS = 2400;          // how long a finished bar stays before it folds away
+const _CHECK_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>';
+
+/** `active`: index of the step it is at (steps.length = all done); `from`: where the previous drawing was. */
+function _startupBarHTML(steps, active, from, elapsedMs = null) {
+  const n = steps.length;
+  const fraction = i => (n > 1 ? Math.min(i, n - 1) / (n - 1) : 1);
+  const complete = active >= n;
+  const style = `--n:${n};--from:${fraction(from)};--to:${fraction(active)};--phase:-${Date.now() % 1600}ms`
+    + (elapsedMs != null ? `;--elapsed:${elapsedMs}ms` : '');
+  return `<div class="inst-progress${complete ? ' is-complete' : ''}" style="${style}" role="progressbar"
+      aria-label="${complete ? 'Live' : 'Starting up'}" aria-valuemin="0" aria-valuemax="${n}" aria-valuenow="${Math.min(active, n)}">
+    ${n > 1 ? '<div class="inst-progress-track"><div class="inst-progress-fill"></div></div>' : ''}
+    <ol class="inst-progress-steps">${steps.map((st, i) => {
+      const state = i < active ? 'done' : i === active ? 'active' : '';
+      const fresh = i < active && i >= from && (elapsedMs == null || elapsedMs < 250) ? ' just-done' : '';   // ticks once, not on every redraw
+      const label = complete && i === n - 1 ? `<span class="inst-progress-live">Live</span>` : escHtml(st.label);
+      return `<li class="inst-progress-step ${state}${fresh}"${i === active ? ' aria-current="step"' : ''}>
+        <span class="inst-progress-dot">${i < active ? _CHECK_SVG : ''}</span><span class="inst-progress-label">${label}</span></li>`;
+    }).join('')}</ol>
+  </div>`;
+}
+
 async function initInstances() {
   const wrap = document.getElementById('instances-table-wrap');
   if (!wrap) return;
   const pendingRemovals = new Set();
+  const startupAt = new Map();    // instance id -> the step its bar showed last time (it grows from there)
+  const wentLive = new Map();     // instance id -> {at, from}: when its start finished, and the step its bar was at
+  let liveRedraw = null;
   let pendingCreate = false;
   const selected = new Set();
   const removeSelBtn = document.getElementById('btn-remove-selected');
@@ -2254,6 +2288,16 @@ async function initInstances() {
       return;
     }
 
+    const now = Date.now();
+    for (const inst of instances) {
+      if (startupAt.has(inst.id) && inst.status === 'running') wentLive.set(inst.id, { at: now, from: startupAt.get(inst.id) });
+      if (inst.status !== 'starting') startupAt.delete(inst.id);
+    }
+    for (const [id, live] of wentLive) if (now - live.at > STARTUP_LIVE_MS || !liveIds.has(id)) wentLive.delete(id);
+    if (wentLive.size && !liveRedraw) {                // draw again when the finished bars have folded away
+      liveRedraw = setTimeout(() => { liveRedraw = null; renderInstances(); }, STARTUP_LIVE_MS + 100);
+    }
+
     const cards = instances.map((inst, idx) => {
       const isRunning  = inst.status === 'running';
       const isStarting = inst.status === 'starting';
@@ -2292,26 +2336,19 @@ async function initInstances() {
         connHtml = `<span style="font-size:12px;color:var(--red)">${inst.wg_state === 'down' ? 'node network down' : 'not on node network'}</span>`;
       }
 
-      // Startup progress: the steps side by side, the current one pulsing
+      // Starting up: the line fills as the node reports each step; once live, it shows complete for a moment
       let startupHtml = '';
       if (isStarting) {
-        const sub = inst.substatus;
-        // In the order they always come; downloading/building are skipped with a cached image
-        const steps = sub === 'waiting_for_network'
-          ? [{ key: 'waiting_for_network', label: 'Node network' }]
-          : [
-              { key: 'downloading',        label: 'Source' },
-              { key: 'building_image',     label: 'Image' },
-              { key: 'creating_container', label: 'Container' },
-              { key: 'waiting',            label: 'App' },
-              { key: 'health_check',       label: 'Health' },
-            ];
-        const found = sub ? steps.findIndex(st => st.key === sub) : -1;
+        const steps = inst.substatus === 'waiting_for_network'
+          ? [{ key: 'waiting_for_network', label: 'Waiting for the node network' }]
+          : STARTUP_STEPS;
+        const found = steps.findIndex(st => st.key === inst.substatus);
         const active = found >= 0 ? found : 0;
-        startupHtml = `<ol class="inst-steps" aria-label="Starting up">${steps.map((st, i) =>
-          `<li class="inst-step${i < active ? ' done' : i === active ? ' active' : ''}"${i === active ? ' aria-current="step"' : ''}>
-             <span class="inst-step-dot" aria-hidden="true"></span><span class="inst-step-label">${st.label}</span>
-           </li>`).join('')}</ol>`;
+        startupHtml = _startupBarHTML(steps, active, startupAt.has(inst.id) ? startupAt.get(inst.id) : active);
+        startupAt.set(inst.id, active);
+      } else if (isRunning && wentLive.has(inst.id)) {
+        const live = wentLive.get(inst.id);
+        startupHtml = _startupBarHTML(STARTUP_STEPS, STARTUP_STEPS.length, live.from, now - live.at);
       }
 
       // Live metrics

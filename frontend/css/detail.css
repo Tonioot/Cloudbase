@@ -405,23 +405,76 @@
 .inst-head .inst-id { font-family: inherit; color: inherit; }
 .inst-row { padding: 12px 0; border-bottom: 1px solid var(--line); }
 
-/* Starting up: the steps side by side, joined by a line; done ones green, the current one pulsing */
-.inst-steps { display: flex; list-style: none; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px solid var(--line); max-width: 460px; }
-.inst-step { flex: 1; position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
-.inst-step::before { content: ""; position: absolute; top: 4px; left: -50%; right: 50%; height: 2px; background: var(--line); }
-.inst-step:first-child::before { display: none; }
-.inst-step.done::before, .inst-step.active::before { background: var(--green); }
-.inst-step-dot { position: relative; z-index: 1; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--line-strong); background: var(--bg); }
-.inst-step.done .inst-step-dot { background: var(--green); border-color: var(--green); }
-.inst-step.active .inst-step-dot { background: var(--yellow); border-color: var(--yellow); animation: inst-step-pulse 1.6s ease-in-out infinite; }
-.inst-step-label { font-size: 11px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.inst-step.done .inst-step-label { color: var(--text-2); }
-.inst-step.active .inst-step-label { color: var(--text); font-weight: 500; }
-@keyframes inst-step-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 var(--yellow-halo); }
-  50%      { box-shadow: 0 0 0 5px var(--yellow-halo); }
+/* Starting up: one line over the whole row that fills step by step; done steps tick, the current one pulses.
+   The table is redrawn every 1.5 s, so the endless animations take their phase from the clock (--phase) and the
+   fill grows from where the previous drawing left it (--from → --to): nothing jumps on a redraw. */
+@property --fill { syntax: "<number>"; inherits: false; initial-value: 0; }
+.inst-progress { position: relative; margin: 12px 0 2px; padding: 12px 0 0; border-top: 1px dashed var(--line); }
+.inst-progress-track { position: absolute; top: 19px; left: calc(50% / var(--n)); right: calc(50% / var(--n)); height: 2px; border-radius: 2px; background: var(--line); }
+.inst-progress-fill {
+  position: relative; height: 100%; border-radius: inherit; width: calc(var(--fill) * 100%);
+  background: linear-gradient(90deg, var(--green) 0%, var(--green) 70%, var(--yellow) 100%);
+  animation: inst-fill 700ms cubic-bezier(.2, .8, .2, 1) both;
 }
-@media (prefers-reduced-motion: reduce) { .inst-step.active .inst-step-dot { animation: none; box-shadow: 0 0 0 3px var(--yellow-halo); } }
+.inst-progress-fill::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .45), transparent);
+  background-size: 40% 100%; background-repeat: no-repeat;
+  animation: inst-shimmer 1.6s linear infinite; animation-delay: var(--phase, 0ms);
+}
+@keyframes inst-fill { from { --fill: var(--from); } to { --fill: var(--to); } }
+@keyframes inst-shimmer { from { background-position: -40% 0; } to { background-position: 140% 0; } }
+
+.inst-progress-steps { position: relative; display: flex; list-style: none; margin: 0; padding: 0; }
+.inst-progress-step { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 7px; min-width: 0; }
+.inst-progress-dot {
+  position: relative; z-index: 1; display: grid; place-items: center;
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--line-strong); background: var(--bg);
+  transition: background var(--transition), border-color var(--transition);
+}
+.inst-progress-dot svg { width: 9px; height: 9px; stroke: var(--bg); stroke-width: 4; fill: none; stroke-linecap: round; stroke-linejoin: round;
+  stroke-dasharray: 24; stroke-dashoffset: 0; }
+.inst-progress-label { font-size: 11.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
+  transition: color var(--transition); }
+
+.inst-progress-step.done .inst-progress-dot { background: var(--green); border-color: var(--green); }
+.inst-progress-step.done .inst-progress-label { color: var(--text-2); }
+.inst-progress-step.just-done .inst-progress-dot { animation: inst-dot-pop 520ms cubic-bezier(.3, 1.6, .5, 1) both; }
+.inst-progress-step.just-done .inst-progress-dot svg { animation: inst-check-draw 420ms ease 160ms both; }
+.inst-progress-step.active .inst-progress-dot {
+  background: var(--yellow); border-color: var(--yellow);
+  animation: inst-dot-pulse 1.6s ease-in-out infinite; animation-delay: var(--phase, 0ms);
+}
+.inst-progress-step.active .inst-progress-dot::after {
+  content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--bg);
+}
+.inst-progress-step.active .inst-progress-label { color: var(--text); font-weight: 500; }
+.inst-progress-step.active .inst-progress-label::after { content: "…"; }
+@keyframes inst-dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--yellow-halo); }
+  50%      { box-shadow: 0 0 0 6px var(--yellow-halo); }
+}
+@keyframes inst-dot-pop { 0% { transform: scale(.55); } 60% { transform: scale(1.18); } 100% { transform: scale(1); } }
+@keyframes inst-check-draw { from { stroke-dashoffset: 24; } to { stroke-dashoffset: 0; } }
+
+/* Done: all green, "Live", and after a moment the bar folds away (--elapsed keeps that going over redraws) */
+.inst-progress.is-complete { animation: inst-progress-out 480ms ease forwards; animation-delay: calc(1900ms - var(--elapsed, 0ms)); }
+.inst-progress.is-complete .inst-progress-fill { background: var(--green); }
+.inst-progress.is-complete .inst-progress-fill::after { display: none; }
+.inst-progress.is-complete .inst-progress-step:last-child .inst-progress-dot { box-shadow: 0 0 0 4px var(--green-halo); }
+.inst-progress-live { display: inline-flex; align-items: center; gap: 5px; color: var(--green); font-weight: 500; }
+@keyframes inst-progress-out {
+  0%   { opacity: 1; max-height: 90px; }
+  60%  { opacity: 0; max-height: 90px; margin-top: 12px; padding-top: 12px; }
+  100% { opacity: 0; max-height: 0; margin-top: 0; padding-top: 0; border-top-color: transparent; overflow: hidden; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .inst-progress-fill, .inst-progress-fill::after, .inst-progress-step .inst-progress-dot,
+  .inst-progress-step .inst-progress-dot svg { animation: none !important; }
+  .inst-progress-fill { --fill: var(--to); }
+  .inst-progress-step.active .inst-progress-dot { box-shadow: 0 0 0 4px var(--yellow-halo); }
+}
 #btn-remove-selected[hidden], #btn-restart-selected[hidden] { display: none; }
 .inst-id { display: inline-flex; align-items: center; gap: 14px; }
 .inst-check { position: relative; display: inline-flex; cursor: pointer; }
