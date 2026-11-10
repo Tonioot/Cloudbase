@@ -1,6 +1,4 @@
 import logging
-
-import rename_migration
 from containers.apps import _restart_policy_config
 from containers.client import _apply_linked_databases, _assert_image_local, _get_client, _host_port
 from containers.naming import instance_container_name
@@ -150,7 +148,6 @@ def list_instance_containers() -> list[dict]:
     app_id / instance_id. Used by the orphan cleaner to reconcile against the DB."""
     import re
     client = _get_client()
-    rename_migration.rename_old_containers(client)          # TEMPORARY, see rename_migration.py
     pattern = re.compile(r"^cloudbase-app-(\d+)-instance-(\d+)$")
     out: list[dict] = []
     for c in client.containers.list(all=True):

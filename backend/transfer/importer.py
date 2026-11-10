@@ -10,8 +10,6 @@ Two phases, so the request can answer in a moment:
 import json
 import logging
 import re
-
-import rename_migration
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -123,7 +121,6 @@ async def import_apps(db: AsyncSession, entries: list[dict], target_node_id: Opt
 
 
 async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_local: bool, actor: str, warnings: list[str]) -> Imported:
-    entry = rename_migration.old_export_keys(entry)          # TEMPORARY, see rename_migration.py
     name = await _check_new_app_name(entry.get("name"), db)
     repo_url = _check_repo_url(_normalize_repo_url(entry.get("repo_url") or ""))
     domains = [d for d in [entry.get("domain"), *(entry.get("extra_domains") or []), *(entry.get("redirect_domains") or [])] if d]

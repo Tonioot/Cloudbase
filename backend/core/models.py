@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, Float, Table, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, Float, Index, Table, UniqueConstraint
 from sqlalchemy.orm import validates
 from core.database import Base
 
@@ -203,6 +203,7 @@ class Instance(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
+    __table_args__ = (Index("ix_audit_logs_app_ts", "app_id", "timestamp"),)
 
     id        = Column(Integer, primary_key=True, index=True)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
@@ -214,6 +215,7 @@ class AuditLog(Base):
 
 class StatsHistory(Base):
     __tablename__ = "stats_history"
+    __table_args__ = (Index("ix_stats_history_app_ts", "app_id", "timestamp"),)
 
     id          = Column(Integer, primary_key=True, index=True)
     app_id      = Column(Integer, ForeignKey("applications.id", ondelete="CASCADE"), nullable=False)
@@ -388,6 +390,7 @@ class NotificationChannel(Base):
 class Notification(Base):
     """One event in the inbox. Problems (with a dedupe_key) stay open until resolved."""
     __tablename__ = "notifications"
+    __table_args__ = (Index("ix_notifications_key_state", "dedupe_key", "state"),)   # the open problem for a key
 
     id          = Column(Integer, primary_key=True, index=True)
     event       = Column(String(60), nullable=False, index=True)

@@ -184,15 +184,31 @@ def test_the_list_hash_changes_with_the_list_and_not_otherwise(setup):
     assert _snapshot(node_id)["hash"] != first
 
 
-def test_instances_from_before_desired_state_get_a_spec_the_first_time_a_node_asks(setup):
+def test_an_instance_without_a_spec_is_listed_as_stopped(setup):
+    """There is nothing to run it with; a node must not guess."""
     node, app = setup
-    node_id, _ = node("d-legacy")
-    rid = _instance(app("d-legacy-app"), node_id, 9107, status="running", desired="running")
-    assert _row(rid).spec_json is None
+    node_id, _ = node("d-nospec")
+    _instance(app("d-nospec-app"), node_id, 9107, status="running", desired="running")
     entry = _snapshot(node_id)["instances"][0]
-    assert entry["desired"] == "running" and entry["spec"]["external_port"] == 9107 and entry["spec"]["env_vars"] == {"A": "1"}
-    assert _row(rid).spec_hash == entry["spec_hash"]
-    assert _snapshot(node_id)["instances"][0]["spec_hash"] == entry["spec_hash"]       # written once, not every time
+    assert entry["desired"] == "stopped" and entry["spec"] is None and entry["spec_hash"] is None
+
+
+def test_an_agent_older_than_3_gets_no_list(client, setup):
+    """It reads the list by older names and would misread it; without a list it removes nothing."""
+    from core.database import AsyncSessionLocal
+    from core.models import Node
+    node, _ = setup
+    node_id, token = node("d-oldagent")
+
+    async def set_version(version):
+        async with AsyncSessionLocal() as db:
+            (await db.get(Node, node_id)).agent_version = version
+            await db.commit()
+    _run(set_version("2.0.0"))
+    r = client.get("/api/nodes/agent/desired", headers={"X-Node-Token": token})
+    assert r.status_code == 409 and "cloudbase update" in r.json()["detail"]
+    _run(set_version("3.0.0"))
+    assert client.get("/api/nodes/agent/desired", headers={"X-Node-Token": token}).status_code == 200
 
 
 # ── the endpoints ────────────────────────────────────────────────────────────────

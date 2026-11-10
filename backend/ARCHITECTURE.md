@@ -57,7 +57,7 @@ ruff check backend tests scripts
 
 ## Names
 
-An app runs as **instances** (model `Instance`, table `application_instances`, container `cloudbase-app-<id>-instance-<n>`); that is the one name for them, in the code, the API, the agent protocol and the panel. `backend/rename_migration.py` is temporary: it moves servers from the old name and is deleted (with its test) once every server runs 3.0.
+An app runs as **instances** (model `Instance`, table `application_instances`, container `cloudbase-app-<id>-instance-<n>`); that is the one name for them, in the code, the API, the agent protocol and the panel.
 
 An app is known by its **id** on disk, in Docker and in nginx: the source lives in `~/.cloudbase/apps/app-<id>`, the image is `cloudbase/app-<id>:latest`, the nginx config is `app-<id>` with the upstream `cloudbase_app_<id>` (`containers/naming.py`, `nginx/paths.py`). Its name is only what people read, and it decides the automatic subdomain `<name>.<base domain>`. Renaming an app (`PUT /api/apps/{id}` with `name`) therefore rewrites its nginx config for the new subdomain and removes the certificate of the old one, and leaves everything else alone.
 
