@@ -19,8 +19,8 @@ ports:
   instance_min: 10000
   instance_max: 19999
 
-  # Database proxies: let app instances reach a database on another node.
-  # Port = db_proxy_min + database id; only reachable from containers on the server.
+  # The port a database publishes on its node's node-network address, for apps on other nodes.
+  # Port = db_proxy_min + database id; only reachable over the node network.
   db_proxy_min: 30000
   db_proxy_max: 30999
 

@@ -4,7 +4,7 @@ from dbs import engines as db_engines, proxy as db_proxy
 from dbs import docker as dbs_docker
 from core.models import Node, Database
 from dbs.ops import _allowlist, _node_reachable
-from dbs.relay import _public_host
+from dbs.public import _public_host
 from dbs.state import _busy, _operation, _remote_progress, _update_info
 
 def _safe_public_port(database_id: int) -> Optional[int]:

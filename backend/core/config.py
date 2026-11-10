@@ -31,8 +31,8 @@ _DEFAULTS = {
     "ports": {
         "instance_min": 8000,
         "instance_max": 17999,
-        # Database proxies for app instances on another node than the database
-        # (port = db_proxy_min + database id). Bound to the cloudbase Docker network only.
+        # The port a database publishes on its node's address on the node network, for apps on other nodes
+        # (port = db_proxy_min + database id; the name is from when these were proxies).
         "db_proxy_min": 30000,
         "db_proxy_max": 30999,
         # Public database access on the primary (port = db_public_min + database id).

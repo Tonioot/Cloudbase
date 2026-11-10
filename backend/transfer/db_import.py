@@ -28,7 +28,7 @@ from dbs import links as db_links
 from dbs.backups import SCHEDULES, _path, _restore
 from dbs.create import create_database_now
 from dbs.provision import ENV_VAR_RE
-from dbs.relay import sync_public_access
+from dbs.public import sync_public_access
 from transfer import archive
 
 log = logging.getLogger("cloudbase.transfer")

@@ -9,7 +9,7 @@ from core.env_crypto import decrypt_env
 from core.models import DatabaseLink, Application
 from dbs.ops import _get_or_404
 from dbs.provision import ENV_VAR_RE
-from dbs.relay import sync_public_access
+from dbs.public import sync_public_access
 from routers.databases.schemas import LinkRequest
 
 router = APIRouter(prefix="/api/databases", tags=["databases"])

@@ -1,8 +1,12 @@
-"""Database connections: what an app container gets as its database URL, and public access on the primary.
+"""Database connections. Runs on the primary and on every node.
 
-An app on the database's own node connects to the container over the `cloudbase` Docker network. An app on any
-other node connects to <database node's address on the node network>:<published port>: the database publishes its
-port on that address only (dbs/docker.py), like instances do, so it is reachable from the nodes and nowhere else.
+What an app container gets as its database URL (resolve_links): on the database's own node the container over the
+`cloudbase` Docker network; on any other node <the database node's address on the node network>:<published port>.
+The database publishes its port on that address only (dbs/docker.py), like instances do: reachable from the nodes
+and nowhere else.
+
+And the public access on the primary: a TCP proxy per public database (TLS, allowlist) to the database, wherever
+it runs (dbs/public.py opens and closes them).
 """
 
 import asyncio

@@ -1,4 +1,5 @@
-"""The primary's way to a database (for public access): the container here, or its node over the node network."""
+"""Public database access on the primary: which ports are open (sync_public_access), and the way to a database
+behind one (open_db_stream): the container here, or its node over the node network. The listeners are in dbs/proxy.py."""
 import asyncio
 from typing import Optional
 from sqlalchemy import select

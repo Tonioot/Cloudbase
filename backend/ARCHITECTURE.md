@@ -26,7 +26,7 @@ agent/                      the node agent (runs on remote servers, talks to the
 | `mesh/` | the node network (WireGuard, hub and spoke with the primary as hub): `addressing`, `helper` (client for the root helper `scripts/cloudbase-wireguard`, via sudo), `hub` (interface, peers, enrolment, handshake health), `routing` (`backend_for`, `wait_reachable`) |
 | `containers/` | Docker on one host: `client`, `naming`, `buildkit`, `dockerfiles`, `build`, `prepare` (get an image onto this machine), `reconciler` (make Docker equal to the list), `cleanup`, `apps`, `instances`, `jobs`, `stats_logs`, `processes` |
 | `nginx/` | `paths`, `pages` (HTML), `config` (nginx config text), `files` (writers), `certbot` (read-only lookups), `certificates` (issuing), `panel` |
-| `dbs/` | managed databases: `docker`, `lifecycle`, `backup_restore`, `updates`, `ops`, `provision`, `view`, `relay`, `proxy`, `workers`, `backups`, `backup_scheduler`, … |
+| `dbs/` | managed databases: `docker`, `lifecycle`, `backup_restore`, `updates`, `ops`, `provision`, `view`, `public`, `proxy`, `workers`, `backups`, `backup_scheduler`, … |
 | `transfer/` | export and import of apps and databases as one file (a tar): `archive` (manifest + dumps), `manifest`/`databases` (what goes in), `jobs`/`exporter` (export runs in the background), `importer`/`db_import` (what comes out) |
 | `notify/` | `events`, `settings`, `config`, `emit`, `dispatch`, `watch`, `channels`, `mailer` |
 | `routers/` | one package per area (`applications/`, `nodes/`, `databases/`, `database_backups/`), each with a module per concern; the package `__init__` composes them in order |
@@ -94,7 +94,7 @@ Databases across nodes use the node network, like instances do: a database publi
 node-network address (`dbs/docker.publish_address`; the primary's is the hub address), and an app on another node gets
 `<that address>:<published port>` as its URL (`dbs/links.py`, `dbs/proxy.resolve_links`). The hub forwards between
 nodes (`scripts/cloudbase-wireguard`), so a node reaches another node's database through it. The primary's public
-database ports (`dbs/proxy.py`, TLS and allowlist) connect the same way (`dbs/relay.open_db_stream`). A container that
+database ports (`dbs/proxy.py`, TLS and allowlist) connect the same way (`dbs/public.open_db_stream`). A container that
 publishes on another address than the node's current one is replaced on its next start; the data volume stays.
 
 What stays a command (`nodes/commands.py`, over the websocket, answered over HTTP): one-off things only — logs,

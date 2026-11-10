@@ -128,13 +128,13 @@ def test_a_node_publishes_on_its_own_address_and_the_primary_on_the_hub_when_it_
 def test_the_primary_connects_to_a_remote_database_over_the_node_network(client, monkeypatch):
     from core.database import AsyncSessionLocal
     from core.models import Database, Node
-    from dbs import relay
+    from dbs import public
     dialed = []
 
     async def open_connection(host, port):
         dialed.append((host, port))
         return object(), object()
-    monkeypatch.setattr(relay.asyncio, "open_connection", open_connection)
+    monkeypatch.setattr(public.asyncio, "open_connection", open_connection)
 
     async def go():
         async with AsyncSessionLocal() as db:
@@ -146,7 +146,7 @@ def test_the_primary_connects_to_a_remote_database_over_the_node_network(client,
             await db.commit()
             ids = database.id, node.id
         try:
-            await relay.open_db_stream(ids[0])
+            await public.open_db_stream(ids[0])
         finally:
             async with AsyncSessionLocal() as db:
                 await db.delete(await db.get(Database, ids[0]))
