@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+from apps import autoscale
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
@@ -129,14 +130,9 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.health_timeout_seconds = health_app.clean_timeout(req.health_timeout_seconds)
     if req.auto_deploy_interval is not None:
         app.auto_deploy_interval = max(30, min(int(req.auto_deploy_interval), 3600))
-    if req.autoscale_enabled is not None:
-        app.autoscale_enabled = req.autoscale_enabled
-    if req.autoscale_min_instances is not None:
-        app.autoscale_min_instances = max(1, req.autoscale_min_instances)
-    if req.autoscale_max_instances is not None:
-        app.autoscale_max_instances = max(1, req.autoscale_max_instances)
-    if req.autoscale_cpu_target is not None:
-        app.autoscale_cpu_target = max(10.0, min(95.0, req.autoscale_cpu_target))
+    for field in autoscale.FIELDS:
+        if getattr(req, field) is not None:
+            setattr(app, field, autoscale.clean(field, getattr(req, field)))
 
     if dockerfile_changed:
         if app.working_dir and os.path.exists(app.working_dir):

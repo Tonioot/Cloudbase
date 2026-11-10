@@ -621,6 +621,24 @@ function _appendLogLine(line) {
   if (terminal.childElementCount > 2000) terminal.removeChild(terminal.firstChild);
 }
 
+// The last scale actions, from the audit log (needs audit.view; without it the line just stays empty).
+async function loadScaleHistory() {
+  const el = document.getElementById('autoscale-history');
+  if (!el) return;
+  try {
+    const entries = await api.getScaleHistory(APP_ID);
+    if (!entries.length) { el.textContent = 'No scale actions yet.'; return; }
+    el.innerHTML = entries.map(e => {
+      const d = e.detail || {};
+      const what = e.action === 'app.autoscale_up' ? `Up to ${d.instances}`
+        : e.action === 'app.autoscale_down' ? `Down to ${d.instances}` : 'Scale up failed';
+      return `<span class="autoscale-event"><b>${escHtml(what)}</b> · ${escHtml(timeAgo(e.timestamp))}${d.reason ? ` · ${escHtml(d.reason)}` : ''}</span>`;
+    }).join('');
+  } catch {
+    el.textContent = '—';
+  }
+}
+
 function escHtml(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
@@ -1511,6 +1529,12 @@ function initSettings() {
   document.getElementById('cfg-autoscale-min').value = app.autoscale_min_instances || 1;
   document.getElementById('cfg-autoscale-max').value = app.autoscale_max_instances || 4;
   document.getElementById('cfg-autoscale-cpu').value = app.autoscale_cpu_target || 70;
+  document.getElementById('cfg-autoscale-mem').value = app.autoscale_memory_target_mb || '';
+  document.getElementById('cfg-autoscale-up').value = app.autoscale_up_seconds || 60;
+  document.getElementById('cfg-autoscale-down').value = app.autoscale_down_minutes || 5;
+  document.getElementById('cfg-autoscale-step-up').value = app.autoscale_max_step_up || '';
+  document.getElementById('cfg-autoscale-step-down').value = app.autoscale_max_step_down || '';
+  if (autoscaleEnabled) loadScaleHistory();
 
   // Health check
   document.getElementById('cfg-health-path').value = app.health_path ?? '/';
@@ -1519,6 +1543,7 @@ function initSettings() {
   document.getElementById('autoscale-options').style.display = autoscaleEnabled ? '' : 'none';
   document.getElementById('cfg-autoscale-enabled').onchange = function() {
     document.getElementById('autoscale-options').style.display = this.checked ? '' : 'none';
+    if (this.checked) loadScaleHistory();
   };
   if (dockerSection) dockerSection.style.display = '';
 
@@ -2823,6 +2848,11 @@ async function saveSettings() {
     autoscale_min_instances: parseInt(document.getElementById('cfg-autoscale-min').value) || 1,
     autoscale_max_instances: parseInt(document.getElementById('cfg-autoscale-max').value) || 4,
     autoscale_cpu_target:   parseFloat(document.getElementById('cfg-autoscale-cpu').value) || 70,
+    autoscale_memory_target_mb: parseInt(document.getElementById('cfg-autoscale-mem').value) || 0,      // 0 = off
+    autoscale_up_seconds:   parseInt(document.getElementById('cfg-autoscale-up').value) || 60,
+    autoscale_down_minutes: parseInt(document.getElementById('cfg-autoscale-down').value) || 5,
+    autoscale_max_step_up:  parseInt(document.getElementById('cfg-autoscale-step-up').value) || 0,      // 0 = no limit
+    autoscale_max_step_down: parseInt(document.getElementById('cfg-autoscale-step-down').value) || 0,
     auto_deploy:            document.getElementById('cfg-autodeploy').checked,
     deploy_branch:          document.getElementById('cfg-deploy-branch').value,
     deploy_strategy:        document.querySelector('#cfg-deploy-strategy button.active')?.dataset.value || 'rolling',

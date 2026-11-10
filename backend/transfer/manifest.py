@@ -25,6 +25,8 @@ PLAIN_FIELDS = (
     "restart_policy", "auto_deploy", "deploy_branch", "deploy_strategy", "auto_deploy_interval",
     "docker_cpu_limit", "docker_memory_limit_mb", "docker_read_only_root", "docker_tmpfs_enabled", "docker_tmpfs_size_mb",
     "autoscale_enabled", "autoscale_min_instances", "autoscale_max_instances", "autoscale_cpu_target",
+    "autoscale_memory_target_mb", "autoscale_up_seconds", "autoscale_down_minutes", "autoscale_max_step_up",
+    "autoscale_max_step_down",
     "maintenance_mode", "update_mode", "source_revision", "image_revision",
     "cron_schedule", "cron_timezone", "cron_enabled", "cron_timeout_seconds",
     "health_path", "health_expect", "health_timeout_seconds",

@@ -1031,3 +1031,8 @@ a.icon-btn { text-decoration: none; }
 }
 .cron-settings .cron-editor { border: 0; border-radius: 0; }
 .cron-settings .cron-row--card { border-top: 1px solid var(--line); }
+
+/* Autoscaling: the last scale actions under the settings */
+.autoscale-history-row .s3-desc { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.autoscale-event { font-size: 12px; color: var(--text-muted); line-height: 1.4; }
+.autoscale-event b { color: var(--text); font-weight: 600; }

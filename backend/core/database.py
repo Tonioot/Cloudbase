@@ -1,8 +1,11 @@
+import logging
 import os
 
 from sqlalchemy import delete, event, select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
+
+log = logging.getLogger("cloudbase.database")
 
 DATA_DIR = os.path.expanduser("~/.cloudbase")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -85,12 +88,43 @@ VIEWER_PERMISSIONS = ["apps.view", "nodes.view", "databases.view", "audit.view",
 OPT_IN_PERMISSIONS = {"secrets.export"}
 
 
+def _add_new_columns(conn) -> None:
+    """A column added to a model is added to its existing table (create_all only makes missing tables), with its
+    default for the rows already there. Nothing is ever changed or removed, so this needs no versions."""
+    from sqlalchemy import inspect
+    existing = inspect(conn)
+    for table in Base.metadata.sorted_tables:
+        if not existing.has_table(table.name):
+            continue
+        have = {c["name"] for c in existing.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in have:
+                continue
+            default = column.default.arg if column.default is not None and column.default.is_scalar else None
+            if not column.nullable and default is None:
+                raise RuntimeError(f"New column {table.name}.{column.name} needs a default or nullable=True")
+            ddl = f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column.type.compile(conn.dialect)}'
+            if default is not None:
+                ddl += f" DEFAULT {_sql_literal(default)}"
+            conn.exec_driver_sql(ddl)
+            log.info("Added column %s.%s", table.name, column.name)
+
+
+def _sql_literal(value) -> str:
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    return "'" + str(value).replace("'", "''") + "'"
+
+
 async def init_db():
     """Create the tables that are missing, and make sure the permissions, the built-in roles and the root account exist."""
     # Importing the models registers their tables with Base.metadata (they import Base from here, so not at the top)
     from core.models import Permission, Role, User, role_permissions
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_add_new_columns)
 
     async with AsyncSessionLocal() as session:
         perm_map: dict[str, int] = {}

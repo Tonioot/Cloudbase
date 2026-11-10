@@ -91,7 +91,12 @@ class Application(Base):
     autoscale_enabled      = Column(Boolean, default=False)
     autoscale_min_instances = Column(Integer, default=1)
     autoscale_max_instances = Column(Integer, default=4)
-    autoscale_cpu_target   = Column(Float,   default=70.0)  # % CPU to trigger scale up
+    autoscale_cpu_target   = Column(Float,   default=70.0)  # % CPU per instance (limits: apps/autoscale.py)
+    autoscale_memory_target_mb = Column(Integer, nullable=True)  # MB per instance; None = CPU only
+    autoscale_up_seconds   = Column(Integer, default=60)     # scale up on the average over this long
+    autoscale_down_minutes = Column(Integer, default=5)      # scale down on the peak over this long
+    autoscale_max_step_up   = Column(Integer, nullable=True) # None = as many as needed at once
+    autoscale_max_step_down = Column(Integer, nullable=True)
     maintenance_mode = Column(Boolean, default=False)
     update_mode      = Column(Boolean, default=False)
     downtime_page    = Column(Text, nullable=True)  # JSON: {title, message, color, custom_html}

@@ -233,6 +233,7 @@ export const api = {
   },
   toggleMaintenanceMode: (id)       => request('POST', `/apps/${id}/maintenance-mode/toggle`),
   toggleUpdateMode:      (id)       => request('POST', `/apps/${id}/update-mode/toggle`),
+  getScaleHistory: appId => request('GET', `/audit-log?limit=8&app_id=${appId}&action=app.autoscale`),
   getAuditLog: (appId, limit, offset) => request('GET', `/audit-log?limit=${limit || 100}&offset=${offset || 0}${appId ? `&app_id=${appId}` : ''}`),
   getStatsHistory:(id, hours) => request('GET', `/apps/${id}/stats/history?hours=${hours || 24}`),
   deployBlueGreen: (id) => request('POST', `/apps/${id}/deploy-blue-green`),

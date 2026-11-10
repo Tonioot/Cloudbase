@@ -61,6 +61,11 @@ class UpdateRequest(BaseModel):
     autoscale_min_instances: Optional[int]   = None
     autoscale_max_instances: Optional[int]   = None
     autoscale_cpu_target:   Optional[float] = None
+    autoscale_memory_target_mb: Optional[int] = None    # 0 = off
+    autoscale_up_seconds:   Optional[int]   = None
+    autoscale_down_minutes: Optional[int]   = None
+    autoscale_max_step_up:  Optional[int]   = None      # 0 = no limit
+    autoscale_max_step_down: Optional[int]  = None      # 0 = no limit
     auto_deploy:            Optional[bool]  = None
     deploy_branch:          Optional[str]   = None   # "" = the checked-out branch
     deploy_strategy:        Optional[str]   = None   # rolling | blue_green

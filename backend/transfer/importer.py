@@ -10,6 +10,7 @@ Two phases, so the request can answer in a moment:
 import json
 import logging
 import re
+from apps import autoscale
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -154,6 +155,8 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
     if entry.get("has_git_token") and not entry.get("git_token"):
         warnings.append(f"{name}: add its Git token in the app's settings")
 
+    scaling = {f: _opt(entry, f, bool if f == "autoscale_enabled" else float) for f in autoscale.FIELDS}
+    scaling = {f: autoscale.clean(f, v) for f, v in scaling.items() if v is not None}
     # Optional settings: only passed when the file has them, so a missing one keeps its default.
     optional = {k: v for k, v in {
         "auto_deploy": _opt(entry, "auto_deploy", bool),
@@ -161,10 +164,7 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
         "deploy_strategy": strategy,
         "auto_deploy_interval": (max(30, min(_opt(entry, "auto_deploy_interval", int), 3600))
                                  if _opt(entry, "auto_deploy_interval", int) is not None else None),
-        "autoscale_enabled": _opt(entry, "autoscale_enabled", bool),
-        "autoscale_min_instances": _opt(entry, "autoscale_min_instances", int),
-        "autoscale_max_instances": _opt(entry, "autoscale_max_instances", int),
-        "autoscale_cpu_target": _opt(entry, "autoscale_cpu_target", int),
+        **scaling,
         "health_path": _health(health.clean_path, entry.get("health_path")),
         "health_expect": _health(health.clean_expect, entry.get("health_expect")),
         "health_timeout_seconds": _health(health.clean_timeout, entry.get("health_timeout_seconds")),
