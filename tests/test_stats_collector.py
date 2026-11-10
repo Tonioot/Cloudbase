@@ -57,25 +57,23 @@ def docker(monkeypatch):
 
     fake = Fake()
     monkeypatch.setattr(stats.containers_stats_logs, "get_container_stats_by_name", fake)
-    monkeypatch.setattr(pm, "_watched_until", {})
     monkeypatch.setattr(pm, "_stats_queues", {})
     return fake
 
 
 class Round:
-    """A collector with its own memory of when it last looked at each app."""
+    """One round of the collector over these apps."""
 
     def __init__(self, apps_and_instances):
         self.apps = [a for a, _ in apps_and_instances]
         self.instances = {a.id: r for a, r in apps_and_instances}
-        self.last = {}
 
-    def at(self, now):
+    def run(self, local_node_id=None):
         from workers import stats
 
         async def go():
             _MINE.set(True)
-            return await stats.sample_due_apps(self.apps, self.instances, now, self.last)
+            return await stats.sample_apps(self.apps, self.instances, local_node_id)
         return _run(go())
 
 
@@ -83,102 +81,49 @@ def test_every_instance_is_asked_once_per_round(docker):
     from containers import processes as pm
     app_id = 900001
     instances = _instances(app_id, 3)
-    assert Round([(_app(app_id), instances)]).at(1000.0) == 3
+    assert Round([(_app(app_id), instances)]).run() == 3
     assert len(docker.asked_for(app_id)) == 3                             # not twice each, as it used to be
     assert all(pm.get_all_instance_stats(app_id, [r.id])[r.id]["cpu_percent"] == 10.0 for r in instances)
     frames = pm.get_recent_stats(app_id)
     assert len(frames) == 1 and frames[0]["memory_mb"] == 150.0 and frames[0]["cpu_percent"] == 10.0
 
 
-def test_an_app_nobody_watches_is_sampled_every_15_seconds(docker):
+def test_every_app_is_sampled_every_round_whether_anybody_looks_or_not(docker):
+    """One rhythm: nothing has to know who is looking."""
     app_id = 900002
     rounds = Round([(_app(app_id), _instances(app_id, 2))])
-    rounds.at(1000.0)
-    rounds.at(1002.0)
-    rounds.at(1010.0)
-    assert len(docker.asked_for(app_id)) == 2                             # one round so far
-    rounds.at(1015.0)
+    rounds.run()
+    rounds.run()
     assert len(docker.asked_for(app_id)) == 4
-
-
-def test_an_app_somebody_watches_is_sampled_every_round(docker):
-    from containers import processes as pm
-    app_id = 900003
-    rounds = Round([(_app(app_id), _instances(app_id, 2))])
-    rounds.at(1000.0)
-    pm.mark_watched(app_id, seconds=60)                                   # the instances tab asked for numbers
-    rounds.at(time.monotonic())
-    rounds.at(time.monotonic() + 1)
-    assert len(docker.asked_for(app_id)) == 6
-
-
-def test_an_open_stats_tab_counts_as_watching(docker):
-    from containers import processes as pm
-    app_id = 900004
-    rounds = Round([(_app(app_id), _instances(app_id, 1))])
-    queue = pm.subscribe_stats(app_id)
-    rounds.at(1000.0)
-    rounds.at(1002.0)
-    assert len(docker.asked_for(app_id)) == 2
-    pm.unsubscribe_stats(app_id, queue)
-    rounds.at(1004.0)
-    assert len(docker.asked_for(app_id)) == 2                             # the tab closed: back to every 15 s
-
-
-def test_the_instances_tab_marks_the_app_as_watched(admin):
-    from containers import processes as pm
-    from core.database import AsyncSessionLocal
-    from core.models import Application
-
-    async def make():
-        async with AsyncSessionLocal() as db:
-            app = Application(name="collect-marks", repo_url="https://example.test/x", start_command="x", port=3000)
-            db.add(app)
-            await db.commit()
-            return app.id
-    app_id = _run(make())
-    assert not pm.is_watched(app_id)
-    assert admin.get(f"/api/apps/{app_id}/instances/stats").status_code == 200
-    assert pm.is_watched(app_id)
-    assert not pm.is_watched(app_id, now=time.monotonic() + 60)           # and it lapses when the tab is gone
 
 
 def test_what_runs_here_is_sampled_wherever_else_the_app_runs(docker):
     """Only this server's instances are handed in; an app with instances elsewhere too is no reason to skip them."""
     app_id = 900005
-    assert Round([(_app(app_id, node_id=77), _instances(app_id, 2))]).at(1000.0) == 2
+    assert Round([(_app(app_id, node_id=77), _instances(app_id, 2))]).run() == 2
     assert len(docker.asked_for(app_id)) == 2
 
 
 def test_an_app_without_running_instances_here_is_not_asked_about(docker):
     app_id = 900006
-    assert Round([(_app(app_id), [])]).at(1000.0) == 0
+    assert Round([(_app(app_id), [])]).run() == 0
     assert docker.asked_for(app_id) == []
 
 
 def test_many_instances_never_run_more_stats_calls_at_once_than_the_limit(docker):
     from workers import stats
     app_id = 900007
-    assert Round([(_app(app_id), _instances(app_id, 40))]).at(1000.0) == 40
+    assert Round([(_app(app_id), _instances(app_id, 40))]).run() == 40
     assert len(docker.asked_for(app_id)) == 40
     assert docker.busiest <= stats.STATS_CONCURRENCY
 
 
-def test_apps_that_stopped_running_here_are_forgotten():
-    from workers import stats
-    last = {900008: 1.0, 900009: 2.0}
-
-    async def go():
-        return await stats.sample_due_apps([], {900009: []}, 1000.0, last)
-    _run(go())
-    assert last == {900009: 2.0}
-
-
 def test_there_is_one_collector_for_every_instance():
-    """No separate poller for other nodes, no stream per open stats tab: one round samples everything."""
+    """No separate poller for other nodes, no stream per open stats tab, no 'who is watching': one round, every 5 s."""
+    from containers import processes as pm
     from workers import stats
     import lifespan
-    assert not hasattr(stats, "_remote_instance_stats_poller")
+    assert not hasattr(stats, "_remote_instance_stats_poller") and not hasattr(pm, "is_watched") and stats.SAMPLE_SECONDS == 5
     assert "_remote_instance_stats_poller" not in open(lifespan.__file__, encoding="utf-8").read()
 
 
@@ -193,7 +138,7 @@ def test_instances_on_other_nodes_use_what_their_node_sent_and_make_one_frame_wi
 
     async def go():
         _MINE.set(True)
-        return await stats.sample_due_apps([_app(app_id)], {app_id: [here, there]}, 1000.0, {}, local_node_id=1)
+        return await stats.sample_apps([_app(app_id)], {app_id: [here, there]}, 1)
     assert _run(go()) == 2
     assert len(docker.asked_for(app_id)) == 1                                                  # Docker only for the local one
     frame = pm.get_recent_stats(app_id)[-1]
@@ -211,57 +156,25 @@ def test_numbers_a_node_sent_too_long_ago_are_not_used(docker):
 
     async def go():
         _MINE.set(True)
-        return await stats.sample_due_apps([_app(app_id)], {app_id: [N(id=9000212, app_id=app_id, node_id=1), old]}, 1000.0, {}, local_node_id=1)
+        return await stats.sample_apps([_app(app_id)], {app_id: [N(id=9000212, app_id=app_id, node_id=1), old]}, 1)
     _run(go())
     assert pm.get_recent_stats(app_id)[-1]["_instance_count"] == 1
 
 
-def test_a_watched_app_makes_its_nodes_send_faster(monkeypatch):
-    from containers import processes as pm
-    from workers import stats
-    sent = []
-
-    class WS:
-        async def send_json(self, message):
-            sent.append(message)
-    monkeypatch.setattr(stats, "_node_ws_connections", {5: WS(), 6: WS()})
-    monkeypatch.setattr(stats, "_hinted", {})
-    monkeypatch.setattr(pm, "_watched_until", {900023: time.monotonic() + 10})
-    instances = {900023: [N(id=1, app_id=900023, node_id=5), N(id=2, app_id=900023, node_id=1)],
-                 900024: [N(id=3, app_id=900024, node_id=6)]}                                     # nobody watches this one
-    _run(stats._hint_watchers(instances, 1, 1000.0))
-    _run(stats._hint_watchers(instances, 1, 1001.0))                                              # not again this soon
-    assert sent == [{"type": "watch", "app_id": 900023}]
-
-
-def test_the_app_stream_only_gets_app_frames(docker):
+def test_the_app_stream_only_gets_app_frames(client, docker):          # client: the app's event loop delivers the frames
     """The charts draw what comes over the app's stream: an instance's own numbers in between would make them jump."""
     from containers import processes as pm
     app_id = 900022
     q = pm.subscribe_stats(app_id)
     try:
-        Round([(_app(app_id), _instances(app_id, 2))]).at(1000.0)
+        Round([(_app(app_id), _instances(app_id, 2))]).run()
+        deadline = time.time() + 2                       # the frame is put on the queue by the app's own event loop
+        while q.empty() and time.time() < deadline:
+            time.sleep(0.02)
+        time.sleep(0.1)                                  # and anything that would come right after it
         frames = []
         while not q.empty():
             frames.append(q.get_nowait())
     finally:
         pm.unsubscribe_stats(app_id, q)
     assert len(frames) == 1 and "instance_id" not in frames[0] and frames[0]["_instance_count"] == 2
-
-
-def test_watching_for_minutes_keeps_the_node_fast(monkeypatch):
-    """The node watches for 30 s after each hint; while somebody looks, a new hint comes every 10 s."""
-    from containers import processes as pm
-    from workers import stats
-    sent = []
-
-    class WS:
-        async def send_json(self, message):
-            sent.append(message)
-    monkeypatch.setattr(stats, "_node_ws_connections", {5: WS()})
-    monkeypatch.setattr(stats, "_hinted", {})
-    monkeypatch.setattr(pm, "_watched_until", {900025: float("inf")})          # the stats tab stays open
-    instances = {900025: [N(id=1, app_id=900025, node_id=5)]}
-    for second in range(0, 181, 2):                                            # three minutes of collector rounds
-        _run(stats._hint_watchers(instances, 1, 1000.0 + second))
-    assert len(sent) == 19                                                     # 0, 10, …, 180 s: never 30 s without one

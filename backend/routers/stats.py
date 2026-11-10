@@ -12,7 +12,7 @@ router = APIRouter(tags=["stats"])
 @router.websocket("/ws/apps/{app_id}/stats")
 async def stream_stats(app_id: int, websocket: WebSocket):
     """The app's stats as the collector (workers/stats.py) makes them: one frame for all its instances, wherever they run.
-    While this is open the app counts as watched, so it is sampled every 2 s."""
+    New frames come every 5 s (workers/stats.py SAMPLE_SECONDS)."""
     if not await auth.authorize_websocket(websocket, "apps.view"):
         return
     await websocket.accept()

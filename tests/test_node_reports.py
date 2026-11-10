@@ -31,7 +31,6 @@ def node_side(monkeypatch):
         db_calls.append((with_stats, with_disk))
         return {"7": {"state": "running", "volume": True}}
     monkeypatch.setattr(report.dbs_lifecycle, "report_all", report_all)
-    monkeypatch.setattr(report, "_watched", {})
     return report, asked, db_calls
 
 
@@ -41,28 +40,17 @@ def _send_into(messages):
     return send
 
 
-def test_every_running_instance_every_ten_seconds_and_databases_every_thirty(node_side):
+def test_every_running_instance_every_round_and_databases_every_sixth(node_side):
     report, asked, db_calls = node_side
     messages = []
-    for tick in range(16):                                         # 32 s
+    for tick in range(7):                                          # 35 s
         _run(report.report_once(tick, _send_into(messages)))
     instance_rounds = [m for m in messages if m["type"] == "instance_stats"]
-    assert len(instance_rounds) == 4                               # at 0, 10, 20, 30 s
+    assert len(instance_rounds) == 7                               # every 5 s
     assert set(instance_rounds[0]["stats"]) == {"11", "21"}        # running ones only
     assert all(s["timestamp"] > 0 for s in instance_rounds[0]["stats"].values())
     assert [m["databases"] for m in messages if m["type"] == "database_report"] == [{"7": {"state": "running", "volume": True}}] * 2
     assert db_calls == [(True, True), (False, False)]              # usage every other round, the data size now and then
-
-
-def test_a_watched_app_is_sent_every_tick_until_nobody_looks(node_side, monkeypatch):
-    report, asked, _ = node_side
-    messages = []
-    report.watch(2)
-    _run(report.report_once(1, _send_into(messages)))              # not a full round: only the watched app
-    assert messages == [{"type": "instance_stats", "stats": {"21": messages[0]["stats"]["21"]}}]
-    report._watched[2] = time.monotonic() - 1                       # its WATCH_SECONDS are over
-    _run(report.report_once(1, _send_into(messages)))
-    assert len(messages) == 1                                       # nobody looks any more: wait for the full round
 
 
 def test_a_failing_part_does_not_stop_the_other(node_side, monkeypatch):
@@ -255,12 +243,3 @@ def test_a_node_finds_its_databases_by_name_and_measures_the_running_ones(monkey
     assert set(out) == {"3", "4", "9"}                                   # by container, by data volume, and nothing else
     assert out["3"]["stats"] == {"cpu_percent": 1.0} and "stats" not in out["4"] and "stats" not in out["9"]
     assert asked == [(3, lifecycle.db_engines.get_engine("postgres").data_dir("16"))]
-
-
-def test_every_hint_extends_the_fast_rate(node_side):
-    report, _, _ = node_side
-    report.watch(2)
-    first = report._watched[2]
-    time.sleep(0.01)
-    report.watch(2)
-    assert report._watched[2] > first and report.watched_apps(time.monotonic()) == {2}

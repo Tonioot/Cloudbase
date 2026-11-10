@@ -86,8 +86,8 @@ with a growing delay and given up after a few attempts until the spec changes; a
 by itself is reported, not fought.
 
 What a node sends by itself, unasked (`agent/report.py`, stored by `nodes/reports.py`): the stats of its instances
-every 10 s (every 2 s for an app somebody looks at: the primary sends a `watch` for it) and the state and usage of its
-databases every 30 s. The stats collector and the database monitor read that instead of asking. Every machine also
+every 5 s and the state and usage of its databases every 30 s. The primary samples its own instances at the same pace
+(`workers/stats.py`), whether anybody looks or not. The stats collector and the database monitor read that instead of asking. Every machine also
 cleans its own Docker disk (`containers/cleanup.py` `cleanup_forever`).
 
 What stays a command (`nodes/commands.py`, over the websocket, answered over HTTP): one-off things only — logs,

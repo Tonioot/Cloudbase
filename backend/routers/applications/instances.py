@@ -35,7 +35,6 @@ async def list_instances(app_id: int, _user: dict = Depends(_auth.require_permis
 async def get_instance_stats(app_id: int, _user: dict = Depends(_auth.require_permission("apps.view")), db: AsyncSession = Depends(get_db)):
     """Return the latest stats snapshot for each instance of this app."""
     await _get_or_404(app_id, db)
-    pm.mark_watched(app_id)       # someone is looking: the collector samples this app every 2 s for a while
     rep_result = await db.execute(
         select(Instance).where(Instance.app_id == app_id)
     )

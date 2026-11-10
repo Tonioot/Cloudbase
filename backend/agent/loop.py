@@ -90,8 +90,6 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState, reco
                                 asyncio.create_task(_execute_in_background(client, state, cmd))
                         elif mtype == "sync":
                             reconciler.nudge()          # the list of what to run changed
-                        elif mtype == "watch":
-                            agent_report.watch(data.get("app_id") or 0)    # somebody looks at this app's stats
                         elif mtype == "cancel_stream":
                             sid = data.get("stream_id")
                             if sid and sid in _active_streams:

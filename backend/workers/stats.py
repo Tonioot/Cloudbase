@@ -13,7 +13,6 @@ from containers import processes as pm
 from containers import naming as containers_naming
 from containers import stats_logs as containers_stats_logs
 from nodes import reports as node_reports
-from nodes.state import _node_ws_connections
 from apps.runtime import has_running_instance
 from core.history import _HISTORY_RETENTION_DAYS, _OVERVIEW_SAMPLE_SECONDS
 
@@ -21,16 +20,10 @@ log = logging.getLogger("cloudbase.main")
 
 
 # ── Background stats collector ────────────────────────────────────────────────
-# Every Docker stats call takes about a second and runs in a thread. They used to run for every instance every 2 s,
-# twice (once for the instance, once for the app), whether anyone looked or not.
-IDLE_SAMPLE_SECONDS = 15      # nobody is looking at the app: this often is enough for history and the instances table
+# Every SAMPLE_SECONDS one frame per app over all its instances: Docker for the ones here (a stats call takes about a
+# second and runs in a thread), what their node sent last for the others (agent/report.py does the same every 5 s).
+SAMPLE_SECONDS = 5
 STATS_CONCURRENCY = 12        # at most this many Docker stats calls at once, so other threaded work is not starved
-_last_sample: dict[int, float] = {}
-
-
-def _wants_sample(app_id: int, now: float, last_sample: dict) -> bool:
-    """Every tick while someone watches the app (stats tab, instances tab); otherwise every IDLE_SAMPLE_SECONDS."""
-    return pm.is_watched(app_id, now) or now - last_sample.get(app_id, float("-inf")) >= IDLE_SAMPLE_SECONDS - 0.5
 
 
 def _aggregate(stats_list: list[dict]) -> dict:
@@ -47,10 +40,8 @@ def _aggregate(stats_list: list[dict]) -> dict:
     }
 
 
-async def collect_stats_once(now: float | None = None) -> int:
-    """One round: every running instance of every app that is due, wherever it runs, once each.
-    Returns the number of instances sampled."""
-    now = _time.monotonic() if now is None else now
+async def collect_stats_once() -> int:
+    """One round: every running instance of every app, wherever it runs, once each. Returns the number sampled."""
     async with AsyncSessionLocal() as db:
         apps = (await db.execute(select(Application).where(has_running_instance()))).scalars().all()
         local_node = (await db.execute(select(Node).where(Node.is_local == True))).scalar_one_or_none()  # noqa: E712
@@ -61,35 +52,12 @@ async def collect_stats_once(now: float | None = None) -> int:
     instances_by_app: dict[int, list] = {}
     for r in running:
         instances_by_app.setdefault(r.app_id, []).append(r)
-    await _hint_watchers(instances_by_app, local_node_id, now)
-    return await sample_due_apps(apps, instances_by_app, now, local_node_id=local_node_id)
+    return await sample_apps(apps, instances_by_app, local_node_id)
 
 
-WATCH_HINT_SECONDS = 10       # how often a node is reminded that somebody looks at an app (it watches for 30 s)
-_hinted: dict[tuple[int, int], float] = {}
-
-
-async def _hint_watchers(instances_by_app: dict[int, list], local_node_id, now: float) -> None:
-    """Tell the nodes of the apps somebody looks at to send those apps' stats every 2 s instead of every 10 s."""
-    for app_id, instances in instances_by_app.items():
-        if not pm.is_watched(app_id, now):
-            continue
-        for node_id in {i.node_id for i in instances if i.node_id != local_node_id}:
-            ws = _node_ws_connections.get(node_id)
-            if ws is not None and now - _hinted.get((node_id, app_id), float("-inf")) >= WATCH_HINT_SECONDS:
-                _hinted[(node_id, app_id)] = now
-                try:
-                    await ws.send_json({"type": "watch", "app_id": app_id})
-                except Exception:
-                    pass
-
-
-async def sample_due_apps(apps, instances_by_app: dict[int, list], now: float, last_sample: dict | None = None,
-                          local_node_id: int | None = None) -> int:
-    """Sample the running instances of the apps that are due (Docker here; on another node: what its agent sent last)
-    and make one frame per app out of all of them. Returns the number of instances sampled."""
-    last_sample = _last_sample if last_sample is None else last_sample
-    due = [a for a in apps if instances_by_app.get(a.id) and _wants_sample(a.id, now, last_sample)]
+async def sample_apps(apps, instances_by_app: dict[int, list], local_node_id: int | None = None) -> int:
+    """Sample the running instances of these apps (Docker here; on another node: what its agent sent last) and make
+    one frame per app out of all of them. Returns the number of instances sampled."""
     gate = asyncio.Semaphore(STATS_CONCURRENCY)
     calls = 0
 
@@ -107,7 +75,6 @@ async def sample_due_apps(apps, instances_by_app: dict[int, list], now: float, l
         try:
             instances = instances_by_app[a.id]
             results = await asyncio.gather(*[sample(r) for r in instances])
-            last_sample[a.id] = now
             stats_list = []
             stamp = int(_time.time() * 1000)
             for instance, s in zip(instances, results):
@@ -135,14 +102,12 @@ async def sample_due_apps(apps, instances_by_app: dict[int, list], now: float, l
         except Exception:
             pass
 
-    await asyncio.gather(*[one_app(a) for a in due])
-    for app_id in [i for i in last_sample if i not in instances_by_app]:
-        del last_sample[app_id]                                    # apps that no longer run
+    await asyncio.gather(*[one_app(a) for a in apps if instances_by_app.get(a.id)])
     return calls
 
 
 async def _stats_collector():
-    """Sample every running instance: every 2 s for apps someone is watching, every 15 s for the rest."""
+    """Sample every running instance every SAMPLE_SECONDS."""
     await asyncio.sleep(4)
     while True:
         try:
@@ -151,7 +116,7 @@ async def _stats_collector():
             return
         except Exception:
             pass
-        await asyncio.sleep(2)
+        await asyncio.sleep(SAMPLE_SECONDS)
 
 
 async def _overview_sampler():
