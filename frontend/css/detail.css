@@ -585,7 +585,10 @@
 .settings-group--danger .sv2-head h3 { color: var(--red); }
 
 /* Card of rows */
-.s3-card { border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 16px; overflow: hidden; }
+.s3-card { border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 16px; }
+/* No overflow: hidden on the card (it would cut off the menus inside it); the outer rows round their own corners */
+.s3-card > :first-child { border-top-left-radius: calc(var(--radius) - 1px); border-top-right-radius: calc(var(--radius) - 1px); }
+.s3-card > :last-child { border-bottom-left-radius: calc(var(--radius) - 1px); border-bottom-right-radius: calc(var(--radius) - 1px); }
 .s3-card--danger { border-color: color-mix(in srgb, var(--red) 35%, var(--line)); }
 
 .s3-row {
