@@ -151,7 +151,7 @@ def test_there_is_no_separate_bar_for_it():
     page = (FRONTEND / "app.html").read_text(encoding="utf-8")
     js = (FRONTEND / "js" / "app.js").read_text(encoding="utf-8")
     assert "app-activity" not in page and "app-activity" not in js
-    assert "badge(busyWith || app.status)" in js                 # the badge itself shows what is being done
+    assert "badge(shownStatus(app))" in js                 # the badge itself shows what is being done
 
 
 def test_the_search_field_of_the_command_menu_has_no_square_outline():

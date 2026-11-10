@@ -3,7 +3,7 @@ import { createLogViewer, fillComponentSelect } from './logviewer.js';
 import { auditTableHTML, cssVar, icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, stripAnsi, ansiToHtml, setBtn, parseDotEnv, pickTextFile, mergeEnvIntoRows, timeAgo } from './utils.js';
 import { pickGitHubToken } from './sidebar.js';
 import { openDomainWizard, leCertName } from './domain-wizard.js';
-import { setCrumbs } from './shell.js';
+import { setCrumbs, shownStatus, updateIndexApp } from './shell.js';
 import { cronSummary, initRunsTab, runNow, toggleSchedule, scheduleEditorHTML, wireScheduleEditor } from './cron.js';
 
 const params = new URLSearchParams(location.search);
@@ -308,7 +308,6 @@ function renderActivity() {
 }
 
 function updateHeaderStatus() {
-  const busyWith = app.activity ? app.activity.kind : null;
   const badgeEl = document.getElementById('app-badge');
   // Traffic mode is shown next to the status — it is otherwise only visible in the ⋯ menu
   const modeChip = app.maintenance_mode
@@ -316,7 +315,8 @@ function updateHeaderStatus() {
     : app.update_mode
       ? ' <span class="pill" style="color:var(--yellow);border-color:var(--yellow-border)">Update mode</span>'
       : '';
-  badgeEl.innerHTML = badge(busyWith || app.status) + modeChip;
+  badgeEl.innerHTML = badge(shownStatus(app)) + modeChip;
+  updateIndexApp(app);
   if (!renderActivity()) document.getElementById('app-meta').textContent = formatPortSummary(app);
 
   const s = app.status;
@@ -329,6 +329,7 @@ function updateHeaderStatus() {
   btnStart.disabled   = (s === 'running') || busy;
   btnStop.disabled    = (s === 'stopped') || busy;
   btnRestart.disabled = busy;
+  for (const b of [btnStart, btnStop, btnRestart]) b.style.opacity = '';   // quickAction dims the others while it runs
 
   if (app.cron) {
     document.getElementById('btn-cron-toggle').textContent = app.cron.enabled ? 'Pause' : 'Resume';
@@ -414,7 +415,7 @@ async function quickAction(action) {
     if (activeTab === 'logs') _logAction(action, 'done');
   } catch (e) {
     toast(e.message, 'error');
-    if (activeTab === 'logs') _logAction(action, 'fail');
+    if (activeTab === 'logs') _logAction(action, 'fail', e.message);
     try { app = await api.getApp(APP_ID); } catch {}
   } finally {
     btn.innerHTML = prev;
@@ -643,7 +644,7 @@ function _appendLogLine(line) {
   if (terminal.childElementCount > 2000) terminal.removeChild(terminal.firstChild);
 }
 
-function _logAction(action, phase) {
+function _logAction(action, phase, reason = '') {
   const terminal = document.getElementById('log-terminal');
   if (!terminal) return;
   if (terminal.querySelector('.log-empty')) terminal.innerHTML = '';
@@ -653,15 +654,16 @@ function _logAction(action, phase) {
   const color  = colors[action] || 'var(--accent)';
 
   const labels = {
-    start:   { begin: '▶  Starting app…',              done: '▶  App started',              fail: '▶  Start failed' },
-    stop:    { begin: '■  Stopping app…',               done: '■  App stopped',               fail: '■  Stop failed' },
-    restart: { begin: '↺  Restarting app…',             done: '↺  App restarted',             fail: '↺  Restart failed' },
+    // 'done' is when the server took it on: the instances follow on their nodes, and the status shows how far they are
+    start:   { begin: '▶  Starting app…',   done: '▶  Instances are starting',       fail: '▶  Start failed' },
+    stop:    { begin: '■  Stopping app…',   done: '■  Instances are stopping',       fail: '■  Stop failed' },
+    restart: { begin: '↺  Restarting app…', done: '↺  Instances are restarting',     fail: '↺  Restart failed' },
   };
-  const text = labels[action]?.[phase] ?? `${action} ${phase}`;
+  const text = (labels[action]?.[phase] ?? `${action} ${phase}`) + (reason ? `: ${reason}` : '');
 
   const sep = document.createElement('div');
   sep.className = 'log-line log-action';
-  sep.innerHTML = `<span class="log-num">    </span><span class="log-text" style="color:${color};font-weight:600;letter-spacing:.02em">── ${text} ── ${ts} ──</span>`;
+  sep.innerHTML = `<span class="log-num">    </span><span class="log-text" style="color:${color};font-weight:600;letter-spacing:.02em">── ${escHtml(text)} ── ${ts} ──</span>`;
   terminal.appendChild(sep);
   terminal.scrollTop = terminal.scrollHeight;
 }

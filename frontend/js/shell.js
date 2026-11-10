@@ -43,8 +43,12 @@ const STATUS_COLOR = {
   stopped: 'var(--faint)',
   error: 'var(--red)', crashed: 'var(--red)', offline: 'var(--red)', unhealthy: 'var(--red)', node_offline: 'var(--red)',
   deploying: 'var(--yellow)', starting: 'var(--yellow)', stopping: 'var(--yellow)', restarting: 'var(--yellow)', creating: 'var(--yellow)',
+  building: 'var(--yellow)', scaling: 'var(--yellow)', updating: 'var(--yellow)', pending: 'var(--yellow)',
 };
 export const statusColor = s => STATUS_COLOR[s] || 'var(--faint)';
+/** What an app shows: what is being done to it right now (restarting, deploying, …), otherwise its status.
+ *  The header badge, the sidebar dot and the dashboard all use this, so they never disagree. */
+export const shownStatus = a => (a && a.activity && a.activity.kind) || (a && a.status);
 
 export const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -216,6 +220,12 @@ let index = { apps: [], nodes: [], databases: [], loaded: false };
 const INDEX_KEY = 'cb-index';
 const HIDDEN_PERMS_KEY = 'cb-hidden-perms';
 
+/** The app page fetched this app again: its dot in the sidebar follows right away instead of at the next poll. */
+export function updateIndexApp(app) {
+  if (!index.loaded || !app) return;
+  updateIndex(index.apps.map(a => a.id === app.id ? { ...a, status: app.status, activity: app.activity } : a), index.nodes, index.databases);
+}
+
 export function updateIndex(apps, nodes, databases, fromCache = false) {
   index = { apps: apps || [], nodes: nodes || [], databases: databases || [], loaded: true };
   if (!fromCache) {
@@ -234,7 +244,7 @@ export function updateIndex(apps, nodes, databases, fromCache = false) {
     appsEl.innerHTML = index.apps.length
       ? index.apps.map(a => `
           <a class="menu-item${section === 'apps' && a.id === currentId ? ' active' : ''}" href="/app?id=${a.id}">
-            <span class="dot" style="background:${statusColor(a.status)}"></span>
+            <span class="dot" style="background:${statusColor(shownStatus(a))}"></span>
             <span class="menu-item-label">${esc(a.name)}</span>
             <span class="menu-item-meta">${esc(a.cron ? 'cron' : a.no_web ? 'worker' : a.app_type === 'static' ? 'static' : a.app_type || '')}</span>
           </a>`).join('')

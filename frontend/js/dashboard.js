@@ -3,7 +3,7 @@ import { icon, toast, confirm, sparkPoints } from './utils.js';
 import { openDeployModal } from './modal.js';
 import { cronSummary } from './cron.js';
 import { renderDatabasesTable, openCreateDatabaseDialog } from './databases.js';
-import { statusColor, esc } from './shell.js';
+import { statusColor, shownStatus, esc } from './shell.js';
 
 let appsData = [];
 let nodesData = [];
@@ -244,7 +244,7 @@ function nodeRowHTML(n) {
   const chips = apps.length
     ? apps.map(({ app, reps }) => {
         const up = reps.filter(r => r.status === 'running').length;
-        return `<a class="app-chip" href="/app?id=${app.id}"><span class="dot" style="background:${statusColor(app.status)}"></span>${esc(app.name)}<span class="app-chip-count">×${up}</span></a>`;
+        return `<a class="app-chip" href="/app?id=${app.id}"><span class="dot" style="background:${statusColor(shownStatus(app))}"></span>${esc(app.name)}<span class="app-chip-count">×${up}</span></a>`;
       }).join('')
     : '<span class="node-apps-empty">No apps on this node</span>';
 
