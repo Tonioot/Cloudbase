@@ -80,6 +80,7 @@ def _collect_system_info() -> dict:
 # 2.x: nodes run what the primary lists (desired state) instead of obeying start/stop commands
 # 3.x: the list and the reports name things as they are named now (instances; 2.x used older names)
 # 4.x: the node sends the stats of its instances (every 5 s) and databases by itself (agent/report.py) and cleans its own disk
+# 5.x: databases across nodes go over the node network; no database control channel or tunnels (download progress is in the report)
 AGENT_VERSION = "5.0.0"
 
 

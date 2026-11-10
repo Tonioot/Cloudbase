@@ -45,7 +45,7 @@ def nudge(node_id: int) -> None:
     asyncio.get_running_loop().call_later(NUDGE_DELAY_SECONDS, _get_node_event(node_id).set)
 
 
-# The oldest agent this panel works with: 4.0 sends its stats by itself, the panel no longer asks for them
+# The oldest agent this panel works with: 5.0 has no database tunnels, the panel no longer offers them
 MIN_AGENT_MAJOR = 5
 
 
