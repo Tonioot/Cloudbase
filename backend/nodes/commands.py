@@ -6,7 +6,7 @@ question outlives neither the panel nor the agent process that got it, so there 
 
 The wire protocol with the agent is unchanged: a command goes out over the websocket as
 {"type": "command", "command": {"id", "app_id", "command_type", "payload", ...}} and the answer comes back over
-HTTP (POST /api/nodes/agent/commands/{id}/result) or the websocket ("command_result").
+HTTP (POST /api/nodes/agent/commands/{id}/result).
 """
 import asyncio
 import itertools

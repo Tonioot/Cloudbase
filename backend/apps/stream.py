@@ -2,9 +2,7 @@ import asyncio
 import json
 import logging
 import secrets
-from sqlalchemy import select
-from core.models import Application, Instance, Node
-from nodes import commands as node_commands
+from core.models import Node
 from nodes.state import _node_ws_connections, unsubscribe_node_stream, subscribe_node_stream
 
 log = logging.getLogger("cloudbase.stats")
@@ -59,54 +57,45 @@ async def _open_remote_stream(node: Node, app_id: int, app_name: str, out_q: asy
     async def _run():
         while True:
             try:
-                caps = json.loads(node.capabilities or "{}")
-                features = caps.get("features") or []
                 agent_ws = _node_ws_connections.get(node.id)
-
-                if "streaming_stats" in features and agent_ws is not None:
-                    stream_id = secrets.token_hex(8)
-                    q = subscribe_node_stream(stream_id)
-                    try:
-                        await agent_ws.send_json({
-                            "type": "command",
-                            "command": {
-                                "id": -1,
-                                "command_type": "stream_stats",
-                                "payload": {"app_id": app_id, "app_name": app_name, "stream_id": stream_id},
-                            },
-                        })
-                        while True:
-                            try:
-                                data = await asyncio.wait_for(q.get(), timeout=30.0)
-                            except asyncio.TimeoutError:
-                                # If the same node websocket is still active, keep the
-                                # stream open instead of thrashing reconnects with 0 frames.
-                                if _node_ws_connections.get(node.id) is agent_ws:
-                                    continue
-                                # WS changed/dropped; break so outer loop reconnects.
-                                break
-                            parsed = json.loads(data) if isinstance(data, str) else data
-                            await out_q.put((node.id, parsed))
-                    except asyncio.TimeoutError:
-                        pass
-                    except Exception as e:
-                        log.debug("remote stream node %d ended: %s", node.id, e)
-                    finally:
-                        unsubscribe_node_stream(stream_id, q)
-                        try:
-                            if _node_ws_connections.get(node.id) is agent_ws:
-                                await agent_ws.send_json({"type": "cancel_stream", "stream_id": stream_id})
-                        except Exception:
-                            pass
-                    await asyncio.sleep(1)
+                if agent_ws is None:                 # not connected (yet): there is no other way to ask it
+                    await asyncio.sleep(2)
                     continue
-
-                # Poll fallback (also used while node websocket is reconnecting)
-                done = await node_commands.ask(node.id, "get_stats", {"app_id": app_id, "app_name": app_name},
-                                               app_id=app_id, reuse=True)
-                if done.status == "done":
-                    await out_q.put((node.id, done.result or {}))
-                await asyncio.sleep(2)
+                stream_id = secrets.token_hex(8)
+                q = subscribe_node_stream(stream_id)
+                try:
+                    await agent_ws.send_json({
+                        "type": "command",
+                        "command": {
+                            "id": -1,
+                            "command_type": "stream_stats",
+                            "payload": {"app_id": app_id, "app_name": app_name, "stream_id": stream_id},
+                        },
+                    })
+                    while True:
+                        try:
+                            data = await asyncio.wait_for(q.get(), timeout=30.0)
+                        except asyncio.TimeoutError:
+                            # If the same node websocket is still active, keep the
+                            # stream open instead of thrashing reconnects with 0 frames.
+                            if _node_ws_connections.get(node.id) is agent_ws:
+                                continue
+                            # WS changed/dropped; break so outer loop reconnects.
+                            break
+                        parsed = json.loads(data) if isinstance(data, str) else data
+                        await out_q.put((node.id, parsed))
+                except asyncio.TimeoutError:
+                    pass
+                except Exception as e:
+                    log.debug("remote stream node %d ended: %s", node.id, e)
+                finally:
+                    unsubscribe_node_stream(stream_id, q)
+                    try:
+                        if _node_ws_connections.get(node.id) is agent_ws:
+                            await agent_ws.send_json({"type": "cancel_stream", "stream_id": stream_id})
+                    except Exception:
+                        pass
+                await asyncio.sleep(1)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -114,21 +103,3 @@ async def _open_remote_stream(node: Node, app_id: int, app_name: str, out_q: asy
                 await asyncio.sleep(2)
 
     return asyncio.create_task(_run())
-
-
-async def _get_app_node(app: Application, db, local_node: Node) -> Node:
-    """Return the node of the first running instance, falling back to local."""
-    result = await db.execute(
-        select(Instance).where(
-            Instance.app_id == app.id,
-            Instance.status == "running",
-            Instance.node_id.isnot(None),
-        ).limit(1)
-    )
-    instance = result.scalar_one_or_none()
-    if instance and instance.node_id:
-        node_result = await db.execute(select(Node).where(Node.id == instance.node_id))
-        node = node_result.scalar_one_or_none()
-        if node:
-            return node
-    return local_node

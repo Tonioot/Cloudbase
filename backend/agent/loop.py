@@ -10,7 +10,7 @@ from agent.dispatch import _active_streams, _execute_command, _execute_in_backgr
 from agent import alive, mesh as agent_mesh
 from agent.log import _agent_log
 from agent.reconcile import Reconciler
-from agent.registration import _build_capabilities, _collect_node_metrics, _collect_system_info, _register, _report_result
+from agent.registration import _build_capabilities, _collect_node_metrics, _collect_system_info, _register
 from agent.state import AgentState, _load_state, _save_state
 from agent.urls import _normalize_url, _ws_url
 
@@ -134,29 +134,9 @@ async def start_agent(main_url=None, invite_code=None, node_name=None, public_ho
             reconciler = Reconciler(client, state)
             background = [asyncio.create_task(agent_mesh.join_forever(client, state)), asyncio.create_task(reconciler.run())]
             try:
-                await _drain_stale_commands(client, state)
                 await _run_websocket_loop(client, state, reconciler)
             finally:
                 for task in background:
                     task.cancel()
     finally:
         db_control.cancel()
-
-
-async def _drain_stale_commands(client: httpx.AsyncClient, state: AgentState) -> None:
-    """Fail any queued commands that were left over from a previous session."""
-    headers = {"X-Node-Token": state.auth_token}
-    try:
-        resp = await client.get(
-            f"{state.main_url}/api/nodes/agent/commands",
-            headers=headers,
-            timeout=10,
-        )
-        if resp.status_code != 200:
-            return
-        commands = resp.json().get("commands") or []
-        for cmd in commands:
-            _agent_log(f"[agent] Draining stale command {cmd['id']} ({cmd.get('command_type')})")
-            await _report_result(client, state, cmd["id"], status="failed", error_message="Agent restarted — command discarded")
-    except Exception as e:
-        _agent_log(f"[agent] Could not drain stale commands: {e}")

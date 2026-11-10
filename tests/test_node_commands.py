@@ -1,8 +1,7 @@
 """Questions to a node live in memory (nodes/commands.py); the protocol with the agent is what it always was:
-the command goes out over the websocket, the answer comes back over HTTP or the websocket."""
+the command goes out over the websocket, the answer comes back over HTTP."""
 import asyncio
 import threading
-import time
 
 import pytest
 
@@ -82,30 +81,11 @@ def test_a_question_goes_out_over_the_websocket_and_the_answer_comes_back_over_h
         ws.__exit__(None, None, None)
 
 
-def test_the_answer_can_also_come_over_the_websocket(admin, node):
-    node_id, token = node("cmd-ws")
-    ws, sock = _connect(admin, token)
-    try:
-        t, out = _in_background(lambda: admin.get(f"/api/nodes/{node_id}/agent-logs"))
-        cmd = _next_command(sock)
-        sock.send_json({"type": "command_result", "command_id": cmd["id"], "status": "done", "result": {"lines": ["x"]}})
-        t.join(10)
-        assert out["result"].json()["lines"] == ["x"]
-    finally:
-        ws.__exit__(None, None, None)
-
-
-def test_an_answer_nobody_waits_for_is_refused_and_does_not_break_the_connection(admin, node):
+def test_an_answer_nobody_waits_for_is_refused(admin, node):
+    """E.g. for a question from before a restart of the panel."""
     node_id, token = node("cmd-unknown")
     r = admin.post("/api/nodes/agent/commands/123/result", headers={"X-Node-Token": token}, json={"status": "done"})
     assert r.status_code == 404
-    ws, sock = _connect(admin, token)
-    try:
-        sock.send_json({"type": "command_result", "command_id": 123, "status": "done"})   # e.g. from before a panel restart
-        sock.send_json({"type": "ping"})
-        assert sock.receive_json()["type"] == "pong"                                       # still connected
-    finally:
-        ws.__exit__(None, None, None)
 
 
 def test_another_nodes_answer_is_refused(admin, node):
@@ -138,19 +118,3 @@ def test_a_question_to_a_node_that_does_not_answer_times_out_and_is_forgotten(cl
     assert _run(go()) == 504
     assert not [c for c in commands._open.values() if c.node_id == node_id]
     assert commands.history(node_id)[0]["status"] == "failed"
-
-
-def test_an_agent_that_starts_drains_what_was_queued_for_it(admin, node):
-    """The agent asks for queued commands when it starts (GET /agent/commands) and reports them failed."""
-    from nodes import commands
-    node_id, token = node("cmd-drain")
-    t, out = _in_background(lambda: admin.get(f"/api/nodes/{node_id}/agent-logs"))
-    deadline = time.time() + 5
-    while time.time() < deadline and not [c for c in commands._open.values() if c.node_id == node_id]:
-        time.sleep(0.05)
-    queued = admin.get("/api/nodes/agent/commands", headers={"X-Node-Token": token}).json()["commands"]
-    assert [c["command_type"] for c in queued] == ["get_agent_logs"]
-    admin.post(f"/api/nodes/agent/commands/{queued[0]['id']}/result", headers={"X-Node-Token": token},
-               json={"status": "failed", "error_message": "Agent restarted — command discarded"})
-    t.join(10)
-    assert out["result"].json()["lines"] == [] and "error" in out["result"].json()

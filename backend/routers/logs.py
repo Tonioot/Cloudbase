@@ -86,83 +86,54 @@ async def stream_logs(app_id: int, websocket: WebSocket):
         node = await _get_app_node(app, db, local_node)
 
         if not node.is_local:
-            import json as _json
-            caps = _json.loads(node.capabilities or "{}")
-            features = caps.get("features") or []
-            agent_ws = _node_ws_connections.get(node.id)
             node_id = node.id
             app_id_val = app.id
             app_name_val = app.name
-
-            # Use true WebSocket streaming if the agent supports it and is connected
-            if "streaming_logs" in features and agent_ws is not None:
-                stream_id = secrets.token_hex(8)
-                log.info("logs stream_logs via WS: app_id=%d node_id=%d stream_id=%s", app_id_val, node_id, stream_id)
-                q = subscribe_node_stream(stream_id)
-                frames = 0
-                # Also show Cloudbase's own messages for this app (deploys, builds,
-                # start/stop) — those are produced here on the primary, not on the node.
-                own = pm.subscribe_logs(app_id_val)
-
-                async def _forward_own():
-                    while True:
-                        q.put_nowait(await own.get())
-
-                forwarder = asyncio.create_task(_forward_own())
-                try:
-                    await agent_ws.send_json({
-                        "type": "command",
-                        "command": {
-                            "id": -1,
-                            "command_type": "stream_logs",
-                            "payload": {"app_id": app_id_val, "app_name": app_name_val, "stream_id": stream_id},
-                        },
-                    })
-                    while True:
-                        try:
-                            data = await asyncio.wait_for(q.get(), timeout=30.0)
-                            frames += 1
-                            await websocket.send_text(data if data.endswith("\n") else data + "\n")
-                        except asyncio.TimeoutError:
-                            log.debug("logs WS stream_id=%s waiting for data (frames so far: %d)", stream_id, frames)
-                except (WebSocketDisconnect, Exception) as e:
-                    log.info("logs WS ended: stream_id=%s frames=%d reason=%s", stream_id, frames, e)
-                finally:
-                    forwarder.cancel()
-                    pm.unsubscribe_logs(app_id_val, own)
-                    unsubscribe_node_stream(stream_id, q)
-                    try:
-                        if _node_ws_connections.get(node_id) is agent_ws:
-                            await agent_ws.send_json({"type": "cancel_stream", "stream_id": stream_id})
-                    except Exception:
-                        pass
-                return
-
-            # Fallback: poll-and-diff — use a fresh DB session each iteration
-            log.info("logs poll fallback: app_id=%d node_id=%d (no WS or streaming_logs not in caps=%s)",
-                     app_id_val, node_id, features)
-            last_snapshot: list[str] = []
-            try:
-                while True:
-                    done = await node_commands.ask(node_id, "get_logs_tail",
-                                                   {"app_id": app_id_val, "app_name": app_name_val, "limit": 200},
-                                                   app_id=app_id_val)
-                    if done.status == "done":
-                        payload = done.result or {}
-                        lines = payload.get("lines", []) or []
-                        if lines != last_snapshot:
-                            if last_snapshot and len(lines) >= len(last_snapshot) and lines[:len(last_snapshot)] == last_snapshot:
-                                delta = lines[len(last_snapshot):]
-                            else:
-                                delta = lines
-                            for line in delta:
-                                await websocket.send_text(line + "\n")
-                            last_snapshot = lines
-                    elif done.error_message:
-                        await websocket.send_text(f"[remote-log-error] {done.error_message}\n")
+            agent_ws = _node_ws_connections.get(node_id)
+            if agent_ws is None:                       # the logs come through its agent: wait until it is back
+                await websocket.send_text(f"[Cloudbase] Node '{node.name}' is not connected right now; its logs show up once it is.\n")
+                while (agent_ws := _node_ws_connections.get(node_id)) is None:
                     await asyncio.sleep(2)
-            except (WebSocketDisconnect, Exception):
-                pass
+            stream_id = secrets.token_hex(8)
+            log.info("logs stream_logs via WS: app_id=%d node_id=%d stream_id=%s", app_id_val, node_id, stream_id)
+            q = subscribe_node_stream(stream_id)
+            frames = 0
+            # Also show Cloudbase's own messages for this app (deploys, builds,
+            # start/stop) — those are produced here on the primary, not on the node.
+            own = pm.subscribe_logs(app_id_val)
+
+            async def _forward_own():
+                while True:
+                    q.put_nowait(await own.get())
+
+            forwarder = asyncio.create_task(_forward_own())
+            try:
+                await agent_ws.send_json({
+                    "type": "command",
+                    "command": {
+                        "id": -1,
+                        "command_type": "stream_logs",
+                        "payload": {"app_id": app_id_val, "app_name": app_name_val, "stream_id": stream_id},
+                    },
+                })
+                while True:
+                    try:
+                        data = await asyncio.wait_for(q.get(), timeout=30.0)
+                        frames += 1
+                        await websocket.send_text(data if data.endswith("\n") else data + "\n")
+                    except asyncio.TimeoutError:
+                        log.debug("logs WS stream_id=%s waiting for data (frames so far: %d)", stream_id, frames)
+            except (WebSocketDisconnect, Exception) as e:
+                log.info("logs WS ended: stream_id=%s frames=%d reason=%s", stream_id, frames, e)
+            finally:
+                forwarder.cancel()
+                pm.unsubscribe_logs(app_id_val, own)
+                unsubscribe_node_stream(stream_id, q)
+                try:
+                    if _node_ws_connections.get(node_id) is agent_ws:
+                        await agent_ws.send_json({"type": "cancel_stream", "stream_id": stream_id})
+                except Exception:
+                    pass
             return
 
         # Local app: subscribe before snapshot so we don't miss lines produced during send

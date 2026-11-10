@@ -45,7 +45,6 @@ GET     /api/domains/certificate/{cert_name}
 GET     /api/domains/server
 GET     /api/health
 GET     /api/nodes
-GET     /api/nodes/agent/commands
 GET     /api/nodes/agent/databases/{database_id}/backups/{backup_id}/download
 GET     /api/nodes/agent/desired
 GET     /api/nodes/mesh

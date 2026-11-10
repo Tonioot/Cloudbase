@@ -130,18 +130,6 @@ async def agent_observed(
     return {"ok": True}
 
 
-@router.get("/agent/commands")
-async def get_pending_commands(
-    limit: int = 20,
-    x_node_token: Optional[str] = Header(default=None),
-    db: AsyncSession = Depends(get_db),
-):
-    if not x_node_token:
-        raise HTTPException(401, "Missing node token")
-    node = await get_node_by_token_or_401(x_node_token, db)
-    return {"commands": node_commands.take_queued(node.id)[:max(1, limit)]}
-
-
 @router.post("/agent/commands/{command_id}/result")
 async def report_command_result(
     command_id: int,
@@ -275,14 +263,6 @@ async def agent_ws(websocket: WebSocket):
                             "memory_percent": incoming.get("node_metrics", {}).get("memory_percent"),
                             "disk_percent": incoming.get("node_metrics", {}).get("disk_percent"),
                         })
-                    elif msg_type == "command_result":
-                        command_id = int(incoming.get("command_id") or -1)
-                        if command_id != -1:          # streams use -1: nothing waits for an answer
-                            try:
-                                node_commands.answer(node_id, command_id, incoming.get("status") or "failed",
-                                                     incoming.get("result"), incoming.get("error_message"))
-                            except HTTPException as exc:      # unknown (the panel restarted since): not worth the connection
-                                log.debug("command_result %s from node %d ignored: %s", command_id, node_id, exc.detail)
                     elif msg_type == "stream_data":
                         stream_id = incoming.get("stream_id")
                         data = incoming.get("data")
