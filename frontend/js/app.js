@@ -54,7 +54,7 @@ function _updateAppTypeVisibility(app) {
   // Cron jobs: no instances to keep running — runs instead of restart/boot/autoscale
   if (el('set-schedule'))        el('set-schedule').style.display = isCron ? '' : 'none';
   if (el('cfg-restart-row'))     el('cfg-restart-row').style.display = isCron ? 'none' : '';
-  if (el('cfg-autoscale-card'))  el('cfg-autoscale-card').style.display = isCron ? 'none' : '';
+  if (el('set-autoscale'))       el('set-autoscale').style.display = isCron ? 'none' : '';
 
   // Settings panel
   if (el('cfg-port-field'))          el('cfg-port-field').style.display = (noWeb || isStatic) ? 'none' : '';
@@ -1540,9 +1540,10 @@ function initSettings() {
   document.getElementById('cfg-health-path').value = app.health_path ?? '/';
   document.getElementById('cfg-health-expect').value = app.health_expect || '';
   document.getElementById('cfg-health-timeout').value = app.health_timeout_seconds || 600;
-  document.getElementById('autoscale-options').style.display = autoscaleEnabled ? '' : 'none';
+  const showAutoscale = on => ['autoscale-options', 'autoscale-more'].forEach(id => { document.getElementById(id).style.display = on ? '' : 'none'; });
+  showAutoscale(autoscaleEnabled);
   document.getElementById('cfg-autoscale-enabled').onchange = function() {
-    document.getElementById('autoscale-options').style.display = this.checked ? '' : 'none';
+    showAutoscale(this.checked);
     if (this.checked) loadScaleHistory();
   };
   if (dockerSection) dockerSection.style.display = '';
@@ -1683,6 +1684,7 @@ const _SETTINGS_ICONS = {
   bell:   '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
   clock:  '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
   activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  scale:  '<rect x="3" y="12" width="4" height="8" rx="1"/><rect x="10" y="8" width="4" height="12" rx="1"/><rect x="17" y="4" width="4" height="16" rx="1"/>',
   alert:  '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
 };
 const _settingsIcon = name =>

@@ -357,12 +357,12 @@ SESSION_SECRET=change-me</pre>
 <p>An instance that keeps crashing is not restarted forever. After 5 restarts within 60 seconds (configurable under <a href="/settings?s=system">System settings</a>), Cloudbase gives up and marks it as <code>error</code>. Fix the cause, then start it again.</p>
 
 <h2>Autoscaling</h2>
-<p>Turn on <strong>Autoscaling</strong> under the app’s <strong>Settings → Resources</strong> and set a minimum, a maximum and a CPU target per instance. Every 15 seconds Cloudbase works out how many instances the app needs to keep each one under its target, and goes there in one step:</p>
+<p>Turn on <strong>Autoscaling</strong> under the app’s <strong>Settings → Autoscaling</strong> and set a minimum, a maximum and a CPU target per instance. Every 15 seconds Cloudbase works out how many instances the app needs to keep each one under its target, and goes there in one step:</p>
 <ul>
   <li><strong>Up</strong>: when the average over the last minute is above the target. With 2 instances at 120% of the target it adds 1; at 300% it adds 4.</li>
   <li><strong>Down</strong>: when the peak over the last 5 minutes stays well below the target (the remaining instances end up at most at 75% of it). Ten idle instances go back to the minimum at once.</li>
 </ul>
-<p>Optional per app: a <strong>memory target</strong> in MB per instance (then it also scales on memory), how long the load must be high before scaling up, how long it must be low before scaling down, and the most instances added or removed in one step. New instances are spread over the least-loaded nodes; remote instances are removed first. After every step the app is left alone at least as long as the scale-up time, and a deploy is never interrupted. The last scale actions are shown under the settings. Autoscaling only acts on apps that are running.</p>
+<p>Optional per app: a <strong>memory target</strong> in MB per instance (then it also scales on memory), how long the load must be high before scaling up, how long it must be low before scaling down, and the most instances added or removed in one step. New instances are spread over the least-loaded nodes; remote instances are removed first. After every step the app is left alone at least as long as the scale-up time, and a deploy is never interrupted. The last scale actions are shown there too. Autoscaling only acts on apps that are running.</p>
 
 <h2>Resource limits</h2>
 <p>CPU and memory limits apply per instance. A container that exceeds its memory limit is killed by Docker and restarted according to the restart policy — if you see instances restarting under load, raise the limit or add instances instead.</p>
