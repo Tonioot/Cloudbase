@@ -302,7 +302,7 @@ SESSION_SECRET=change-me</pre>
 <p>If a new instance doesn’t become healthy, the deploy stops and is rolled back: new instances are removed and the old ones keep serving. Nothing is switched in nginx until the new code proves it works. Read the reason in the deploy log, fix it, and deploy again.</p>
 
 <h2>Auto-deploy</h2>
-<p>Turn on <strong>Auto-deploy</strong> in the app’s settings and every new commit on the chosen branch is put live by itself, with the strategy you pick. Cloudbase checks the branch every minute (or every 5 or 15 minutes) by asking the Git host for its latest commit — that’s tiny and works from anywhere, also when the panel isn’t reachable from the internet. No webhook or extra GitHub permission is needed.</p>
+<p>Turn on <strong>Auto-deploy</strong> in the app’s settings and every new commit on the chosen branch is put live by itself, with the strategy you pick there (rolling or blue/green; rollbacks and retries use it too). Cloudbase checks the branch every minute (or every 5 or 15 minutes) by asking the Git host for its latest commit — that’s tiny and works from anywhere, also when the panel isn’t reachable from the internet. No webhook or extra GitHub permission is needed.</p>
 <ul>
   <li>Several pushes in a row deploy only the newest commit.</li>
   <li>A push during a running deploy waits; the next check picks it up.</li>

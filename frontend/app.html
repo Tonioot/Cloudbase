@@ -381,8 +381,8 @@
             </section>
 
             <!-- Deploys -->
-            <section class="settings-group sv2-sec" id="autodeploy-section" data-nav="Deploys" data-icon="rocket" data-perm="apps.configure">
-              <header class="sv2-head"><h3>Deploys</h3><p>Put new commits live automatically. Cloudbase checks the branch and rolls new commits out.</p></header>
+            <section class="settings-group sv2-sec" id="autodeploy-section" data-nav="Auto-deploy" data-icon="rocket" data-perm="apps.configure">
+              <header class="sv2-head"><h3>Auto-deploy</h3><p>Put new commits live automatically. Cloudbase checks the branch and rolls new commits out.</p></header>
               <div class="s3-card">
                 <label class="s3-row">
                   <span class="s3-label"><span class="s3-title">Auto-deploy</span><span class="s3-desc">Deploy every new commit on the app’s branch (set under General).</span></span>
@@ -399,15 +399,15 @@
                       </select>
                     </span>
                   </div>
-                  <div class="s3-row">
-                    <span class="s3-label"><span class="s3-title">Strategy</span><span class="s3-desc" id="cfg-deploy-strategy-hint">Rolling replaces instances one by one; blue/green switches all at once.</span></span>
-                    <span class="s3-ctl">
-                      <div class="segmented" id="cfg-deploy-strategy" role="radiogroup">
-                        <button type="button" data-value="rolling" role="radio">Rolling</button>
-                        <button type="button" data-value="blue_green" role="radio">Blue/green</button>
-                      </div>
-                    </span>
-                  </div>
+                </div>
+                <div class="s3-row">
+                  <span class="s3-label"><span class="s3-title">Strategy</span><span class="s3-desc" id="cfg-deploy-strategy-hint">Rolling replaces instances one by one; blue/green switches all at once.</span><span class="s3-desc">For auto-deploys, rollbacks and retries. A deploy by hand asks for it.</span></span>
+                  <span class="s3-ctl">
+                    <div class="segmented" id="cfg-deploy-strategy" role="radiogroup">
+                      <button type="button" data-value="rolling" role="radio">Rolling</button>
+                      <button type="button" data-value="blue_green" role="radio">Blue/green</button>
+                    </div>
+                  </span>
                 </div>
               </div>
             </section>
@@ -536,9 +536,9 @@
               </div>
             </section>
 
-            <!-- Visitor pages -->
-            <section class="settings-group sv2-sec" id="maintenance-pages-section" data-nav="Visitor pages" data-icon="layout" data-nosave data-perm="apps.configure">
-              <header class="sv2-head"><h3>Visitor pages</h3><p>What visitors see while the app can’t serve them. Served by nginx, also when every instance is down.</p></header>
+            <!-- Maintenance pages -->
+            <section class="settings-group sv2-sec" id="maintenance-pages-section" data-nav="Maintenance pages" data-icon="layout" data-nosave data-perm="apps.configure">
+              <header class="sv2-head"><h3>Maintenance pages</h3><p>What visitors see while the app can’t serve them. Served by nginx, also when every instance is down.</p></header>
               <div class="s3-card">
                 <div class="s3-note" id="maint-no-nginx-warn" style="display:none"><span id="maint-no-nginx-text">Requires a domain</span></div>
                 <button type="button" class="s3-row s3-link" id="btn-open-downtime-modal">
@@ -694,7 +694,7 @@
 
     <header class="vp-head">
       <div class="vp-head-text">
-        <div class="vp-title" id="vp-title">Visitor pages</div>
+        <div class="vp-title" id="vp-title">Maintenance pages</div>
         <div class="vp-sub">What visitors see while the app can’t serve them. Served by nginx, so they work even when every instance is down.</div>
       </div>
       <button type="button" class="btn btn-icon btn-ghost" id="vp-close" aria-label="Close">

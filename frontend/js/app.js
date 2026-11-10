@@ -1763,7 +1763,7 @@ function _refreshSettingsDirty() {
   const state = document.getElementById('settings-save-state');
   const btn = document.getElementById('btn-save');
   box?.classList.toggle('is-dirty', dirty.length > 0);
-  // Domains, visitor pages, … apply right away: the bar only shows there
+  // Domains, maintenance pages, … apply right away: the bar only shows there
   // while other sections still have unsaved changes
   const current = _settingsSection && document.getElementById(_settingsSection);
   box?.classList.toggle('is-hidden', !!current?.hasAttribute('data-nosave') && !dirty.length);
@@ -1822,7 +1822,7 @@ function _enableSettingsForEditor() {
   delete panel.dataset.viewerLocked;
 }
 
-/* ─── Visitor pages (maintenance pages) ─────────────────────────────────── */
+/* ─── Maintenance pages ─────────────────────────────────── */
 
 const VP_PAGES = ['downtime', 'update', 'restart', 'starting'];
 
@@ -2054,7 +2054,7 @@ function _vpSetScheme(scheme) {
 
 async function _vpClose() {
   if (_vp && JSON.stringify(_vp.drafts) !== _vp.saved) {
-    if (!await confirm('Discard changes?', 'Your edits to the visitor pages are not saved.')) return;
+    if (!await confirm('Discard changes?', 'Your edits to the maintenance pages are not saved.')) return;
   }
   document.getElementById('vp-backdrop').style.display = 'none';
 }
@@ -2192,7 +2192,7 @@ async function saveMaintenancePages() {
     _vp.saved = JSON.stringify(_vp.drafts);
     _updateMaintBadges();
     _vpUpdateDirty();
-    if (res.ok) toast('Visitor pages saved');
+    if (res.ok) toast('Maintenance pages saved');
     else toast(`Saved, but nginx wasn't updated: ${res.message || 'unknown error'}`, 'warn');
   } catch (e) {
     toast(e.message, 'error');
