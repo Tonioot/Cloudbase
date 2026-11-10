@@ -114,7 +114,6 @@ class Node(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(120), unique=True, nullable=False)
-    role = Column(String(20), default="node")  # main | node | hybrid
     status = Column(String(20), default="online")  # online | offline | unknown
     public_host = Column(String(255), nullable=True)
     auth_token = Column(String(200), nullable=True, index=True)
@@ -126,7 +125,6 @@ class Node(Base):
     last_seen = Column(DateTime, nullable=True)
     offline_since = Column(DateTime, nullable=True)
     last_error = Column(Text, nullable=True)
-    connection_type     = Column(String(20), nullable=True)   # "websocket" | "http_polling"
     agent_version       = Column(String(40), nullable=True)
     node_cpu_percent    = Column(Float, nullable=True)
     node_memory_percent = Column(Float, nullable=True)

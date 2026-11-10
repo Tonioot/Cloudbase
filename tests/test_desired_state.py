@@ -23,7 +23,7 @@ def _node(name, token=None, status="online"):
 
     async def go():
         async with AsyncSessionLocal() as db:
-            node = Node(name=name, role="node", status=status, auth_token=token or f"token-{name}", is_local=False, enabled=True,
+            node = Node(name=name, status=status, auth_token=token or f"token-{name}", is_local=False, enabled=True,
                         wg_ip="127.0.0.1", wg_public_key="K" * 44, wg_state="up", agent_version="2.0.0")
             db.add(node)
             await db.commit()

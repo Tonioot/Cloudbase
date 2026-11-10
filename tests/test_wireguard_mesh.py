@@ -61,7 +61,7 @@ def _add_node(name: str, key: str | None = None, ip: str | None = None, wg_state
 
     async def go():
         async with AsyncSessionLocal() as db:
-            node = Node(name=name, role="node", status="online", auth_token=f"token-{name}", is_local=False, enabled=True,
+            node = Node(name=name, status="online", auth_token=f"token-{name}", is_local=False, enabled=True,
                         wg_public_key=key, wg_ip=ip, wg_state=wg_state)
             db.add(node)
             await db.commit()

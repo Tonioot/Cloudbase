@@ -50,7 +50,6 @@ async def register_node(req: RegisterNodeRequest, db: AsyncSession = Depends(get
     auth_token = secrets.token_urlsafe(40)
     node = Node(
         name=req.name,
-        role=req.role if req.role in ("main", "node", "hybrid") else "node",
         status="online",
         public_host=req.public_host,
         auth_token=auth_token,
@@ -259,7 +258,6 @@ async def agent_ws(websocket: WebSocket):
                             live_node.status = "online"
                             live_node.last_seen = _utcnow()
                             live_node.offline_since = None
-                            live_node.connection_type = "websocket"
                             caps = incoming.get("capabilities") or {}
                             if caps:
                                 live_node.capabilities = json.dumps(caps)
@@ -281,7 +279,6 @@ async def agent_ws(websocket: WebSocket):
                             "cpu_percent": incoming.get("node_metrics", {}).get("cpu_percent"),
                             "memory_percent": incoming.get("node_metrics", {}).get("memory_percent"),
                             "disk_percent": incoming.get("node_metrics", {}).get("disk_percent"),
-                            "connection_type": "websocket",
                         })
                     elif msg_type == "command_result":
                         command_id = int(incoming.get("command_id") or -1)

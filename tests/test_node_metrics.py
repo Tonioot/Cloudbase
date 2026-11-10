@@ -79,7 +79,7 @@ def test_the_history_endpoint_serves_rates_and_usage(admin):
 
     async def seed():
         async with AsyncSessionLocal() as db:
-            node = Node(name="metrics-node", role="node", status="online", auth_token="token-metrics", is_local=False, enabled=True)
+            node = Node(name="metrics-node", status="online", auth_token="token-metrics", is_local=False, enabled=True)
             db.add(node)
             await db.flush()
             now = datetime.utcnow()

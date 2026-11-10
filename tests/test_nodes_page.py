@@ -20,9 +20,9 @@ def node_with_work(client):
 
     async def setup():
         async with AsyncSessionLocal() as db:
-            node = Node(name="page-node", role="node", status="online", auth_token="token-page", is_local=False, enabled=True,
+            node = Node(name="page-node", status="online", auth_token="token-page", is_local=False, enabled=True,
                         wg_ip="10.77.0.9", wg_public_key="P" * 44, wg_state="up", agent_version="2.0.0")
-            other = Node(name="other-page-node", role="node", status="online", auth_token="token-page-2", is_local=False, enabled=True)
+            other = Node(name="other-page-node", status="online", auth_token="token-page-2", is_local=False, enabled=True)
             app_b = Application(name="b-shop", repo_url="https://example.test/b", start_command="x", port=3000)
             app_a = Application(name="a-blog", repo_url="https://example.test/a", start_command="x", port=3000)
             db.add_all([node, other, app_a, app_b])

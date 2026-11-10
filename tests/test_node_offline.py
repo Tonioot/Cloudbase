@@ -23,7 +23,7 @@ def world(client):
         def node(self, name, **kw):
             async def go():
                 async with AsyncSessionLocal() as db:
-                    node = Node(name=name, role="node", status=kw.pop("status", "online"), auth_token=f"token-{name}", is_local=False,
+                    node = Node(name=name, status=kw.pop("status", "online"), auth_token=f"token-{name}", is_local=False,
                                 enabled=True, agent_version="2.0.0", last_seen=datetime.utcnow(), **kw)
                     db.add(node)
                     await db.commit()
@@ -98,7 +98,7 @@ def test_going_offline_takes_the_live_instances_out_of_rotation_and_nothing_else
     _run(liveness.node_gone(gone))
 
     node = world.node_row(gone)
-    assert node.status == "offline" and node.offline_since is not None and node.connection_type is None
+    assert node.status == "offline" and node.offline_since is not None
     assert world.replica_row(live).status == "node_offline" and world.replica_row(live).substatus is None
     assert world.replica_row(booting).status == "node_offline"
     assert world.replica_row(stopped).status == "stopped"

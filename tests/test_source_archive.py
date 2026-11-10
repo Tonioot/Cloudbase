@@ -89,7 +89,7 @@ def _setup(tmp_path):
 
     async def go():
         async with AsyncSessionLocal() as db:
-            node = Node(name="src-node", role="node", status="online", auth_token="token-src", is_local=False, enabled=True)
+            node = Node(name="src-node", status="online", auth_token="token-src", is_local=False, enabled=True)
             app = Application(name="src-app", repo_url="https://example.test/x", start_command="python app.py", port=8000,
                               working_dir=str(source), app_type="python")
             db.add_all([node, app])

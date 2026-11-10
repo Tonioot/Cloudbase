@@ -128,7 +128,7 @@ function renderHeader() {
     else badgeEl.innerHTML = `<span class="badge ${online ? 'badge-running' : 'badge-error'}">${online ? 'Online' : 'Offline'}</span>`;
 
     const meta = node.metadata || {};
-    const role = node.is_local ? 'Primary node — this server' : node.role === 'hybrid' ? 'Hybrid node' : 'Node';
+    const role = node.is_local ? 'Primary node — this server' : 'Node';
     document.getElementById('node-meta').textContent = [
         role,
         node.agent_version ? `agent ${node.agent_version}` : null,

@@ -31,7 +31,6 @@ async def mark_offline(db: AsyncSession, node: Node) -> bool:
     node.status = "offline"
     if node.offline_since is None:
         node.offline_since = _utcnow()
-    node.connection_type = None
     await mark_instances_offline(db, node.id)
     return True
 

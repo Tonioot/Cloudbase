@@ -87,7 +87,6 @@ async def ensure_local_node(db: AsyncSession) -> Node:
 
     local = Node(
         name="Primary Node",
-        role="hybrid",
         status="online",
         is_local=True,
         enabled=True,
@@ -239,7 +238,7 @@ def _as_node_dict(node: Node) -> dict:
     return {
         "id": node.id,
         "name": node.name,
-        "role": node.role,
+        "role": "primary" if node.is_local else "node",
         "status": node.status,
         "public_host": node.public_host,
         "is_local": bool(node.is_local),
@@ -250,7 +249,6 @@ def _as_node_dict(node: Node) -> dict:
         "last_seen": node.last_seen.isoformat() + "Z" if node.last_seen else None,
         "offline_since": node.offline_since.isoformat() + "Z" if node.offline_since else None,
         "last_error": node.last_error,
-        "connection_type": node.connection_type,
         "agent_version": node.agent_version,
         "wg_ip": node.wg_ip,
         "wg_state": node.wg_state,
