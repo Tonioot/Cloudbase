@@ -304,6 +304,6 @@ async def agent_ws(websocket: WebSocket):
 
         if node_id is not None and should_mark_offline:
             try:
-                await node_gone(node_id)
+                await asyncio.shield(node_gone(node_id))   # finish it even when the connection's task is cancelled (shutdown)
             except Exception as e:
                 log.error("Error marking node id=%s offline: %s", node_id, e)
