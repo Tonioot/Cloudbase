@@ -233,7 +233,7 @@ cloudbase stop</pre>
   lead: 'Environment variables are the place for configuration and secrets: database URLs, API keys, feature flags. Cloudbase stores them encrypted and passes them to every instance of the app.',
   body: `
 <h2>Adding variables</h2>
-<p>In the app, go to <strong>Settings → Environment</strong>. Add rows one by one, or click <strong>Import .env</strong> to read a file in the usual <code>KEY=value</code> format. Comments, blank lines, <code>export</code> prefixes and quoted values are understood. Imported keys that already exist are updated; others are added.</p>
+<p>In the app, go to <strong>Settings → Environment variables</strong>. Add rows one by one, or click <strong>Import .env</strong> to read a file in the usual <code>KEY=value</code> format. Comments, blank lines, <code>export</code> prefixes and quoted values are understood. Imported keys that already exist are updated; others are added.</p>
 <pre># .env
 DATABASE_URL="postgres://app:secret@db:5432/app"
 export NODE_ENV=production
@@ -1284,7 +1284,7 @@ cloudbase restore ~/cloudbase-backup.tar.gz</pre>
 <ul>
   <li>Open <strong>Logs → All instances</strong>: the failing build step and its output are there.</li>
   <li><em>Missing module / package</em> — the dependency isn’t in <code>package.json</code> or <code>requirements.txt</code>.</li>
-  <li><em>Build needs a variable</em> — add it under Settings → Environment; they’re available during the build. With your own Dockerfile, declare it with <code>ARG</code>.</li>
+  <li><em>Build needs a variable</em> — add it under Settings → Environment variables; they’re available during the build. With your own Dockerfile, declare it with <code>ARG</code>.</li>
   <li><em>Out of memory during build</em> — large frontend builds can need 2 GB+. Add swap or build on a bigger node.</li>
 </ul>
 
