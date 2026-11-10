@@ -11,7 +11,7 @@ from core.database import AsyncSessionLocal
 from core.models import DatabaseLink, Database, Application, Node, Instance
 from nodes import commands as node_commands
 from dbs.provision import _spec
-from dbs.state import COMMAND_TIMEOUT_SECONDS, PROVISION_TIMEOUT_SECONDS, _busy, release
+from dbs.state import COMMAND_TIMEOUT_SECONDS, PROVISION_TIMEOUT_SECONDS, claim, release
 
 log = logging.getLogger("cloudbase.databases")
 
@@ -68,8 +68,7 @@ async def _set_status(database_id: int, status: str, error: Optional[str] = None
 
 
 def _spawn(database_id: int, coro_fn) -> None:
-    """Run an operation in the background, one at a time per database."""
-    _busy.add(database_id)
+    """Run an operation on a database the caller holds (claim()) in the background; it lets go when done."""
 
     async def runner():
         try:
@@ -98,9 +97,18 @@ async def _start_operation(database_id: int, op: str) -> None:
     await _set_status(database_id, status, error, container_id=result.get("container_id"))
 
 
-def _require_idle(database: Database) -> None:
-    if database.id in _busy:
-        raise HTTPException(409, "Another operation on this database is still running")
+async def _begin(database_id: int, db: AsyncSession, operation: str | None = None) -> tuple[Database, Node]:
+    """Hold the database for an operation on its node, which must be reachable. Raises (and lets go) otherwise."""
+    database = await _get_or_404(database_id, db)
+    claim(database.id, operation)
+    try:
+        node = await _node_for(database, db)
+        if not _node_reachable(node):
+            raise HTTPException(409, f"Node '{node.name}' is offline")
+    except BaseException:
+        release(database.id)
+        raise
+    return database, node
 
 
 async def _links_for(database_id: int, db: AsyncSession) -> list[dict]:

@@ -12,9 +12,9 @@ from core.audit import log_audit
 from core.database import AsyncSessionLocal, get_db
 from core.env_crypto import encrypt_text
 from core.models import Database
-from dbs.ops import _get_or_404, _links_for, _node_for, _node_reachable, _require_idle, _run_on_node, _set_status, _spawn, _start_operation
+from dbs.ops import _begin, _get_or_404, _links_for, _node_for, _node_reachable, _run_on_node, _set_status, _spawn, _start_operation
 from dbs.provision import _spec
-from dbs.state import PROVISION_TIMEOUT_SECONDS, _busy, _operation, _update_info
+from dbs.state import PROVISION_TIMEOUT_SECONDS, _operation, _update_info, claim, release
 from dbs.workers import _check_updates_on
 from dbs.backups import run_backup
 
@@ -28,11 +28,7 @@ async def start_database(
     _user: dict = Depends(_auth.require_permission("databases.manage")),
     actor: str = Depends(_auth.get_current_actor),
 ):
-    database = await _get_or_404(database_id, db)
-    _require_idle(database)
-    node = await _node_for(database, db)
-    if not _node_reachable(node):
-        raise HTTPException(409, f"Node '{node.name}' is offline")
+    database, node = await _begin(database_id, db)
     database.desired_state = "running"
     database.status = "starting"
     database.last_error = None
@@ -49,11 +45,7 @@ async def restart_database(
     _user: dict = Depends(_auth.require_permission("databases.manage")),
     actor: str = Depends(_auth.get_current_actor),
 ):
-    database = await _get_or_404(database_id, db)
-    _require_idle(database)
-    node = await _node_for(database, db)
-    if not _node_reachable(node):
-        raise HTTPException(409, f"Node '{node.name}' is offline")
+    database, node = await _begin(database_id, db)
     database.desired_state = "running"
     database.status = "starting"
     database.last_error = None
@@ -70,11 +62,7 @@ async def stop_database(
     _user: dict = Depends(_auth.require_permission("databases.manage")),
     actor: str = Depends(_auth.get_current_actor),
 ):
-    database = await _get_or_404(database_id, db)
-    _require_idle(database)
-    node = await _node_for(database, db)
-    if not _node_reachable(node):
-        raise HTTPException(409, f"Node '{node.name}' is offline")
+    database, node = await _begin(database_id, db)
     database.desired_state = "stopped"
     database.status = "stopping"
     database.last_error = None
@@ -98,38 +86,32 @@ async def rotate_password(
 ):
     """Give the app user a new password. The old one stops working at once; linked
     apps pick up the new URL when they restart."""
-    database = await _get_or_404(database_id, db)
-    _require_idle(database)
-    node = await _node_for(database, db)
-    if not _node_reachable(node):
-        raise HTTPException(409, f"Node '{node.name}' is offline")
-    if database.status not in ("running", "unhealthy"):
-        raise HTTPException(409, "The database must be running to change its password")
-
-    spec = _spec(database)
-    new_password = secrets.token_urlsafe(24)
-    _busy.add(database_id)
-    _operation[database_id] = "Changing the password…"
+    database, node = await _begin(database_id, db, "Changing the password…")
     try:
-        await _run_on_node(
-            node,
-            lambda: dbs_backup_restore.rotate_password(spec, new_password),
-            "db_rotate_password",
-            {"spec": spec, "new_password": new_password},
-        )
+        if database.status not in ("running", "unhealthy"):
+            raise HTTPException(409, "The database must be running to change its password")
+        spec = _spec(database)
+        new_password = secrets.token_urlsafe(24)
+        try:
+            await _run_on_node(
+                node,
+                lambda: dbs_backup_restore.rotate_password(spec, new_password),
+                "db_rotate_password",
+                {"spec": spec, "new_password": new_password},
+            )
+        except Exception as e:
+            raise HTTPException(502, f"The password was not changed: {e}")
         creds = {**spec["credentials"], "password": new_password}
         database.credentials = encrypt_text(json.dumps(creds))
         await log_audit(db, "database.rotate_password", actor=actor, detail={"database_id": database.id, "name": database.name})
         await db.commit()
-    except Exception as e:
-        raise HTTPException(502, f"The password was not changed: {e}")
     finally:
-        _busy.discard(database_id)
-        _operation.pop(database_id, None)
+        release(database_id)
 
     await db_links.refresh(db)
     if database.engine in dbs_backup_restore.ROTATE_RECREATES:
         # The server command / environment carries the password: new container, same data.
+        claim(database.id)
         database.status = "starting"
         await db.commit()
         _spawn(database.id, lambda: _start_operation(database.id, "recreate"))
@@ -160,12 +142,9 @@ async def update_database_engine(
 ):
     """Install the newest patch release of the database's version (e.g. 18.6 → 18.7).
     A backup is made first; a failed start rolls back to the previous image."""
-    database = await _get_or_404(database_id, db)
-    _require_idle(database)
-    node = await _node_for(database, db)
-    if not _node_reachable(node):
-        raise HTTPException(409, f"Node '{node.name}' is offline")
+    database, node = await _begin(database_id, db)
     if database.status not in ("running", "unhealthy"):
+        release(database_id)
         raise HTTPException(409, "The database must be running to update it")
     await log_audit(db, "database.update_engine", actor=actor, detail={
         "database_id": database.id, "name": database.name, "from": (_update_info.get(database_id) or {}).get("version"),

@@ -3,6 +3,7 @@ import logging
 from datetime import timedelta, datetime, timezone
 from typing import Optional
 from sqlalchemy import select
+from fastapi import HTTPException
 from dbs import engines as db_engines, state as dbs_state
 from core.database import AsyncSessionLocal
 from core.models import DatabaseBackup, Database
@@ -59,10 +60,10 @@ async def _scheduler_tick() -> None:
                 due.append(database.id)
     # One at a time: backups are heavy on disk and network.
     for database_id in due:
-        if database_id in dbs_state._busy:
+        try:
+            dbs_state.claim(database_id, "Backing up…")
+        except HTTPException:
             continue
-        dbs_state._busy.add(database_id)
-        dbs_state._operation[database_id] = "Backing up…"
         try:
             await run_backup(database_id, "scheduled", "scheduler")
             await _apply_retention(database_id)

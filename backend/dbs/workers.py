@@ -9,10 +9,11 @@ from dbs import updates as dbs_updates
 from dbs import docker as dbs_docker
 from core.database import AsyncSessionLocal
 from core.models import DatabaseStatsHistory, Database, Node
+from fastapi import HTTPException
 from dbs.ops import _node_reachable, _run_on_node, _set_status, _spawn, _start_operation, _state_to_status
 from dbs.provision import _data_dir
 from dbs.relay import open_db_stream, push_proxies
-from dbs.state import HEAL_BACKOFF_SECONDS, MONITOR_INTERVAL_SECONDS, _busy, _last_heal, _released_at, _update_info
+from dbs.state import HEAL_BACKOFF_SECONDS, MONITOR_INTERVAL_SECONDS, _busy, _last_heal, _released_at, _update_info, claim
 from nodes import reports as node_reports
 
 log = logging.getLogger("cloudbase.databases")
@@ -85,6 +86,10 @@ async def _monitor_tick() -> None:
                 # Should be running but is not: start it again, with a backoff.
                 now = time.monotonic()
                 if now - _last_heal.get(d.id, 0) < HEAL_BACKOFF_SECONDS:
+                    continue
+                try:
+                    claim(d.id)                     # somebody may have started an operation meanwhile
+                except HTTPException:
                     continue
                 _last_heal[d.id] = now
                 log.info("[db-monitor] database %s (%s) is %s, starting it", d.name, d.id, state)

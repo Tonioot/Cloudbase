@@ -1,5 +1,8 @@
 import asyncio
+import contextlib
 import time
+
+from fastapi import HTTPException
 from fastapi import WebSocket
 
 # Pulling an image on a slow node can take minutes.
@@ -18,10 +21,29 @@ HEAL_BACKOFF_SECONDS = 120
 DIAL_TIMEOUT_SECONDS = 10
 
 
-# Databases with an operation in flight; the monitor leaves them alone.
+# Databases with an operation in flight; the monitor leaves them alone. One operation at a time per database:
+# claim() checks and marks it in one step (no await in between), release() lets go.
 _busy: set[int] = set()
 # When each database's last operation ended: a node's report from before then no longer says how it is.
 _released_at: dict[int, float] = {}
+
+
+def claim(database_id: int, operation: str | None = None) -> None:
+    """Hold the database for one operation, or 409 when another one runs. Pair with release()."""
+    if database_id in _busy:
+        raise HTTPException(409, "Another operation on this database is still running")
+    _busy.add(database_id)
+    if operation:
+        _operation[database_id] = operation
+
+
+@contextlib.contextmanager
+def held(database_id: int, operation: str | None = None):
+    claim(database_id, operation)
+    try:
+        yield
+    finally:
+        release(database_id)
 
 
 def release(database_id: int) -> None:

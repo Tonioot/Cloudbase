@@ -10,6 +10,7 @@ from core.audit import log_audit
 from core.env_crypto import encrypt_text
 from core.models import Database, Node
 from dbs.ops import _node_reachable, _spawn, _start_operation
+from dbs.state import claim
 from dbs.provision import NAME_RE, _new_credentials, _next_database_id, _validate_limits
 
 
@@ -64,5 +65,6 @@ async def create_database_now(db: AsyncSession, *, name_in, engine_in, version_i
     })
     await db.commit()
 
+    claim(database.id)
     _spawn(database.id, lambda: _start_operation(database.id, "ensure"))
     return database, node

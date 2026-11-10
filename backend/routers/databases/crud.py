@@ -14,10 +14,10 @@ from dbs import lifecycle as dbs_lifecycle
 from core.audit import log_audit
 from core.database import get_db
 from core.models import DatabaseStatsHistory, DatabaseLink, Database, Node
-from dbs.ops import _get_or_404, _links_for, _node_for, _node_reachable, _require_idle, _run_on_node, _spawn, _start_operation
+from dbs.ops import _get_or_404, _links_for, _node_for, _node_reachable, _run_on_node, _spawn, _start_operation
 from dbs.provision import _data_dir, _validate_limits
 from dbs.relay import _public_host, push_proxies
-from dbs.state import _busy, _operation
+from dbs.state import _busy, _operation, claim, release
 from dbs.view import _as_dict, _client_ip, _safe_public_port
 from routers.databases.schemas import CreateDatabaseRequest, PublicAccessRequest, UpdateDatabaseRequest
 from dbs.backups import run_backup
@@ -101,7 +101,8 @@ async def update_database(
     actor: str = Depends(_auth.get_current_actor),
 ):
     database = await _get_or_404(database_id, db)
-    _require_idle(database)
+    if database.id in _busy:
+        raise HTTPException(409, "Another operation on this database is still running")
     cpu = None if req.clear_cpu_limit else (req.cpu_limit if req.cpu_limit is not None else database.cpu_limit)
     mem = None if req.clear_memory_limit else (req.memory_limit_mb if req.memory_limit_mb is not None else database.memory_limit_mb)
     _validate_limits(database.engine, cpu, mem)
@@ -118,6 +119,7 @@ async def update_database(
         "database_id": database.id, "name": database.name, "cpu_limit": cpu, "memory_limit_mb": mem,
     })
     if database.desired_state == "running":
+        claim(database.id)                  # no await since the check above: nothing else got in between
         database.status = "starting"
         await db.commit()
         # New limits (and the tuning derived from them) need a new container; the volume stays.
@@ -138,41 +140,39 @@ async def delete_database(
     actor: str = Depends(_auth.get_current_actor),
 ):
     database = await _get_or_404(database_id, db)
-    _require_idle(database)
-    node = await db.get(Node, database.node_id)
-    if final_backup and node is not None and _node_reachable(node) and database.status in ("running", "unhealthy"):
-        _busy.add(database_id)
-        _operation[database_id] = "Making a final backup…"
-        try:
-            await run_backup(database_id, "pre_delete", actor)
-        except Exception as e:
-            raise HTTPException(502, f"The final backup failed, so the database was not deleted: {e}")
-        finally:
-            _busy.discard(database_id)
-            _operation.pop(database_id, None)
-    removed_on_node = False
-    if node is not None and _node_reachable(node):
-        _busy.add(database_id)
-        try:
-            await _run_on_node(
-                node,
-                lambda: dbs_lifecycle.remove(database_id, keep_volume=keep_data),
-                "db_remove",
-                {"database_id": database_id, "keep_volume": keep_data},
+    claim(database_id)
+    try:
+        node = await db.get(Node, database.node_id)
+        reachable = node is not None and _node_reachable(node)
+        if not reachable and not force:
+            raise HTTPException(
+                409,
+                "The node of this database is offline. Delete again with force to remove it from Cloudbase only; "
+                "the container and its data then stay on the node.",
             )
-            removed_on_node = True
-        except Exception as e:
-            if not force:
-                raise HTTPException(502, f"Could not remove the database container: {e}")
-            log.warning("[db] forced delete of database %s; container removal failed: %s", database_id, e)
-        finally:
-            _busy.discard(database_id)
-    elif not force:
-        raise HTTPException(
-            409,
-            "The node of this database is offline. Delete again with force to remove it from Cloudbase only; "
-            "the container and its data then stay on the node.",
-        )
+        if final_backup and reachable and database.status in ("running", "unhealthy"):
+            _operation[database_id] = "Making a final backup…"
+            try:
+                await run_backup(database_id, "pre_delete", actor)
+            except Exception as e:
+                raise HTTPException(502, f"The final backup failed, so the database was not deleted: {e}")
+            _operation.pop(database_id, None)
+        removed_on_node = False
+        if reachable:
+            try:
+                await _run_on_node(
+                    node,
+                    lambda: dbs_lifecycle.remove(database_id, keep_volume=keep_data),
+                    "db_remove",
+                    {"database_id": database_id, "keep_volume": keep_data},
+                )
+                removed_on_node = True
+            except Exception as e:
+                if not force:
+                    raise HTTPException(502, f"Could not remove the database container: {e}")
+                log.warning("[db] forced delete of database %s; container removal failed: %s", database_id, e)
+    finally:
+        release(database_id)
 
     name = database.name
     await db.delete(database)

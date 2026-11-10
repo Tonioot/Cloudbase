@@ -265,9 +265,8 @@ async def _apply_retention(database_id: int) -> None:
 
 def _start_in_background(database_id: int, operation: str, coro_fn) -> None:
     """One backup or restore at a time per database; the monitor and lifecycle
-    actions wait. Failures are recorded on the backup, never on the database."""
-    dbs_state._busy.add(database_id)
-    dbs_state._operation[database_id] = operation
+    actions wait. Failures are recorded on the backup, never on the database. 409 when another operation runs."""
+    dbs_state.claim(database_id, operation)
 
     async def runner():
         try:
@@ -281,7 +280,8 @@ def _start_in_background(database_id: int, operation: str, coro_fn) -> None:
 
 
 def _require_backup_ready(database: Database, node: Optional[Node]) -> None:
-    dbs_ops._require_idle(database)
+    if database.id in dbs_state._busy:
+        raise HTTPException(409, "Another operation on this database is still running")
     if node is None or not dbs_ops._node_reachable(node):
         raise HTTPException(409, "The node of this database is offline")
     if database.status not in ("running", "unhealthy"):
