@@ -7,20 +7,13 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
-from core import activity
 from core.models import Deployment
 from containers import processes as pm
-from containers import naming as containers_naming
-from containers import build as containers_build
 from core import auth as _auth
-from apps.rollout import replace_instances
-from apps.git import _current_branch, _deploy_app, _refresh_app_source_revision, _sync_app_source
-from apps.images import _image_build_kwargs, _image_port
-from apps.runtime import _has_live_instances, _load_app_instances
 from apps.serializers import _deployment_dict, _get_or_404
-from apps.state import app_lock, busy_with
+from apps.state import busy_with
 from apps.validation import _check_git_ref
-from routers.applications.schemas import GitDeployRequest, PullRequest
+from routers.applications.schemas import GitDeployRequest
 from routers.applications.sse import _DEPLOY_STREAM_DONE, _SSE_HEADERS, _SSE_PING, _queue_get_or_heartbeat, _sse_line
 from apps import deployments as apps_deployments
 
@@ -31,189 +24,15 @@ log = logging.getLogger("cloudbase.apps")
 
 
 @router.post("/{app_id}/deploy-rolling")
-async def deploy_rolling(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
-    with app_lock(app_id, "deploying"):
-        return await replace_instances(app_id, db, actor, batch=1)
+async def deploy_rolling(app_id: int, _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
+    """Replace the instances one at a time with the current source (no new commit is fetched)."""
+    return await apps_deployments.run_deploy(app_id, strategy="rolling", pull=False, actor=actor)
 
 
 @router.post("/{app_id}/deploy-blue-green")
-async def deploy_zero_downtime(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
-    with app_lock(app_id, "deploying"):
-        return await replace_instances(app_id, db, actor, batch=None)
-
-
-@router.post("/{app_id}/pull/stream")
-async def git_pull_stream(app_id: int, payload: PullRequest | None = Body(default=None), _user: dict = Depends(_auth.require_permission("apps.pull")), db: AsyncSession = Depends(get_db)):
-    """Streaming SSE variant of git_pull. Each build log line is emitted as it happens."""
-    app = await _get_or_404(app_id, db)
-    target_commit = _check_git_ref(payload.commit if payload else None)
-    app_dir = pm.get_app_dir(app.id)
-
-    if not os.path.exists(app_dir):
-        async def _reclone_gen():
-            yield _sse_line("[Git] App directory missing — attempting fresh clone…")
-            try:
-                await _deploy_app(app)
-                yield _sse_line("[Git] Fresh clone completed.")
-                yield f"event: result\ndata: {json.dumps({'message': 'Fresh clone completed', 'output': 'Fresh clone completed.'})}\n\n"
-                yield "data: __DONE__\n\n"
-            except Exception as exc:
-                yield _sse_line(f"[Error] Re-clone failed: {exc}")
-                yield "data: __FAILED__\n\n"
-        return StreamingResponse(_reclone_gen(), media_type="text/event-stream", headers=_SSE_HEADERS)
-
-    queue: asyncio.Queue = asyncio.Queue()
-    result_holder: dict = {}
-    loop = asyncio.get_running_loop()
-    was_running = _has_live_instances(await _load_app_instances(app_id, db))
-
-    def _q(line: str) -> None:
-        loop.call_soon_threadsafe(queue.put_nowait, str(line))
-
-    async def _do_pull() -> None:
-        entry = activity.begin(app_id, "updating", "Fetching the latest commit")
-        try:
-            commit_info, source_revision = await _sync_app_source(app, app_dir, target_commit, _q)
-
-            _q("[Docker] Rebuilding image…")
-
-            def _docker_push(_aid, line):
-                _q(str(line))
-
-            await asyncio.to_thread(
-                containers_build.build_image,
-                app_id, app_dir, _docker_push,
-                app.app_type or "unknown", app.start_command or "",
-                _image_port(app),
-                **_image_build_kwargs(app),
-            )
-            app.docker_image = containers_naming.image_name(app_id)
-            if source_revision:
-                app.image_revision = source_revision
-            await db.commit()
-
-            if was_running:
-                _q("[Docker] Image rebuilt. Running container left untouched. Restart manually to use the new image.")
-            else:
-                _q("[Docker] Image rebuilt. Start the app to apply changes.")
-
-            branch_now = target_commit or await asyncio.to_thread(_current_branch, app_dir)
-            result_holder["result"] = {
-                "message": f"Updated and rebuilt Docker image from {branch_now}",
-                "commit": commit_info,
-                "source_revision": source_revision,
-                "output": (
-                    "Image rebuilt. Restart manually to switch to the new image."
-                    if was_running else
-                    "Image rebuilt. Start the app to apply changes."
-                ),
-            }
-        except HTTPException as exc:
-            result_holder["error"] = exc.detail
-        except Exception as exc:
-            result_holder["error"] = str(exc)
-        finally:
-            activity.end(app_id, entry)
-            loop.call_soon_threadsafe(queue.put_nowait, None)
-
-    asyncio.create_task(_do_pull())
-
-    async def _generate():
-        while True:
-            item = await _queue_get_or_heartbeat(queue)
-            if item is _SSE_PING:
-                yield ": ping\n\n"
-                continue
-            if item is None:
-                if "error" in result_holder:
-                    yield _sse_line(f"[Error] {result_holder['error']}")
-                    yield "data: __FAILED__\n\n"
-                else:
-                    yield f"event: result\ndata: {json.dumps(result_holder.get('result', {}))}\n\n"
-                    yield "data: __DONE__\n\n"
-                break
-            yield _sse_line(item)
-
-    return StreamingResponse(_generate(), media_type="text/event-stream", headers=_SSE_HEADERS)
-
-
-@router.post("/{app_id}/rebuild/stream")
-async def rebuild_docker_image_stream(app_id: int, _user: dict = Depends(_auth.require_permission("apps.pull")), db: AsyncSession = Depends(get_db)):
-    """Streaming SSE variant of rebuild_docker_image."""
-    app = await _get_or_404(app_id, db)
-
-    if not app.working_dir:
-        raise HTTPException(400, "No working directory — deploy the app first")
-
-    queue: asyncio.Queue = asyncio.Queue()
-    result_holder: dict = {}
-    loop = asyncio.get_running_loop()
-    was_running = _has_live_instances(await _load_app_instances(app_id, db))
-
-    def _q(line: str) -> None:
-        loop.call_soon_threadsafe(queue.put_nowait, str(line))
-
-    async def _do_rebuild() -> None:
-        entry = activity.begin(app_id, "building", "Building the image")
-        try:
-            _q("[Docker] Rebuilding image…")
-
-            def _push(aid, line):
-                _q(str(line))
-
-            img = await asyncio.to_thread(
-                containers_build.build_image,
-                app_id, app.working_dir, _push,
-                app.app_type or "unknown", app.start_command or "", _image_port(app),
-                **_image_build_kwargs(app),
-            )
-            source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
-            app.docker_image = img
-            if source_revision:
-                app.image_revision = source_revision
-            await db.commit()
-
-            if was_running:
-                _q("[Docker] Image rebuilt. Running container left untouched. Restart manually to use the new image.")
-                result_holder["result"] = {
-                    "status": "running",
-                    "message": "Image rebuilt. Running container was not restarted.",
-                    "output": "Image rebuilt. Restart manually to switch to the new image.",
-                    "source_revision": source_revision,
-                }
-            else:
-                _q("[Docker] Image rebuilt. Start the app to run it.")
-                result_holder["result"] = {
-                    "status": "rebuilt",
-                    "message": "Image rebuilt. Start the app to run it.",
-                    "output": "Image rebuilt. Start the app to run it.",
-                    "source_revision": source_revision,
-                }
-        except Exception as exc:
-            result_holder["error"] = str(exc)
-        finally:
-            activity.end(app_id, entry)
-            loop.call_soon_threadsafe(queue.put_nowait, None)
-
-    asyncio.create_task(_do_rebuild())
-
-    async def _generate():
-        while True:
-            item = await _queue_get_or_heartbeat(queue)
-            if item is _SSE_PING:
-                yield ": ping\n\n"
-                continue
-            if item is None:
-                if "error" in result_holder:
-                    yield _sse_line(f"[Error] {result_holder['error']}")
-                    yield "data: __FAILED__\n\n"
-                else:
-                    yield f"event: result\ndata: {json.dumps(result_holder.get('result', {}))}\n\n"
-                    yield "data: __DONE__\n\n"
-                break
-            yield _sse_line(item)
-
-    return StreamingResponse(_generate(), media_type="text/event-stream", headers=_SSE_HEADERS)
+async def deploy_zero_downtime(app_id: int, _user: dict = Depends(_auth.require_permission("apps.pull")), actor: str = Depends(_auth.get_current_actor)):
+    """New instances next to the old ones with the current source (no new commit is fetched)."""
+    return await apps_deployments.run_deploy(app_id, strategy="blue_green", pull=False, actor=actor)
 
 
 @router.get("/{app_id}/deployments")
@@ -247,6 +66,7 @@ async def deploy_stream(
     strategy="rebuild"     build a new image; running instances are left alone
     strategy="rolling"     replace instances one at a time with the new image
     strategy="blue_green"  start new instances next to the old ones, then switch
+    pull=false             keep the source as it is (Rebuild): no commit is fetched
 
     Rolling and blue/green build the image themselves, so the code is only built
     once. Progress lines (those starting with "[") are streamed as SSE.
@@ -272,7 +92,7 @@ async def deploy_stream(
     async def _run() -> None:
         try:
             result_holder["result"] = await apps_deployments.run_deploy(
-                app_id, commit=target_commit, strategy=strategy,
+                app_id, commit=target_commit, strategy=strategy, pull=payload.pull,
                 trigger="rollback" if payload.trigger == "rollback" else "manual", actor=actor,
             )
         except HTTPException as exc:

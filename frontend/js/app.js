@@ -208,7 +208,7 @@ function renderHeader() {
   document.getElementById('menu-pull-rolling')?.addEventListener('click', () => pullAndDeploy('rolling'));
   document.getElementById('menu-pull-bluegreen')?.addEventListener('click', () => pullAndDeploy('blue_green'));
   document.getElementById('menu-pull-rebuild')?.addEventListener('click', () => pullAndDeploy('rebuild'));
-  document.getElementById('menu-rebuild')?.addEventListener('click', () => tileAction('rebuild', 'Rebuild'));
+  document.getElementById('menu-rebuild')?.addEventListener('click', () => streamDeploy('Rebuild', { strategy: 'rebuild', pull: false }));
   _syncZeroDowntimeButton();
   // Hide web-only controls (downtime/update mode buttons etc.) right away for
   // background workers, not only once the Settings tab has been opened.
@@ -2835,44 +2835,6 @@ async function saveSettings() {
   }
 }
 
-async function tileAction(endpoint, label) {
-  const tileId = endpoint === 'pull' ? 'tile-pull' : 'tile-rebuild';
-  const tile = document.getElementById(tileId);           // optional: a tile with this id
-  const tileIcon = tile?.querySelector('.action-tile-icon');
-  const origIcon = tileIcon?.innerHTML;
-  if (tile) tile.disabled = true;
-  if (tileIcon) tileIcon.innerHTML = spinner;
-  const logsTitle = endpoint === 'pull' ? 'Pull + Rebuild Logs' : 'Rebuild Logs';
-  let logDialog;
-
-  try {
-    let streamPath, body = null;
-    if (endpoint === 'pull') {
-      const selectedCommit = await openCommitPicker();
-      if (selectedCommit === null) {
-        return;
-      }
-      streamPath = `/apps/${APP_ID}/pull/stream`;
-      body = selectedCommit ? { commit: selectedCommit } : null;
-    } else {
-      streamPath = `/apps/${APP_ID}/rebuild/stream`;
-    }
-
-    logDialog = openActionLogsDialog(logsTitle);
-    await api.streamAction(streamPath, body, line => logDialog.append(line));
-    logDialog.setStatus('Done');
-  } catch (e) {
-    if (logDialog) {
-      logDialog.append(`[Error] ${e.message}`);
-      logDialog.setStatus('Failed');
-    }
-    toast(e.message, 'error');
-  } finally {
-    if (tile) tile.disabled = false;
-    if (tileIcon) tileIcon.innerHTML = origIcon;
-  }
-}
-
 /** Pull a commit and deploy it in one go: strategy = rebuild | rolling | blue_green. */
 /* ─── DEPLOYMENTS ───────────────────────────────────────────────────────── */
 let _deploysTimer = null;
@@ -2964,30 +2926,24 @@ async function loadDeployments() {
 }
 
 /** Deploy a specific commit with the app's strategy (rollback / retry). */
-async function deployCommit(commit, trigger = 'manual') {
-  const strategy = app.deploy_strategy || 'rolling';
-  const dlg = openActionLogsDialog(trigger === 'rollback' ? `Roll back to ${_shortSha(commit)}` : `Deploy ${_shortSha(commit)}`);
-  try {
-    const res = await api.streamAction(`/apps/${APP_ID}/deploy/stream`, { commit, strategy, trigger }, line => dlg.append(line));
-    dlg.setStatus('Done');
-    toast(res?.message || 'Deploy finished');
-  } catch (e) {
-    dlg.append(`[Error] ${e.message}`);
-    dlg.setStatus('Failed');
-    toast(e.message, 'error');
-  } finally {
-    try { app = await api.getApp(APP_ID); updateHeaderStatus(); } catch { /* keep header */ }
-    if (activeTab === 'deployments') loadDeployments();
-  }
+function deployCommit(commit, trigger = 'manual') {
+  const title = trigger === 'rollback' ? `Roll back to ${_shortSha(commit)}` : `Deploy ${_shortSha(commit)}`;
+  return streamDeploy(title, { commit, strategy: app.deploy_strategy || 'rolling', trigger });
 }
 
+/** Pull a commit and deploy it in one go: strategy = rebuild | rolling | blue_green. */
 async function pullAndDeploy(strategy) {
   const commit = await openCommitPicker();
   if (commit === null) return;
   const titles = { rebuild: 'Pull & build', rolling: 'Pull & rolling deploy', blue_green: 'Pull & blue/green deploy' };
-  const dlg = openActionLogsDialog(titles[strategy] || 'Deploy');
+  return streamDeploy(titles[strategy] || 'Deploy', { commit: commit || null, strategy });
+}
+
+/** Every deploy, rebuild and rollback goes through the one deploy endpoint; its progress shows in a dialog. */
+async function streamDeploy(title, body) {
+  const dlg = openActionLogsDialog(title);
   try {
-    const res = await api.streamAction(`/apps/${APP_ID}/deploy/stream`, { commit: commit || null, strategy }, line => dlg.append(line));
+    const res = await api.streamAction(`/apps/${APP_ID}/deploy/stream`, body, line => dlg.append(line));
     dlg.setStatus('Done');
     toast(res?.message || 'Deploy finished');
   } catch (e) {
@@ -2995,10 +2951,8 @@ async function pullAndDeploy(strategy) {
     dlg.setStatus('Failed');
     toast(e.message, 'error');
   } finally {
-    try {
-      app = await api.getApp(APP_ID);
-      updateHeaderStatus();
-    } catch { /* keep the old header */ }
+    try { app = await api.getApp(APP_ID); updateHeaderStatus(); } catch { /* keep the header */ }
+    if (activeTab === 'deployments') loadDeployments();
   }
 }
 

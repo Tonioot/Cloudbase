@@ -102,8 +102,6 @@ POST    /api/apps/{app_id}/instances/restart
 POST    /api/apps/{app_id}/instances/{instance_id}/restart
 POST    /api/apps/{app_id}/maintenance-mode/toggle
 POST    /api/apps/{app_id}/maintenance-pages/render
-POST    /api/apps/{app_id}/pull/stream
-POST    /api/apps/{app_id}/rebuild/stream
 POST    /api/apps/{app_id}/restart
 POST    /api/apps/{app_id}/scale
 POST    /api/apps/{app_id}/start

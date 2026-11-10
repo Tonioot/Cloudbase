@@ -82,10 +82,6 @@ class MaintenancePageConfig(BaseModel):
     background: Optional[str] = "none" # none | glow | grid
 
 
-class PullRequest(BaseModel):
-    commit: Optional[str] = None
-
-
 class MaintenanceSettings(BaseModel):
     downtime_page: MaintenancePageConfig = MaintenancePageConfig()
     update_page: MaintenancePageConfig = MaintenancePageConfig(color="#f0883e")
@@ -123,3 +119,4 @@ class GitDeployRequest(BaseModel):
     commit: Optional[str] = None          # None = latest on the current branch
     strategy: str = "rebuild"             # rebuild | rolling | blue_green
     trigger: str = "manual"               # manual | rollback
+    pull: bool = True                     # False: build/deploy the source as it is (Rebuild)

@@ -37,13 +37,15 @@ async def run_deploy(
     strategy: str = "rolling",
     trigger: str = "manual",
     actor: str = "system",
+    pull: bool = True,
     on_line: Optional[Callable[[str], None]] = None,
 ) -> dict:
-    """Sync the source to `commit` (or the branch head) and put it live.
+    """Sync the source to `commit` (or the branch head; with pull=False: keep the source as it is) and put it live.
 
     strategy: rolling | blue_green | rebuild (build only). Apps without a
     public domain can't be rolled through nginx; they are rebuilt and their
-    running instances restarted. Raises HTTPException on failure.
+    running instances restarted. Every deploy, rebuild and rollback goes through here: one lock, one history,
+    one notification. Raises HTTPException on failure.
     """
 
     def push(line: str) -> None:
@@ -90,11 +92,16 @@ async def run_deploy(
                 dep_id = dep.id
                 push(f"[Deploy] {trigger.capitalize()} deploy started ({strategy.replace('_', '/')})")
 
-                commit_info, source_revision = await apps_git._sync_app_source(
-                    app, app.working_dir, commit, push, branch=app.deploy_branch or None,
-                )
+                if pull:
+                    commit_info, source_revision = await apps_git._sync_app_source(
+                        app, app.working_dir, commit, push, branch=app.deploy_branch or None,
+                    )
+                else:
+                    source_revision = await asyncio.to_thread(apps_git._refresh_app_source_revision, app)
                 sha, subject, author = await asyncio.to_thread(_commit_details, app.working_dir)
                 commit_label = f"{sha[:7]} {subject or ''}".strip() if sha else None
+                if not pull:
+                    commit_info = commit_label or "the current source"
                 dep.commit_sha, dep.commit_message, dep.commit_author = sha, subject, author
                 dep.branch = await asyncio.to_thread(apps_git._current_branch, app.working_dir)
                 await db.commit()

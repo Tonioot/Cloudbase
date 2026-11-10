@@ -124,7 +124,6 @@ def test_every_operation_that_changes_an_app_is_tracked():
         "routers/applications/lifecycle.py": ['@activity.tracked("stopping")'],
         "routers/applications/scale.py": ['@activity.tracked("scaling")'],
         "routers/applications/instances.py": ['@activity.tracked("restarting")'],
-        "routers/applications/deploys.py": ['activity.begin(app_id, "updating"', 'activity.begin(app_id, "building"'],
         "workers/autoscaler.py": ['activity.track(app_id, "scaling")'],
     }
     for path, needles in expected.items():
