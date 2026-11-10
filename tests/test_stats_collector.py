@@ -247,3 +247,21 @@ def test_the_app_stream_only_gets_app_frames(docker):
     finally:
         pm.unsubscribe_stats(app_id, q)
     assert len(frames) == 1 and "instance_id" not in frames[0] and frames[0]["_instance_count"] == 2
+
+
+def test_watching_for_minutes_keeps_the_node_fast(monkeypatch):
+    """The node watches for 30 s after each hint; while somebody looks, a new hint comes every 10 s."""
+    from containers import processes as pm
+    from workers import stats
+    sent = []
+
+    class WS:
+        async def send_json(self, message):
+            sent.append(message)
+    monkeypatch.setattr(stats, "_node_ws_connections", {5: WS()})
+    monkeypatch.setattr(stats, "_hinted", {})
+    monkeypatch.setattr(pm, "_watched_until", {900025: float("inf")})          # the stats tab stays open
+    instances = {900025: [N(id=1, app_id=900025, node_id=5)]}
+    for second in range(0, 181, 2):                                            # three minutes of collector rounds
+        _run(stats._hint_watchers(instances, 1, 1000.0 + second))
+    assert len(sent) == 19                                                     # 0, 10, …, 180 s: never 30 s without one

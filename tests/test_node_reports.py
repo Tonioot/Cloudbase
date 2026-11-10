@@ -255,3 +255,12 @@ def test_a_node_finds_its_databases_by_name_and_measures_the_running_ones(monkey
     assert set(out) == {"3", "4", "9"}                                   # by container, by data volume, and nothing else
     assert out["3"]["stats"] == {"cpu_percent": 1.0} and "stats" not in out["4"] and "stats" not in out["9"]
     assert asked == [(3, lifecycle.db_engines.get_engine("postgres").data_dir("16"))]
+
+
+def test_every_hint_extends_the_fast_rate(node_side):
+    report, _, _ = node_side
+    report.watch(2)
+    first = report._watched[2]
+    time.sleep(0.01)
+    report.watch(2)
+    assert report._watched[2] > first and report.watched_apps(time.monotonic()) == {2}
