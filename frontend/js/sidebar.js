@@ -29,7 +29,7 @@ function wireLogout() {
   btn.dataset.wired = '1';
   btn.addEventListener('click', async () => {
     await api.logout().catch(() => {});
-    try { sessionStorage.removeItem('cb-index'); sessionStorage.removeItem('cb-hidden-perms'); } catch { /* ignore */ }
+    try { sessionStorage.removeItem('cb-index'); sessionStorage.removeItem('cb-hidden-perms'); sessionStorage.removeItem('cb-me'); } catch { /* ignore */ }
     location.href = '/login';
   });
 }
@@ -239,9 +239,10 @@ async function initRoleBasedUI() {
     const isRoot = !!data.is_root;
     document.body.dataset.role = data.role;
     document.body.dataset.permissions = JSON.stringify(data.permissions || []);
-    window.dispatchEvent(new CustomEvent('cloudbase-role-ready', { detail: { role: data.role, username: data.username, permissions: data.permissions || [] } }));
-
     const perms = new Set(data.permissions || []);
+    // Root, or anyone with users.manage / roles.manage, gets Users & roles (shell.js shows it)
+    const canManageUsers = isRoot || perms.has('users.manage') || perms.has('roles.manage');
+    window.dispatchEvent(new CustomEvent('cloudbase-role-ready', { detail: { role: data.role, username: data.username, permissions: data.permissions || [], canManageUsers } }));
 
     // The answer is in: drop the rules remembered from the previous page and keep the new ones for the next
     document.getElementById('perm-hide-rules-cache')?.remove();
@@ -275,11 +276,5 @@ async function initRoleBasedUI() {
       }
     }
 
-    // Show Manage Users & Roles for Root, or anyone with users.manage / roles.manage
-    const canManageUsers = isRoot || perms.has('users.manage') || perms.has('roles.manage');
-    if (canManageUsers) {
-      const btn = document.getElementById('btn-manage-users');
-      if (btn) btn.style.display = '';
-    }
   } catch {}
 }

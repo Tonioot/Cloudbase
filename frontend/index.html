@@ -91,8 +91,10 @@
 
 <script type="module">
   import { api } from './js/api.js';
-  import { initDashboard } from './js/dashboard.js';
+  import { initDashboard, drawDashboardFromCache } from './js/dashboard.js';
   import { initSidebar } from './js/sidebar.js';
+
+  drawDashboardFromCache();
 
   // Guard: redirect to login if not authenticated
   try {

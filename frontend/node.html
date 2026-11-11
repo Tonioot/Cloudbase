@@ -127,8 +127,10 @@
 
 <script type="module">
   import { api } from './js/api.js';
-  import { initNodePage } from './js/node_detail.js';
+  import { initNodePage, drawNodeFromCache } from './js/node_detail.js';
   import { initSidebar } from './js/sidebar.js';
+
+  drawNodeFromCache();
 
   try {
     await api.checkAuth();

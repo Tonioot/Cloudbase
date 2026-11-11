@@ -21,6 +21,21 @@ const HISTORY_LEN = 60;
 const _history = { apps: [], instances: [], cpu: [], mem: [], nodes: [] };
 
 /* ─── Init ──────────────────────────────────────────────────────────────── */
+/** Draw from what the last page knew (the sidebar's index) before anything is fetched, even the sign-in check:
+ *  the page has its shape from the first frame and nothing moves when the fresh data comes in. */
+export function drawDashboardFromCache() {
+  try {
+    const cached = JSON.parse(sessionStorage.getItem('cb-index') || 'null');
+    if (!cached) return;
+    appsData = cached.apps || [];
+    nodesData = cached.nodes || [];
+    renderKpis();
+    renderApps();
+    renderNodes();
+    renderDatabasesTable(document.getElementById('databases-grid'), cached.databases || []);
+  } catch { /* nothing remembered yet */ }
+}
+
 export async function initDashboard() {
   const openDeploy = () => openDeployModal(app => {
     toast(`"${app.name}" deployed successfully`);

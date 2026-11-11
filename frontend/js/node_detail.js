@@ -35,6 +35,18 @@ const CHARTS = [
     { id: 'load', title: 'Load average', unit: '1 min', fmt: fmtLoad, series: [{ key: 'load', color: '--green' }] },
 ];
 const RANGE_LABELS = { 1: 'Last hour', 24: 'Last 24 hours', 168: 'Last 7 days' };
+const RUN_KEY = `cb-node-run-${NODE_ID}`;   // what ran here at the last visit, shown until the fresh list is in
+
+/** Drawn before anything is fetched, even the sign-in check: the chart cards, and what ran here at the last visit.
+ *  The page keeps its shape while the data comes in. */
+export function drawNodeFromCache() {
+    if (!NODE_ID || isNaN(NODE_ID)) return;
+    buildCharts();
+    try {
+        const cached = sessionStorage.getItem(RUN_KEY);
+        if (cached) document.getElementById('run-list').innerHTML = cached;
+    } catch { /* nothing remembered */ }
+}
 
 export async function initNodePage() {
     if (!NODE_ID || isNaN(NODE_ID)) {
@@ -52,7 +64,7 @@ export async function initNodePage() {
     }
 
     renderAll();
-    buildCharts();
+    _setChartsOfflineState(node.status !== 'online' && !node.is_local);
     loadMetrics();
     refreshWorkloads();
     loadLogs();
@@ -253,6 +265,7 @@ function renderRunning() {
         <thead><tr><th>Name</th><th>Kind</th><th>Status</th><th>Reached at</th></tr></thead>
         <tbody>${instances.map(instanceRow).join('')}${databases.map(databaseRow).join('')}</tbody>
     </table>`;
+    try { sessionStorage.setItem(RUN_KEY, list.innerHTML); } catch { /* the next visit just fills a moment later */ }
     list.querySelectorAll('tr[data-href]').forEach(tr => tr.addEventListener('click', e => {
         if (!e.target.closest('a')) location.href = tr.dataset.href;
     }));
@@ -334,7 +347,6 @@ function buildCharts() {
             <canvas id="chart-${c.id}" style="width:100%;height:110px;display:block"></canvas>
             <div id="chart-${c.id}-empty" class="chart-offline-overlay" style="display:none"></div>
         </div>`).join('');
-    _setChartsOfflineState(node.status !== 'online' && !node.is_local);
     document.getElementById('nd-charts').addEventListener('click', e => {
         const btn = e.target.closest('[data-chart]');
         if (btn) openLargeChart(btn.dataset.chart);

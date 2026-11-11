@@ -12,6 +12,8 @@ export class PermissionError extends Error {
   }
 }
 
+let _authCheck = null;
+
 async function request(method, path, body) {
   const opts = { method, headers: {}, credentials: 'same-origin' };
   if (body) {
@@ -41,7 +43,8 @@ async function transferRequest(path, opts) {
 
 export const api = {
   health:        ()          => request('GET',    '/health'),
-  checkAuth:     ()          => request('GET',    '/auth/check'),
+  // Asked once per page: the page's guard and the sidebar's roles share the answer instead of waiting for two
+  checkAuth:     ()          => (_authCheck ??= request('GET', '/auth/check')),
   getSession:    ()          => request('GET',    '/auth/session'),
   logout:        ()          => request('POST',   '/auth/logout'),
   changePassword:(newPwd)    => request('POST',   '/auth/change-password', { password: newPwd }),

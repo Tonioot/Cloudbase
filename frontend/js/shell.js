@@ -219,6 +219,7 @@ let index = { apps: [], nodes: [], databases: [], loaded: false };
 // instead of popping in after the server has answered. They are refreshed right after.
 const INDEX_KEY = 'cb-index';
 const HIDDEN_PERMS_KEY = 'cb-hidden-perms';
+const ME_KEY = 'cb-me';   // who is signed in, as the last page learned it: the menu is right from the first frame
 
 /** The app page fetched this app again: its dot in the sidebar follows right away instead of at the next poll. */
 export function updateIndexApp(app) {
@@ -403,6 +404,17 @@ function closePalette() {
 
 /* ─── Mount ─────────────────────────────────────────────────────────────── */
 
+/** The signed-in user in the sidebar, and the Users & roles item when they may manage them. */
+function showMe(me) {
+  const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+  set('rail-user-name', me.username);
+  set('sb-user-name', me.username);
+  set('rail-avatar-initials', me.username.slice(0, 2).toUpperCase());
+  if (me.role) { set('rail-user-role', me.role); set('sb-user-role', me.role); }
+  const users = document.getElementById('btn-manage-users');
+  if (users) users.style.display = me.users ? '' : 'none';
+}
+
 function mount() {
   const rail = document.getElementById('rail');
   if (!rail) return;
@@ -419,6 +431,8 @@ function mount() {
       style.textContent = `${hidden.map(p => `[data-perm="${p}"]`).join(',')}{display:none!important}`;
       document.head.appendChild(style);
     }
+    const me = JSON.parse(sessionStorage.getItem(ME_KEY) || 'null');
+    if (me) showMe(me);
   } catch { /* nothing remembered yet */ }
   api.health().then(h => {
     const el = document.getElementById('rail-version');
@@ -485,15 +499,9 @@ function mount() {
   syncThemeButton();
 
   window.addEventListener('cloudbase-role-ready', e => {
-    const name = e.detail?.username || 'admin';
-    document.getElementById('rail-user-name').textContent = name;
-    document.getElementById('sb-user-name').textContent = name;
-    document.getElementById('rail-avatar-initials').textContent = name.slice(0, 2).toUpperCase();
-    const role = e.detail?.role;
-    if (role) {
-      document.getElementById('rail-user-role').textContent = role;
-      document.getElementById('sb-user-role').textContent = role;
-    }
+    const me = { username: e.detail?.username || 'admin', role: e.detail?.role || '', users: !!e.detail?.canManageUsers };
+    showMe(me);
+    try { sessionStorage.setItem(ME_KEY, JSON.stringify(me)); } catch { /* ignore */ }
   });
 }
 

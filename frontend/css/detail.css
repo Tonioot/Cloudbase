@@ -44,7 +44,7 @@
   overflow-wrap: anywhere;
 }
 
-.detail-links { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; color: var(--muted); }
+.detail-links { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; color: var(--muted); min-height: 18px; }   /* its line is there before the app is loaded */
 .detail-url { display: inline-flex; color: var(--accent); }
 .detail-url:hover { text-decoration: underline; text-underline-offset: 3px; }
 .detail-repo { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
@@ -744,7 +744,7 @@ button.s3-link:hover { background: var(--hover); }
 }
 
 /* ─── Database detail ───────────────────────────────────────────────────── */
-.db-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 8px; font-size: 13px; color: var(--muted); }
+.db-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 8px; font-size: 13px; color: var(--muted); min-height: 1.5em; }
 .db-meta > *:not(:last-child)::after { content: '·'; margin-left: 14px; color: var(--faint); }
 .db-meta code { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
 
