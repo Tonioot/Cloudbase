@@ -290,8 +290,10 @@ async def _deploy_app(app: Application):
 _source_locks: dict[int, asyncio.Lock] = {}
 
 
-def _has_source(app_id: int) -> bool:
-    return os.path.isdir(os.path.join(pm.get_app_dir(app_id), ".git"))
+def _has_source(app: Application) -> bool:
+    """Anything there counts: only a missing or empty folder is cloned again (never over files that are there)."""
+    source = pm.app_source_dir(app)
+    return not source or (os.path.isdir(source) and any(os.scandir(source)))
 
 
 async def ensure_source(app_id: int) -> None:
@@ -299,14 +301,10 @@ async def ensure_source(app_id: int) -> None:
 
     A primary restored from a full backup (or moved to a new server) knows its apps, but their source is not in the
     backup: it comes from Git. Building here and handing the source to a node both come through this first."""
-    if _has_source(app_id):
-        return
     async with _source_locks.setdefault(app_id, asyncio.Lock()):
-        if _has_source(app_id):
-            return
         async with AsyncSessionLocal() as db:
             app = await db.get(Application, app_id)
-            if app is None or not app.repo_url:
+            if app is None or not app.repo_url or _has_source(app):
                 return
             pinned = app.source_revision
             log.warning("[deploy] the source of app=%s is not on this server; cloning it again", app.name)

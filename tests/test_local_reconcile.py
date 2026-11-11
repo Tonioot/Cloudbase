@@ -96,6 +96,9 @@ class Docker:
         monkeypatch.setattr(pm, "stop_docker_instance", self._stop)
         monkeypatch.setattr(pm, "start_docker_instance", self._start)
         monkeypatch.setattr(local.prepare, "ensure_image", self._ensure_image)
+        async def source_is_here(app_id):
+            return None
+        monkeypatch.setattr(local.apps_git, "ensure_source", source_is_here)   # no repository to clone in a test
         self.promoted = []
         monkeypatch.setattr(observed.promote, "start_promotion", self.promoted.append)
 
