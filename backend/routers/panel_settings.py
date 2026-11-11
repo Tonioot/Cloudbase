@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+from core.system_settings import clean_system_settings
 from typing import Optional
 from fastapi import Depends, Body, HTTPException, APIRouter
 from pydantic import BaseModel
@@ -13,7 +14,6 @@ from nginx import pages as nginx_pages
 from nginx import files as nginx_files
 from nginx import config as nginx_config
 from core.runtime import PORT
-from mesh import addressing
 from nginx.panel import _load_panel_https_domain, _refresh_all_app_nginx
 
 log = logging.getLogger("cloudbase.main")
@@ -91,6 +91,8 @@ async def set_base_domain(req: BaseDomainRequest, db: AsyncSession = Depends(get
 
 
 # ── System settings (ports, limits from config.yaml) ─────────────────────────
+
+
 @router.get("/api/system/settings", include_in_schema=False)
 async def get_system_settings(_: dict = Depends(auth.require_permission("system.manage"))):
     return {
@@ -117,42 +119,7 @@ async def save_system_settings(
     body: dict = Body(...),
     _: dict = Depends(auth.require_permission("system.manage")),
 ):
-    def _int(val, lo, hi, default):
-        try:
-            v = int(val)
-            if lo <= v <= hi:
-                return v
-        except (TypeError, ValueError):
-            pass
-        return default
-
-    auth_cfg = body.get("auth",   {})
-    ports    = body.get("ports",  {})
-    limits   = body.get("limits", {})
-    wireguard = body.get("wireguard", {})
-    sections = {}
-    if auth_cfg:
-        sections["auth"] = {
-            "token_expire_seconds": _int(auth_cfg.get("token_expire_seconds"), 60, 2592000, _cfg.get_auth("token_expire_seconds")),
-        }
-    if ports:
-        sections["ports"] = {
-            "instance_min": _int(ports.get("instance_min"), 1024, 65000, _cfg.get_port("instance_min")),
-            "instance_max": _int(ports.get("instance_max"), 1024, 65000, _cfg.get_port("instance_max")),
-        }
-    if limits:
-        sections["limits"] = {
-            "max_apps":                _int(limits.get("max_apps"),                1, 100000, _cfg.get_limit("max_apps")),
-            "max_instances":           _int(limits.get("max_instances"),           1, 100000, _cfg.get_limit("max_instances")),
-            "max_nodes":               _int(limits.get("max_nodes"),               1, 10000,  _cfg.get_limit("max_nodes")),
-            "max_restarts_per_window": _int(limits.get("max_restarts_per_window"), 1, 1000,   _cfg.get_limit("max_restarts_per_window")),
-            "restart_window_seconds":  _int(limits.get("restart_window_seconds"),  10, 86400, _cfg.get_limit("restart_window_seconds")),
-        }
-    if wireguard:
-        endpoint = str(wireguard.get("endpoint") or "").strip()
-        if endpoint and not (addressing.is_valid_endpoint(endpoint if ":" in endpoint else endpoint + ":51820")):
-            raise HTTPException(400, "The node network address must be a host name or IP address, optionally with a port")
-        sections["wireguard"] = {"endpoint": endpoint}
+    sections = clean_system_settings(body)
     if sections:
         _cfg.save_config_sections(sections)
     return {"ok": True}

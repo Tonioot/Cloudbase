@@ -18,7 +18,7 @@ export const SETTINGS_SECTIONS = {
   backups:  { title: 'Backup storage',   sub: 'Keep a copy of every database backup outside this server, in S3-compatible storage.' },
   notifications: { title: 'Notifications', sub: 'Where Cloudbase reports problems and deploys — Slack, Teams, PagerDuty, e-mail, webhooks and more — and which events go where.' },
   tokens:   { title: 'Git tokens',       sub: 'Saved access tokens for private repositories on GitHub, GitLab, Bitbucket, Gitea and other Git hosts (HTTPS). Pick one when you create or edit an app.' },
-  transfer: { title: 'Export / import',  sub: 'Move app configurations between Cloudbase installations, or keep a backup.' },
+  transfer: { title: 'Export / Import',  sub: 'Move apps, databases and settings to another Cloudbase, or keep a full backup of this one.' },
   logs:     { title: 'System logs',      sub: 'Everything Cloudbase itself logs — deploys, autoscaler, nginx, nodes, databases — in one place, live.' },
   account:  { title: 'Account',          sub: 'Your own sign-in details.' },
 };
@@ -1211,6 +1211,49 @@ function openChannelDialog(state, ch, reload) {
 
 /* ─── Export / import ───────────────────────────────────────────────────── */
 
+/** The text of one member of a tar stream (an export, or an unzipped full backup), read without keeping the rest:
+ *  the members before it are skipped as they stream past. null when it is not there. */
+async function tarFind(stream, wanted) {
+  const reader = stream.getReader();
+  let buf = new Uint8Array(0);
+  let skip = 0;
+  const more = async () => {
+    const { done, value } = await reader.read();
+    if (done) return false;
+    const joined = new Uint8Array(buf.length + value.length);
+    joined.set(buf);
+    joined.set(value, buf.length);
+    buf = joined;
+    return true;
+  };
+  const need = async n => { while (buf.length < n) if (!await more()) return false; return true; };
+  const text = bytes => new TextDecoder().decode(bytes).replace(/\0[\s\S]*$/, '');
+  try {
+    for (;;) {
+      while (skip > 0) {
+        if (!buf.length && !await more()) return null;
+        const n = Math.min(skip, buf.length);
+        buf = buf.subarray(n);
+        skip -= n;
+      }
+      if (!await need(512)) return null;
+      const header = buf.subarray(0, 512);
+      buf = buf.subarray(512);
+      if (header.every(b => b === 0)) return null;
+      const prefix = text(header.subarray(345, 500));
+      const name = (prefix ? `${prefix}/` : '') + text(header.subarray(0, 100));
+      const size = parseInt(text(header.subarray(124, 136)).trim() || '0', 8) || 0;
+      if (name.replace(/^\.\//, '') === wanted) {
+        if (size > 64 * 1048576 || !await need(size)) return null;
+        return new TextDecoder().decode(buf.subarray(0, size));
+      }
+      skip = Math.ceil(size / 512) * 512;
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+}
+
 function renderTransfer(root) {
   const plainHttp = location.protocol !== 'https:';
   const can = p => isRoot() || currentPerms().has(p);
@@ -1228,9 +1271,21 @@ function renderTransfer(root) {
     </label>`;
 
   root.innerHTML = `
-    ${group('Export', 'Download one file with your apps and databases, to set them up again somewhere else.',
+    <div class="segmented tx-mode" role="tablist" id="tx-mode">
+      <button type="button" role="tab" data-mode="export" aria-pressed="true">Export</button>
+      <button type="button" role="tab" data-mode="import" aria-pressed="false">Import</button>
+    </div>
+    <div id="tx-export">
+    ${group('Export', 'Download a file to set things up again on another Cloudbase, or to keep as a backup.',
       `<div class="tx">
-         <section>
+         <div class="segmented tx-kinds" role="tablist" id="exp-kind">
+           <button type="button" role="tab" data-kind="apps" aria-pressed="true">Apps</button>
+           <button type="button" role="tab" data-kind="databases" aria-pressed="false">Databases</button>
+           <button type="button" role="tab" data-kind="settings" aria-pressed="false">Settings &amp; users</button>
+           <button type="button" role="tab" data-kind="all" aria-pressed="false">Everything</button>
+         </div>
+         <div class="tx-kind-info" id="exp-kind-info"></div>
+         <section id="exp-app-section">
            <div class="tx-sec-hd">
              <span class="tx-sec-title">Apps</span><span class="tx-sec-count" id="exp-app-count"></span>
              <label class="check-inline tx-all"><input type="checkbox" id="exp-all" checked /> All</label>
@@ -1244,12 +1299,12 @@ function renderTransfer(root) {
            </div>
            <div id="exp-db-list" class="check-list"></div>
          </section>
-         <section>
+         <section id="exp-options">
            <div class="tx-sec-hd"><span class="tx-sec-title">Also include</span></div>
            <div class="tx-options">
-             ${option('exp-secrets', 'Environment variables &amp; Git tokens', 'The values, as plain text. Without this you get the settings and the names of the variables.',
-               canSecrets, 'Only the root account can give the “Secrets → export” permission.')}
-             <span id="exp-data-slot">${option('exp-data', 'Database data', 'A dump of each selected database, which must be running. The file can get as large as the databases.',
+             <span id="exp-secrets-slot">${option('exp-secrets', 'Environment variables &amp; Git tokens', 'The values, as plain text. Without this you get the settings and the names of the variables.',
+               canSecrets, 'Only the root account can give the “Secrets → export” permission.')}</span>
+             <span id="exp-data-slot">${option('exp-data', 'Database data', 'A dump of each database (it must be running). The file can get as large as the databases.',
                canData, 'You need the “Database backups” permission.')}</span>
            </div>
          </section>
@@ -1268,26 +1323,47 @@ function renderTransfer(root) {
            <div class="tx-run" id="exp-run" style="display:none"></div>
          </div>
        </div>`)}
-    ${group('Import', 'Set up apps and databases from an export file. Names that already exist are skipped.',
+    </div>
+    <div id="tx-import" style="display:none">
+    ${group('Import', 'Choose a file. You first see what it holds and what will happen; nothing changes until you confirm.',
       `<div class="tx">
          <div class="tx-file" id="imp-drop">
-           <span class="tx-file-name" id="imp-name">Drop an export file here, or choose one</span>
+           <span class="tx-file-name" id="imp-name">Drop an export file or a full backup here, or choose one</span>
            <button type="button" class="btn btn-sm" id="imp-browse">Choose file</button>
-           <input type="file" id="imp-file" accept=".cloudbase,application/octet-stream" hidden>
+           <input type="file" id="imp-file" accept=".cloudbase,.gz,application/octet-stream,application/gzip" hidden>
          </div>
-         <div class="tx-bar">
+         <div id="imp-preview"></div>
+         <div class="tx-bar" id="imp-restore-bar" style="display:none">
+           <div class="tx-bar-info"><div class="tx-summary">Restore this backup</div></div>
+           <div class="tx-bar-actions">
+             <input class="input tx-pw" id="imp-pw" type="password" placeholder="Your account password" autocomplete="current-password" />
+             <button class="btn btn-danger" id="imp-restore" ${isRoot() ? '' : 'disabled title="Only the admin account can restore a full backup"'}>Restore</button>
+           </div>
+         </div>
+         <div class="tx-bar" id="imp-bar" style="display:none">
            <div class="tx-bar-info">
-             <div class="tx-inline">
+             <div class="tx-summary" id="imp-sum"></div>
+             <div class="tx-inline" id="imp-node-row">
                <label class="field-label" for="imp-node" style="margin:0">Place on</label>
                <select class="input" id="imp-node"><option value="">This server (primary)</option></select>
              </div>
-             <div class="tx-note">Instances and databases all go to this node; scale to others afterwards.</div>
+             <div class="tx-note" id="imp-node-note">Instances and databases all go to this node; scale to others afterwards.</div>
            </div>
            <div class="tx-bar-actions"><button class="btn btn-primary" id="imp-go" disabled>Import</button></div>
          </div>
          <div id="imp-result"></div>
        </div>`)}
+    </div>
   `;
+
+  // Export or import: one of the two at a time
+  document.getElementById('tx-mode').onclick = e => {
+    const btn = e.target.closest('[data-mode]');
+    if (!btn) return;
+    document.querySelectorAll('#tx-mode [data-mode]').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+    show(document.getElementById('tx-export'), btn.dataset.mode === 'export');
+    show(document.getElementById('tx-import'), btn.dataset.mode === 'import');
+  };
 
   // ── Export: what to export ────────────────────────────────────────────────
   const expList = document.getElementById('exp-list');
@@ -1299,26 +1375,59 @@ function renderTransfer(root) {
   const expData = document.getElementById('exp-data');
   const expPw = document.getElementById('exp-pw');
   const summary = document.getElementById('exp-summary');
+  const expGo = document.getElementById('exp-go');
+  const run = document.getElementById('exp-run');
   const appChecks = () => [...expList.querySelectorAll('.exp-check')];
   const dbChecks = () => [...dbList.querySelectorAll('.exp-db-check')];
   const ticked = list => list.filter(c => c.checked).map(c => parseInt(c.value, 10));
-  const withSecrets = () => expSecrets.checked && canSecrets;
-  const withData = () => expData.checked && canData && ticked(dbChecks()).length > 0;
+  // What to export: apps, databases, the Cloudbase settings, or everything (a full backup of this installation)
+  let kind = 'apps';
+  const KIND_INFO = {
+    apps: '',
+    databases: '',
+    settings: 'Users and roles, notification channels, Git tokens, the backup storage, the base domain and the System settings. Secrets are in it as plain text, so it needs the “Secrets → export” permission and your password. Importing it adds what the other server does not have yet.',
+    all: 'A full backup of this installation: apps, databases, nodes, users, settings, history and the keys that decrypt your secrets. Restore it on a new server (under Import, or with <code>cloudbase restore</code>) to carry on where you were; it replaces what is there. Only the admin account can make one.',
+  };
+  const kindAllowed = k => (k === 'settings' ? canSecrets : k === 'all' ? isRoot() : true);
+  const withSecrets = () => kind === 'apps' && expSecrets.checked && canSecrets;
+  const withData = () => expData.checked && canData && (kind === 'all' || (kind === 'databases' && ticked(dbChecks()).length > 0));
+  const needsPassword = () => withSecrets() || kind === 'settings' || kind === 'all';
 
   const sync = () => {
-    const apps = ticked(appChecks()).length, dbs = ticked(dbChecks()).length;
+    const apps = kind === 'apps' ? ticked(appChecks()).length : 0;
+    const dbs = kind === 'databases' ? ticked(dbChecks()).length : 0;
+    show(document.getElementById('exp-app-section'), kind === 'apps');
+    show(dbSection, kind === 'databases');
+    show(document.getElementById('exp-options'), kind !== 'settings');
+    show(document.getElementById('exp-secrets-slot'), kind === 'apps');
+    show(document.getElementById('exp-data-slot'), kind === 'databases' || kind === 'all');
+    const info = document.getElementById('exp-kind-info');
+    info.innerHTML = KIND_INFO[kind] + (kindAllowed(kind) ? '' : ' <span class="tx-lock">needs permission</span>');
+    show(info, !!KIND_INFO[kind]);
+    expGo.disabled = !kindAllowed(kind);
+    expGo.textContent = kind === 'all' ? 'Download full backup' : 'Download export';
     document.getElementById('exp-app-count').textContent = appChecks().length ? `${apps} of ${appChecks().length}` : '';
     document.getElementById('exp-db-count').textContent = dbChecks().length ? `${dbs} of ${dbChecks().length}` : '';
     const parts = [];
     if (apps) parts.push(plural(apps, 'app'));
     if (dbs) parts.push(plural(dbs, 'database'));
+    if (kind === 'settings') parts.push('Settings & users');
+    if (kind === 'all') parts.push('Everything');
     if (withSecrets()) parts.push('with secrets');
     if (withData()) parts.push('with data');
     summary.textContent = parts.length ? parts.join(' · ') : 'Nothing selected';
-    show(document.getElementById('exp-warn'), withSecrets() || withData());
-    show(expPw, withSecrets());
+    show(document.getElementById('exp-warn'), needsPassword() || withData());
+    show(expPw, needsPassword());
     // the data option only makes sense when a database is selected
-    document.getElementById('exp-data-wrap').style.opacity = dbs || !canData ? '' : '.6';
+    document.getElementById('exp-data-wrap').style.opacity = dbs || kind === 'all' || !canData ? '' : '.6';
+  };
+  document.getElementById('exp-kind').onclick = e => {
+    const btn = e.target.closest('[data-kind]');
+    if (!btn) return;
+    kind = btn.dataset.kind;
+    document.querySelectorAll('#exp-kind [data-kind]').forEach(b => b.setAttribute('aria-pressed', String(b === btn)));
+    show(run, false);
+    sync();
   };
 
   api.listApps().then(apps => {
@@ -1333,8 +1442,7 @@ function renderTransfer(root) {
     sync();
   }).catch(e => { expList.innerHTML = notice(esc(e.message)); });
   api.listDatabases().then(dbs => {
-    if (!dbs.length) return;
-    show(dbSection, true);
+    if (!dbs.length) { dbList.innerHTML = '<div class="tx-empty">No databases to export.</div>'; return; }
     dbList.innerHTML = dbs.map(d => `
       <label class="check-row">
         <input type="checkbox" class="exp-db-check" value="${d.id}" checked />
@@ -1351,8 +1459,6 @@ function renderTransfer(root) {
   sync();
 
   // ── Export: start, follow, download ───────────────────────────────────────
-  const expGo = document.getElementById('exp-go');
-  const run = document.getElementById('exp-run');
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   // The progress card: what is happening now, and the steps with the finished ones ticked off.
   const STAGES = [['collect', 'Settings'], ['dump', 'Database data'], ['pack', 'Package'], ['done', 'Download']];
@@ -1369,21 +1475,26 @@ function renderTransfer(root) {
   };
 
   expGo.onclick = async () => {
-    const appIds = ticked(appChecks()), dbIds = ticked(dbChecks());
-    if (!appIds.length && !dbIds.length) return toast('Select at least one app or database', 'error');
-    if (withSecrets() && !expPw.value) { expPw.focus(); return toast('Enter your account password', 'error'); }
+    const appIds = kind === 'apps' ? ticked(appChecks()) : [];
+    const dbIds = kind === 'databases' ? ticked(dbChecks()) : [];
+    if (kind === 'apps' && !appIds.length) return toast('Select at least one app', 'error');
+    if (kind === 'databases' && !dbIds.length) return toast('Select at least one database', 'error');
+    if (needsPassword() && !expPw.value) { expPw.focus(); return toast('Enter your account password', 'error'); }
     expGo.disabled = true;
     expGo.innerHTML = `${spinner} Exporting…`;
     const wantsData = withData();
     renderRun({ state: 'running', stage: 'collect', message: 'Starting…' }, wantsData);
     try {
-      const { job_id } = await api.startExport({
-        app_ids: appIds.length === appChecks().length ? null : appIds,    // null: every app
-        database_ids: dbIds,
-        include_data: withData(),
-        include_secrets: withSecrets(),
-        password: expPw.value,
-      });
+      const { job_id } = kind === 'all'
+        ? await api.startFullBackup({ include_data: withData(), password: expPw.value })
+        : await api.startExport({
+          app_ids: kind === 'apps' && appIds.length === appChecks().length ? null : appIds,    // null: every app
+          database_ids: dbIds,
+          include_data: withData(),
+          include_secrets: withSecrets(),
+          include_settings: kind === 'settings',
+          password: expPw.value,
+        });
       let status;
       for (;;) {                                  // a database dump can take minutes: follow the job
         await sleep(700);
@@ -1400,14 +1511,16 @@ function renderTransfer(root) {
       a.click();
       URL.revokeObjectURL(a.href);
       expPw.value = '';
-      renderRun({ state: 'done', stage: 'done', message: `Downloaded: ${plural(status.apps, 'app')}, ${plural(status.databases, 'database')}.` }, wantsData);
-      toast('Export downloaded');
+      const what = kind === 'all' ? `the full backup${status.databases ? ` with ${plural(status.databases, 'database dump')}` : ''}`
+        : kind === 'settings' ? 'the settings and users'
+        : kind === 'apps' ? plural(status.apps, 'app') : plural(status.databases, 'database');
+      renderRun({ state: 'done', stage: 'done', message: `Downloaded ${what}.` }, wantsData);
+      toast(kind === 'all' ? 'Full backup downloaded' : 'Export downloaded');
     } catch (e) {
       renderRun({ state: 'failed', message: e.message }, wantsData);
       toast(e.message, 'error');
     } finally {
-      expGo.disabled = false;
-      expGo.textContent = 'Download export';
+      sync();
     }
   };
 
@@ -1417,13 +1530,74 @@ function renderTransfer(root) {
   const fileInput = document.getElementById('imp-file');
   const impGo = document.getElementById('imp-go');
   const result = document.getElementById('imp-result');
-  const choose = f => {
+  const preview = document.getElementById('imp-preview');
+  const restoreBar = document.getElementById('imp-restore-bar');
+  const importBar = document.getElementById('imp-bar');
+  const previewRow = (kind, what, name, text) =>
+    `<li data-kind="${kind}"><span class="tx-what">${esc(what)}</span>${name ? `<b>${esc(name)}</b>` : ''}<span>${esc(text)}</span></li>`;
+  const choose = async f => {
     file = f || null;
     const name = document.getElementById('imp-name');
-    name.textContent = file ? `${file.name} (${(file.size / 1048576).toFixed(file.size > 1048576 ? 1 : 2)} MB)` : 'Drop an export file here, or choose one';
+    name.textContent = file ? `${file.name} (${(file.size / 1048576).toFixed(file.size > 1048576 ? 1 : 2)} MB)` : 'Drop an export file or a full backup here, or choose one';
     name.classList.toggle('has-value', !!file);
-    impGo.disabled = !file;
+    result.innerHTML = '';
+    show(restoreBar, false);
+    show(importBar, false);
+    if (!file) { preview.innerHTML = ''; return; }
+    preview.innerHTML = `<div class="tx-preview"><div class="tx-preview-head">${spinner}<span>Reading the file…</span></div></div>`;
+    try {
+      const head = new Uint8Array(await file.slice(0, 2).arrayBuffer());
+      if (head[0] === 0x1f && head[1] === 0x8b) await previewFullBackup();     // gzip: a full backup
+      else await previewExport();
+    } catch (e) {
+      preview.innerHTML = `<div class="tx-warn">This file cannot be imported: ${esc(e.message)}</div>`;
+    }
   };
+
+  const previewFullBackup = async () => {
+    const text = await tarFind(file.stream().pipeThrough(new DecompressionStream('gzip')), 'cloudbase/MANIFEST');
+    const info = Object.fromEntries((text || '').split('\n').filter(l => l.includes('=')).map(l => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]));
+    const made = info.created ? new Date(info.created).toLocaleString('nl', { dateStyle: 'medium', timeStyle: 'short' }) : null;
+    preview.innerHTML = `
+      <div class="tx-preview">
+        <div class="tx-preview-head"><b>Full backup</b><span>${[info.host && `of ${esc(info.host)}`, made && `made ${esc(made)}`, info.version && `Cloudbase ${esc(info.version)}`].filter(Boolean).join(' · ') || 'made with cloudbase backup'}</span></div>
+        <ul class="tx-list">
+          ${previewRow('replace', 'Everything', '', 'apps, databases, nodes, users, settings, history and the keys that decrypt your secrets')}
+          ${Number(info.data) ? previewRow('ok', 'Database data', '', `${plural(Number(info.data), 'dump')}, added to the databases' backup lists`) : ''}
+        </ul>
+        <div class="tx-warn">Restoring <b>replaces everything on this server</b> with what is in the backup. Cloudbase restarts, and afterwards you sign in with the accounts from the backup. What is here now is kept aside on the server.</div>
+      </div>`;
+    show(restoreBar, true);
+  };
+
+  const previewExport = async () => {
+    const text = await tarFind(file.stream(), 'manifest.json');
+    if (!text) throw new Error('it is not a Cloudbase export or backup');
+    const plan = await api.previewImport(JSON.parse(text));
+    const rows = [];
+    for (const a of plan.apps) rows.push(previewRow(a.action === 'add' ? 'ok' : 'skip', 'App', a.name,
+      a.action === 'add' ? `${plural(a.instances, 'instance')}${a.start ? ', started after the import' : ''}` : `skipped: ${a.reason}`));
+    for (const d of plan.databases) rows.push(previewRow(d.action === 'add' ? 'ok' : 'skip', 'Database', d.name,
+      d.action === 'add' ? `${d.engine} ${d.version}${d.data ? ', with its data' : ', empty'}${d.links.length ? `, linked to ${d.links.join(', ')}` : ''}` : `skipped: ${d.reason}`));
+    if (plan.settings && !plan.settings.allowed) rows.push(previewRow('skip', 'Settings', '', 'skipped: only the admin account can import them'));
+    for (const i of plan.settings?.items || []) rows.push(previewRow(i.action === 'skip' ? 'skip' : i.action === 'replace' ? 'replace' : 'ok', i.what, i.name,
+      i.action === 'add' ? 'added' : i.action === 'replace' ? 'taken over from the file' : `skipped: ${i.reason}`));
+    const adds = rows.filter(r => !r.includes('data-kind="skip"')).length;
+    const made = plan.created_at ? new Date(plan.created_at).toLocaleString('nl', { dateStyle: 'medium', timeStyle: 'short' }) : null;
+    preview.innerHTML = `
+      <div class="tx-preview">
+        <div class="tx-preview-head"><b>Export file</b><span>${[made && `made ${esc(made)}`, plan.apps.length && (plan.secrets ? 'with environment variable values' : 'environment variable names only')].filter(Boolean).join(' · ')}</span></div>
+        <ul class="tx-list">${rows.join('') || previewRow('skip', '', '', 'This file holds nothing to import.')}</ul>
+      </div>`;
+    document.getElementById('imp-sum').textContent = `${adds ? `${plural(adds, 'item')} will be added or changed` : 'Nothing will change'}${rows.length - adds ? `, ${rows.length - adds} skipped` : ''}.`;
+    const placed = plan.apps.some(a => a.action === 'add') || plan.databases.some(d => d.action === 'add');
+    show(document.getElementById('imp-node-row'), placed);
+    show(document.getElementById('imp-node-note'), placed);
+    impGo.disabled = !adds;
+    impGo.textContent = adds ? `Import ${plural(adds, 'item')}` : 'Import';
+    show(importBar, true);
+  };
+
   document.getElementById('imp-browse').onclick = () => fileInput.click();
   fileInput.onchange = () => choose(fileInput.files[0]);
   ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('is-over'); }));
@@ -1434,9 +1608,36 @@ function renderTransfer(root) {
     nodes.filter(n => !n.is_local).forEach(n => sel.insertAdjacentHTML('beforeend', `<option value="${n.id}">${esc(n.name)}</option>`));
   }).catch(() => {});
 
+  document.getElementById('imp-restore').onclick = async () => {
+    const pw = document.getElementById('imp-pw');
+    if (!pw.value) { pw.focus(); return toast('Enter your account password', 'error'); }
+    if (!await confirm('Replace everything on this server?', 'Apps, databases, nodes, users, settings and keys are replaced by what is in the backup. Cloudbase restarts.')) return;
+    const btn = document.getElementById('imp-restore');
+    btn.disabled = true;
+    show(restoreBar, false);
+    result.innerHTML = `<div class="tx-run" data-state="running"><div class="tx-run-head">${spinner}<span class="tx-run-title">Uploading and checking the backup…</span></div><div class="tx-track"><div class="tx-track-fill"></div></div></div>`;
+    try {
+      const res = await api.restoreFull(file, pw.value);
+      pw.value = '';
+      const from = [res.host && `from ${res.host}`, res.created && `made ${res.created.slice(0, 10)}`].filter(Boolean).join(', ');
+      result.innerHTML = `<div class="tx-run" data-state="running"><div class="tx-run-head">${spinner}<span class="tx-run-title">Backup${from ? ` (${esc(from)})` : ''} checked. Cloudbase is restarting with it…</span></div><div class="tx-track"><div class="tx-track-fill"></div></div></div>`;
+      // Wait for it to go away and come back, then sign in with the accounts from the backup
+      await sleep(3000);
+      for (let i = 0; i < 90; i++) {
+        try { await api.health(); location.href = '/login'; return; } catch { await sleep(2000); }
+      }
+      result.innerHTML = '<div class="tx-warn">Cloudbase has not come back yet. If it does not run as a service, start it again on the server: the backup is put in place when it starts.</div>';
+    } catch (e) {
+      result.innerHTML = `<div class="tx-warn">Restore failed: ${esc(e.message)}</div>`;
+      btn.disabled = false;
+      show(restoreBar, true);
+    }
+  };
+
   const row = (kind, name, text) => `<li data-kind="${kind}">${name ? `<b>${esc(name)}</b>` : ''}<span>${esc(text)}</span></li>`;
   impGo.onclick = async () => {
     impGo.disabled = true;
+    show(importBar, false);
     result.innerHTML = `<div class="tx-run" data-state="running"><div class="tx-run-head">${spinner}<span class="tx-run-title">Uploading and importing… a large file takes a while.</span></div><div class="tx-track"><div class="tx-track-fill"></div></div></div>`;
     try {
       const nodeVal = document.getElementById('imp-node').value;
@@ -1446,18 +1647,21 @@ function renderTransfer(root) {
         ...res.databases.map(d => row('ok', d.name, `database · ${d.engine} ${d.version}${d.links ? ` · linked to ${plural(d.links, 'app')}` : ''}${d.restoring ? ' · restoring its data' : ''}`)),
         ...res.skipped.map(s => row('skip', s.name, `app skipped: ${s.reason}`)),
         ...res.skipped_databases.map(s => row('skip', s.name, `database skipped: ${s.reason}`)),
+        ...(res.settings?.added || []).map(a => row('ok', '', a)),
+        ...(res.settings?.skipped || []).map(a => row('skip', '', `skipped: ${a}`)),
         ...res.warnings.map(w => row('warn', '', w)),
       ];
-      const done = res.imported.length + res.databases.length;
+      const done = res.imported.length + res.databases.length + (res.settings?.added.length || 0);
       const skipped = res.skipped.length + res.skipped_databases.length;
       result.innerHTML = `
         <div class="tx-result-sum">${done} imported${skipped ? `, ${skipped} skipped` : ''}.${done ? ' Building, starting and restoring continue in the background.' : ''} If the file held secrets, delete it now.</div>
         <ul class="tx-list">${items.join('')}</ul>`;
+      preview.innerHTML = '';                    // the outcome replaces the plan
       if (done) toast('Import started');
     } catch (e) {
       result.innerHTML = `<div class="tx-warn">Import failed: ${esc(e.message)}</div>`;
-    } finally {
-      impGo.disabled = !file;
+      show(importBar, true);
+      impGo.disabled = false;
     }
   };
 }

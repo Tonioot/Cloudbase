@@ -72,7 +72,7 @@ The goal is to keep multi-server application management transparent and easy to 
 * Activity per app and a global audit log
 * Notifications in the panel and to Slack, Microsoft Teams, PagerDuty, e-mail, webhooks, Discord, Telegram and ntfy — problems resolve themselves when fixed
 * Users and custom roles with fine-grained permissions
-* App export/import and full CLI backups
+* Export and import of apps, databases and settings, with a preview of what an import will do, and full backups of the whole installation from the panel or the CLI
 
 ---
 

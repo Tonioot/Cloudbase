@@ -1159,36 +1159,44 @@ tail -n 100 ~/.cloudbase/logs/node-agent.log # what the agent did</pre>
   slug: 'backups',
   group: 'Administration',
   title: 'Backups & moving apps',
-  summary: 'Exports of apps and databases, full backups with the CLI, and moving to a new server.',
-  keywords: 'backup export import restore migrate move server json tar',
-  lead: 'There are two kinds of backup: an export of your apps and databases from the panel, and a full backup of the Cloudbase database and credentials from the command line.',
+  summary: 'Exporting apps, databases or settings, full backups of the whole installation, and moving to a new server.',
+  keywords: 'backup export import restore migrate move server json tar full settings users',
+  lead: 'Under Settings → Export / Import you take out apps, databases, the settings and users, or everything at once. An import always shows first what it will do.',
   body: `
-<h2>Exporting apps and databases (panel)</h2>
-<p>Under <a href="/settings?s=transfer">Settings → Export / import</a>, select apps and databases and download one <code>.cloudbase</code> file. It holds each app’s repository, type, build and start command, port, domains, restart policy, Docker limits, auto-deploy and autoscale settings, maintenance pages and the <strong>number of instances</strong>, and for each database its engine, version, limits, backup schedule and <strong>the apps it is linked to</strong>.</p>
+<h2>What to export</h2>
+<p>Under <a href="/settings?s=transfer">Settings → Export / Import</a>, choose <strong>Export</strong> and one of four:</p>
+<ul>
+  <li><strong>Apps</strong>: the apps you tick, with their repository, type, build and start command, port, domains, restart policy, limits, auto-deploy and autoscale settings, maintenance pages and <strong>number of instances</strong>. Optionally with their environment variables and Git tokens.</li>
+  <li><strong>Databases</strong>: the databases you tick, with engine, version, limits, backup schedule and <strong>the apps they are linked to</strong>. Optionally with their data.</li>
+  <li><strong>Settings &amp; users</strong>: users and roles, notification channels and when they are sent, Git tokens, the backup storage, the base domain and the System settings.</li>
+  <li><strong>Everything</strong>: a full backup of this installation, see below.</li>
+</ul>
 <p>The file is not encrypted, so treat it like what it contains: with only settings it is harmless, with secrets or data it is like a password file. Move it straight to where you import it and delete it afterwards; don’t email it around. Over plain <code>http</code> from a public address the export is refused.</p>
 
 <h3>Secrets</h3>
-<p>Environment variables and Git tokens are only included when you tick the box, which needs the <code>secrets.export</code> permission and your account password. Secrets can be typed in everywhere else in Cloudbase but are never shown again, so reading them back out is a separate right. Only the root account can give it to a role, and the <em>Administrator</em> role does not have it. Without it the file holds the settings and the <em>names</em> of the variables, and the import tells you what to fill in. A database’s own credentials are never exported: an import creates new ones, and linked apps pick them up through the link.</p>
+<p>Environment variables and Git tokens are only in an app export when you tick the box, which needs the <code>secrets.export</code> permission and your account password. <em>Settings &amp; users</em> always holds secrets (webhooks, tokens, the storage key), so it needs the same. Secrets can be typed in everywhere else in Cloudbase but are never shown again, so reading them back out is a separate right. Only the root account can give it to a role, and the <em>Administrator</em> role does not have it. A database’s own credentials are never exported: an import creates new ones, and linked apps pick them up through the link.</p>
 
 <h3>Database data</h3>
-<p>Tick <strong>Include the data of the selected databases</strong> (needs the <code>databases.backup</code> permission) to put a dump of each database in the file. The databases must be running. Each dump is made with the normal backup mechanism, so it also appears in the database’s backup list, and the file can be as large as the databases. Exporting runs in the background; the page shows what it is doing and downloads the file when it is ready, once: the copy on the server is deleted after that. Not included: source code (it comes from Git), container data other than databases, and the node an app or database ran on.</p>
+<p>Tick <strong>Database data</strong> (needs the <code>databases.backup</code> permission) to put a dump of each database in the file. The databases must be running. Each dump is made with the normal backup mechanism, so it also appears in the database’s backup list, and the file can be as large as the databases. Exporting runs in the background; the page shows what it is doing and downloads the file when it is ready, once: the copy on the server is deleted after that. Not included: source code (it comes from Git), container data other than databases, and the node an app or database ran on.</p>
 
 <h2>Importing</h2>
-<p>Choose the file on the same page. Cloudbase checks every app and database the way creating one does (name, repository, domains, engine and version, limits) and creates them, with the same number of instances and with the apps linked to their databases again. Names that already exist are skipped and listed with the reason. Then, in the background, it clones, builds and starts the apps that were running, and restores each database’s data as soon as that database is up. <strong>Place instances and databases on</strong> picks the node for all of them; the default is this server. A database that was reachable from the internet is created private; turn that on again if you need it.</p>
-<p>What you may import follows your permissions: apps need <code>apps.deploy</code>, databases need <code>databases.create</code>, linking needs <code>databases.manage</code> and restoring data needs <code>databases.backup</code>. Whatever you may not do is skipped, and the result says so.</p>
+<p>Choose <strong>Import</strong> and pick a file. Before anything happens you see what it holds and what will be done with each part: added, skipped (and why, for example because the name already exists) or taken over. Only then do you import.</p>
+<p>Cloudbase checks every app and database the way creating one does (name, repository, domains, engine and version, limits) and creates them, with the same number of instances and with the apps linked to their databases again. Then, in the background, it clones, builds and starts the apps that were running, and restores each database’s data as soon as that database is up. <strong>Place on</strong> picks the node for all of them; the default is this server. A database that was reachable from the internet is created private; turn that on again if you need it.</p>
+<p>Settings and users are added where this server does not have them yet: roles, users (with the password they had), channels and tokens with a name that exists are skipped; the base domain and backup storage only when none is set here. The notification and System settings are taken over. Only the admin account can import them, because they can add accounts.</p>
+<p>What else you may import follows your permissions: apps need <code>apps.deploy</code>, databases need <code>databases.create</code>, linking needs <code>databases.manage</code> and restoring data needs <code>databases.backup</code>.</p>
 
-<h2>Full backup (CLI)</h2>
+<h2>Full backup</h2>
+<p><strong>Everything</strong> downloads a full backup: the Cloudbase database (apps, nodes, users, roles, history), the keys that decrypt environment variables and saved tokens, the settings and the certificates, and with <em>Database data</em> a dump of every running database. Only the admin account can make one, with its password. It is the same file as the command line makes:</p>
 <pre>cloudbase backup ~/cloudbase-backup.tar.gz
 cloudbase restore ~/cloudbase-backup.tar.gz</pre>
-<p>This includes the database (apps, nodes, users, roles, history), the keys that decrypt environment variables and saved tokens, settings and certificates. Treat the file like a password. Restoring stops Cloudbase, keeps the replaced data in <code>~/.cloudbase/pre-restore-…</code> and starts it again. Managed databases have their own backups on the Databases page.</p>
+<p>To restore one, pick it under <strong>Import</strong>: you see which server it came from and when it was made, and that it <strong>replaces everything</strong> on this server. After you confirm with your password, Cloudbase restarts with the backup and you sign in with the accounts from it. What was there before is kept in <code>~/.cloudbase/before-restore-…</code> (from the command line: <code>pre-restore-…</code>). Database dumps from the backup are in each database’s backup list, one click from being restored. Nodes find a restored primary by themselves: when their link to it stays silent for five minutes, they join the node network again.</p>
 
 <h2>Moving to a new server</h2>
 <ol class="guide-steps">
-  <li>Install Cloudbase on the new server.</li>
-  <li>Export your apps on the old panel and import them on the new one. Add their environment variables and tokens again.</li>
-  <li>Set the panel and base domain under Domain &amp; SSL. Certificates aren’t part of an export: click <strong>Set up HTTPS</strong> for the panel and for each app once DNS points to the new server.</li>
-  <li>Move DNS to the new server’s IP.</li>
-  <li>Re-connect remote nodes with a new invite from the new panel.</li>
+  <li>Make a full backup (<strong>Everything</strong>, with <em>Database data</em> for databases on the primary).</li>
+  <li>Install Cloudbase on the new server, sign in and restore the backup under <strong>Import</strong>.</li>
+  <li>Move DNS (the panel's domain and the app domains) to the new server. Nodes reconnect by themselves once the panel's address points there.</li>
+  <li>Check the certificates under Domain &amp; SSL; click <strong>Set up HTTPS</strong> again where one is missing.</li>
 </ol>
 
 <h2>Your app’s data</h2>

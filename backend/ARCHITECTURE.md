@@ -27,7 +27,7 @@ agent/                      the node agent (runs on remote servers, talks to the
 | `containers/` | Docker on one host: `client`, `naming`, `buildkit`, `dockerfiles`, `build`, `prepare` (get an image onto this machine), `reconciler` (make Docker equal to the list), `cleanup`, `apps`, `instances`, `jobs`, `stats_logs`, `processes` |
 | `nginx/` | `paths`, `pages` (HTML), `config` (nginx config text), `files` (writers), `certbot` (read-only lookups), `certificates` (issuing), `panel` |
 | `dbs/` | managed databases: `docker`, `lifecycle`, `backup_restore`, `updates`, `ops`, `provision`, `view`, `public`, `proxy`, `workers`, `backups`, `backup_scheduler`, … |
-| `transfer/` | export and import of apps and databases as one file (a tar): `archive` (manifest + dumps), `manifest`/`databases` (what goes in), `jobs`/`exporter` (export runs in the background), `importer`/`db_import` (what comes out) |
+| `transfer/` | export and import of apps, databases and settings as one file (a tar): `archive` (manifest + dumps), `manifest`/`databases`/`settings` (what goes in), `jobs`/`exporter` (export runs in the background), `importer`/`db_import`/`settings` (what comes out; `/api/transfer/preview` says what an import will do first); `full` is the full backup (the same .tar.gz as `cloudbase backup`), restored at the next start before the database is opened |
 | `notify/` | `events`, `settings`, `config`, `emit`, `dispatch`, `watch`, `channels`, `mailer` |
 | `routers/` | one package per area (`applications/`, `nodes/`, `databases/`, `database_backups/`), each with a module per concern; the package `__init__` composes them in order |
 

@@ -555,7 +555,7 @@ PYEOF
 # Everything needed to bring this server back, including the keys that decrypt
 # app env vars and saved tokens. App sources are re-cloned and images rebuilt,
 # so they're not included; managed databases have their own backups.
-BACKUP_FILES=(credentials secret_key env_key agent_token github_tokens.json config.yaml)
+BACKUP_FILES=(credentials secret_key env_key github_tokens.json config.yaml)
 BACKUP_DIRS=(certs db-tls)
 
 cmd_backup() {
@@ -654,7 +654,8 @@ cmd_restore() {
     local keep="$data_dir/pre-restore-$(date +%Y%m%d-%H%M%S)"
     mkdir -p "$keep"
     local f d
-    for f in cloudbase.db "${BACKUP_FILES[@]}"; do
+    # The database's journal files go too: left behind, they would be applied to the restored database
+    for f in cloudbase.db cloudbase.db-wal cloudbase.db-shm "${BACKUP_FILES[@]}"; do
         [[ -f "$data_dir/$f" ]] && mv "$data_dir/$f" "$keep/"
     done
     for d in "${BACKUP_DIRS[@]}"; do
@@ -671,6 +672,11 @@ cmd_restore() {
         [[ -d "$src_dir/$d" ]] && cp -rp "$src_dir/$d" "$data_dir/"
     done
     [[ -f "$src_dir/agent_state.json" ]] && cp -p "$src_dir/agent_state.json" "$BACKEND_DIR/"
+    # Database dumps a backup from the panel can hold (they are in the databases' backup lists)
+    if [[ -d "$src_dir/backups" ]]; then
+        mkdir -p "$data_dir/backups"
+        cp -p "$src_dir/backups/"* "$data_dir/backups/" 2>/dev/null || true
+    fi
     chmod 600 "$data_dir/cloudbase.db"
 
     success "Restored. The previous data is kept in $keep"

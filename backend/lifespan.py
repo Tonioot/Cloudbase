@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import os
+from transfer import full as full_restore
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -85,6 +86,8 @@ async def lifespan(app: FastAPI):
         yield
         return
 
+    # A full backup restored from the panel is put in place before anything reads the database (transfer/full.py)
+    full_restore.apply_pending()
     _ensure_first_run_password()
 
     await init_db()

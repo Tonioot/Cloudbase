@@ -1,5 +1,6 @@
 """The node network end to end on the primary: enrolling nodes, following their health, routing to instances."""
 import asyncio
+import time
 import base64
 import json
 import socket
@@ -441,7 +442,7 @@ def _join_with(monkeypatch, answers_on: set):
     started = []
     monkeypatch.setattr(helper, "keygen", lambda: KEYS[4])
     monkeypatch.setattr(helper, "start_node", lambda *args: started.append(args) or KEYS[4])
-    monkeypatch.setattr(helper, "status", lambda: {"peers": [{"latest_handshake": 5 if started[-1][2] in answers_on else 0}]})
+    monkeypatch.setattr(helper, "status", lambda: {"peers": [{"latest_handshake": int(time.time()) if started[-1][2] in answers_on else 0}]})
     monkeypatch.setattr(agent_mesh, "_save_state", lambda s: None)
     monkeypatch.setattr(agent_mesh, "HANDSHAKE_WAIT_SECONDS", 1)
     real_sleep = asyncio.sleep
@@ -488,3 +489,33 @@ def test_without_any_answer_there_is_no_public_address(monkeypatch):
     monkeypatch.setattr(publicip, "_cache", {"ip": None, "at": 0.0})
     monkeypatch.setattr(publicip, "_fetch", lambda url: (_ for _ in ()).throw(OSError("offline")))
     assert publicip.detect() is None
+
+
+def test_a_node_joins_again_when_the_hub_stops_answering(monkeypatch):
+    """A primary restored on a new server has a new hub key: its nodes find it again by themselves."""
+    agent_mesh, state, started = _join_with(monkeypatch, {"203.0.113.7:51820"})
+    from mesh import helper
+    clock = {"now": 10_000.0}
+    monkeypatch.setattr(agent_mesh, "_now", lambda: clock["now"])
+    handshakes = {"at": clock["now"]}
+    monkeypatch.setattr(helper, "status", lambda: {"peers": [{"latest_handshake": handshakes["at"]}]})
+    joins = []
+    real_join = agent_mesh.join_once
+
+    async def counting_join(client, st):
+        joins.append(clock["now"])
+        if len(joins) == 3:
+            raise asyncio.CancelledError                  # enough: stop the loop
+        handshakes["at"] = clock["now"]                   # joining makes the hub answer
+        await real_join(client, st)
+    monkeypatch.setattr(agent_mesh, "join_once", counting_join)
+    real_sleep = asyncio.sleep
+
+    async def tick(seconds):
+        clock["now"] += seconds                          # time passes; the hub stays silent after the join
+        await real_sleep(0)
+    monkeypatch.setattr(agent_mesh.asyncio, "sleep", tick)
+    with pytest.raises(asyncio.CancelledError):
+        _run(agent_mesh.join_forever(_JoinClient(), state))
+    assert len(joins) == 3
+    assert joins[1] - joins[0] >= agent_mesh.LOST_AFTER_SECONDS     # not before the hub was silent long enough

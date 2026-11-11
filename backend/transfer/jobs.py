@@ -31,6 +31,7 @@ class ExportJob:
     size: int = 0
     apps: int = 0
     databases: int = 0
+    kind: str = "export"          # export | full
 
     def public(self) -> dict:
         return {"state": self.state, "stage": self.stage, "message": self.message, "size": self.size,
@@ -58,11 +59,11 @@ def sweep(now: Optional[float] = None) -> None:
         pass
 
 
-def create(owner: str) -> ExportJob:
+def create(owner: str, kind: str = "export") -> ExportJob:
     _ensure_dir()
     sweep()
-    job = ExportJob(id=uuid.uuid4().hex, owner=owner, created=time.time())
-    job.path = os.path.join(EXPORT_DIR, f"{job.id}.cloudbase")
+    job = ExportJob(id=uuid.uuid4().hex, owner=owner, created=time.time(), kind=kind)
+    job.path = os.path.join(EXPORT_DIR, f"{job.id}.{'tar.gz' if kind == 'full' else 'cloudbase'}")
     _jobs[job.id] = job
     return job
 

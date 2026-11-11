@@ -317,3 +317,23 @@
 .tx-list b { font-weight: 500; color: var(--text); }
 .tx-list span { color: var(--muted); }
 .tx-list li[data-kind="skip"] span { color: var(--red); }
+
+/* Export: what to export (apps, databases, the Cloudbase settings, everything) */
+.tx-kinds { align-self: flex-start; }
+.tx-kind-info { font-size: 13px; line-height: 1.55; color: var(--muted); max-width: 720px; margin-top: -8px; }
+.tx-kind-info .tx-lock { display: inline-block; margin-left: 6px; }
+.tx-kind-info code { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
+
+/* Export or import: one at a time */
+.tx-mode { margin-bottom: 22px; }
+
+/* Import: what the file holds and what will happen, before anything does */
+.tx-preview { display: flex; flex-direction: column; gap: 12px; }
+.tx-preview-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+.tx-preview-head b { font-size: 14px; font-weight: 600; color: var(--text); }
+.tx-preview .tx-result-sum { margin: 0; color: var(--muted); }
+.tx-list .tx-what { flex: none; min-width: 150px; color: var(--muted); }
+.tx-list li[data-kind="skip"] { opacity: .7; }
+.tx-list li[data-kind="skip"] span:last-child { color: var(--muted); }
+.tx-list li[data-kind="replace"]::before { content: "↻"; color: var(--accent); }
+@media (max-width: 640px) { .tx-list .tx-what { min-width: 0; } }

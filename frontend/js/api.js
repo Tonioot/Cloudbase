@@ -153,6 +153,14 @@ export const api = {
   startExport:    (body) => request('POST', '/transfer/export', body),
   exportStatus:   (jobId) => request('GET', `/transfer/export/${jobId}`),
   downloadExport: (jobId) => transferRequest(`/transfer/export/${jobId}/download`, { method: 'GET' }),
+  previewImport: (manifest) => request('POST', '/transfer/preview', { manifest }),
+  startFullBackup: (body) => request('POST', '/transfer/full-backup', body),
+  restoreFull: (file, password) => {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('password', password);
+    return transferRequest('/transfer/restore', { method: 'POST', body: form });
+  },
   importTransfer: (file, targetNodeId) => {
     const form = new FormData();
     form.append('file', file);

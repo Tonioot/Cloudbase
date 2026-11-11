@@ -6,7 +6,7 @@ from typing import Optional
 
 from core.audit import log_audit
 from core.database import AsyncSessionLocal
-from transfer import archive, databases, jobs, manifest
+from transfer import archive, databases, jobs, manifest, settings
 
 log = logging.getLogger("cloudbase.transfer")
 
@@ -19,6 +19,7 @@ async def run_export(
     include_secrets: bool,
     include_data: bool,
     actor: str,
+    include_settings: bool = False,
 ) -> None:
     error: Optional[str] = None
     detail: dict = {}
@@ -27,6 +28,8 @@ async def run_export(
         async with AsyncSessionLocal() as db:
             content = await manifest.build_manifest(db, app_ids, include_secrets)
             content["databases"], ids = await databases.database_entries(db, database_ids)
+            if include_settings:
+                content["settings"] = await settings.settings_entry(db)
         files = {}
         if include_data and content["databases"]:
             job.stage = "dump"
@@ -37,7 +40,8 @@ async def run_export(
         await asyncio.to_thread(archive.write, job.path, content, files)
         os.chmod(job.path, 0o600)             # it may hold secrets and data in the clear: owner only
         job.size = os.path.getsize(job.path)
-        detail = {"apps": job.apps, "databases": job.databases, "secrets": include_secrets, "data": bool(files)}
+        detail = {"apps": job.apps, "databases": job.databases, "secrets": include_secrets, "data": bool(files),
+                  "settings": include_settings}
     except Exception as exc:
         error = str(getattr(exc, "detail", exc))[:300]
         log.warning("[transfer] export failed: %s", error)
