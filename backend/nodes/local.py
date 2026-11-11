@@ -9,6 +9,7 @@ is no node network to wait for (nginx reaches the instance on localhost).
 import asyncio
 import logging
 
+from apps import git as apps_git
 from containers import prepare, processes as pm
 from containers.reconciler import Reconciler
 from core.database import AsyncSessionLocal
@@ -42,7 +43,8 @@ class LocalReconciler(Reconciler):
 
     async def _prepare(self, spec: dict, progress) -> None:
         async def fetch(app_id: int) -> str:
-            return pm.get_app_dir(app_id)             # the source is already here
+            await apps_git.ensure_source(app_id)      # here already, unless this primary was restored or moved
+            return pm.get_app_dir(app_id)
         await prepare.ensure_image(spec, progress, fetch, push=pm._push_line)
 
     async def _watch_nudges(self) -> None:

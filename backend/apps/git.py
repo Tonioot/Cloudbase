@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from typing import Optional
 from fastapi import HTTPException
+from core.database import AsyncSessionLocal
 from core.models import Application
 from containers import processes as pm
 from containers import dockerfiles as containers_dockerfiles
@@ -284,6 +285,41 @@ async def _deploy_app(app: Application):
         **_dockerfile_build_kwargs(app),
     )
     log.info("[deploy] Deployment finished for app=%s", app.name)
+
+
+_source_locks: dict[int, asyncio.Lock] = {}
+
+
+def _has_source(app_id: int) -> bool:
+    return os.path.isdir(os.path.join(pm.get_app_dir(app_id), ".git"))
+
+
+async def ensure_source(app_id: int) -> None:
+    """Clone the app's repository again when its source is not on this server, at the commit the app was on.
+
+    A primary restored from a full backup (or moved to a new server) knows its apps, but their source is not in the
+    backup: it comes from Git. Building here and handing the source to a node both come through this first."""
+    if _has_source(app_id):
+        return
+    async with _source_locks.setdefault(app_id, asyncio.Lock()):
+        if _has_source(app_id):
+            return
+        async with AsyncSessionLocal() as db:
+            app = await db.get(Application, app_id)
+            if app is None or not app.repo_url:
+                return
+            pinned = app.source_revision
+            log.warning("[deploy] the source of app=%s is not on this server; cloning it again", app.name)
+            await _deploy_app(app)
+            if pinned:
+                reset = await asyncio.to_thread(subprocess.run, ["git", "reset", "--hard", pinned],
+                                                cwd=pm.get_app_dir(app_id), capture_output=True, text=True)
+                if reset.returncode == 0:
+                    app.source_revision = pinned
+                else:
+                    log.warning("[deploy] app=%s: commit %s is not in the repository any more; using the branch head",
+                                app.name, pinned[:8])
+            await db.commit()
 
 
 async def _change_repository(app: Application, new_url: str) -> bool:

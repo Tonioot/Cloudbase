@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+from apps.git import ensure_source
 from fastapi import HTTPException, Query, Depends, APIRouter
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTask
@@ -90,6 +91,7 @@ def _pack_source(source_dir: str) -> tuple[str, list[str]]:
 async def get_source_archive(app_id: int, db: AsyncSession = Depends(get_db), _node: None = Depends(_source_archive_auth)):
     """Return a .tar.gz of the app's working directory for remote nodes to build from.
     Only the local primary serves this — remote nodes call this endpoint directly."""
+    await ensure_source(app_id)                    # cloned again when this primary was restored or moved
     app = await _get_or_404(app_id, db)
     source_dir = pm.app_source_dir(app)
     if not source_dir or not os.path.exists(source_dir):

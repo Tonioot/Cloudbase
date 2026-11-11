@@ -247,3 +247,40 @@ def test_the_preview_says_what_an_import_will_do_before_it_does_it(admin, client
             return (await db.execute(select(Application).where(Application.name == "preview-new"))).scalar_one_or_none()
     assert _run(still_absent()) is None                       # a preview changes nothing
     assert admin.post("/api/transfer/preview", json={"manifest": {"format": "nope"}}).status_code == 400
+
+
+def test_a_restored_primary_clones_an_apps_source_again_at_the_commit_it_was_on(client, tmp_path):
+    """The source is not in a full backup (it comes from Git): building, or handing it to a node, clones it first."""
+    import shutil
+    import subprocess
+    from core.database import AsyncSessionLocal
+    from core.models import Application
+    from containers import processes as pm
+    from apps import git as apps_git
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()  # noqa: E731
+    git("init", "-q", "-b", "main")
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "first")
+    first = git("rev-parse", "HEAD")
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "second")
+
+    async def make():
+        async with AsyncSessionLocal() as db:
+            app = Application(name="restored-source", repo_url=repo.as_uri(), app_type="node", start_command="node .",
+                              port=3000, source_revision=first)
+            db.add(app)
+            await db.commit()
+            return app.id
+    app_id = _run(make())
+    shutil.rmtree(pm.get_app_dir(app_id), ignore_errors=True)          # what a new server looks like
+
+    _run(apps_git.ensure_source(app_id))
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=pm.get_app_dir(app_id), capture_output=True, text=True).stdout.strip()
+    assert head == first                                                 # the commit it was on, not the newest
+
+    async def revision():
+        async with AsyncSessionLocal() as db:
+            return (await db.get(Application, app_id)).source_revision
+    assert _run(revision()) == first
