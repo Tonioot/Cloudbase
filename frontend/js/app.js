@@ -120,15 +120,29 @@ async function refreshApp() {
 
 function _syncStatsViewFromAppStatus() {
   if (!app) return;
-  const stoppedView = document.getElementById('stats-stopped');
-  const contentView = document.getElementById('stats-content');
-  if (!stoppedView || !contentView) return;
-
   if (app.status !== 'running') {
     lastStatStatus = 'stopped';
-    _removeStatsLoading();
-    stoppedView.style.display = 'flex';
-    contentView.style.display = 'none';
+    _showStats(false);
+  }
+}
+
+const _STOPPED_SVG = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg>';
+
+/** The metrics tab, running or not. Not running looks like a node that is offline: the charts keep their place with
+ *  a quiet note over them, and the history stays (it has the time the app did run). */
+function _showStats(running) {
+  _removeStatsLoading();
+  document.getElementById('stats-content').style.display = 'block';
+  const hist = document.getElementById('stats-history-section');
+  if (hist) hist.style.display = '';
+  document.querySelectorAll('#stats-content .stats-stopped-overlay').forEach(o => {
+    o.innerHTML = running ? '' : `${_STOPPED_SVG}<span>App not running</span>`;
+    o.style.display = running ? 'none' : 'flex';
+    const canvas = o.previousElementSibling;
+    if (canvas) canvas.style.opacity = running ? '1' : '0';
+  });
+  if (!running) {
+    document.querySelectorAll('#stats-content .sinfo-val').forEach(v => { v.textContent = '—'; });
   }
 }
 
@@ -672,13 +686,7 @@ function _updateStatsContextBar(instanceCount) {
 function handleStatData(data) {
   if (data.status === 'stopped') {
     lastStatStatus = 'stopped';
-    if (statsTabActive) {
-      _removeStatsLoading();
-      document.getElementById('stats-stopped').style.display = 'flex';
-      document.getElementById('stats-content').style.display = 'none';
-      const hist = document.getElementById('stats-history-section');
-      if (hist) hist.style.display = 'none';
-    }
+    if (statsTabActive) _showStats(false);
     return;
   }
   // Per-instance frame — not an aggregated app-level frame, skip for charts
@@ -704,11 +712,7 @@ function handleStatData(data) {
 
   if (!statsTabActive) return;
 
-  _removeStatsLoading();
-  document.getElementById('stats-stopped').style.display = 'none';
-  const hist = document.getElementById('stats-history-section');
-  if (hist) hist.style.display = '';
-  document.getElementById('stats-content').style.display = 'block';
+  _showStats(true);
 
   document.getElementById('s-cpu').textContent    = `${(data.cpu_percent || 0).toFixed(1)}%`;
   document.getElementById('s-mem').textContent    = `${(data.memory_mb   || 0).toFixed(0)} MB`;
@@ -742,32 +746,16 @@ function initStats() {
   // Always clear any stale loading spinner before deciding what to show
   _removeStatsLoading();
 
-  const histSection = document.getElementById('stats-history-section');
-  if (lastStatStatus === 'stopped') {
-    // App is known stopped — show stopped state immediately
-    document.getElementById('stats-stopped').style.display = 'flex';
-    document.getElementById('stats-content').style.display = 'none';
-    if (histSection) histSection.style.display = 'none';
-  } else if (cpuData.length > 0) {
-    // We have buffered data — show it immediately
-    document.getElementById('stats-stopped').style.display = 'none';
-    document.getElementById('stats-content').style.display = 'block';
-    if (histSection) histSection.style.display = '';
+  if (lastStatStatus === 'stopped' || (app.status !== 'running' && !cpuData.length)) {
+    _showStats(false);
+  } else {
+    // Running: the buffered frames at once (the server replays its recent ones too), or the empty charts until they come
+    _showStats(true);
     if (_lastInstanceCount) _updateStatsContextBar(_lastInstanceCount);
     updateChart(chartCpu,  cpuData);
     updateChart(chartMem,  memData);
     updateChart(chartNet,  netData);
     updateChart(chartDisk, diskData);
-  } else if (app.status === 'running') {
-    // App is running but WebSocket hasn't sent data yet — show content skeleton, not spinner
-    document.getElementById('stats-stopped').style.display = 'none';
-    document.getElementById('stats-content').style.display = 'block';
-    if (histSection) histSection.style.display = '';
-  } else {
-    // Status unknown — show stopped state rather than an indefinite spinner
-    document.getElementById('stats-stopped').style.display = 'flex';
-    document.getElementById('stats-content').style.display = 'none';
-    if (histSection) histSection.style.display = 'none';
   }
 
   const historyRange = document.getElementById('history-range');

@@ -160,14 +160,6 @@
       <div class="tab-panel" id="panel-stats">
         <div class="stats-panel">
 
-          <div id="stats-stopped" style="display:none" class="empty-state">
-            <div class="empty-icon">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22,12 18,12 15,21 9,3 6,12 2,12"/></svg>
-            </div>
-            <div class="empty-title">App is not running</div>
-            <div class="empty-sub">Start the application to see real-time performance statistics.</div>
-          </div>
-
           <div id="stats-content" style="display:none">
             <div id="stats-context-bar" style="display:none;align-items:center;gap:8px;margin-bottom:14px;font-size:11px;color:var(--text-muted)"></div>
             <div class="stats-layout">
@@ -191,19 +183,19 @@
               <div class="stats-charts-grid">
                 <div class="card chart-card">
                   <div class="chart-hdr"><div><div class="chart-title">CPU Usage</div><div class="chart-subtitle">Last 5 min · every 5 s</div></div><span class="chart-badge">%</span></div>
-                  <canvas id="chart-cpu" style="width:100%;height:120px;display:block"></canvas>
+                  <canvas id="chart-cpu" style="width:100%;height:120px;display:block"></canvas><div class="chart-offline-overlay stats-stopped-overlay" style="display:none"></div>
                 </div>
                 <div class="card chart-card">
                   <div class="chart-hdr"><div><div class="chart-title">Memory RSS</div><div class="chart-subtitle">Last 5 min · every 5 s</div></div><span class="chart-badge">MB</span></div>
-                  <canvas id="chart-mem" style="width:100%;height:120px;display:block"></canvas>
+                  <canvas id="chart-mem" style="width:100%;height:120px;display:block"></canvas><div class="chart-offline-overlay stats-stopped-overlay" style="display:none"></div>
                 </div>
                 <div class="card chart-card">
                   <div class="chart-hdr"><div><div class="chart-title">Network Traffic</div><div class="chart-subtitle">Cumulative RX + TX</div></div><span class="chart-badge">MB</span></div>
-                  <canvas id="chart-net" style="width:100%;height:120px;display:block"></canvas>
+                  <canvas id="chart-net" style="width:100%;height:120px;display:block"></canvas><div class="chart-offline-overlay stats-stopped-overlay" style="display:none"></div>
                 </div>
                 <div class="card chart-card">
                   <div class="chart-hdr"><div><div class="chart-title">Disk I/O</div><div class="chart-subtitle">Cumulative Read + Write</div></div><span class="chart-badge">MB</span></div>
-                  <canvas id="chart-disk" style="width:100%;height:120px;display:block"></canvas>
+                  <canvas id="chart-disk" style="width:100%;height:120px;display:block"></canvas><div class="chart-offline-overlay stats-stopped-overlay" style="display:none"></div>
                 </div>
               </div>
 

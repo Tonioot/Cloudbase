@@ -65,6 +65,8 @@ export async function initNodePage() {
 
     renderAll();
     _setChartsOfflineState(node.status !== 'online' && !node.is_local);
+    // The primary runs no agent: nobody sends it commands
+    if (node.is_local) document.getElementById('nd-tabs')?.replaceWith(Object.assign(document.createElement('h2'), { textContent: 'Agent log' }));
     loadMetrics();
     refreshWorkloads();
     loadLogs();
@@ -543,6 +545,13 @@ function _setChartsOfflineState(offline) {
         }
     }
 
+    const historyOverlay = document.getElementById('node-history-empty');
+    const historyList = document.getElementById('node-history-list');
+    if (historyOverlay) {
+        historyOverlay.innerHTML = offline ? `${OFFLINE_SVG}<span>Node offline</span>` : '';
+        historyOverlay.style.display = offline ? 'flex' : 'none';
+        if (historyList) historyList.style.opacity = offline ? '0' : '1';
+    }
     const logsOverlay = document.getElementById('node-logs-empty');
     const logsContent = document.getElementById('node-logs-content');
     if (logsOverlay) {
@@ -562,6 +571,7 @@ function _setChartsOfflineState(offline) {
 /* ─── Agent log and commands ───────────────────────────────────────────── */
 function initTabs() {
     const group = document.getElementById('nd-tabs');
+    if (!group) return;                 // the primary: only its log, no tabs
     group.addEventListener('click', e => {
         const btn = e.target.closest('[data-tab]');
         if (!btn) return;
