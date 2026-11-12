@@ -111,6 +111,7 @@ async def summary(db: AsyncSession, app_id: int, today: Optional[date] = None) -
         "uptime": round(100 * ok / checks, 3) if checks else None,
         "average_ms": round(ms / ok) if ok else None,
         "days": days,
+        "recent_ms": [r[2] for r in recent[-60:]],   # the last hour, for the small chart; None = a failed check
         "incidents": [{"from": i["from"].isoformat() + "Z", "until": i["until"].isoformat() + "Z" if i["until"] else None}
                       for i in incidents([(r[0], r[1]) for r in recent])][:20],
         "last_check": {"at": last[0].isoformat() + "Z", "ok": last[1], "response_ms": last[2], "detail": last[3]} if last else None,

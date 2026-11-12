@@ -384,7 +384,7 @@
                   <div class="s3-row">
                     <span class="s3-label"><span class="s3-title">How Cloudbase finds out</span><span class="s3-desc" id="cfg-deploy-method-hint">Check the branch every so often, or let your Git host tell Cloudbase the moment you push.</span></span>
                     <span class="s3-ctl">
-                      <div class="segmented" id="cfg-deploy-method" role="radiogroup">
+                      <div class="segmented" id="cfg-deploy-method" role="radiogroup" data-nosnap>
                         <button type="button" data-value="check" role="radio">Check</button>
                         <button type="button" data-value="webhook" role="radio">Webhook</button>
                       </div>
@@ -402,7 +402,7 @@
                       </span>
                     </div>
                   </div>
-                  <div id="autodeploy-webhook" hidden>
+                  <div id="autodeploy-webhook" data-nosnap hidden>
                     <div class="s3-row">
                       <span class="s3-label"><span class="s3-title">Payload URL</span><span class="s3-desc">GitHub, GitLab or Gitea. Content type: application/json. Event: push only.</span></span>
                       <span class="s3-ctl"><input class="input" id="webhook-url" type="text" readonly /></span>

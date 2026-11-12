@@ -1767,9 +1767,10 @@ function _sectionSnapshot(sec) {
   const parts = [];
   sec.querySelectorAll('input, select, textarea').forEach(el => {
     if (el.type === 'hidden' && el.id !== 'cfg-token-id') return;
+    if (el.closest('[data-nosnap]')) return;   // acts at once (the webhook), not with Save
     parts.push(el.type === 'checkbox' ? el.checked : el.value);
   });
-  sec.querySelectorAll('.segmented button.active').forEach(b => parts.push(b.dataset.value));
+  sec.querySelectorAll('.segmented button.active').forEach(b => { if (!b.closest('[data-nosnap]')) parts.push(b.dataset.value); });
   return JSON.stringify(parts);
 }
 
