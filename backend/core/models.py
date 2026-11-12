@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, Float, Index, Table, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, Date, Text, Boolean, ForeignKey, Float, Index, Table, UniqueConstraint
 from sqlalchemy.orm import validates
 from core.database import Base
 
@@ -66,6 +66,8 @@ class Application(Base):
     health_path            = Column(String(200), default="/", nullable=False)   # "" = only check that the port is open
     health_expect          = Column(String(60), default="", nullable=False)    # "" = any answer below 500; "2xx,301"
     health_timeout_seconds = Column(Integer, default=600, nullable=False)
+    show_on_status_page    = Column(Boolean, default=False, nullable=False)   # listed on the public /status page (apps/uptime.py)
+    webhook_secret         = Column(String(300), nullable=True)   # encrypted; set = a push webhook is on (apps/webhooks.py)
     # Auto-deploy: poll the branch and roll out new commits
     auto_deploy          = Column(Boolean, default=False, nullable=False)
     deploy_branch        = Column(String(200), nullable=True)   # None = the branch that is checked out
@@ -231,6 +233,32 @@ class StatsHistory(Base):
     disk_mb     = Column(Float, nullable=True)
 
 
+class UptimeCheck(Base):
+    """One check of an app's public address (every minute, kept 7 days; see apps/uptime.py)."""
+    __tablename__ = "uptime_checks"
+    __table_args__ = (Index("ix_uptime_checks_app_ts", "app_id", "timestamp"),)
+
+    id          = Column(Integer, primary_key=True, index=True)
+    app_id      = Column(Integer, ForeignKey("applications.id", ondelete="CASCADE"), nullable=False)
+    timestamp   = Column(DateTime, default=datetime.utcnow, nullable=False)
+    ok          = Column(Boolean, nullable=False)
+    response_ms = Column(Integer, nullable=True)
+    detail      = Column(String(200), nullable=True)
+
+
+class UptimeDay(Base):
+    """What the checks of one day add up to (kept 90 days)."""
+    __tablename__ = "uptime_days"
+    __table_args__ = (UniqueConstraint("app_id", "day", name="uq_uptime_days_app_day"),)
+
+    id        = Column(Integer, primary_key=True, index=True)
+    app_id    = Column(Integer, ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    day       = Column(Date, nullable=False)
+    checks    = Column(Integer, nullable=False, default=0)
+    ok_checks = Column(Integer, nullable=False, default=0)
+    total_ms  = Column(Integer, nullable=False, default=0)   # response time of the checks that worked, added up
+
+
 class OverviewHistory(Base):
     """Cluster-wide samples for the dashboard (every 30s, kept 7 days)."""
     __tablename__ = "overview_history"
@@ -282,7 +310,7 @@ class Deployment(Base):
     commit_message = Column(String(500), nullable=True)
     commit_author  = Column(String(200), nullable=True)
     branch         = Column(String(200), nullable=True)
-    trigger        = Column(String(20), nullable=False, default="manual")   # manual | auto | rollback
+    trigger        = Column(String(20), nullable=False, default="manual")   # manual | auto | webhook | rollback
     strategy       = Column(String(20), nullable=False, default="rolling")  # rolling | blue_green | rebuild | restart
     status         = Column(String(20), nullable=False, default="running")  # running | success | failed
     error          = Column(Text, nullable=True)

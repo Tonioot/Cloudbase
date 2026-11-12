@@ -27,6 +27,7 @@ from workers.demo import _dev_demo_logs
 from workers.health import _node_health_monitor
 from workers.mesh import _mesh_monitor
 from workers.recovery import _startup_recovery
+from workers.uptime import uptime_monitor
 from workers.stats import _overview_sampler, _stats_collector, _stats_history_writer
 
 log = logging.getLogger("cloudbase.main")
@@ -71,6 +72,7 @@ async def _start_panel_tasks() -> list[asyncio.Task]:
         asyncio.create_task(notify_dispatch.dispatcher()),
         asyncio.create_task(notify_watch.watcher()),
         asyncio.create_task(_cron.scheduler()),
+        asyncio.create_task(uptime_monitor()),
     ]
     if os.environ.get("CLOUDBASE_DEV_DEMO_LOGS"):
         tasks.append(asyncio.create_task(_dev_demo_logs(os.environ["CLOUDBASE_DEV_DEMO_LOGS"])))

@@ -13,6 +13,7 @@ from routers.applications import instances
 from routers.applications import scale
 from routers.applications import deploys
 from routers.applications import maintenance
+from routers.applications import webhook
 
 router = APIRouter()
 router.include_router(crud.router)
@@ -26,3 +27,4 @@ router.include_router(instances.router)
 router.include_router(scale.router)
 router.include_router(deploys.router)
 router.include_router(maintenance.router)
+router.include_router(webhook.router)

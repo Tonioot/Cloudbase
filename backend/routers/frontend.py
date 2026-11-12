@@ -80,6 +80,10 @@ def register(app: FastAPI) -> None:
         async def login_page(request: Request):
             return _page(request, "login.html")
 
+        @app.get("/status", include_in_schema=False)
+        async def status_page(request: Request):
+            return _page(request, "status.html")
+
         @app.get("/app", include_in_schema=False)
         async def app_page(request: Request):
             return _page(request, "app.html")

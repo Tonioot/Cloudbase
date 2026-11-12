@@ -6,6 +6,7 @@ EVENTS: dict[str, tuple[str, str, str]] = {
     "deploy.rolled_back":     ("New version rolled back",      "Deploys",   "warning"),
     "deploy.succeeded":       ("Deploy succeeded",             "Deploys",   "info"),
     "instance.failed":        ("Instance crashed or failed",   "Apps",      "warning"),
+    "uptime.down":            ("App not reachable",            "Apps",      "critical"),
     "node.offline":           ("Node offline",                 "Nodes",     "critical"),
     "node.disk_high":         ("Disk almost full",             "Nodes",     "warning"),
     "database.down":          ("Database down",                "Databases", "critical"),
@@ -18,12 +19,12 @@ EVENTS: dict[str, tuple[str, str, str]] = {
 
 
 # Problems: they stay open and send the all-clear when they're fixed
-PROBLEM_EVENTS = {"instance.failed", "node.offline", "node.disk_high", "database.down",
+PROBLEM_EVENTS = {"instance.failed", "uptime.down", "node.offline", "node.disk_high", "database.down",
                   "backup.failed", "backup.offsite_failed", "cert.expiring", "cron.failed"}
 
 
 # Sensible defaults for a new channel
-DEFAULT_EVENTS = ["deploy.failed", "deploy.rolled_back", "instance.failed", "node.offline",
+DEFAULT_EVENTS = ["deploy.failed", "deploy.rolled_back", "instance.failed", "uptime.down", "node.offline",
                   "node.disk_high", "database.down", "backup.failed", "backup.offsite_failed", "cert.expiring",
                   "cron.failed", "cron.missed"]
 

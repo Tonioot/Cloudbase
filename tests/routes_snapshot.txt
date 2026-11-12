@@ -1,5 +1,6 @@
 DELETE  /api/apps/{app_id}
 DELETE  /api/apps/{app_id}/instances/{instance_id}
+DELETE  /api/apps/{app_id}/webhook
 DELETE  /api/databases/{database_id}
 DELETE  /api/databases/{database_id}/backups/{backup_id}
 DELETE  /api/databases/{database_id}/links/{link_id}
@@ -26,6 +27,8 @@ GET     /api/apps/{app_id}/instances
 GET     /api/apps/{app_id}/instances/stats
 GET     /api/apps/{app_id}/source-archive
 GET     /api/apps/{app_id}/stats/history
+GET     /api/apps/{app_id}/uptime
+GET     /api/apps/{app_id}/webhook
 GET     /api/audit-log
 GET     /api/auth/check
 GET     /api/auth/session
@@ -61,6 +64,7 @@ GET     /api/notifications/summary
 GET     /api/overview/history
 GET     /api/roles
 GET     /api/roles/permissions
+GET     /api/status
 GET     /api/system/backup-storage
 GET     /api/system/github-tokens
 GET     /api/system/log-sources
@@ -81,6 +85,7 @@ GET     /login
 GET     /node
 GET     /notifications
 GET     /settings
+GET     /status
 GET     /{full_path:path}
 MOUNT /css
 MOUNT /fonts
@@ -107,6 +112,7 @@ POST    /api/apps/{app_id}/scale
 POST    /api/apps/{app_id}/start
 POST    /api/apps/{app_id}/stop
 POST    /api/apps/{app_id}/update-mode/toggle
+POST    /api/apps/{app_id}/webhook
 POST    /api/auth/change-password
 POST    /api/auth/login
 POST    /api/auth/logout
@@ -151,6 +157,7 @@ POST    /api/transfer/import
 POST    /api/transfer/preview
 POST    /api/transfer/restore
 POST    /api/users
+POST    /api/webhooks/{app_id}
 PUT     /api/apps/{app_id}
 PUT     /api/apps/{app_id}/cron
 PUT     /api/apps/{app_id}/maintenance-pages

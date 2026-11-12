@@ -9,6 +9,8 @@ from fastapi.routing import APIRoute
 # Endpoints that need no signed-in user, or check something else themselves: on purpose, and nothing else
 OPEN = {
     "/api/health",                     # liveness, for load balancers and `cloudbase doctor`
+    "/api/status",                     # the public status page: only apps that opted in
+    "/api/webhooks/{app_id}",       # a Git host: the signature of the delivery is checked by the endpoint
     "/api/auth/check", "/api/auth/login", "/api/auth/session", "/api/auth/logout", "/api/auth/change-password",
 }
 NODE_TOKEN_PREFIX = "/api/nodes/agent/"   # a node's agent, with its X-Node-Token (checked by the endpoint)

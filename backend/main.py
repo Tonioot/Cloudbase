@@ -13,6 +13,8 @@ from core.access import _AuthMiddleware
 from lifespan import lifespan
 from routers import applications, audit as audit_router, cron as cron_router, domains as domains_router, files, frontend, logs, nodes, notifications as notifications_router, overview, panel_logs, panel_settings, roles as roles_router, session, transfer, users, databases as databases_router, database_backups as database_backups_router
 from routers import stats as routers_stats
+from routers import webhooks as webhooks_router
+from routers import status as status_router
 
 # Must run after the imports above: it replaces any root handlers an imported
 # module installed (node_agent used to, which sent everything to node-agent.log).
@@ -46,6 +48,8 @@ app.include_router(database_backups_router.router)
 app.include_router(database_backups_router.agent_router)
 app.include_router(database_backups_router.storage_router)
 app.include_router(notifications_router.router)
+app.include_router(webhooks_router.router)
+app.include_router(status_router.router)
 
 # Last: its catch-all route would otherwise shadow everything registered after it.
 frontend.register(app)

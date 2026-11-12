@@ -1395,6 +1395,44 @@ function initAutoDeploySettings() {
 
 }
 
+/** What the uptime checks found, under the status page switch. */
+async function showUptimeHint() {
+  const hint = document.getElementById('cfg-status-hint');
+  if (!hint) return;
+  hint.dataset.base ||= hint.innerHTML;
+  try {
+    const u = await api.getUptime(APP_ID);
+    const note = u.uptime === null ? 'No checks yet.' : `Last 90 days: ${u.uptime}% up${u.average_ms ? `, ${u.average_ms} ms on average` : ''}.`;
+    hint.innerHTML = `${hint.dataset.base} ${escHtml(note)}`;
+  } catch { /* the hint is optional */ }
+}
+
+/** The webhook of the auto-deploy settings: a URL and a secret for the Git host. It acts at once (own buttons), not with Save. */
+async function initWebhookSettings() {
+  if (!document.getElementById('webhook-card')) return;
+  const $ = id => document.getElementById(id);
+  const show = w => {
+    $('webhook-details').hidden = !w.enabled;
+    $('webhook-on').hidden = w.enabled;
+    $('webhook-hint').textContent = w.enabled
+      ? 'On. Add it to the repository on your Git host. With auto-deploy on, a push to the branch deploys at once; the check above stays as a fallback.'
+      : 'Off. Deploy at once on a push instead of waiting for the next check. Works with GitHub, GitLab and Gitea.';
+    $('webhook-url').value = w.enabled ? location.origin + w.path : '';
+    $('webhook-secret').value = w.secret || '';
+  };
+  try { show(await api.getWebhook(APP_ID)); } catch (e) { return; }
+  for (const id of ['webhook-url', 'webhook-secret']) $(id).onfocus = e => e.target.select();
+  $('webhook-on').onclick = async () => { try { show(await api.newWebhook(APP_ID)); } catch (e) { toast(e.message, 'error'); } };
+  $('webhook-new').onclick = async () => {
+    if (!(await confirm('New secret', 'The old secret stops working at once. Update it on your Git host.'))) return;
+    try { show(await api.newWebhook(APP_ID)); } catch (e) { toast(e.message, 'error'); }
+  };
+  $('webhook-off').onclick = async () => {
+    if (!(await confirm('Switch off the webhook', 'Pushes no longer deploy at once.'))) return;
+    try { show(await api.removeWebhook(APP_ID)); } catch (e) { toast(e.message, 'error'); }
+  };
+}
+
 /** The branch picker next to the repository: the branches of the saved repository, or of the address being typed. */
 function initBranchSetting() {
   const branchSel = document.getElementById('cfg-deploy-branch');
@@ -1500,6 +1538,7 @@ function initSettings() {
   document.getElementById('cfg-port').value         = app.port           || '';
   renderNetwork();
   initAutoDeploySettings();
+  initWebhookSettings();
   initBranchSetting();
 
   _updateAppTypeVisibility(app);
@@ -1527,6 +1566,8 @@ function initSettings() {
   // Health check
   document.getElementById('cfg-health-path').value = app.health_path ?? '/';
   document.getElementById('cfg-health-expect').value = app.health_expect || '';
+  document.getElementById('cfg-status-page').checked = !!app.show_on_status_page;
+  showUptimeHint();
   document.getElementById('cfg-health-timeout').value = app.health_timeout_seconds || 600;
   const showAutoscale = on => ['autoscale-options', 'autoscale-more'].forEach(id => { document.getElementById(id).style.display = on ? '' : 'none'; });
   showAutoscale(autoscaleEnabled);
@@ -2849,6 +2890,7 @@ async function saveSettings() {
     auto_deploy_interval:   parseInt(document.getElementById('cfg-deploy-interval').value, 10) || 60,
     health_path:            document.getElementById('cfg-health-path').value.trim(),
     health_expect:          document.getElementById('cfg-health-expect').value.trim(),
+    show_on_status_page:    document.getElementById('cfg-status-page').checked,
     health_timeout_seconds: parseInt(document.getElementById('cfg-health-timeout').value, 10) || 600,
     env_vars,
     env_var_keys,
@@ -2929,7 +2971,7 @@ async function loadDeployments() {
   list.innerHTML = rows.map(d => {
     const isLive = live && d.id === live.id;
     const statusText = d.status === 'running' ? 'Deploying' : d.status === 'success' ? (isLive ? 'Live' : 'Deployed') : 'Failed';
-    const trigger = { auto: 'Auto', manual: 'Manual', rollback: 'Rollback' }[d.trigger] || d.trigger;
+    const trigger = { auto: 'Auto', webhook: 'Webhook', manual: 'Manual', rollback: 'Rollback' }[d.trigger] || d.trigger;
     const when = d.created_at ? timeAgo(d.created_at) : '';
     const dur = _fmtDuration(d.created_at, d.finished_at);
     return `
@@ -2937,7 +2979,7 @@ async function loadDeployments() {
         <span class="deploy-status"><span class="deploy-dot"></span>${statusText}</span>
         <span class="deploy-main">
           <span class="deploy-msg">${escHtml(d.commit_message || (d.status === 'running' ? 'Fetching code…' : 'Unknown commit'))}</span>
-          <span class="deploy-meta">${d.commit_sha ? `<code>${_shortSha(d.commit_sha)}</code>` : ''}${d.branch ? ` · ${escHtml(d.branch)}` : ''}${d.commit_author ? ` · ${escHtml(d.commit_author)}` : ''} · ${trigger}${d.trigger !== 'auto' && d.actor ? ` by ${escHtml(d.actor)}` : ''}</span>
+          <span class="deploy-meta">${d.commit_sha ? `<code>${_shortSha(d.commit_sha)}</code>` : ''}${d.branch ? ` · ${escHtml(d.branch)}` : ''}${d.commit_author ? ` · ${escHtml(d.commit_author)}` : ''} · ${trigger}${!['auto', 'webhook'].includes(d.trigger) && d.actor ? ` by ${escHtml(d.actor)}` : ''}</span>
           ${d.status === 'failed' && d.error ? `<span class="deploy-error">${escHtml(d.error)}</span>` : ''}
         </span>
         <span class="deploy-when">${when}${dur ? `<small>${dur}</small>` : ''}</span>

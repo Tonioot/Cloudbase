@@ -38,31 +38,35 @@ async def _instance_views(app_id: int, db: AsyncSession) -> list[dict]:
     return [_instance_to_dict(instance, node) for instance, node in rows]
 
 
+def public_url(app: Application) -> Optional[str]:
+    """Where visitors reach the app: its custom domain first, then its automatic subdomain; None without one."""
+    import re as _re
+    if app.no_web:
+        return None
+    if app.domain:
+        return f"{'https' if (app.ssl_cert_path and app.ssl_key_path) else 'http'}://{app.domain}"
+    _base = _syscfg.get_base_domain_cached()
+    if not _base:
+        return None
+    _slug = _re.sub(r"[^a-z0-9]+", "-", (app.name or "").lower()).strip("-")
+    if not _slug:
+        return None
+    _auto = f"{_slug}.{_base}"
+    _secure = bool(_syscfg.get_base_ssl_cert_cached()) or (nginx_certbot.capability()[0] and nginx_certbot.exists(_auto))
+    return f"{'https' if _secure else 'http'}://{_auto}"
+
+
 def _app_to_dict(
     app: Application,
     instances: list,
     include_sensitive: bool = True,
     include_page_configs: bool = True,
 ) -> dict:
-    import re as _re
     downtime_page = json.loads(app.downtime_page or "{}") if include_page_configs else None
     update_page = json.loads(app.update_page or "{}") if include_page_configs else None
     restart_page = json.loads(app.restart_page or "{}") if include_page_configs else None
     starting_page = json.loads(app.starting_page or "{}") if include_page_configs else None
-    # Compute the app's accessible URL: custom domain first, then auto-subdomain
-    _app_url: Optional[str] = None
-    if not app.no_web:
-        if app.domain:
-            _proto = "https" if (app.ssl_cert_path and app.ssl_key_path) else "http"
-            _app_url = f"{_proto}://{app.domain}"
-        else:
-            _base = _syscfg.get_base_domain_cached()
-            if _base:
-                _slug = _re.sub(r"[^a-z0-9]+", "-", (app.name or "").lower()).strip("-")
-                if _slug:
-                    _auto = f"{_slug}.{_base}"
-                    _secure = bool(_syscfg.get_base_ssl_cert_cached()) or (nginx_certbot.capability()[0] and nginx_certbot.exists(_auto))
-                    _app_url = f"{'https' if _secure else 'http'}://{_auto}"
+    _app_url = public_url(app)
     return {
         "id": app.id,
         "name": app.name,
@@ -120,6 +124,7 @@ def _app_to_dict(
         "health_path": health.settings_of(app)[0],
         "health_expect": health.settings_of(app)[1],
         "health_timeout_seconds": health.settings_of(app)[2],
+        "show_on_status_page": bool(app.show_on_status_page),
         "instances": instances,
         "instance_count": len(instances),
         "node_id": app.node_id,

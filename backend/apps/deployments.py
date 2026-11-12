@@ -10,7 +10,7 @@ from containers import processes as pm, naming as containers_naming, build as co
 from core.database import AsyncSessionLocal
 from core import activity
 from core.models import Application, Deployment
-from apps import state as apps_state, rollout as apps_rollout, git as apps_git, nginx_sync as apps_nginx_sync, runtime as apps_runtime, images as apps_images
+from apps import commit_status, state as apps_state, rollout as apps_rollout, git as apps_git, nginx_sync as apps_nginx_sync, runtime as apps_runtime, images as apps_images
 from core.audit import log_audit as apps_log_audit
 from apps.lifecycle import restart_locked
 
@@ -68,6 +68,7 @@ async def run_deploy(
     collector = asyncio.create_task(_collect())
     dep_id: Optional[int] = None
     app_name, commit_label = f"app {app_id}", None
+    gh: Optional[tuple] = None   # (repo_url, token, sha) once the commit is known: its status on GitHub
     try:
         with apps_state.app_lock(app_id, "deploying"):
             async with AsyncSessionLocal() as db:
@@ -105,6 +106,8 @@ async def run_deploy(
                 dep.commit_sha, dep.commit_message, dep.commit_author = sha, subject, author
                 dep.branch = await asyncio.to_thread(apps_git._current_branch, app.working_dir)
                 await db.commit()
+                gh = (app.repo_url, app.github_token, sha)
+                await commit_status.report(app_id, *gh, "pending", "Deploying with Cloudbase")
 
                 if strategy in ("rolling", "blue_green"):
                     push("[Deploy] Replacing the instances one at a time…" if strategy == "rolling"
@@ -123,15 +126,21 @@ async def run_deploy(
                                      detail={"name": app.name, "commit": commit_info, "strategy": strategy, "trigger": trigger})
                 await db.commit()
         await _finish(dep_id, "success", None, captured)
+        if gh:
+            await commit_status.report(app_id, *gh, "success", "Deployed with Cloudbase")
         await _notify(app_id, app_name, trigger, commit_label, None)
         return {"message": message, "commit": commit_info, "strategy": strategy, "deployment_id": dep_id, **(res or {})}
     except HTTPException as exc:
         await _finish(dep_id, "failed", str(exc.detail), captured)
+        if gh:
+            await commit_status.report(app_id, *gh, "failure", str(exc.detail))
         if dep_id is not None:
             await _notify(app_id, app_name, trigger, commit_label, str(exc.detail))
         raise
     except Exception as exc:
         await _finish(dep_id, "failed", str(exc), captured)
+        if gh:
+            await commit_status.report(app_id, *gh, "failure", str(exc))
         if dep_id is not None:
             await _notify(app_id, app_name, trigger, commit_label, str(exc))
         raise HTTPException(500, str(exc)) from exc
@@ -186,7 +195,7 @@ async def _finish(dep_id: Optional[int], status: str, error: Optional[str], capt
 
 
 async def _notify(app_id: int, app_name: str, trigger: str, commit: Optional[str], error: Optional[str]) -> None:
-    what = {"auto": "Auto-deploy", "rollback": "Rollback"}.get(trigger, "Deploy")
+    what = {"auto": "Auto-deploy", "webhook": "Webhook deploy", "rollback": "Rollback"}.get(trigger, "Deploy")
     lines = [f"Commit: {commit}"] if commit else []
     if error is None:
         await notify_emit.emit("deploy.succeeded", f"{what} of {app_name} succeeded", "\n".join(lines),

@@ -122,6 +122,8 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         if req.deploy_strategy not in ("rolling", "blue_green"):
             raise HTTPException(400, "deploy_strategy must be rolling or blue_green")
         app.deploy_strategy = req.deploy_strategy
+    if req.show_on_status_page is not None:
+        app.show_on_status_page = bool(req.show_on_status_page)
     if req.health_path is not None:
         app.health_path = health_app.clean_path(req.health_path)
     if req.health_expect is not None:

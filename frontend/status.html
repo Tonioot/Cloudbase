@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Status</title>
+  <link rel="icon" type="image/png" href="/cloudbase.png" />
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="css/fonts.css" />
+  <link rel="stylesheet" href="css/variables.css" />
+  <link rel="stylesheet" href="css/base.css" />
+  <style>
+    body { min-height: 100vh; padding: 48px 16px; }
+    .st { max-width: 760px; margin: 0 auto; }
+    .st h1 { font-size: 26px; font-weight: 400; letter-spacing: -0.03em; margin-bottom: 20px; }
+    .st-banner { border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 28px; font-size: 15px; display: flex; align-items: center; gap: 10px; }
+    .st-banner.up { background: var(--green-bg); border-color: var(--green-border); }
+    .st-banner.down { background: var(--red-bg); border-color: var(--red-border); }
+    .st-banner.maintenance { background: var(--yellow-bg); border-color: var(--yellow-border); }
+    .st-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); flex: none; }
+    .up > .st-dot, .st-app-head .up { background: var(--green); }
+    .down > .st-dot, .st-app-head .down { background: var(--red); }
+    .maintenance > .st-dot, .st-app-head .maintenance { background: var(--yellow); }
+    .st-app { border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 14px; background: var(--surface); }
+    .st-app-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .st-app-head strong { font-weight: 500; font-size: 15px; }
+    .st-state { margin-left: auto; color: var(--muted); font-size: 13px; }
+    .st-days { display: flex; gap: 2px; height: 30px; }
+    .st-day { flex: 1; min-width: 0; border-radius: 2px; background: var(--line-strong); }
+    .st-day.ok { background: var(--green); }
+    .st-day.some { background: var(--yellow); }
+    .st-day.bad { background: var(--red); }
+    .st-foot { display: flex; justify-content: space-between; gap: 12px; margin-top: 8px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+    .st-inc { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+    .st-empty, .st-updated { color: var(--muted); font-size: 13px; }
+    .st-updated { margin-top: 20px; text-align: center; }
+  </style>
+</head>
+<body>
+  <main class="st">
+    <h1>Status</h1>
+    <div class="st-banner" id="st-banner" hidden><span class="st-dot"></span><span id="st-banner-text"></span></div>
+    <div id="st-apps"></div>
+    <p class="st-updated" id="st-updated"></p>
+  </main>
+  <script type="module" src="/js/status.js"></script>
+</body>
+</html>

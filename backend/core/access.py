@@ -77,7 +77,7 @@ class _AuthMiddleware(BaseHTTPMiddleware):
         # Node-agent endpoints use X-Node-Token / hello message auth — bypass cookie auth
         if path.startswith("/api/nodes/agent/") or path.startswith("/api/nodes/ws/agent"):
             return await call_next(request)
-        if path in _PUBLIC:
+        if path in _PUBLIC or path == "/api/status" or path.startswith("/api/webhooks/"):   # a webhook proves itself with its signature
             return await call_next(request)
 
         # WebSocket upgrade requests reach BaseHTTPMiddleware as HTTP GET requests.
