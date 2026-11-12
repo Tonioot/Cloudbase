@@ -380,45 +380,47 @@
                   <span class="s3-label"><span class="s3-title">Auto-deploy</span><span class="s3-desc">Deploy every new commit on the app’s branch (set under General).</span></span>
                   <span class="toggle"><input type="checkbox" id="cfg-autodeploy" /><span class="toggle-slider"></span></span>
                 </label>
-                <div id="autodeploy-options">
+                <div id="autodeploy-options" hidden>
                   <div class="s3-row">
-                    <span class="s3-label"><label class="s3-title" for="cfg-deploy-interval">Check for new commits</label></span>
+                    <span class="s3-label"><span class="s3-title">How Cloudbase finds out</span><span class="s3-desc" id="cfg-deploy-method-hint">Check the branch every so often, or let your Git host tell Cloudbase the moment you push.</span></span>
                     <span class="s3-ctl">
-                      <select class="input" id="cfg-deploy-interval">
-                        <option value="60">Every minute</option>
-                        <option value="300">Every 5 minutes</option>
-                        <option value="900">Every 15 minutes</option>
-                      </select>
+                      <div class="segmented" id="cfg-deploy-method" role="radiogroup">
+                        <button type="button" data-value="check" role="radio">Check</button>
+                        <button type="button" data-value="webhook" role="radio">Webhook</button>
+                      </div>
                     </span>
                   </div>
-                </div>
-                <div class="s3-row">
-                  <span class="s3-label"><span class="s3-title">Strategy</span><span class="s3-desc" id="cfg-deploy-strategy-hint">Rolling replaces instances one by one; blue/green switches all at once.</span><span class="s3-desc">For auto-deploys, rollbacks and retries. A deploy by hand asks for it.</span></span>
-                  <span class="s3-ctl">
-                    <div class="segmented" id="cfg-deploy-strategy" role="radiogroup">
-                      <button type="button" data-value="rolling" role="radio">Rolling</button>
-                      <button type="button" data-value="blue_green" role="radio">Blue/green</button>
+                  <div id="autodeploy-check">
+                    <div class="s3-row">
+                      <span class="s3-label"><label class="s3-title" for="cfg-deploy-interval">Check for new commits</label></span>
+                      <span class="s3-ctl">
+                        <select class="input" id="cfg-deploy-interval">
+                          <option value="60">Every minute</option>
+                          <option value="300">Every 5 minutes</option>
+                          <option value="900">Every 15 minutes</option>
+                        </select>
+                      </span>
                     </div>
-                  </span>
-                </div>
-              </div>
-              <div class="s3-card" id="webhook-card" data-perm="apps.configure">
-                <div class="s3-row">
-                  <span class="s3-label"><span class="s3-title">Webhook</span><span class="s3-desc" id="webhook-hint">Off. Deploy at once on a push instead of waiting for the next check. Works with GitHub, GitLab and Gitea.</span></span>
-                  <span class="s3-ctl"><button type="button" class="btn btn-primary btn-sm" id="webhook-on">Switch on</button></span>
-                </div>
-                <div id="webhook-details" hidden>
-                  <div class="s3-row">
-                    <span class="s3-label"><span class="s3-title">Payload URL</span><span class="s3-desc">Content type: application/json. Event: push only.</span></span>
-                    <span class="s3-ctl"><input class="input" id="webhook-url" type="text" readonly /></span>
+                  </div>
+                  <div id="autodeploy-webhook" hidden>
+                    <div class="s3-row">
+                      <span class="s3-label"><span class="s3-title">Payload URL</span><span class="s3-desc">GitHub, GitLab or Gitea. Content type: application/json. Event: push only.</span></span>
+                      <span class="s3-ctl"><input class="input" id="webhook-url" type="text" readonly /></span>
+                    </div>
+                    <div class="s3-row">
+                      <span class="s3-label"><span class="s3-title">Secret</span><span class="s3-desc">GitHub and Gitea: “Secret”. GitLab: “Secret token”.</span></span>
+                      <span class="s3-ctl"><input class="input" id="webhook-secret" type="text" readonly /></span>
+                    </div>
+                    <div class="s3-foot"><button type="button" class="btn btn-sm" id="webhook-new">New secret</button></div>
                   </div>
                   <div class="s3-row">
-                    <span class="s3-label"><span class="s3-title">Secret</span><span class="s3-desc">GitHub and Gitea: “Secret”. GitLab: “Secret token”.</span></span>
-                    <span class="s3-ctl"><input class="input" id="webhook-secret" type="text" readonly /></span>
-                  </div>
-                  <div class="s3-foot">
-                    <button type="button" class="btn btn-sm" id="webhook-new">New secret</button>
-                    <button type="button" class="btn btn-sm" id="webhook-off">Switch off</button>
+                    <span class="s3-label"><span class="s3-title">Strategy</span><span class="s3-desc" id="cfg-deploy-strategy-hint">Rolling replaces instances one by one; blue/green switches all at once.</span><span class="s3-desc">For auto-deploys, rollbacks and retries. A deploy by hand asks for it.</span></span>
+                    <span class="s3-ctl">
+                      <div class="segmented" id="cfg-deploy-strategy" role="radiogroup">
+                        <button type="button" data-value="rolling" role="radio">Rolling</button>
+                        <button type="button" data-value="blue_green" role="radio">Blue/green</button>
+                      </div>
+                    </span>
                   </div>
                 </div>
               </div>

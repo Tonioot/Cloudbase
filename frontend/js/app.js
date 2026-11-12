@@ -1375,7 +1375,7 @@ function initAutoDeploySettings() {
   if (!toggle) return;
   const options = document.getElementById('autodeploy-options');
   toggle.checked = !!app.auto_deploy;
-  const sync = () => options.classList.toggle('is-off', !toggle.checked);
+  const sync = () => { options.hidden = !toggle.checked; };
   toggle.onchange = sync;
   sync();
 
@@ -1407,29 +1407,34 @@ async function showUptimeHint() {
   } catch { /* the hint is optional */ }
 }
 
-/** The webhook of the auto-deploy settings: a URL and a secret for the Git host. It acts at once (own buttons), not with Save. */
-async function initWebhookSettings() {
-  if (!document.getElementById('webhook-card')) return;
+/** How Cloudbase finds out about a push: it checks the branch (polling) or the Git host calls a webhook; one of the two.
+ *  The webhook is switched on and off at once (it has a secret to show), not with Save. */
+async function initDeployMethod() {
+  const seg = document.getElementById('cfg-deploy-method');
+  if (!seg) return;
   const $ = id => document.getElementById(id);
   const show = w => {
-    $('webhook-details').hidden = !w.enabled;
-    $('webhook-on').hidden = w.enabled;
-    $('webhook-hint').textContent = w.enabled
-      ? 'On. Add it to the repository on your Git host. With auto-deploy on, a push to the branch deploys at once; the check above stays as a fallback.'
-      : 'Off. Deploy at once on a push instead of waiting for the next check. Works with GitHub, GitLab and Gitea.';
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b.dataset.value === (w.enabled ? 'webhook' : 'check')));
+    $('autodeploy-check').hidden = w.enabled;
+    $('autodeploy-webhook').hidden = !w.enabled;
     $('webhook-url').value = w.enabled ? location.origin + w.path : '';
     $('webhook-secret').value = w.secret || '';
   };
-  try { show(await api.getWebhook(APP_ID)); } catch (e) { return; }
+  let current;
+  try { current = await api.getWebhook(APP_ID); } catch { current = { enabled: false }; }
+  show(current);
   for (const id of ['webhook-url', 'webhook-secret']) $(id).onfocus = e => e.target.select();
-  $('webhook-on').onclick = async () => { try { show(await api.newWebhook(APP_ID)); } catch (e) { toast(e.message, 'error'); } };
+  seg.onclick = async e => {
+    const b = e.target.closest('button[data-value]');
+    if (!b || (b.dataset.value === 'webhook') === current.enabled) return;
+    try {
+      current = b.dataset.value === 'webhook' ? await api.newWebhook(APP_ID) : await api.removeWebhook(APP_ID);
+      show(current);
+    } catch (err) { toast(err.message, 'error'); }
+  };
   $('webhook-new').onclick = async () => {
     if (!(await confirm('New secret', 'The old secret stops working at once. Update it on your Git host.'))) return;
-    try { show(await api.newWebhook(APP_ID)); } catch (e) { toast(e.message, 'error'); }
-  };
-  $('webhook-off').onclick = async () => {
-    if (!(await confirm('Switch off the webhook', 'Pushes no longer deploy at once.'))) return;
-    try { show(await api.removeWebhook(APP_ID)); } catch (e) { toast(e.message, 'error'); }
+    try { current = await api.newWebhook(APP_ID); show(current); } catch (err) { toast(err.message, 'error'); }
   };
 }
 
@@ -1538,7 +1543,7 @@ function initSettings() {
   document.getElementById('cfg-port').value         = app.port           || '';
   renderNetwork();
   initAutoDeploySettings();
-  initWebhookSettings();
+  initDeployMethod();
   initBranchSetting();
 
   _updateAppTypeVisibility(app);

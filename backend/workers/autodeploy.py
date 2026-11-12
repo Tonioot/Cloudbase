@@ -81,8 +81,10 @@ async def auto_deploy_loop() -> None:
     while True:
         try:
             async with AsyncSessionLocal() as db:
+                # An app with a webhook is told by its Git host; it is not polled as well
                 rows = (await db.execute(
-                    select(Application.id, Application.auto_deploy_interval).where(Application.auto_deploy == True)  # noqa: E712
+                    select(Application.id, Application.auto_deploy_interval).where(
+                        Application.auto_deploy == True, Application.webhook_secret.is_(None))  # noqa: E712
                 )).all()
             now = time.time()
             for app_id, interval in rows:

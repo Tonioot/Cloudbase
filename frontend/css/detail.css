@@ -619,7 +619,7 @@
 
 /* Auto-deploy settings: options fade out while it's off */
 #autodeploy-options { transition: opacity var(--transition); }
-#autodeploy-options.is-off { opacity: .45; }
+#autodeploy-options[hidden], #autodeploy-check[hidden], #autodeploy-webhook[hidden] { display: none; }
 #cfg-deploy-strategy[hidden] { display: none; }
 
 /* ─── App settings tab ──────────────────────────────────────────────────────
@@ -712,7 +712,7 @@ button.s3-link:hover { background: var(--hover); }
 
 /* Autoscale and auto-deploy options follow their toggle */
 #autodeploy-options { transition: opacity var(--transition); }
-#autodeploy-options.is-off { opacity: .45; }
+#autodeploy-options[hidden], #autodeploy-check[hidden], #autodeploy-webhook[hidden] { display: none; }
 
 /* Save bar: sticks to the bottom while the section scrolls */
 .s3-savebar {
