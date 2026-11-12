@@ -6,6 +6,7 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from core import selfupdate
 from core.models import Node
 from nodes.commands import _utcnow
 from nodes.state import _node_ws_connections
@@ -250,6 +251,8 @@ def _as_node_dict(node: Node) -> dict:
         "offline_since": node.offline_since.isoformat() + "Z" if node.offline_since else None,
         "last_error": node.last_error,
         "agent_version": node.agent_version,
+        "code_commit": selfupdate.current()["commit"] if node.is_local else node.code_commit,
+        "code_version": selfupdate.current()["version"] if node.is_local else node.code_version,
         "wg_ip": node.wg_ip,
         "wg_state": node.wg_state,
         "wg_handshake_at": node.wg_handshake_at.isoformat() + "Z" if node.wg_handshake_at else None,

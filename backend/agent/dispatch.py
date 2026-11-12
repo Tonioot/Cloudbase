@@ -3,7 +3,7 @@ import secrets
 import asyncio
 from typing import Optional, Callable, Dict, Any
 import httpx
-from agent.commands.apps import cmd_cron_run, cmd_docker_cleanup, cmd_get_agent_logs, cmd_get_instance_logs
+from agent.commands.apps import cmd_cron_run, cmd_docker_cleanup, cmd_get_agent_logs, cmd_get_instance_logs, cmd_self_update
 from agent.commands.databases import cmd_db_backup, cmd_db_check_updates, cmd_db_ensure, cmd_db_logs, cmd_db_recreate, cmd_db_remove, cmd_db_restart, cmd_db_restore, cmd_db_rotate_password, cmd_db_stats, cmd_db_stop, cmd_db_update
 from agent.log import _agent_log
 from agent.registration import _report_result
@@ -29,6 +29,7 @@ COMMAND_HANDLERS: Dict[str, Callable] = {
     "docker_cleanup": cmd_docker_cleanup,
     "get_agent_logs": cmd_get_agent_logs,
     "cron_run": cmd_cron_run,
+    "self_update": cmd_self_update,
 }
 
 

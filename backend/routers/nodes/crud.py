@@ -14,6 +14,7 @@ from nodes import commands as node_commands
 from nodes.commands import _utcnow
 from nodes import workloads as node_workloads
 from nodes.liveness import node_gone, run_node_docker_cleanup
+from nodes import updates as node_updates
 from nodes.registry import _as_node_dict, ensure_local_node, get_node_or_404
 from nodes.state import _node_ws_connections, _pending_pings
 from routers.nodes.schemas import InviteRequest, NodeUpdateRequest
@@ -143,6 +144,24 @@ async def docker_cleanup(
     res = await run_node_docker_cleanup(node, aggressive=True)
     await log_audit(db, "node.docker_cleanup", actor=actor, detail={"name": node.name, "node_id": node_id,
                                                                     "summary": res.get("summary") or res.get("skipped")})
+    await db.commit()
+    return res
+
+
+@router.post("/{node_id}/update")
+async def update_cloudbase(
+    node_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(_auth.require_permission("nodes.configure")),
+    actor: str = Depends(_auth.get_current_actor),
+):
+    """Update Cloudbase on this node from Git and restart it. For the primary that restarts the panel."""
+    node = await get_node_or_404(node_id, db)
+    if node.is_local and user.get("permissions") is not None and "system.manage" not in user["permissions"]:
+        raise HTTPException(403, "Updating the primary restarts the panel: that needs the system.manage permission")
+    res = await node_updates.update_node(node)
+    await log_audit(db, "node.update", actor=actor, detail={"name": node.name, "node_id": node_id,
+                                                           "status": res.get("status"), "commit": res.get("commit")})
     await db.commit()
     return res
 

@@ -77,6 +77,8 @@ export async function initNodePage() {
     document.getElementById('btn-delete').onclick = deleteNode;
     document.getElementById('btn-refresh-logs').onclick = () => (activeTab === 'log' ? loadLogs() : loadHistory());
     document.getElementById('btn-docker-cleanup').onclick = cleanupDocker;
+    document.getElementById('btn-update').onclick = updateCloudbase;
+    markIfBehind();
     initTabs();
 
     setInterval(refreshNode, 8000);
@@ -294,6 +296,7 @@ function renderAbout() {
         meta.ram_total_mb ? _detailItem('Memory', `${Math.round(meta.ram_total_mb / 1024)} GB`) : '',
         meta.disk_total_gb ? _detailItem('Storage', `${meta.disk_total_gb} GB`) : '',
         meta.uptime_secs ? _detailItem('Uptime', fmtUptime(meta.uptime_secs)) : '',
+        _detailItem('Cloudbase', cloudbaseLabel(node), { valueClass: 'node-detail-value-mono' }),
         _detailItem('Agent', node.agent_version || '—'),
         _detailItem('Last seen', connected ? 'Connected now' : timeAgo(node.last_seen), { valueClass: connected ? 'node-detail-value-live' : '' }),
         _detailItem('Node ID', `#${node.id}`, { valueClass: 'node-detail-value-mono' }),
@@ -650,6 +653,71 @@ async function loadHistory() {
         }).join('');
     } catch (e) {
         list.innerHTML = `<span style="color:var(--red)">${escHtml(e.message)}</span>`;
+    }
+}
+
+/* ─── Updating Cloudbase on this node ───────────────────────────────────── */
+function cloudbaseLabel(n) {
+    const parts = [n.code_version, n.code_commit].filter(Boolean);
+    return parts.length ? parts.join(' · ') : '—';
+}
+
+/** A node that runs another commit than the primary gets a hint on the button. */
+async function markIfBehind() {
+    const btn = document.getElementById('btn-update');
+    if (!btn || node.is_local || !node.code_commit) return;
+    try {
+        const nodes = await api.listNodes();
+        const primary = nodes.find(n => n.is_local);
+        const behind = primary && primary.code_commit && primary.code_commit !== node.code_commit;
+        btn.classList.toggle('btn-primary', !!behind);
+        btn.title = behind
+            ? `This node runs ${node.code_commit}, the primary runs ${primary.code_commit}`
+            : 'Update Cloudbase on this server to the newest version';
+    } catch { /* the hint is optional */ }
+}
+
+async function waitForPanel() {
+    // The primary restarts: wait until it answers again, then show the new version
+    await new Promise(r => setTimeout(r, 6000));
+    for (let i = 0; i < 60; i++) {
+        try {
+            const r = await fetch('/api/health', { cache: 'no-store' });
+            if (r.ok) { location.reload(); return; }
+        } catch { /* still restarting */ }
+        await new Promise(r => setTimeout(r, 2000));
+    }
+    location.reload();
+}
+
+async function updateCloudbase() {
+    const btn = document.getElementById('btn-update');
+    const what = node.is_local
+        ? 'Cloudbase fetches the newest version and restarts <strong>the panel</strong>. You are signed in again by the time it is back; running apps are not stopped.'
+        : `Cloudbase fetches the newest version on <strong>${escHtml(node.name)}</strong> and restarts its agent. Running instances are not stopped.`;
+    if (!(await confirm('Update Cloudbase', what))) return;
+    btn.disabled = true;
+    btn.innerHTML = `${spinner} Updating…`;
+    let restarting = false;
+    try {
+        const r = await api.updateNodeCloudbase(NODE_ID);
+        if (r.status === 'updated') {
+            toast(`Updated to ${r.commit}. Cloudbase is restarting…`);
+            restarting = true;
+            if (node.is_local) { waitForPanel(); return; }
+        } else if (r.status === 'current') {
+            toast('Already up to date');
+        } else {
+            toast(r.message || 'The update did not run', 'error');
+        }
+    } catch (e) {
+        toast(e.message, 'error');
+    } finally {
+        if (!(restarting && node.is_local)) {
+            btn.disabled = false;
+            btn.textContent = 'Update Cloudbase';
+            if (restarting) setTimeout(refreshNode, 15000);   // the agent reports its new version when it is back
+        }
     }
 }
 

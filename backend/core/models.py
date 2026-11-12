@@ -137,6 +137,8 @@ class Node(Base):
     offline_since = Column(DateTime, nullable=True)
     last_error = Column(Text, nullable=True)
     agent_version       = Column(String(40), nullable=True)
+    code_commit         = Column(String(20), nullable=True)   # what the node runs (Git commit), from its heartbeat
+    code_version        = Column(String(40), nullable=True)   # the VERSION file
     node_cpu_percent    = Column(Float, nullable=True)
     node_memory_percent = Column(Float, nullable=True)
     node_disk_percent   = Column(Float, nullable=True)

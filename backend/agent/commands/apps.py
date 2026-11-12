@@ -1,6 +1,7 @@
 import os
 import asyncio
 import subprocess
+from core import selfupdate
 from containers import naming as containers_naming, cleanup as containers_cleanup, jobs as containers_jobs
 from agent.log import AGENT_LOG_FILE, _agent_log
 from agent.source import ensure_image
@@ -13,6 +14,14 @@ from agent.source import ensure_image
 async def cmd_docker_cleanup(_client, _state, _main_id, payload):
     """Remove superseded images and trim the build cache on this node."""
     return await asyncio.to_thread(containers_cleanup.cleanup_docker, bool(payload.get("aggressive")))
+
+
+async def cmd_self_update(_client, _state, _main_id, _payload):
+    """Update this node's Cloudbase from Git and restart it (no root needed; see core/selfupdate.py)."""
+    result = await asyncio.to_thread(selfupdate.update)
+    if result["status"] == "updated":
+        selfupdate.restart_soon(graceful=False)   # after the answer has been sent
+    return result
 
 
 async def cmd_get_agent_logs(_client, _state, _main_id, payload):

@@ -5,7 +5,7 @@ from typing import Any, Optional
 import httpx
 import psutil
 from agent.state import AgentState
-from core import sysmetrics
+from core import selfupdate, sysmetrics
 
 def _collect_node_metrics() -> dict:
     return sysmetrics.collect()
@@ -81,12 +81,15 @@ def _collect_system_info() -> dict:
 # 3.x: the list and the reports name things as they are named now (instances; 2.x used older names)
 # 4.x: the node sends the stats of its instances (every 5 s) and databases by itself (agent/report.py) and cleans its own disk
 # 5.x: databases across nodes go over the node network; no database control channel or tunnels (download progress is in the report)
+# 5.1: a node can update itself when the primary asks (self_update); nothing in the list or the reports changed
 AGENT_VERSION = "5.0.0"
 
 
 def _build_capabilities() -> dict:
     return {
         "agent_version": AGENT_VERSION,
+        "code_commit": selfupdate.current()["commit"],     # what this node runs, for the update button
+        "code_version": selfupdate.current()["version"],
         "features": ["streaming_logs", "streaming_stats", "file_management", "nginx_management", "hybrid_mode"],
         "platform": platform.system(),
         "arch": platform.machine(),

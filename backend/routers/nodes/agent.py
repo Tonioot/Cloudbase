@@ -247,6 +247,8 @@ async def agent_ws(websocket: WebSocket):
                                 live_node.capabilities = json.dumps(caps)
                                 if caps.get("agent_version"):
                                     live_node.agent_version = caps["agent_version"]
+                                live_node.code_commit = caps.get("code_commit") or live_node.code_commit
+                                live_node.code_version = caps.get("code_version") or live_node.code_version
                             if incoming.get("metadata_json") is not None:
                                 live_node.metadata_json = json.dumps(incoming.get("metadata_json") or {})
                             metrics = incoming.get("node_metrics") or {}
