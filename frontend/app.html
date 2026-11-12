@@ -552,7 +552,7 @@
 
             <!-- Uptime monitoring -->
             <section class="settings-group sv2-sec" id="uptime-section" data-nav="Uptime monitoring" data-icon="activity" data-perm="apps.configure">
-              <header class="sv2-head"><h3>Uptime monitoring</h3><p>While the app runs, Cloudbase asks its public address with the path and healthy answers of the health check, and alerts you when it stops answering.</p></header>
+              <header class="sv2-head"><h3>Uptime monitoring</h3><p>While the app runs, Cloudbase asks its public address with the path and healthy answers of the health check, alerts you when it stops answering, and can show the result on the status page.</p></header>
               <div class="s3-card">
                 <div class="s3-row">
                   <span class="s3-label"><label class="s3-title" for="cfg-uptime-interval">Check every</label><span class="s3-desc" id="cfg-uptime-hint">Two failed checks in a row count as an outage.</span></span>
@@ -568,15 +568,8 @@
                     </select>
                   </span>
                 </div>
-              </div>
-            </section>
-
-            <!-- Status page -->
-            <section class="settings-group sv2-sec" id="statuspage-section" data-nav="Status page" data-icon="globe" data-perm="apps.configure">
-              <header class="sv2-head"><h3>Status page</h3><p>The public page at <a href="/status" target="_blank" rel="noopener">/status</a> shows how your apps are doing. Anyone can open it without signing in.</p></header>
-              <div class="s3-card">
                 <label class="s3-row">
-                  <span class="s3-label"><span class="s3-title">Show this app</span><span class="s3-desc" id="cfg-status-hint">Lists the app by name, with its uptime of the last 90 days. Needs uptime monitoring.</span></span>
+                  <span class="s3-label"><span class="s3-title">Show on the status page</span><span class="s3-desc" id="cfg-status-hint">Lists the app by name on <a href="/status" target="_blank" rel="noopener">/status</a>, which anyone can open without signing in. Shows the uptime of the last 90 days.</span></span>
                   <span class="toggle"><input type="checkbox" id="cfg-status-page" /><span class="toggle-slider"></span></span>
                 </label>
               </div>
