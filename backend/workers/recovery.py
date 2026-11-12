@@ -1,8 +1,9 @@
 import asyncio
 import logging
+from datetime import datetime
 from sqlalchemy import select
 from core.database import AsyncSessionLocal
-from core.models import Application
+from core.models import Application, Deployment
 from nodes import registry as nodes_registry
 from containers import processes as pm
 from containers import instances as containers_instances
@@ -22,6 +23,12 @@ async def _startup_recovery() -> None:
     (nodes/local.py); here is only what has to happen once, as the panel starts."""
     async with AsyncSessionLocal() as db:
         await nodes_registry.ensure_local_node(db)
+
+        # A deploy that was going when the panel stopped will never finish: mark it, or it shows "deploying" forever
+        for dep in (await db.execute(select(Deployment).where(Deployment.status == "running"))).scalars().all():
+            dep.status, dep.finished_at = "failed", datetime.utcnow()
+            dep.error = "Interrupted: Cloudbase restarted during the deploy"
+        await db.commit()
 
     # Live logs of the containers that kept running while the panel was down
     try:
