@@ -118,7 +118,7 @@ function railHTML(active) {
     </nav>
 
     <div class="sb-help">
-      <a class="sb-item" href="/status" target="_blank" rel="noopener" title="The public status page (opens in a new tab)">${ICONS.status}<span>Status page</span></a>
+      <a class="sb-item" href="/status" target="_blank" rel="noopener" title="The public status page (opens in a new tab)">${ICONS.status}<span>Status</span></a>
       ${nav('guides', '/guides', 'Guides')}
     </div>
 
