@@ -30,6 +30,7 @@ export const ICONS = {
   transfer: svg('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>', 15),
   users:    svg('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M21.5 20c0-2.8-1.7-4.9-4-5.7"/>', 15),
   lock:     svg('<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>', 15),
+  status:   svg('<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>'),
   guides:   svg('<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="9" y1="7" x2="16" y2="7"/><line x1="9" y1="11" x2="14" y2="11"/>'),
   logout:   svg('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>', 15),
   plus:     svg('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>', 15),
@@ -117,6 +118,7 @@ function railHTML(active) {
     </nav>
 
     <div class="sb-help">
+      <a class="sb-item" href="/status" target="_blank" rel="noopener" title="The public status page (opens in a new tab)">${ICONS.status}<span>Status page</span></a>
       ${nav('guides', '/guides', 'Guides')}
     </div>
 
@@ -297,6 +299,7 @@ function paletteCommands() {
     { group: 'Go to', label: 'Overview', icon: ICONS.overview, run: go('/'), keywords: 'dashboard home' },
     { group: 'Go to', label: 'Audit log', icon: ICONS.audit, run: go('/audit'), keywords: 'history events' },
     { group: 'Go to', label: 'Notifications', icon: ICONS.bell, run: go('/notifications'), keywords: 'alerts inbox problems' },
+    { group: 'Go to', label: 'Status page', icon: ICONS.status, run: () => window.open('/status', '_blank', 'noopener'), keywords: 'public uptime incidents' },
     { group: 'Go to', label: 'Guides', icon: ICONS.guides, run: go('/guides'), keywords: 'docs documentation help how' },
   ];
   for (const a of index.apps) {
