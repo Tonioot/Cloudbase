@@ -18,7 +18,7 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps import health
+from apps import health, uptime
 from apps.git import _deploy_app, _encrypt_github_token, _normalize_repo_url
 from apps.lifecycle import start_app_now
 from apps.nginx_sync import _write_app_nginx_config
@@ -168,6 +168,7 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
         "health_path": _health(health.clean_path, entry.get("health_path")),
         "health_expect": _health(health.clean_expect, entry.get("health_expect")),
         "health_timeout_seconds": _health(health.clean_timeout, entry.get("health_timeout_seconds")),
+        "uptime_interval_seconds": _health(uptime.clean_interval, entry.get("uptime_interval_seconds")),
     }.items() if v is not None}
 
     app = Application(

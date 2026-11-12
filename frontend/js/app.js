@@ -1397,7 +1397,7 @@ function initAutoDeploySettings() {
 
 /** What the uptime checks found, under the status page switch. */
 async function showUptimeHint() {
-  const hint = document.getElementById('cfg-status-hint');
+  const hint = document.getElementById('cfg-uptime-hint');
   if (!hint) return;
   hint.dataset.base ||= hint.innerHTML;
   try {
@@ -1572,6 +1572,7 @@ function initSettings() {
   document.getElementById('cfg-health-path').value = app.health_path ?? '/';
   document.getElementById('cfg-health-expect').value = app.health_expect || '';
   document.getElementById('cfg-status-page').checked = !!app.show_on_status_page;
+  document.getElementById('cfg-uptime-interval').value = String(app.uptime_interval_seconds ?? 60);
   showUptimeHint();
   document.getElementById('cfg-health-timeout').value = app.health_timeout_seconds || 600;
   const showAutoscale = on => ['autoscale-options', 'autoscale-more'].forEach(id => { document.getElementById(id).style.display = on ? '' : 'none'; });
@@ -2897,6 +2898,7 @@ async function saveSettings() {
     health_path:            document.getElementById('cfg-health-path').value.trim(),
     health_expect:          document.getElementById('cfg-health-expect').value.trim(),
     show_on_status_page:    document.getElementById('cfg-status-page').checked,
+    uptime_interval_seconds: parseInt(document.getElementById('cfg-uptime-interval').value, 10),
     health_timeout_seconds: parseInt(document.getElementById('cfg-health-timeout').value, 10) || 600,
     env_vars,
     env_var_keys,

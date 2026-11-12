@@ -74,6 +74,7 @@ class UpdateRequest(BaseModel):
     health_expect:          Optional[str]   = None   # "" = any answer below 500; "2xx,301"
     health_timeout_seconds: Optional[int]   = None
     show_on_status_page:    Optional[bool]  = None
+    uptime_interval_seconds: Optional[int]  = None   # 0 = off
 
 
 class MaintenancePageConfig(BaseModel):

@@ -533,7 +533,7 @@
 
             <!-- Health check -->
             <section class="settings-group sv2-sec" id="health-section" data-nav="Health check" data-icon="activity" data-perm="apps.configure">
-              <header class="sv2-head"><h3>Health check</h3><p>A new instance only gets visitors once it answers like this. Until then it is not in nginx. Cloudbase also asks the app’s public address every minute this way and alerts you when it stops answering.</p></header>
+              <header class="sv2-head"><h3>Health check</h3><p>A new instance only gets visitors once it answers like this. Until then it is not in nginx.</p></header>
               <div class="s3-card">
                 <div class="s3-row">
                   <span class="s3-label"><label class="s3-title" for="cfg-health-path">Path</label><span class="s3-desc">Cloudbase asks this URL path. Empty only checks that the port is open.</span></span>
@@ -547,8 +547,36 @@
                   <span class="s3-label"><label class="s3-title" for="cfg-health-timeout">Time to become healthy</label><span class="s3-desc">In seconds. After this the instance is marked as failed (10 to 3600).</span></span>
                   <span class="s3-ctl"><input class="input" id="cfg-health-timeout" type="number" min="10" max="3600" step="10" placeholder="600" /></span>
                 </div>
+              </div>
+            </section>
+
+            <!-- Uptime monitoring -->
+            <section class="settings-group sv2-sec" id="uptime-section" data-nav="Uptime monitoring" data-icon="activity" data-perm="apps.configure">
+              <header class="sv2-head"><h3>Uptime monitoring</h3><p>While the app runs, Cloudbase asks its public address with the path and healthy answers of the health check, and alerts you when it stops answering.</p></header>
+              <div class="s3-card">
+                <div class="s3-row">
+                  <span class="s3-label"><label class="s3-title" for="cfg-uptime-interval">Check every</label><span class="s3-desc" id="cfg-uptime-hint">Two failed checks in a row count as an outage.</span></span>
+                  <span class="s3-ctl">
+                    <select class="input" id="cfg-uptime-interval">
+                      <option value="0">Don’t check</option>
+                      <option value="30">30 seconds</option>
+                      <option value="60">1 minute</option>
+                      <option value="120">2 minutes</option>
+                      <option value="300">5 minutes</option>
+                      <option value="600">10 minutes</option>
+                      <option value="900">15 minutes</option>
+                    </select>
+                  </span>
+                </div>
+              </div>
+            </section>
+
+            <!-- Status page -->
+            <section class="settings-group sv2-sec" id="statuspage-section" data-nav="Status page" data-icon="globe" data-perm="apps.configure">
+              <header class="sv2-head"><h3>Status page</h3><p>The public page at <a href="/status" target="_blank" rel="noopener">/status</a> shows how your apps are doing. Anyone can open it without signing in.</p></header>
+              <div class="s3-card">
                 <label class="s3-row">
-                  <span class="s3-label"><span class="s3-title">Show on the Cloudbase status page</span><span class="s3-desc" id="cfg-status-hint">Lists this app by name on <a href="/status" target="_blank" rel="noopener">/status</a>, which anyone can open without signing in.</span></span>
+                  <span class="s3-label"><span class="s3-title">Show this app</span><span class="s3-desc" id="cfg-status-hint">Lists the app by name, with its uptime of the last 90 days. Needs uptime monitoring.</span></span>
                   <span class="toggle"><input type="checkbox" id="cfg-status-page" /><span class="toggle-slider"></span></span>
                 </label>
               </div>

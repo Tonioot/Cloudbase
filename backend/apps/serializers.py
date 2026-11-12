@@ -125,6 +125,7 @@ def _app_to_dict(
         "health_expect": health.settings_of(app)[1],
         "health_timeout_seconds": health.settings_of(app)[2],
         "show_on_status_page": bool(app.show_on_status_page),
+        "uptime_interval_seconds": app.uptime_interval_seconds if app.uptime_interval_seconds is not None else 60,
         "instances": instances,
         "instance_count": len(instances),
         "node_id": app.node_id,

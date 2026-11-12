@@ -220,3 +220,55 @@ def test_the_panel_can_read_the_uptime_of_one_app(admin):
     app_id = _app("status-panel")
     r = admin.get(f"/api/apps/{app_id}/uptime")
     assert r.status_code == 200 and r.json()["status"] == "stopped" and r.json()["uptime"] is None
+
+
+# ── how often ─────────────────────────────────────────────────────────────────
+
+def test_only_the_offered_intervals_are_accepted(admin):
+    from apps import uptime
+    from fastapi import HTTPException
+    assert [uptime.clean_interval(v) for v in (0, "30", 60, 900)] == [0, 30, 60, 900]
+    for bad in (1, 45, 3600, "x", None):
+        with pytest.raises(HTTPException):
+            uptime.clean_interval(bad)
+    app_id = _app("interval-setting")
+    assert admin.get(f"/api/apps/{app_id}").json()["uptime_interval_seconds"] == 60
+    assert admin.put(f"/api/apps/{app_id}", json={"uptime_interval_seconds": 300}).status_code == 200
+    assert admin.get(f"/api/apps/{app_id}").json()["uptime_interval_seconds"] == 300
+    assert admin.put(f"/api/apps/{app_id}", json={"uptime_interval_seconds": 7}).status_code == 400
+
+
+def test_each_app_is_checked_at_its_own_pace_and_never_when_off(monkeypatch):
+    from workers import uptime as worker
+    asked = []
+
+    async def targets():
+        return [(1, "fast", "http://a.test", "/", "", 30), (2, "slow", "http://b.test", "/", "", 600)]
+
+    async def check(app_id, *a):
+        asked.append(app_id)
+
+    async def open_none(prefix):
+        return {}
+    monkeypatch.setattr(worker, "_targets", targets)
+    monkeypatch.setattr(worker, "check_app", check)
+    monkeypatch.setattr(worker, "open_keys", open_none)
+    worker._last_check.clear()
+    clock = [1000.0]
+    monkeypatch.setattr(worker.time, "monotonic", lambda: clock[0])
+    for _ in range(3):                      # now, +30 s, +60 s
+        _run(worker.check_all())
+        clock[0] += 30
+    assert sorted(asked) == [1, 1, 1, 2]    # the slow one only the first time
+
+
+def test_the_whole_page_is_only_operational_when_something_really_answers():
+    from routers.status import overall_state
+    assert overall_state([]) == "none"
+    assert overall_state(["up", "up"]) == "up"
+    assert overall_state(["up", "stopped"]) == "up"            # stopped on purpose does not spoil it
+    assert overall_state(["up", "down", "maintenance"]) == "down"
+    assert overall_state(["up", "maintenance"]) == "maintenance"
+    assert overall_state(["stopped", "stopped"]) == "stopped"   # nothing runs: not "operational"
+    assert overall_state(["stopped", "unknown"]) == "unknown"
+    assert overall_state(["unknown"]) == "unknown"

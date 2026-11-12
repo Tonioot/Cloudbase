@@ -16,7 +16,7 @@ from apps.git import _change_repository, _encrypt_github_token, _normalize_repo_
 from apps.images import _image_port, _dockerfile_build_kwargs
 from apps.nginx_sync import _auto_subdomain, _write_app_nginx_config, _best_effort_remove_app_nginx
 from apps.serializers import _app_to_dict, _get_or_404, _instance_views
-from apps import health as health_app
+from apps import health as health_app, uptime as apps_uptime
 from apps.validation import _validate_docker_runtime_settings, _check_domain_conflicts, _check_new_app_name, _check_repo_url
 from routers.applications.schemas import UpdateRequest
 
@@ -122,6 +122,8 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         if req.deploy_strategy not in ("rolling", "blue_green"):
             raise HTTPException(400, "deploy_strategy must be rolling or blue_green")
         app.deploy_strategy = req.deploy_strategy
+    if req.uptime_interval_seconds is not None:
+        app.uptime_interval_seconds = apps_uptime.clean_interval(req.uptime_interval_seconds)
     if req.show_on_status_page is not None:
         app.show_on_status_page = bool(req.show_on_status_page)
     if req.health_path is not None:

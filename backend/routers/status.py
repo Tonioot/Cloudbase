@@ -17,6 +17,17 @@ _CACHE_SECONDS = 15           # the page is public: many visitors must not mean 
 _cache: tuple[float, dict] = (0.0, {})
 
 
+def overall_state(states: list[str]) -> str:
+    """One word for the whole page. "Operational" needs something that really runs and answers; apps that were
+    stopped on purpose do not spoil it, but when nothing runs the page does not claim that all is well."""
+    if not states:
+        return "none"
+    for state in ("down", "maintenance", "up", "unknown"):
+        if state in states:
+            return state
+    return "stopped"
+
+
 async def _running_app_ids(db) -> set[int]:
     return set((await db.execute(select(Instance.app_id).where(Instance.status == "running"))).scalars())
 
@@ -36,9 +47,7 @@ async def public_status():
         for app in apps:
             data = await apps_uptime.summary(db, app.id)
             items.append({"name": app.name, "status": apps_uptime.state_of(app, app.id in running, data["last_check"]), **data})
-    states = {i["status"] for i in items}
-    overall = "down" if "down" in states else "maintenance" if "maintenance" in states else "up"
-    result = {"overall": overall if items else "none", "apps": items}
+    result = {"overall": overall_state([i["status"] for i in items]), "apps": items}
     _cache = (now, result)
     return result
 

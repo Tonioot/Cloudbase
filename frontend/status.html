@@ -11,69 +11,94 @@
   <link rel="stylesheet" href="css/base.css" />
   <style>
     body { min-height: 100vh; }
-    .st { max-width: 780px; margin: 0 auto; padding: 40px 20px 56px; }
-    .st-top { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
-    .st-top img { width: 32px; height: 32px; object-fit: contain; }
-    .st-top h1 { font-size: 20px; font-weight: 500; letter-spacing: -0.02em; margin: 0; }
-    .st-top time { margin-left: auto; color: var(--muted); font-size: 12px; font-family: var(--font-mono); }
+    .st { max-width: 820px; margin: 0 auto; padding: 36px 20px 56px; }
 
-    .st-banner { display: flex; align-items: center; gap: 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); padding: 20px 22px; margin-bottom: 32px; background: var(--surface); }
+    /* Header */
+    .st-top { display: flex; align-items: center; gap: 12px; margin-bottom: 30px; }
+    .st-top img { width: 34px; height: 34px; object-fit: contain; }
+    .st-top h1 { font-size: 20px; font-weight: 500; letter-spacing: -0.02em; margin: 0; line-height: 1.2; }
+    .st-top p { margin: 1px 0 0; color: var(--muted); font-size: 12.5px; }
+    .st-live { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+    .st-live i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); animation: st-pulse 2.4s ease-in-out infinite; }
+    .st-live.lost i { background: var(--red); animation: none; }
+    @keyframes st-pulse { 50% { opacity: .35; } }
+
+    /* Overall */
+    .st-banner { display: flex; align-items: center; gap: 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); padding: 18px 22px; margin-bottom: 30px; background: var(--surface); }
     .st-banner svg { width: 26px; height: 26px; flex: none; }
-    .st-banner h2 { font-size: 17px; font-weight: 500; margin: 0; letter-spacing: -0.01em; }
-    .st-banner p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+    .st-banner h2 { font-size: 18px; font-weight: 500; margin: 0; letter-spacing: -0.015em; }
     .st-banner.up { background: var(--green-bg); border-color: var(--green-border); } .st-banner.up svg { color: var(--green); }
     .st-banner.down { background: var(--red-bg); border-color: var(--red-border); } .st-banner.down svg { color: var(--red); }
     .st-banner.maintenance { background: var(--yellow-bg); border-color: var(--yellow-border); } .st-banner.maintenance svg { color: var(--yellow); }
     .st-banner.none svg { color: var(--faint); }
 
-    .st-h { font-size: 12px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 12px; }
-    .st-app { border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 18px 20px 14px; margin-bottom: 14px; background: var(--surface); }
-    .st-app-head { display: flex; align-items: center; gap: 10px; }
-    .st-app-head strong { font-weight: 500; font-size: 15px; }
-    .st-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); flex: none; }
-    .st-dot.up { background: var(--green); box-shadow: 0 0 0 4px var(--green-halo); }
-    .st-dot.down { background: var(--red); box-shadow: 0 0 0 4px var(--red-halo); }
-    .st-dot.maintenance { background: var(--yellow); box-shadow: 0 0 0 4px var(--yellow-halo); }
-    .st-state { margin-left: auto; font-size: 13px; color: var(--muted); }
-    .st-state.up { color: var(--green); } .st-state.down { color: var(--red); } .st-state.maintenance { color: var(--yellow); }
+    .st-h { display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 12px; }
+    .st-h[hidden], .st-inc-wrap[hidden] { display: none; }
+    .st-legend { margin-left: auto; display: flex; gap: 14px; text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 11.5px; }
+    .st-legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .st-legend i { width: 8px; height: 8px; border-radius: 2px; background: var(--line-strong); }
+    .st-legend .ok { background: var(--green); } .st-legend .some { background: var(--yellow); } .st-legend .bad { background: var(--red); }
 
-    .st-stats { display: flex; gap: 28px; margin: 14px 0; align-items: flex-end; flex-wrap: wrap; }
-    .st-stat span { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
-    .st-stat b { font-size: 20px; font-weight: 400; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
-    .st-spark { margin-left: auto; width: 140px; height: 32px; color: var(--accent); }
+    /* One service: compact */
+    .st-app { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); margin-bottom: 10px; padding: 14px 20px 12px; }
+    .st-app-top { display: flex; align-items: center; gap: 12px; }
+    .st-app-top h3 { font-size: 15px; font-weight: 500; margin: 0; letter-spacing: -0.01em; }
+    .st-up { margin-left: auto; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .st-up b { font-weight: 500; color: var(--text); }
+    .st-pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line-strong); color: var(--muted); }
+    .st-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+    .st-pill.up { color: var(--green); background: var(--green-bg); border-color: var(--green-border); } .st-pill.up i { background: var(--green); }
+    .st-pill.down { color: var(--red); background: var(--red-bg); border-color: var(--red-border); } .st-pill.down i { background: var(--red); }
+    .st-pill.maintenance { color: var(--yellow); background: var(--yellow-bg); border-color: var(--yellow-border); } .st-pill.maintenance i { background: var(--yellow); }
 
-    .st-days { display: flex; gap: 2px; height: 32px; }
-    .st-day { flex: 1; min-width: 0; border-radius: 2px; background: var(--line-strong); cursor: default; transition: opacity var(--transition); }
+    .st-days { display: flex; gap: 2px; height: 26px; margin-top: 12px; }
+    .st-day { flex: 1; min-width: 0; border-radius: 2px; background: var(--line-strong); transition: opacity var(--transition); }
     .st-day:hover { opacity: .65; }
     .st-day.ok { background: var(--green); } .st-day.some { background: var(--yellow); } .st-day.bad { background: var(--red); }
-    .st-axis { display: flex; justify-content: space-between; margin-top: 8px; color: var(--faint); font-size: 11px; }
-    .st-tip { position: fixed; z-index: 10; pointer-events: none; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--pop); border: 1px solid var(--line-strong); box-shadow: var(--shadow); font-size: 12px; white-space: nowrap; }
-    .st-tip[hidden] { display: none; }
+    .st-axis { display: flex; justify-content: space-between; gap: 12px; margin-top: 6px; color: var(--faint); font-size: 11px; }
+    .st-axis span:nth-child(2) { margin: 0 auto; }
 
-    .st-inc-wrap { margin-top: 36px; }
-    .st-inc-wrap[hidden], #st-apps-h[hidden] { display: none; }
-    .st-inc { border-left: 2px solid var(--line-strong); padding: 2px 0 2px 14px; margin-bottom: 14px; font-size: 14px; }
-    .st-inc small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
-    .st-inc.open { border-color: var(--red); }
+    .st-tip { position: fixed; z-index: 10; pointer-events: none; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--pop); border: 1px solid var(--line-strong); box-shadow: var(--shadow); font-size: 12px; white-space: nowrap; line-height: 1.5; }
+    .st-tip[hidden] { display: none; }
+    .st-tip b { font-weight: 500; }
+
+    /* Incidents */
+    .st-inc-wrap { margin-top: 40px; }
+    .st-date { font-size: 13px; font-weight: 500; margin: 18px 0 8px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+    .st-inc { display: flex; gap: 12px; padding: 8px 0; font-size: 14px; }
+    .st-inc i { width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--green); flex: none; }
+    .st-inc.open i { background: var(--red); }
+    .st-inc small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 1px; }
     .st-empty { color: var(--muted); font-size: 14px; }
-    .st-foot { margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 12px; color: var(--faint); font-size: 12px; flex-wrap: wrap; }
-    @media (max-width: 520px) { .st-spark { display: none; } .st-stats { gap: 22px; } }
+
+    .st-foot { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--line); display: flex; justify-content: space-between; gap: 12px; color: var(--faint); font-size: 12px; flex-wrap: wrap; }
+
+    @media (max-width: 600px) {
+      .st { padding: 24px 16px 40px; }
+      .st-legend, .st-axis span:nth-child(2) { display: none; }
+    }
   </style>
 </head>
 <body>
   <main class="st">
-    <header class="st-top"><img src="/assets/cloudbase-mark.png" alt="" /><h1>Status</h1><time id="st-time"></time></header>
+    <header class="st-top">
+      <img src="/assets/cloudbase-mark.png" alt="" />
+      <div><h1>Status</h1><p>How our services are doing right now</p></div>
+      <div class="st-live" id="st-live"><i></i><span id="st-time">Loading…</span></div>
+    </header>
     <section class="st-banner none" id="st-banner">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="st-icon"><circle cx="12" cy="12" r="9"/></svg>
-      <div><h2 id="st-title">Checking…</h2><p id="st-sub"></p></div>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" id="st-icon"><circle cx="12" cy="12" r="9"/></svg>
+      <h2 id="st-title">Checking…</h2>
     </section>
-    <h2 class="st-h" id="st-apps-h" hidden>Systems</h2>
+    <h2 class="st-h" id="st-apps-h" hidden>Services
+      <span class="st-legend"><span><i class="ok"></i>No downtime</span><span><i class="some"></i>Partial</span><span><i class="bad"></i>Outage</span><span><i></i>No data</span></span>
+    </h2>
     <div id="st-apps"></div>
     <section class="st-inc-wrap" id="st-inc-wrap" hidden>
       <h2 class="st-h">Incidents, last 7 days</h2>
       <div id="st-incidents"></div>
     </section>
-    <footer class="st-foot"><span>Checked every minute.</span><span>Powered by Cloudbase</span></footer>
+    <footer class="st-foot"><span>Times are shown in your own time zone.</span><span>Powered by Cloudbase</span></footer>
   </main>
   <div class="st-tip" id="st-tip" hidden></div>
   <script type="module" src="/js/status.js"></script>

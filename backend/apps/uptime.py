@@ -11,13 +11,26 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 from urllib.parse import urlsplit
 
+from fastapi import HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps import health
 from core.models import UptimeCheck, UptimeDay
 
-CHECK_SECONDS = 60
+CHECK_SECONDS = 60                       # the default
+INTERVALS = (0, 30, 60, 120, 300, 600, 900)   # what an app may choose; 0 = no checks
+
+
+def clean_interval(seconds) -> int:
+    """The interval as it is stored. Raises HTTPException(400) for anything that is not on offer."""
+    try:
+        value = int(seconds)
+    except (TypeError, ValueError):
+        value = -1
+    if value not in INTERVALS:
+        raise HTTPException(400, "The check interval must be off, 30 seconds, or 1, 2, 5, 10 or 15 minutes")
+    return value
 TIMEOUT_SECONDS = 10
 FAILURES_FOR_OUTAGE = 2
 RAW_DAYS = 7
