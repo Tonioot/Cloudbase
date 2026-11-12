@@ -66,6 +66,8 @@ class Application(Base):
     health_path            = Column(String(200), default="/", nullable=False)   # "" = only check that the port is open
     health_expect          = Column(String(60), default="", nullable=False)    # "" = any answer below 500; "2xx,301"
     health_timeout_seconds = Column(Integer, default=600, nullable=False)
+    uptime_path            = Column(String(200), default="", nullable=False)   # "" = the same as the startup check
+    uptime_expect          = Column(String(60), default="", nullable=False)    # "" = the same as the startup check
     uptime_interval_seconds = Column(Integer, default=60, nullable=False)   # while it runs: how often the public address is asked; 0 = not at all
     show_on_status_page    = Column(Boolean, default=False, nullable=False)   # listed on the public /status page (apps/uptime.py)
     webhook_secret         = Column(String(300), nullable=True)   # encrypted; set = a push webhook is on (apps/webhooks.py)

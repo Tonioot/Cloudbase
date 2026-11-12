@@ -75,6 +75,8 @@ class UpdateRequest(BaseModel):
     health_timeout_seconds: Optional[int]   = None
     show_on_status_page:    Optional[bool]  = None
     uptime_interval_seconds: Optional[int]  = None   # 0 = off
+    uptime_path:            Optional[str]   = None   # "" = as the startup check
+    uptime_expect:          Optional[str]   = None
 
 
 class MaintenancePageConfig(BaseModel):

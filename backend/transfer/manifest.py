@@ -29,7 +29,7 @@ PLAIN_FIELDS = (
     "autoscale_max_step_down",
     "maintenance_mode", "update_mode", "source_revision", "image_revision",
     "cron_schedule", "cron_timezone", "cron_enabled", "cron_timeout_seconds",
-    "health_path", "health_expect", "health_timeout_seconds", "uptime_interval_seconds",
+    "health_path", "health_expect", "health_timeout_seconds", "uptime_interval_seconds", "uptime_path", "uptime_expect",
 )
 # Stored as JSON text in the row, written as real JSON in the file.
 JSON_FIELDS = ("extra_domains", "redirect_domains", "downtime_page", "update_page", "restart_page", "starting_page")

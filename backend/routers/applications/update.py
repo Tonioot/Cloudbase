@@ -122,6 +122,10 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         if req.deploy_strategy not in ("rolling", "blue_green"):
             raise HTTPException(400, "deploy_strategy must be rolling or blue_green")
         app.deploy_strategy = req.deploy_strategy
+    if req.uptime_path is not None:
+        app.uptime_path = health_app.clean_path(req.uptime_path)
+    if req.uptime_expect is not None:
+        app.uptime_expect = health_app.clean_expect(req.uptime_expect)
     if req.uptime_interval_seconds is not None:
         app.uptime_interval_seconds = apps_uptime.clean_interval(req.uptime_interval_seconds)
     if req.show_on_status_page is not None:

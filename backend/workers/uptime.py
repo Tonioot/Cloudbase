@@ -30,6 +30,7 @@ async def _targets() -> list[tuple]:
             url = public_url(app)
             if app.id in running and url and not app.maintenance_mode:
                 path, expect, _ = health.settings_of(app)
+                path, expect = app.uptime_path or path, app.uptime_expect or expect   # its own, or the startup check's
                 interval = 60 if app.uptime_interval_seconds is None else app.uptime_interval_seconds
                 if interval:
                     out.append((app.id, app.name, url, path or "/", expect, interval))

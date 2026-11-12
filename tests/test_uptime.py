@@ -272,3 +272,22 @@ def test_the_whole_page_is_only_operational_when_something_really_answers():
     assert overall_state(["stopped", "stopped"]) == "stopped"   # nothing runs: not "operational"
     assert overall_state(["stopped", "unknown"]) == "unknown"
     assert overall_state(["unknown"]) == "unknown"
+
+
+def test_monitoring_asks_what_the_startup_check_asks_unless_it_has_its_own_path(admin):
+    from workers import uptime as worker
+    from core.database import AsyncSessionLocal
+    from core.models import Instance
+    same = _app("path-same", domain="same.test", health_path="/ready", health_expect="2xx")
+    own = _app("path-own", domain="own.test", health_path="/ready", health_expect="2xx", uptime_path="/", uptime_expect="200,301")
+
+    async def make_running():
+        async with AsyncSessionLocal() as db:
+            for app_id in (same, own):
+                db.add(Instance(app_id=app_id, node_id=1, status="running"))
+            await db.commit()
+    _run(make_running())
+    found = {t[1]: t for t in _run(worker._targets())}
+    assert found["path-same"][3:5] == ("/ready", "2xx")
+    assert found["path-own"][3:5] == ("/", "200,301")
+    assert admin.put(f"/api/apps/{own}", json={"uptime_path": "no-slash"}).status_code == 400

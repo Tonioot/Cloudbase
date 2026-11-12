@@ -168,6 +168,8 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
         "health_path": _health(health.clean_path, entry.get("health_path")),
         "health_expect": _health(health.clean_expect, entry.get("health_expect")),
         "health_timeout_seconds": _health(health.clean_timeout, entry.get("health_timeout_seconds")),
+        "uptime_path": _health(health.clean_path, entry.get("uptime_path")),
+        "uptime_expect": _health(health.clean_expect, entry.get("uptime_expect")),
         "uptime_interval_seconds": _health(uptime.clean_interval, entry.get("uptime_interval_seconds")),
     }.items() if v is not None}
 

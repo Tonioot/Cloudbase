@@ -1573,6 +1573,8 @@ function initSettings() {
   document.getElementById('cfg-health-expect').value = app.health_expect || '';
   document.getElementById('cfg-status-page').checked = !!app.show_on_status_page;
   document.getElementById('cfg-uptime-interval').value = String(app.uptime_interval_seconds ?? 60);
+  document.getElementById('cfg-uptime-path').value = app.uptime_path || '';
+  document.getElementById('cfg-uptime-expect').value = app.uptime_expect || '';
   showUptimeHint();
   document.getElementById('cfg-health-timeout').value = app.health_timeout_seconds || 600;
   const showAutoscale = on => ['autoscale-options', 'autoscale-more'].forEach(id => { document.getElementById(id).style.display = on ? '' : 'none'; });
@@ -1719,6 +1721,8 @@ const _SETTINGS_ICONS = {
   bell:   '<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>',
   clock:  '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>',
   activity: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+  shield: '<path d="M12 3 4 6v6c0 4.5 3.3 7.8 8 9 4.7-1.2 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/>',
+  monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/><path d="M6.5 10h2l1.5-3 2.5 6 1.5-3h2"/>',
   scale:  '<rect x="3" y="12" width="4" height="8" rx="1"/><rect x="10" y="8" width="4" height="12" rx="1"/><rect x="17" y="4" width="4" height="16" rx="1"/>',
   alert:  '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>',
 };
@@ -2898,6 +2902,8 @@ async function saveSettings() {
     health_path:            document.getElementById('cfg-health-path').value.trim(),
     health_expect:          document.getElementById('cfg-health-expect').value.trim(),
     show_on_status_page:    document.getElementById('cfg-status-page').checked,
+    uptime_path:            document.getElementById('cfg-uptime-path').value.trim(),
+    uptime_expect:          document.getElementById('cfg-uptime-expect').value.trim(),
     uptime_interval_seconds: parseInt(document.getElementById('cfg-uptime-interval').value, 10),
     health_timeout_seconds: parseInt(document.getElementById('cfg-health-timeout').value, 10) || 600,
     env_vars,
