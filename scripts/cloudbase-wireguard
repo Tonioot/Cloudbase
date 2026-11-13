@@ -20,8 +20,9 @@ Commands (all print JSON or a public key on stdout; errors go to stderr with exi
                                            be a spoke: connect to the hub, own <address>
   peers                                    hub only: JSON list [{"public_key", "ip"}] on stdin
   status                                   the interface and its peers (handshakes, traffic)
-  boot                                     bring the interface up from the saved state (at boot)
+  boot                                     bring the interface up from the saved state (at boot), and isolate apps
   down                                     take the interface down
+  isolate                                  keep app containers from starting connections to this machine itself
 """
 import ipaddress
 import json
@@ -243,7 +244,42 @@ def forward_between_nodes() -> None:
         run(["iptables", "-I", *rule])          # first, before Docker's chains drop it
 
 
+APPS_CHAIN = "CLOUDBASE-APPS"
+APP_INTERFACES = ("cbapps0", "cbdb+")       # the bridges of the apps network and of the database networks
+
+
+def isolate_apps() -> None:
+    """Containers of apps cannot start a connection to this machine itself (its other apps' published ports, its
+    databases, the panel, SSH). Without this, Docker's own proxy lets a container reach every port that is published
+    on this machine's addresses, which undoes the isolation between apps. What stays: answers to connections the
+    machine started (nginx to an app, the panel to a database), web traffic to ports 80 and 443 (an app that calls
+    its own domain on this server), DNS and ping. Traffic to other machines is forwarded, not input, and is untouched."""
+    try:
+        run(["iptables", "-N", APPS_CHAIN])
+    except HelperError:
+        pass                                                      # it exists
+    run(["iptables", "-F", APPS_CHAIN])
+    for rule in (["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
+                 ["-p", "tcp", "-m", "multiport", "--dports", "80,443", "-j", "ACCEPT"],
+                 ["-p", "udp", "--dport", "53", "-j", "ACCEPT"],
+                 ["-p", "tcp", "--dport", "53", "-j", "ACCEPT"],
+                 ["-p", "icmp", "-j", "ACCEPT"],
+                 ["-j", "DROP"]):
+        run(["iptables", "-A", APPS_CHAIN, *rule])
+    for interface in APP_INTERFACES:
+        jump = ["INPUT", "-i", interface, "-j", APPS_CHAIN]
+        try:
+            run(["iptables", "-C", *jump])
+        except HelperError:
+            run(["iptables", "-I", *jump])                        # first, before the firewall's own rules
+
+
 # ── commands ───────────────────────────────────────────────────────────────────
+def cmd_isolate(_args) -> str:
+    isolate_apps()
+    return json.dumps({"isolated": True})
+
+
 def cmd_keygen(_args) -> str:
     return keygen()
 
@@ -326,11 +362,14 @@ def cmd_status(_args) -> str:
 def cmd_boot(_args) -> str:
     state = load_state()
     if not state or interface_exists():
-        return json.dumps({"up": interface_exists()})
-    run(["wg-quick", "up", _path(f"{IFACE}.conf")])
-    if state.get("role") == "hub":
-        forward_between_nodes()
-    return json.dumps({"up": True})
+        up = interface_exists()
+    else:
+        run(["wg-quick", "up", _path(f"{IFACE}.conf")])
+        if state.get("role") == "hub":
+            forward_between_nodes()
+        up = True
+    isolate_apps()                                  # the rule does not survive a reboot
+    return json.dumps({"up": up})
 
 
 def cmd_down(_args) -> str:
@@ -340,7 +379,7 @@ def cmd_down(_args) -> str:
 
 
 COMMANDS = {"keygen": cmd_keygen, "hub": cmd_hub, "node": cmd_node, "peers": cmd_peers,
-            "status": cmd_status, "boot": cmd_boot, "down": cmd_down}
+            "status": cmd_status, "boot": cmd_boot, "down": cmd_down, "isolate": cmd_isolate}
 
 
 def main(argv: list[str]) -> int:

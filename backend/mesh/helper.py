@@ -50,5 +50,10 @@ def set_peers(peers: list[dict]) -> int:
     return json.loads(_run(["peers"], stdin=json.dumps(peers)))["peers"]
 
 
+def isolate_apps() -> None:
+    """Containers of apps may not start connections to this machine itself (see the helper)."""
+    _run(["isolate"])
+
+
 def status() -> dict:
     return json.loads(_run(["status"]))

@@ -105,6 +105,32 @@ def test_peers_must_be_nodes_of_the_hub_network(wg, monkeypatch):
         wg.cmd_peers([], "{not json")
 
 
+def test_apps_may_not_start_connections_to_the_machine_but_keep_what_they_need(wg, monkeypatch):
+    calls, present = [], set()
+
+    def run(args, stdin=None):
+        calls.append(args)
+        if args[:2] == ["iptables", "-N"] and ("N", args[2]) in present:
+            raise wg.HelperError("chain exists")
+        if args[:2] == ["iptables", "-N"]:
+            present.add(("N", args[2]))
+        if args[:2] == ["iptables", "-C"] and tuple(args[2:]) not in present:
+            raise wg.HelperError("no such rule")
+        if args[:2] == ["iptables", "-I"]:
+            present.add(tuple(args[2:]))
+        return ""
+    monkeypatch.setattr(wg, "run", run)
+    wg.isolate_apps()
+    wg.isolate_apps()                                              # again: nothing is added twice
+    chain = [c[3:] for c in calls if c[:3] == ["iptables", "-A", wg.APPS_CHAIN]]
+    assert chain[0] == ["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"]   # answers to the machine's own connections
+    assert ["-p", "tcp", "-m", "multiport", "--dports", "80,443", "-j", "ACCEPT"] in chain      # an app calling its own domain
+    assert chain[-1] == ["-j", "DROP"]                                                           # everything else is refused
+    jumps = [c for c in calls if c[:2] == ["iptables", "-I"]]
+    assert jumps == [["iptables", "-I", "INPUT", "-i", "cbapps0", "-j", wg.APPS_CHAIN],
+                     ["iptables", "-I", "INPUT", "-i", "cbdb+", "-j", wg.APPS_CHAIN]]
+
+
 def test_peers_are_refused_on_a_node(wg):
     wg.save_state({"role": "node", "address": "10.77.0.2/32", "peers": []})
     with pytest.raises(wg.HelperError):

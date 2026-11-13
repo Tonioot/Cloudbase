@@ -58,8 +58,26 @@ def ensure_network(name: str, bridge: str, isolated: bool = False) -> None:
             log.info("[docker] Created network %s", name)
 
 
+_firewall_done = False
+
+
+def _isolate_from_host() -> None:
+    """Ask the root helper, once per run, to keep containers from starting connections to this machine itself. Never
+    stops an app from starting: an old helper (not updated yet) only means the apps are less shut off."""
+    global _firewall_done
+    if _firewall_done:
+        return
+    from mesh import helper
+    try:
+        helper.isolate_apps()
+        _firewall_done = True
+    except Exception as exc:
+        log.warning("[docker] Apps can still reach this machine's own ports: %s (run: cloudbase update)", exc)
+
+
 def ensure_apps_network() -> None:
     ensure_network(naming.APPS_NETWORK, "cbapps0", isolated=True)
+    _isolate_from_host()
 
 
 def ensure_database_network(database_id: int) -> str:

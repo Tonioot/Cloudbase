@@ -93,6 +93,7 @@ def docker(monkeypatch):
     module.errors = types.SimpleNamespace(NotFound=NotFound)
     monkeypatch.setitem(sys.modules, "docker", module)
     monkeypatch.setattr(cc, "_get_client", lambda: fake)
+    monkeypatch.setattr(cc, "_firewall_done", True)
     monkeypatch.setattr(db_proxy, "local_node_id", lambda: 1)
     return fake
 
@@ -143,6 +144,23 @@ def test_an_old_spec_that_names_the_shared_network_is_ignored(docker):
     kwargs = {}
     cc._apply_linked_databases(docker, kwargs, {"network": "cloudbase"})
     assert kwargs["network"] == naming.APPS_NETWORK
+
+
+def test_the_firewall_is_asked_for_once_and_a_failure_never_stops_an_app(monkeypatch):
+    from mesh import helper
+    calls = []
+    monkeypatch.setattr(cc, "_firewall_done", False)
+    monkeypatch.setattr(helper, "isolate_apps", lambda: calls.append(1))
+    cc._isolate_from_host()
+    cc._isolate_from_host()
+    assert calls == [1]
+
+    def old_helper():
+        raise helper.HelperError("usage: cloudbase-wireguard")
+    monkeypatch.setattr(cc, "_firewall_done", False)
+    monkeypatch.setattr(helper, "isolate_apps", old_helper)
+    cc._isolate_from_host()                       # only logs: not updated yet means less shut off, not a broken app
+    assert cc._firewall_done is False             # and it asks again at the next start
 
 
 def test_the_old_shared_network_goes_when_only_databases_are_left_on_it(docker):
