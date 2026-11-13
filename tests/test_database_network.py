@@ -104,7 +104,7 @@ def test_the_container_publishes_on_the_node_network_address_only(monkeypatch):
     import types
     monkeypatch.setitem(sys.modules, "docker", sys.modules.get("docker") or types.ModuleType("docker"))
     monkeypatch.setattr(dbs_docker, "_ensure_image", lambda *a: None)
-    monkeypatch.setattr(dbs_docker.containers_client, "ensure_network", lambda name: None)
+    monkeypatch.setattr(dbs_docker.containers_client, "ensure_database_network", lambda database_id: "net")
     monkeypatch.setattr(dbs_docker, "publish_address", lambda: "10.77.0.3")
     dbs_docker._run_container(Client(), _spec())
     assert runs[-1]["ports"] == {"5432/tcp": ("10.77.0.3", dbs_docker.published_port(7))}

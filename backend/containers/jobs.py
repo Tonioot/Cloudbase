@@ -1,6 +1,6 @@
 import json
 import threading
-from containers.client import _apply_linked_databases, _assert_image_local, _get_client
+from containers.client import _apply_linked_databases, _assert_image_local, _get_client, start_container
 from containers.dockerfiles import _cmd_to_json
 from containers.naming import job_container_name
 from containers.instances import remove_container_by_name
@@ -64,10 +64,10 @@ def run_job_container(
         if docker_options.get("tmpfs_size_mb"):
             tmpfs_opts.append(f"size={int(docker_options['tmpfs_size_mb'])}m")
         run_kwargs["tmpfs"] = {"/tmp": ",".join(tmpfs_opts)}
-    _apply_linked_databases(run_kwargs, docker_options)
+    extra_networks = _apply_linked_databases(client, run_kwargs, docker_options)
     _assert_image_local(client, img)
 
-    container = client.containers.run(img, **run_kwargs)
+    container = start_container(client, img, run_kwargs, extra_networks)
     output = bytearray()
     timed_out = False
     deadline = _time.monotonic() + max(1, int(timeout_seconds or 3600))

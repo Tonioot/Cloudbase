@@ -1,6 +1,6 @@
 import logging
 from containers.apps import _restart_policy_config
-from containers.client import _apply_linked_databases, _assert_image_local, _get_client, _host_port
+from containers.client import _apply_linked_databases, _assert_image_local, _get_client, _host_port, start_container
 from containers.naming import instance_container_name
 
 log = logging.getLogger("cloudbase.docker")
@@ -91,13 +91,13 @@ def run_instance_container(
             tmpfs_opts.append(f"size={int(tmpfs_size_mb)}m")
         run_kwargs["tmpfs"] = {"/tmp": ",".join(tmpfs_opts)}
 
-    _apply_linked_databases(run_kwargs, docker_options)
+    extra_networks = _apply_linked_databases(client, run_kwargs, docker_options)
     _assert_image_local(client, img)
     # Retry on transient Docker errors: port still releasing or container name
     # still being removed after a force-remove.
     for attempt in (1, 2, 3):
         try:
-            container = client.containers.run(img, **run_kwargs)
+            container = start_container(client, img, run_kwargs, extra_networks)
             break
         except _docker_mod.errors.APIError as exc:
             err = str(exc)

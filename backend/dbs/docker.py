@@ -2,14 +2,11 @@ import logging
 import threading
 from typing import Optional
 from dbs import engines as db_engines
-from containers import client as containers_client
+from containers import client as containers_client, naming
 from core import config as _cfg
 from agent import state as agent_state
 
 log = logging.getLogger("cloudbase.databases")
-
-
-NETWORK = "cloudbase"
 
 
 STOP_TIMEOUT_SECONDS = 60  # databases need time for a clean shutdown
@@ -51,7 +48,7 @@ class VolumeConflictError(RuntimeError):
 
 
 def container_name(database_id: int) -> str:
-    return f"cloudbase-db-{database_id}"
+    return naming.database_container_name(database_id)
 
 
 def volume_name(database_id: int) -> str:
@@ -179,14 +176,14 @@ def _run_container(client, spec: dict):
     if not spec.get("image_override"):
         _ensure_image(client, image, db_id)
     _progress[db_id] = "Starting the container"
-    containers_client.ensure_network(NETWORK)
+    network = containers_client.ensure_database_network(db_id)      # the apps linked to it join this one
 
     run_kwargs = {
         "detach": True,
         "name": container_name(db_id),
         "environment": engine.container_env(creds),
         "volumes": {volume_name(db_id): {"bind": engine.data_dir(version), "mode": "rw"}},
-        "network": NETWORK,
+        "network": network,
         "restart_policy": {"Name": "unless-stopped"},
         "stop_signal": "SIGTERM",
         "healthcheck": {

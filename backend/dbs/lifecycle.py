@@ -2,8 +2,8 @@ import logging
 import re
 from typing import Optional
 from dbs import engines as db_engines
-from containers import stats_logs as containers_stats_logs
-from dbs.docker import NETWORK, STOP_TIMEOUT_SECONDS, VolumeConflictError, VolumeMissingError, _client, _container_state, _get_container, _progress, _run_container, publish_address, published_binding, published_port, _volume_exists, container_name, volume_name
+from containers import naming, stats_logs as containers_stats_logs
+from dbs.docker import STOP_TIMEOUT_SECONDS, VolumeConflictError, VolumeMissingError, _client, _container_state, _get_container, _progress, _run_container, publish_address, published_binding, published_port, _volume_exists, container_name, volume_name
 
 log = logging.getLogger("cloudbase.databases")
 
@@ -159,13 +159,14 @@ def report_all(with_stats: bool, with_disk: bool) -> dict[str, dict]:
 
 
 def container_address(database_id: int) -> tuple[str, int]:
-    """IP on the cloudbase network and port of a running database container."""
+    """IP on its own network and port of a running database container."""
     client = _client()
     container = _get_container(client, database_id)
     if container is None:
         raise RuntimeError(f"Database container {container_name(database_id)} does not exist on this node")
     container.reload()
-    ip = ((container.attrs.get("NetworkSettings") or {}).get("Networks") or {}).get(NETWORK, {}).get("IPAddress")
+    networks = (container.attrs.get("NetworkSettings") or {}).get("Networks") or {}
+    ip = (networks.get(naming.database_network_name(database_id)) or next(iter(networks.values()), {})).get("IPAddress")
     if not ip:
         raise RuntimeError(f"{container_name(database_id)} is not running")
     engine = db_engines.get_engine(container.labels.get("cloudbase.engine", ""))

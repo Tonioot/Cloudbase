@@ -85,8 +85,8 @@ async def refresh(db: AsyncSession) -> None:
 
 
 def runtime_options(app_id: int) -> dict:
-    """Extra Docker options for an app container: the database network and links."""
+    """Extra Docker options for an app container: its database links."""
     links = _app_links.get(app_id)
     if not links:
         return {}
-    return {"network": dbs_docker.NETWORK, "linked_databases": [dict(l) for l in links]}
+    return {"linked_databases": [dict(l) for l in links]}

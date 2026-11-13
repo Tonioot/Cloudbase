@@ -17,3 +17,18 @@ def instance_container_name(app_id: int, instance_id: int) -> str:
 
 def job_container_name(app_id: int, run_id: int) -> str:
     return f"cloudbase-cron-{app_id}-{run_id}"
+
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+
+APPS_NETWORK = "cloudbase-apps"      # every app container; containers on it cannot reach each other
+LEGACY_NETWORK = "cloudbase"         # the one shared network of earlier versions
+
+
+def database_container_name(database_id: int) -> str:
+    return f"cloudbase-db-{database_id}"
+
+
+def database_network_name(database_id: int) -> str:
+    """A database and the apps linked to it, and nobody else."""
+    return f"cloudbase-db-{database_id}"

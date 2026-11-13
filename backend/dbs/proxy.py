@@ -337,13 +337,23 @@ def public_listening(database_id: int) -> bool:
     return database_id in _public
 
 
+def _is_local(link: dict, me: Optional[int]) -> bool:
+    # Node id unknown (e.g. right after the primary starts): the database is
+    # local exactly when its container exists on this host.
+    return link["node_id"] == me if me is not None else _container_here(int(link["database_id"]))
+
+
+def local_database_ids(linked: list[dict]) -> list[int]:
+    """The linked databases that run on this machine: the container joins their networks."""
+    me = local_node_id()
+    return [int(link["database_id"]) for link in linked if _is_local(link, me)]
+
+
 def resolve_links(linked: list[dict]) -> dict:
     """For a container about to start here: the env vars of its linked databases. Called from a worker thread."""
     me = local_node_id()
     env: dict[str, str] = {}
     for link in linked:
-        # Node id unknown (e.g. right after the primary starts): the database is
-        # local exactly when its container exists on this host.
-        local = link["node_id"] == me if me is not None else _container_here(int(link["database_id"]))
+        local = _is_local(link, me)
         env[link["env_var"]] = link["direct_url"] if local or not link.get("remote_url") else link["remote_url"]
     return env
