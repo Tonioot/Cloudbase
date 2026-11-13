@@ -4,7 +4,8 @@ How many: enough that the load per instance stays under the app's targets (CPU %
 instance), in one step, not one instance at a time (desired_instances). Fast up: the average over the last
 `autoscale_up_seconds`. Slow down: the peak over the last `autoscale_down_minutes`, with some headroom, so the
 remaining instances are not at their target straight away. Optional per app: at most this many added or removed
-per step.
+per step. The window (down to 5 s) and the pause after an action (`autoscale_cooldown_seconds`, by default as long as
+the window) decide how fast it reacts; a new instance still needs its start and startup check before it takes load.
 
 Scale up goes to the least-loaded online nodes (spread over them); scale down removes remote instances first, then
 the newest local ones. Scale actions run as background tasks that hold the app (apps.state.acquire_app), so a
@@ -35,7 +36,7 @@ from nodes.registry import ensure_local_node
 
 alog = logging.getLogger("cloudbase.autoscaler")
 ACTOR = "autoscaler"
-CHECK_INTERVAL = 15          # seconds between checks
+CHECK_INTERVAL = 5           # seconds between checks
 DOWN_HEADROOM = 0.75         # after scaling down, the peak load per instance is at most this part of the target
 
 DEFAULT_UP_SECONDS = 60
@@ -84,6 +85,7 @@ def settings(app) -> dict:
         "cpu_target": app.autoscale_cpu_target or 70.0,
         "memory_target_mb": app.autoscale_memory_target_mb or None,
         "up_seconds": app.autoscale_up_seconds or DEFAULT_UP_SECONDS,
+        "cooldown_seconds": app.autoscale_cooldown_seconds or app.autoscale_up_seconds or DEFAULT_UP_SECONDS,
         "down_seconds": (app.autoscale_down_minutes or DEFAULT_DOWN_MINUTES) * 60,
         "max_step_up": app.autoscale_max_step_up or None,
         "max_step_down": app.autoscale_max_step_down or None,
@@ -98,7 +100,10 @@ def recent_average(app_id: int, seconds: int) -> Optional[tuple[float, float]]:
     now_ms = _time.time() * 1000
     frames = [f for f in pm.get_recent_stats(app_id)
               if f.get("cpu_percent") is not None and (f.get("timestamp") or 0) >= now_ms - seconds * 1000]
-    if len(frames) < 3 or now_ms - min(f["timestamp"] for f in frames) < seconds * 750:
+    # A sample comes every 5 s: a short window holds only a few, and cannot be "covered" by older ones
+    if len(frames) < min(3, max(1, seconds // 5)):
+        return None
+    if seconds >= 30 and now_ms - min(f["timestamp"] for f in frames) < seconds * 750:
         return None
     return (sum(f["cpu_percent"] for f in frames) / len(frames),
             sum(f.get("memory_mb") or 0 for f in frames) / len(frames))
@@ -217,7 +222,7 @@ async def check_app(db, app, local_node: Node, now: float) -> None:
     """Decide for one app and start the action in the background."""
     s = settings(app)
     since_action = now - _last_scaled[app.id] if app.id in _last_scaled else float("inf")   # (the clock starts at boot)
-    if since_action < s["up_seconds"]:
+    if since_action < s["cooldown_seconds"]:
         return
     # A deploy (or our own previous action, or somebody restarting the app) is still running. Rolling and
     # blue-green deploys briefly run old and new instances side by side; scaling down then would leave too few.

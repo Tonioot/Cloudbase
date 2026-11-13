@@ -67,6 +67,7 @@ class Application(Base):
     health_expect          = Column(String(60), default="", nullable=False)    # "" = any answer below 500; "2xx,301"
     health_timeout_seconds = Column(Integer, default=600, nullable=False)
     uptime_path            = Column(String(200), default="", nullable=False)   # "" = the same as the startup check
+    uptime_failures        = Column(Integer, default=2, nullable=False)        # failed checks in a row that make an outage
     uptime_expect          = Column(String(60), default="", nullable=False)    # "" = the same as the startup check
     uptime_interval_seconds = Column(Integer, default=60, nullable=False)   # while it runs: how often the public address is asked; 0 = not at all
     show_on_status_page    = Column(Boolean, default=False, nullable=False)   # listed on the public /status page (apps/uptime.py)
@@ -102,6 +103,7 @@ class Application(Base):
     autoscale_down_minutes = Column(Integer, default=5)      # scale down on the peak over this long
     autoscale_max_step_up   = Column(Integer, nullable=True) # None = as many as needed at once
     autoscale_max_step_down = Column(Integer, nullable=True)
+    autoscale_cooldown_seconds = Column(Integer, nullable=True)  # pause after a scale action; None = as the scale up window
     maintenance_mode = Column(Boolean, default=False)
     update_mode      = Column(Boolean, default=False)
     downtime_page    = Column(Text, nullable=True)  # JSON: {title, message, color, custom_html}

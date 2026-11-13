@@ -227,10 +227,11 @@ def test_the_panel_can_read_the_uptime_of_one_app(admin):
 def test_only_the_offered_intervals_are_accepted(admin):
     from apps import uptime
     from fastapi import HTTPException
-    assert [uptime.clean_interval(v) for v in (0, "30", 60, 900)] == [0, 30, 60, 900]
+    assert [uptime.clean_interval(v) for v in (0, 5, "30", 60, 900)] == [0, 5, 30, 60, 900]
     for bad in (1, 45, 3600, "x", None):
         with pytest.raises(HTTPException):
             uptime.clean_interval(bad)
+    assert uptime.timeout_for(5) == 4 and uptime.timeout_for(60) == 10    # over before the next check
     app_id = _app("interval-setting")
     assert admin.get(f"/api/apps/{app_id}").json()["uptime_interval_seconds"] == 60
     assert admin.put(f"/api/apps/{app_id}", json={"uptime_interval_seconds": 300}).status_code == 200
@@ -291,3 +292,36 @@ def test_monitoring_asks_what_the_startup_check_asks_unless_it_has_its_own_path(
     assert found["path-same"][3:5] == ("/ready", "2xx")
     assert found["path-own"][3:5] == ("/", "200,301")
     assert admin.put(f"/api/apps/{own}", json={"uptime_path": "no-slash"}).status_code == 400
+
+
+def test_the_number_of_failed_checks_for_an_outage_is_per_app(monkeypatch, admin):
+    from apps import uptime
+    from fastapi import HTTPException
+    from workers import uptime as worker
+    assert uptime.clean_failures("3") == 3
+    for bad in (0, 21, "x", None):
+        with pytest.raises(HTTPException):
+            uptime.clean_failures(bad)
+    app_id = _app("failures-setting")
+    assert admin.get(f"/api/apps/{app_id}").json()["uptime_failures"] == 2
+    assert admin.put(f"/api/apps/{app_id}", json={"uptime_failures": 4}).status_code == 200
+    assert admin.get(f"/api/apps/{app_id}").json()["uptime_failures"] == 4
+    assert admin.put(f"/api/apps/{app_id}", json={"uptime_failures": 0}).status_code == 400
+
+    events = []
+
+    async def fake_emit(event, title, message="", **kw):
+        events.append(event)
+
+    async def fake_resolve(*a, **kw):
+        pass
+    monkeypatch.setattr(worker, "emit", fake_emit)
+    monkeypatch.setattr(worker, "resolve", fake_resolve)
+    monkeypatch.setattr(worker.apps_uptime, "probe", lambda *a: (False, None, "no answer"))
+    worker._failures.clear()
+    for _ in range(3):
+        _run(worker.check_app(app_id, "Site", "http://site.test", "/", "", 60, 4))
+    assert events == []                                     # three is not yet an outage for this app
+    _run(worker.check_app(app_id, "Site", "http://site.test", "/", "", 60, 4))
+    assert events == ["uptime.down"]
+    assert [i["until"] for i in uptime.incidents([(datetime(2026, 11, 1) + timedelta(minutes=i), False) for i in range(3)], 4)] == []

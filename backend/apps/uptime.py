@@ -1,8 +1,9 @@
 """Uptime: is the app reachable the way visitors reach it?
 
-Every minute `workers/uptime.py` asks the public address of each web app that should be running, with the app's
-health check settings (path and healthy answers, see apps/health.py). The checks are kept for 7 days; what a day adds
-up to is kept for 90. Two failed checks in a row are an outage (notification `uptime.down`)."""
+`workers/uptime.py` asks the public address of each web app that should be running, by default every minute and at
+best every 5 seconds, with the app's health check settings (path and healthy answers, see apps/health.py). The checks
+are kept for 7 days; what a day adds up to is kept for 90. A number of failed checks in a row (2 unless the app says
+otherwise) is an outage (notification `uptime.down`)."""
 import http.client
 import socket
 import ssl
@@ -19,7 +20,7 @@ from apps import health
 from core.models import UptimeCheck, UptimeDay
 
 CHECK_SECONDS = 60                       # the default
-INTERVALS = (0, 30, 60, 120, 300, 600, 900)   # what an app may choose; 0 = no checks
+INTERVALS = (0, 5, 10, 15, 30, 60, 120, 300, 600, 900)   # what an app may choose; 0 = no checks
 
 
 def clean_interval(seconds) -> int:
@@ -29,24 +30,43 @@ def clean_interval(seconds) -> int:
     except (TypeError, ValueError):
         value = -1
     if value not in INTERVALS:
-        raise HTTPException(400, "The check interval must be off, 30 seconds, or 1, 2, 5, 10 or 15 minutes")
+        raise HTTPException(400, "The check interval must be off, 5, 10, 15 or 30 seconds, or 1, 2, 5, 10 or 15 minutes")
     return value
+
+
 TIMEOUT_SECONDS = 10
-FAILURES_FOR_OUTAGE = 2
+FAILURES_FOR_OUTAGE = 2                  # the default: failed checks in a row that make an outage
+FAILURES_RANGE = (1, 20)
+
+
+def clean_failures(count) -> int:
+    """Failed checks in a row that count as an outage, as it is stored. Raises HTTPException(400) for a bad number."""
+    try:
+        value = int(count)
+    except (TypeError, ValueError):
+        value = 0
+    if not FAILURES_RANGE[0] <= value <= FAILURES_RANGE[1]:
+        raise HTTPException(400, f"Failed checks for an outage must be between {FAILURES_RANGE[0]} and {FAILURES_RANGE[1]}")
+    return value
+
+
+def timeout_for(interval: int) -> int:
+    """A check must be over before the next one is due."""
+    return max(2, min(TIMEOUT_SECONDS, interval - 1)) if interval else TIMEOUT_SECONDS
 RAW_DAYS = 7
 DAYS = 90
 
 
-def probe(url: str, path: str, expect: str) -> tuple[bool, Optional[int], str]:
+def probe(url: str, path: str, expect: str, timeout: int = TIMEOUT_SECONDS) -> tuple[bool, Optional[int], str]:
     """Ask `url` once: (healthy, response time in ms, what happened). Blocking: run it with asyncio.to_thread."""
     parts = urlsplit(url)
     host, secure = parts.hostname or "", parts.scheme == "https"
     started = time.monotonic()
     try:
         if secure:
-            conn = http.client.HTTPSConnection(host, parts.port or 443, timeout=TIMEOUT_SECONDS, context=ssl.create_default_context())
+            conn = http.client.HTTPSConnection(host, parts.port or 443, timeout=timeout, context=ssl.create_default_context())
         else:
-            conn = http.client.HTTPConnection(host, parts.port or 80, timeout=TIMEOUT_SECONDS)
+            conn = http.client.HTTPConnection(host, parts.port or 80, timeout=timeout)
         try:
             conn.request("GET", path or "/", headers={"User-Agent": "Cloudbase-uptime", "Connection": "close"})
             status = int(conn.getresponse().status or 0)
@@ -55,7 +75,7 @@ def probe(url: str, path: str, expect: str) -> tuple[bool, Optional[int], str]:
     except ssl.SSLError as exc:
         return False, None, f"certificate problem ({exc.reason or type(exc).__name__})"[:200]
     except socket.timeout:
-        return False, None, f"no answer within {TIMEOUT_SECONDS}s"
+        return False, None, f"no answer within {timeout}s"
     except Exception as exc:
         return False, None, f"no answer ({type(exc).__name__})"
     ms = int((time.monotonic() - started) * 1000)
@@ -85,8 +105,8 @@ async def prune(db: AsyncSession, now: Optional[datetime] = None) -> None:
     await db.commit()
 
 
-def incidents(checks: list[tuple[datetime, bool]]) -> list[dict]:
-    """Outages from checks in time order: runs of at least FAILURES_FOR_OUTAGE failed checks, newest first.
+def incidents(checks: list[tuple[datetime, bool]], needed: int = FAILURES_FOR_OUTAGE) -> list[dict]:
+    """Outages from checks in time order: runs of at least `needed` failed checks, newest first.
     `until` is None while the outage lasts."""
     out, start, count = [], None, 0
     for ts, ok in checks:
@@ -94,15 +114,15 @@ def incidents(checks: list[tuple[datetime, bool]]) -> list[dict]:
             start = start or ts
             count += 1
             continue
-        if start and count >= FAILURES_FOR_OUTAGE:
+        if start and count >= needed:
             out.append({"from": start, "until": ts})
         start, count = None, 0
-    if start and count >= FAILURES_FOR_OUTAGE:
+    if start and count >= needed:
         out.append({"from": start, "until": None})
     return out[::-1]
 
 
-async def summary(db: AsyncSession, app_id: int, today: Optional[date] = None) -> dict:
+async def summary(db: AsyncSession, app_id: int, today: Optional[date] = None, needed: int = FAILURES_FOR_OUTAGE) -> dict:
     """Uptime of the last 90 days (per day and in total), the average response time and the outages of the last 7 days."""
     today = today or datetime.utcnow().date()
     first = today - timedelta(days=DAYS - 1)
@@ -126,7 +146,7 @@ async def summary(db: AsyncSession, app_id: int, today: Optional[date] = None) -
         "days": days,
         "recent_ms": [r[2] for r in recent[-60:]],   # the last hour, for the small chart; None = a failed check
         "incidents": [{"from": i["from"].isoformat() + "Z", "until": i["until"].isoformat() + "Z" if i["until"] else None}
-                      for i in incidents([(r[0], r[1]) for r in recent])][:20],
+                      for i in incidents([(r[0], r[1]) for r in recent], needed)][:20],
         "last_check": {"at": last[0].isoformat() + "Z", "ok": last[1], "response_ms": last[2], "detail": last[3]} if last else None,
     }
 

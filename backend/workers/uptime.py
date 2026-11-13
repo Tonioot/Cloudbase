@@ -1,4 +1,5 @@
-"""Check the public address of every web app that should be running, once a minute (primary only)."""
+"""Check the public address of every web app that should be running, each at its own pace (default once a minute, at
+best every 5 seconds), and raise an outage after the app's number of failed checks in a row (primary only)."""
 import asyncio
 import logging
 import time
@@ -15,13 +16,15 @@ log = logging.getLogger("cloudbase.uptime")
 
 _failures: dict[int, int] = {}      # app id → failed checks in a row
 _last_check: dict[int, float] = {}  # app id → when it was last asked (monotonic)
-_TICK_SECONDS = 10                  # the shortest interval is 30 s: look at what is due this often
+_TICK_SECONDS = 1                   # the shortest interval is 5 s: look at what is due this often
+_TIDY_SECONDS = 10                  # closing the alerts of apps that are no longer checked needs no tick of its own
 _PRUNE_SECONDS = 6 * 3600
 _CONCURRENT = 8
+_last_tidy = 0.0
 
 
 async def _targets() -> list[tuple]:
-    """(app id, name, url, path, expect, interval) of the apps to check."""
+    """(app id, name, url, path, expect, interval, failures for an outage) of the apps to check."""
     async with AsyncSessionLocal() as db:
         running = set((await db.execute(select(Instance.app_id).where(Instance.status == "running"))).scalars())
         apps = (await db.execute(select(Application).where(Application.cron_schedule.is_(None), Application.no_web == False))).scalars().all()  # noqa: E712
@@ -33,12 +36,14 @@ async def _targets() -> list[tuple]:
                 path, expect = app.uptime_path or path, app.uptime_expect or expect   # its own, or the startup check's
                 interval = 60 if app.uptime_interval_seconds is None else app.uptime_interval_seconds
                 if interval:
-                    out.append((app.id, app.name, url, path or "/", expect, interval))
+                    out.append((app.id, app.name, url, path or "/", expect, interval,
+                                app.uptime_failures or apps_uptime.FAILURES_FOR_OUTAGE))
         return out
 
 
-async def check_app(app_id: int, name: str, url: str, path: str, expect: str, interval: int = 60) -> None:
-    ok, ms, detail = await asyncio.to_thread(apps_uptime.probe, url, path, expect)
+async def check_app(app_id: int, name: str, url: str, path: str, expect: str, interval: int = 60,
+                    failures: int = apps_uptime.FAILURES_FOR_OUTAGE) -> None:
+    ok, ms, detail = await asyncio.to_thread(apps_uptime.probe, url, path, expect, apps_uptime.timeout_for(interval))
     async with AsyncSessionLocal() as db:
         await apps_uptime.record(db, app_id, ok, ms, detail)
     key = f"uptime.down:{app_id}"
@@ -47,7 +52,7 @@ async def check_app(app_id: int, name: str, url: str, path: str, expect: str, in
         await resolve(key, f"{name} is reachable again", "")
         return
     _failures[app_id] = _failures.get(app_id, 0) + 1
-    if _failures[app_id] >= apps_uptime.FAILURES_FOR_OUTAGE:
+    if _failures[app_id] >= failures:
         await emit("uptime.down", f"{name} is not reachable", f"{url}{path if path != '/' else ''}: {detail}",
                    app_id=app_id, link=f"/app?id={app_id}", key=key)
 
@@ -61,13 +66,16 @@ async def check_all() -> None:
     for app_id in list(_last_check):
         if app_id not in live:
             del _last_check[app_id]
-    # An app that stopped, went into maintenance or was deleted has nothing to be reachable: close its alert quietly
-    for key in await open_keys("uptime.down:"):
-        if int(key.split(":", 1)[1]) not in live:
-            await resolve(key, "", silent=True)
+    now = time.monotonic()
+    global _last_tidy
+    if now - _last_tidy >= _TIDY_SECONDS:
+        _last_tidy = now
+        # An app that stopped, went into maintenance or was deleted has nothing to be reachable: close its alert quietly
+        for key in await open_keys("uptime.down:"):
+            if int(key.split(":", 1)[1]) not in live:
+                await resolve(key, "", silent=True)
     sem = asyncio.Semaphore(_CONCURRENT)
 
-    now = time.monotonic()
     due = [t for t in targets if now - _last_check.get(t[0], 0.0) >= t[5] - 1]   # every app at its own pace
     for t in due:
         _last_check[t[0]] = now
@@ -96,4 +104,4 @@ async def uptime_monitor() -> None:
             return
         except Exception as exc:
             log.warning("uptime monitor: %s", exc)
-        await asyncio.sleep(max(2.0, _TICK_SECONDS - (time.monotonic() - started)))
+        await asyncio.sleep(max(0.5, _TICK_SECONDS - (time.monotonic() - started)))

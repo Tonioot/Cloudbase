@@ -171,6 +171,7 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
         "uptime_path": _health(health.clean_path, entry.get("uptime_path")),
         "uptime_expect": _health(health.clean_expect, entry.get("uptime_expect")),
         "uptime_interval_seconds": _health(uptime.clean_interval, entry.get("uptime_interval_seconds")),
+        "uptime_failures": _health(uptime.clean_failures, entry.get("uptime_failures")),
     }.items() if v is not None}
 
     app = Application(

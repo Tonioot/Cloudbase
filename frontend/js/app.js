@@ -635,24 +635,6 @@ function _appendLogLine(line) {
   if (terminal.childElementCount > 2000) terminal.removeChild(terminal.firstChild);
 }
 
-// The last scale actions, from the audit log (needs audit.view; without it the line just stays empty).
-async function loadScaleHistory() {
-  const el = document.getElementById('autoscale-history');
-  if (!el) return;
-  try {
-    const entries = await api.getScaleHistory(APP_ID);
-    if (!entries.length) { el.textContent = 'No scale actions yet.'; return; }
-    el.innerHTML = entries.map(e => {
-      const d = e.detail || {};
-      const what = e.action === 'app.autoscale_up' ? `Up to ${d.instances}`
-        : e.action === 'app.autoscale_down' ? `Down to ${d.instances}` : 'Scale up failed';
-      return `<span class="autoscale-event"><b>${escHtml(what)}</b> · ${escHtml(timeAgo(e.timestamp))}${d.reason ? ` · ${escHtml(d.reason)}` : ''}</span>`;
-    }).join('');
-  } catch {
-    el.textContent = '—';
-  }
-}
-
 function escHtml(s) {
   return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 }
@@ -1566,13 +1548,14 @@ function initSettings() {
   document.getElementById('cfg-autoscale-down').value = app.autoscale_down_minutes || 5;
   document.getElementById('cfg-autoscale-step-up').value = app.autoscale_max_step_up || '';
   document.getElementById('cfg-autoscale-step-down').value = app.autoscale_max_step_down || '';
-  if (autoscaleEnabled) loadScaleHistory();
+  document.getElementById('cfg-autoscale-cooldown').value = app.autoscale_cooldown_seconds || '';
 
   // Health check
   document.getElementById('cfg-health-path').value = app.health_path ?? '/';
   document.getElementById('cfg-health-expect').value = app.health_expect || '';
   document.getElementById('cfg-status-page').checked = !!app.show_on_status_page;
   document.getElementById('cfg-uptime-interval').value = String(app.uptime_interval_seconds ?? 60);
+  document.getElementById('cfg-uptime-failures').value = app.uptime_failures || 2;
   document.getElementById('cfg-uptime-path').value = app.uptime_path || '';
   document.getElementById('cfg-uptime-expect').value = app.uptime_expect || '';
   showUptimeHint();
@@ -1581,7 +1564,6 @@ function initSettings() {
   showAutoscale(autoscaleEnabled);
   document.getElementById('cfg-autoscale-enabled').onchange = function() {
     showAutoscale(this.checked);
-    if (this.checked) loadScaleHistory();
   };
   if (dockerSection) dockerSection.style.display = '';
 
@@ -1886,6 +1868,54 @@ const VP_SHARED_KEYS = ['logo_data', 'brand_name', 'color', 'theme', 'background
 
 let _vp = null; // { page, drafts, saved, previewTimer, device, scheme }
 
+// What an import file may contain. Top level: the style shared by all pages. Per page ("downtime", "update",
+// "restart", "starting"): its own text, and anything from the top level it wants to do differently. The logo is
+// never part of a file.
+const VP_IMPORT_TEXT = ['title', 'message', 'status_url', 'custom_html'];
+const VP_IMPORT_STYLE = ['brand_name', 'color', 'theme', 'background'];
+const VP_THEMES = ['auto', 'light', 'dark'];
+const VP_BACKGROUNDS = ['none', 'glow', 'grid'];
+const VP_EXAMPLE = {
+  brand_name: 'Your product',
+  color: '#3b82f6',
+  theme: 'auto',
+  background: 'glow',
+  downtime: { title: 'Down for maintenance', message: 'We are working on it and will be back shortly.', status_url: 'https://status.example.com', color: '#e5484d' },
+  update: { title: 'Updating', message: 'A new version is being deployed. This takes a minute.' },
+  restart: { title: 'Restarting', message: 'Back in a moment.' },
+  starting: { title: 'Starting', message: 'Almost there.' },
+};
+
+/** Put the contents of an import file in the drafts (nothing is saved). Returns how many pages it touched. */
+function _vpApplyImport(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('the file must contain one JSON object');
+  const check = (key, value) => {
+    if (key === 'color' && !/^#[0-9a-fA-F]{6}$/.test(value)) throw new Error(`"color" must look like #3b82f6, not ${JSON.stringify(value)}`);
+    if (key === 'theme' && !VP_THEMES.includes(value)) throw new Error(`"theme" must be one of ${VP_THEMES.join(', ')}`);
+    if (key === 'background' && !VP_BACKGROUNDS.includes(value)) throw new Error(`"background" must be one of ${VP_BACKGROUNDS.join(', ')}`);
+    if (typeof value !== 'string') throw new Error(`"${key}" must be text`);
+  };
+  const known = new Set([...VP_IMPORT_STYLE, ...VP_PAGES]);
+  const unknown = Object.keys(data).filter(k => !known.has(k));
+  if (unknown.length) throw new Error(`unknown key "${unknown[0]}" (use ${[...known].join(', ')})`);
+
+  let touched = 0;
+  for (const type of VP_PAGES) {
+    const own = data[type];
+    if (own != null && (typeof own !== 'object' || Array.isArray(own))) throw new Error(`"${type}" must be an object`);
+    const fields = {};
+    for (const k of VP_IMPORT_STYLE) if (data[k] !== undefined) fields[k] = data[k];
+    for (const k of [...VP_IMPORT_TEXT, ...VP_IMPORT_STYLE]) if (own && own[k] !== undefined) fields[k] = own[k];
+    for (const [k, v] of Object.entries(fields)) check(k, v);
+    const bad = Object.keys(own || {}).find(k => !VP_IMPORT_TEXT.includes(k) && !VP_IMPORT_STYLE.includes(k));
+    if (bad) throw new Error(`unknown key "${bad}" in "${type}"`);
+    if (Object.keys(fields).length) { Object.assign(_vp.drafts[type], fields); touched++; }
+  }
+  if (!touched) throw new Error('the file has nothing to import');
+  _vpChanged();
+  return touched;
+}
+
 // Maintenance pages are served by Cloudbase's nginx on the app's domain, so
 // they need one: a custom domain, or the automatic subdomain from the base
 // domain (app_url without app.domain). Mirrors _has_public_nginx_domain()
@@ -2170,6 +2200,28 @@ function _initMaintModal() {
     VP_PAGES.forEach(t => VP_SHARED_KEYS.forEach(k => { _vp.drafts[t][k] = src[k]; }));
     _vpUpdateDirty();
     toast('Branding and style copied to all four pages');
+  };
+
+  // Everything but the logo from a file (so an AI can write it), and an example to start from
+  const importFile = document.getElementById('vp-import-file');
+  document.getElementById('vp-import').onclick = () => importFile.click();
+  importFile.addEventListener('change', async () => {
+    const file = importFile.files[0];
+    importFile.value = '';
+    if (!file) return;
+    try {
+      const touched = _vpApplyImport(JSON.parse(await file.text()));
+      _vpShowPage(_vp.page);
+      toast(`Imported ${touched} page${touched === 1 ? '' : 's'}. Check the preview, then save`);
+    } catch (e) {
+      toast(`Import failed: ${e.message}`, 'error');
+    }
+  });
+  document.getElementById('vp-example').onclick = () => {
+    const blob = new Blob([JSON.stringify(VP_EXAMPLE, null, 2) + '\n'], { type: 'application/json' });
+    const link = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: 'maintenance-pages.json' });
+    link.click();
+    URL.revokeObjectURL(link.href);
   };
 
   // Custom HTML
@@ -2895,6 +2947,7 @@ async function saveSettings() {
     autoscale_down_minutes: parseInt(document.getElementById('cfg-autoscale-down').value) || 5,
     autoscale_max_step_up:  parseInt(document.getElementById('cfg-autoscale-step-up').value) || 0,      // 0 = no limit
     autoscale_max_step_down: parseInt(document.getElementById('cfg-autoscale-step-down').value) || 0,
+    autoscale_cooldown_seconds: parseInt(document.getElementById('cfg-autoscale-cooldown').value) || 0,   // 0 = as the scale up time
     auto_deploy:            document.getElementById('cfg-autodeploy').checked,
     deploy_branch:          document.getElementById('cfg-deploy-branch').value,
     deploy_strategy:        document.querySelector('#cfg-deploy-strategy button.active')?.dataset.value || 'rolling',
@@ -2905,6 +2958,7 @@ async function saveSettings() {
     uptime_path:            document.getElementById('cfg-uptime-path').value.trim(),
     uptime_expect:          document.getElementById('cfg-uptime-expect').value.trim(),
     uptime_interval_seconds: parseInt(document.getElementById('cfg-uptime-interval').value, 10),
+    uptime_failures:        parseInt(document.getElementById('cfg-uptime-failures').value, 10) || 2,
     health_timeout_seconds: parseInt(document.getElementById('cfg-health-timeout').value, 10) || 600,
     env_vars,
     env_var_keys,

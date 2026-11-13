@@ -66,6 +66,7 @@ class UpdateRequest(BaseModel):
     autoscale_down_minutes: Optional[int]   = None
     autoscale_max_step_up:  Optional[int]   = None      # 0 = no limit
     autoscale_max_step_down: Optional[int]  = None      # 0 = no limit
+    autoscale_cooldown_seconds: Optional[int] = None    # 0 = as the scale up window
     auto_deploy:            Optional[bool]  = None
     deploy_branch:          Optional[str]   = None   # "" = the checked-out branch
     deploy_strategy:        Optional[str]   = None   # rolling | blue_green
@@ -75,6 +76,7 @@ class UpdateRequest(BaseModel):
     health_timeout_seconds: Optional[int]   = None
     show_on_status_page:    Optional[bool]  = None
     uptime_interval_seconds: Optional[int]  = None   # 0 = off
+    uptime_failures:        Optional[int]   = None   # failed checks in a row for an outage
     uptime_path:            Optional[str]   = None   # "" = as the startup check
     uptime_expect:          Optional[str]   = None
 

@@ -511,7 +511,11 @@
                   </div>
                   <div class="s3-row">
                     <span class="s3-label"><label class="s3-title" for="cfg-autoscale-up">Scale up after</label><span class="s3-desc">In seconds: the average over this long must be above target. Also the pause after an action.</span></span>
-                    <span class="s3-ctl"><input class="input" id="cfg-autoscale-up" type="number" min="30" max="600" step="5" placeholder="60" /></span>
+                    <span class="s3-ctl"><input class="input" id="cfg-autoscale-up" type="number" min="5" max="600" step="5" placeholder="60" /></span>
+                  </div>
+                  <div class="s3-row">
+                    <span class="s3-label"><label class="s3-title" for="cfg-autoscale-cooldown">Pause after a scale action</label><span class="s3-desc">In seconds, before the next action. Empty: as long as the scale up time. Lower it to follow a sudden peak faster.</span></span>
+                    <span class="s3-ctl"><input class="input" id="cfg-autoscale-cooldown" type="number" min="5" max="3600" step="5" placeholder="Same as scale up" /></span>
                   </div>
                   <div class="s3-row">
                     <span class="s3-label"><label class="s3-title" for="cfg-autoscale-down">Scale down after</label><span class="s3-desc">In minutes: the peak over this long must stay well below target.</span></span>
@@ -526,8 +530,6 @@
                     <span class="s3-ctl"><input class="input" id="cfg-autoscale-step-down" type="number" min="1" max="100" step="1" placeholder="No limit" /></span>
                   </div>
                 </div>
-                <p class="s3-group">Recent scaling</p>
-                <div class="s3-card"><div class="autoscale-history" id="autoscale-history">—</div></div>
               </div>
             </section>
 
@@ -555,10 +557,13 @@
               <header class="sv2-head"><h3>Uptime monitoring</h3><p>While the app is running, Cloudbase requests its public address on a schedule and alerts you when it stops answering. It can also show the result on the status page.</p></header>
               <div class="s3-card">
                 <div class="s3-row">
-                  <span class="s3-label"><label class="s3-title" for="cfg-uptime-interval">Check every</label><span class="s3-desc" id="cfg-uptime-hint">Two failed checks in a row count as an outage.</span></span>
+                  <span class="s3-label"><label class="s3-title" for="cfg-uptime-interval">Check every</label><span class="s3-desc" id="cfg-uptime-hint">How often the public address is requested.</span></span>
                   <span class="s3-ctl">
                     <select class="input" id="cfg-uptime-interval">
                       <option value="0">Don’t check</option>
+                      <option value="5">5 seconds</option>
+                      <option value="10">10 seconds</option>
+                      <option value="15">15 seconds</option>
                       <option value="30">30 seconds</option>
                       <option value="60">1 minute</option>
                       <option value="120">2 minutes</option>
@@ -567,6 +572,10 @@
                       <option value="900">15 minutes</option>
                     </select>
                   </span>
+                </div>
+                <div class="s3-row">
+                  <span class="s3-label"><label class="s3-title" for="cfg-uptime-failures">Failed checks for an outage</label><span class="s3-desc">In a row. Lower is quicker to alert, higher ignores short hiccups.</span></span>
+                  <span class="s3-ctl"><input class="input" id="cfg-uptime-failures" type="number" min="1" max="20" step="1" placeholder="2" /></span>
                 </div>
                 <div class="s3-row">
                   <span class="s3-label"><label class="s3-title" for="cfg-uptime-path">Path</label><span class="s3-desc">Leave empty to use the path of the startup check.</span></span>
@@ -865,6 +874,9 @@
     </div>
 
     <footer class="vp-foot">
+      <button type="button" class="btn btn-ghost" id="vp-import" title="Fill all four pages from a JSON file, everything except the logo">Import file</button>
+      <button type="button" class="btn btn-ghost" id="vp-example" title="Download an example file to give to an AI">Example file</button>
+      <input type="file" id="vp-import-file" accept="application/json,.json" hidden>
       <span class="vp-dirty" id="vp-dirty"></span>
       <button type="button" class="btn" id="vp-cancel">Cancel</button>
       <button type="button" class="btn btn-primary" id="vp-save">Save pages</button>

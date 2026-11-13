@@ -9,7 +9,7 @@ from workers import autoscaler as scaler
 def _app(**kw):
     base = dict(id=1, autoscale_min_instances=1, autoscale_max_instances=10, autoscale_cpu_target=40.0,
                 autoscale_memory_target_mb=None, autoscale_up_seconds=60, autoscale_down_minutes=5,
-                autoscale_max_step_up=None, autoscale_max_step_down=None)
+                autoscale_max_step_up=None, autoscale_max_step_down=None, autoscale_cooldown_seconds=None)
     return types.SimpleNamespace(**{**base, **kw})
 
 
@@ -58,7 +58,9 @@ def test_new_instances_are_spread_and_remote_ones_go_first():
 def test_the_settings_are_kept_within_their_limits():
     assert autoscale.clean("autoscale_cpu_target", 200) == 95
     assert autoscale.clean("autoscale_down_minutes", 0) == 1
-    assert autoscale.clean("autoscale_up_seconds", 5) == 30
+    assert autoscale.clean("autoscale_up_seconds", 1) == 5               # fast: a window of a few seconds is allowed
+    assert autoscale.clean("autoscale_cooldown_seconds", 0) is None      # as long as the scale up window
+    assert autoscale.clean("autoscale_cooldown_seconds", 10) == 10
     assert autoscale.clean("autoscale_memory_target_mb", 0) is None      # off
     assert autoscale.clean("autoscale_max_step_up", 0) is None           # no limit
     assert autoscale.clean("autoscale_max_step_down", 3.7) == 3
@@ -152,3 +154,18 @@ def test_an_idle_app_is_scaled_down_in_one_action(client, monkeypatch):
             return ids
     ids = asyncio.run(go())
     assert actions == [(10, sorted(ids, reverse=True)[:9])]          # newest first, the oldest one stays
+
+
+def test_the_pause_after_an_action_is_its_own_setting_or_the_scale_up_window():
+    assert scaler.settings(_app())["cooldown_seconds"] == 60
+    assert scaler.settings(_app(autoscale_up_seconds=10))["cooldown_seconds"] == 10
+    assert scaler.settings(_app(autoscale_cooldown_seconds=5))["cooldown_seconds"] == 5
+
+
+def test_a_short_window_needs_only_the_samples_that_fit_in_it(monkeypatch):
+    import time
+    now = time.time() * 1000
+    frames = [{"cpu_percent": 90.0, "memory_mb": 10, "timestamp": now - 2000}]
+    monkeypatch.setattr(scaler.pm, "get_recent_stats", lambda app_id: frames)
+    assert scaler.recent_average(1, 5) == (90.0, 10)         # one sample in 5 s is enough
+    assert scaler.recent_average(1, 60) is None              # a minute needs a minute of them

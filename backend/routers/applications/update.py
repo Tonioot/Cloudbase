@@ -128,6 +128,8 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.uptime_expect = health_app.clean_expect(req.uptime_expect)
     if req.uptime_interval_seconds is not None:
         app.uptime_interval_seconds = apps_uptime.clean_interval(req.uptime_interval_seconds)
+    if req.uptime_failures is not None:
+        app.uptime_failures = apps_uptime.clean_failures(req.uptime_failures)
     if req.show_on_status_page is not None:
         app.show_on_status_page = bool(req.show_on_status_page)
     if req.health_path is not None:

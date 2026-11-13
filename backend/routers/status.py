@@ -45,7 +45,7 @@ async def public_status():
                                  .order_by(Application.name))).scalars().all()
         items = []
         for app in apps:
-            data = await apps_uptime.summary(db, app.id)
+            data = await apps_uptime.summary(db, app.id, needed=app.uptime_failures or apps_uptime.FAILURES_FOR_OUTAGE)
             items.append({"name": app.name, "status": apps_uptime.state_of(app, app.id in running, data["last_check"]), **data})
     result = {"overall": overall_state([i["status"] for i in items]), "apps": items}
     _cache = (now, result)
@@ -56,5 +56,5 @@ async def public_status():
 async def app_uptime(app_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.view"))):
     app = await _get_or_404(app_id, db)
     running = await _running_app_ids(db)
-    data = await apps_uptime.summary(db, app_id)
+    data = await apps_uptime.summary(db, app_id, needed=app.uptime_failures or apps_uptime.FAILURES_FOR_OUTAGE)
     return {"status": apps_uptime.state_of(app, app_id in running, data["last_check"]), **data}
