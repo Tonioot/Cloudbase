@@ -8,6 +8,7 @@ from core import applog
 from dbs import links as db_links
 from nodes.registry import ensure_local_node
 from nodes import desired
+from apps import app_links
 from apps.git import _decrypt_github_token, _refresh_app_source_revision
 from apps.images import _image_port
 from apps.nginx_sync import _has_public_nginx_domain
@@ -128,8 +129,9 @@ async def _start_instance_runtime(
         return
     if source_revision is None:
         source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
-    await desired.start(db, node_id=instance_node.id, instance_id=instance.id,
-                        payload=_instance_payload(app, instance, env_vars, source_revision))
+    payload = _instance_payload(app, instance, env_vars, source_revision)
+    payload["docker_options"].update(await app_links.runtime_options(db, app))     # where the apps it links to are, who links to it
+    await desired.start(db, node_id=instance_node.id, instance_id=instance.id, payload=payload)
     instance.status = "starting"
     instance.substatus = None
     instance.last_error = None

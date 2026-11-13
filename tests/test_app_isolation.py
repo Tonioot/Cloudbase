@@ -19,9 +19,10 @@ class FakeNetwork:
         self.members: dict[str, "FakeContainer"] = {}
         self.attrs = {}
 
-    def connect(self, container):
+    def connect(self, container, aliases=None):
         self.members[container.name] = container
         container.networks.add(self.name)
+        container.aliases[self.name] = aliases
 
     def disconnect(self, container):
         self.members.pop(container.name, None)
@@ -37,7 +38,7 @@ class FakeNetwork:
 class FakeContainer:
     def __init__(self, name, networks=()):
         self.name, self.networks, self.started = name, set(networks), False
-        self.attrs = {}
+        self.attrs, self.aliases = {}, {}
 
     def reload(self):
         self.attrs = {"NetworkSettings": {"Networks": {n: {} for n in self.networks}}}
@@ -119,7 +120,7 @@ def test_an_app_joins_the_networks_of_its_databases_on_this_node_only(docker):
     docker.container_list["cloudbase-db-7"] = FakeContainer("cloudbase-db-7")
     kwargs = {}
     networks = cc._apply_linked_databases(docker, kwargs, {"linked_databases": [link(7), link(8, node_id=2)]})
-    assert networks == ["cloudbase-db-7"]                                  # database 8 runs elsewhere: reached over the node network
+    assert networks == [("cloudbase-db-7", [])]                                  # database 8 runs elsewhere: reached over the node network
     assert kwargs["environment"] == {"DB7_URL": "pg://db7", "DB8_URL": "pg://10.0.0.2:8"}
     assert "cloudbase-db-7" in docker.container_list["cloudbase-db-7"].networks      # the database is on it too
 
@@ -178,3 +179,37 @@ def test_the_old_shared_network_goes_when_only_databases_are_left_on_it(docker):
     cc.retire_legacy_network(docker)
     assert legacy.name not in docker.network_list
     assert database.networks == {"cloudbase-db-7"}                         # the database kept a network of its own
+
+
+# ── links between apps ────────────────────────────────────────────────────────
+def app_link(targets, link_id=5, target=9):
+    return {"link_id": link_id, "env_var": "BACKEND_URL", "target_app_id": target, "alias": f"app-{target}", "port": 3000,
+            "network": f"cloudbase-link-{link_id}", "targets": targets}
+
+
+def test_an_app_reaches_a_target_on_its_own_node_by_name_over_a_private_network(docker):
+    kwargs = {}
+    networks = cc._apply_linked_databases(docker, kwargs, {"linked_apps": [app_link([{"node_id": 1, "port": 20001, "address": "10.0.0.1"}])]})
+    assert kwargs["environment"] == {"BACKEND_URL": "http://app-9:3000"}
+    assert networks == [("cloudbase-link-5", [])]
+    assert docker.network_list["cloudbase-link-5"].options["com.docker.network.bridge.name"] == "cbl5"
+
+
+def test_a_target_on_another_node_is_reached_at_the_address_its_node_publishes_it_on(docker):
+    targets = [{"node_id": 3, "port": 20003, "address": "10.0.0.3"}, {"node_id": 2, "port": 20002, "address": "10.0.0.2"}]
+    kwargs = {}
+    networks = cc._apply_linked_databases(docker, kwargs, {"linked_apps": [app_link(targets)]})
+    assert kwargs["environment"] == {"BACKEND_URL": "http://10.0.0.2:20002"}      # the same one every time: the lowest node
+    assert networks == []                                                          # no network shared with another machine
+
+
+def test_a_target_that_does_not_run_yet_is_reached_by_name_for_when_it_starts_here(docker):
+    kwargs = {}
+    networks = cc._apply_linked_databases(docker, kwargs, {"linked_apps": [app_link([])]})
+    assert kwargs["environment"] == {"BACKEND_URL": "http://app-9:3000"} and networks == [("cloudbase-link-5", [])]
+
+
+def test_a_target_joins_the_network_of_each_link_to_it_under_its_name(docker):
+    exposed = [{"network": "cloudbase-link-5", "alias": "app-9"}, {"network": "cloudbase-link-6", "alias": "app-9"}]
+    networks = cc._apply_linked_databases(docker, {}, {"exposed_to": exposed})
+    assert networks == [("cloudbase-link-5", ["app-9"]), ("cloudbase-link-6", ["app-9"])]

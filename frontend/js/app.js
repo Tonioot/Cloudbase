@@ -417,9 +417,9 @@ async function quickAction(action) {
 
 /* ─── Tabs ──────────────────────────────────────────────────────────────── */
 function initTabs() {
-  let tabs = ['runs', 'logs', 'stats', 'files', 'instances', 'deployments', 'settings', 'activity'];
+  let tabs = ['runs', 'logs', 'stats', 'files', 'connections', 'instances', 'deployments', 'settings', 'activity'];
   // A cron job has runs instead of instances and metrics; other apps have no runs
-  const hidden = app.cron ? ['instances', 'stats'] : ['runs'];
+  const hidden = app.cron ? ['instances', 'stats', 'connections'] : ['runs'];
   hidden.forEach(t => { document.getElementById(`tab-${t}`).style.display = 'none'; });
   if (app.cron) document.getElementById('tab-runs').style.display = '';
   tabs = tabs.filter(t => !hidden.includes(t));
@@ -467,11 +467,143 @@ function setupTab(t) {
   if (t === 'logs')      initLogs();
   if (t === 'stats')     initStats();
   if (t === 'files')     initFiles();
+  if (t === 'connections') initConnections();
   if (t === 'instances') initInstances();
   if (t === 'settings')  initSettings();
   if (t === 'deployments') initDeployments();
   if (t === 'activity')  initActivity();
   if (t === 'runs')      _runsTeardown = initRunsTab(APP_ID, { getApp: () => app, onChange: refreshApp });
+}
+
+/* ─── CONNECTIONS ───────────────────────────────────────────────────────── */
+let reservedEnv = new Set();      // variable names that a connection owns: the env list must not set them
+
+async function initConnections() {
+  document.getElementById('btn-add-connection').onclick = openConnectionDialog;
+  await renderConnections();
+}
+
+async function renderConnections() {
+  const wrap = document.getElementById('connections-wrap');
+  let c;
+  try { c = await api.getConnections(APP_ID); } catch (e) { wrap.innerHTML = `<div class="apps-empty">${escHtml(e.message)}</div>`; return; }
+  reservedEnv = new Set(c.reserved_env);
+  const row = (kind, l, detail) => `
+    <div class="db-list-row">
+      <div class="db-list-main">
+        <a href="${kind === 'database' ? '/database?id=' : '/app?id='}${l.target_id}" class="db-list-title">${escHtml(l.name)}</a>
+        ${detail ? `<span class="db-tag">${escHtml(detail)}</span>` : ''}
+        <code class="db-list-meta" title="Set by this connection; it cannot be changed in the environment variables">${escHtml(l.env_var_name)}</code>
+      </div>
+      <button type="button" class="btn btn-sm btn-ghost" data-remove="${kind}:${l.id}" data-perm="apps.configure">Remove</button>
+    </div>`;
+  const section = (title, rows, empty) => `
+    <section class="db-card"><div class="db-card-head"><h2>${title}</h2></div>
+      <div class="db-list">${rows.length ? rows.join('') : `<div class="db-list-empty">${empty}</div>`}</div></section>`;
+  wrap.innerHTML =
+    section('Databases', c.databases.map(l => row('database', l, l.engine)), 'No databases connected.') +
+    section('Apps this app calls', c.apps.map(l => row('app', l, '')), 'No apps connected.') +
+    section('Apps that call this app', c.used_by.map(l => `
+      <div class="db-list-row"><div class="db-list-main"><a href="/app?id=${l.app_id}" class="db-list-title">${escHtml(l.name)}</a></div></div>`),
+      "No app calls this one. Open that app's Connections tab to connect it.");
+  wrap.querySelectorAll('[data-remove]').forEach(btn => {
+    btn.onclick = async () => {
+      const [kind, id] = btn.dataset.remove.split(':');
+      const ok = await confirm('Remove this connection?', 'The app no longer gets the address, and it can no longer reach the other one. This applies after a restart.');
+      if (!ok) return;
+      try {
+        const done = await api.removeConnection(APP_ID, kind, parseInt(id, 10));
+        toast('Connection removed');
+        await offerRestart(done.restart);
+        renderConnections();
+      } catch (e) { toast(e.message, 'error'); }
+    };
+  });
+  if (!_canManageApps()) wrap.querySelectorAll('[data-perm]').forEach(b => { b.style.display = 'none'; });
+}
+
+/** A connection only takes effect when the apps start again: offer it, never do it unasked. */
+async function offerRestart(ids) {
+  if (!ids || !ids.length) return;
+  const ok = await confirm('Restart now to apply?',
+    `${ids.length === 1 ? 'The app restarts' : 'Both apps restart'} (a few seconds of downtime). Or restart ${ids.length === 1 ? 'it' : 'them'} yourself later.`);
+  if (!ok) return;
+  for (const id of ids) {
+    try { await api.restart(id); } catch (e) { toast(e.message, 'error'); }
+  }
+  toast('Restarting');
+}
+
+async function openConnectionDialog() {
+  let options;
+  try { options = await api.getConnectionOptions(APP_ID); } catch (e) { toast(e.message, 'error'); return; }
+  if (!options.databases.length && !options.apps.length) { toast('Nothing left to connect to'); return; }
+  const kinds = [options.databases.length && 'database', options.apps.length && 'app'].filter(Boolean);
+  const backdrop = document.createElement('div');
+  backdrop.className = 'dialog-backdrop';
+  backdrop.innerHTML = `
+    <div class="dialog dialog-modern form-dialog" role="dialog" aria-modal="true" aria-labelledby="conn-dlg-title">
+      <div class="dialog-title" id="conn-dlg-title">Add connection</div>
+      <div class="dialog-body">
+        <div class="field" style="margin:0">
+          <label class="field-label" for="conn-kind">Connect to</label>
+          <select id="conn-kind" class="input">${kinds.map(k => `<option value="${k}">${k === 'database' ? 'A database' : 'An app'}</option>`).join('')}</select>
+        </div>
+        <div class="field" style="margin:0">
+          <label class="field-label" for="conn-target">Which one</label>
+          <select id="conn-target" class="input"></select>
+        </div>
+        <div class="field" style="margin:0">
+          <label class="field-label" for="conn-env">Environment variable</label>
+          <input id="conn-env" class="input input-mono" spellcheck="false" autocomplete="off" />
+          <div class="field-hint">This app gets the address in this variable. Nothing else can change it.</div>
+        </div>
+        <div class="field-hint" id="conn-error" style="color:var(--red);display:none;margin:0"></div>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn" id="conn-cancel">Cancel</button>
+        <button class="btn btn-primary" id="conn-ok">Connect</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  const kindEl = backdrop.querySelector('#conn-kind'), targetEl = backdrop.querySelector('#conn-target'), envEl = backdrop.querySelector('#conn-env');
+  const list = () => (kindEl.value === 'database' ? options.databases : options.apps);
+  const fillEnv = () => { envEl.value = (list().find(t => String(t.id) === targetEl.value) || {}).default_env_var || ''; };
+  const fillTargets = () => {
+    targetEl.innerHTML = list().map(t => `<option value="${t.id}">${escHtml(t.name)}</option>`).join('');
+    fillEnv();
+  };
+  kindEl.onchange = fillTargets;
+  targetEl.onchange = fillEnv;
+  fillTargets();
+  const close = () => backdrop.remove();
+  backdrop.querySelector('#conn-cancel').onclick = close;
+  backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
+  backdrop.querySelector('#conn-ok').onclick = async () => {
+    const errEl = backdrop.querySelector('#conn-error');
+    const body = { kind: kindEl.value, target_id: parseInt(targetEl.value, 10), env_var_name: envEl.value.trim().toUpperCase() };
+    try {
+      let done;
+      try {
+        done = await api.addConnection(APP_ID, body);
+      } catch (e) {
+        if (!/already sets/.test(e.message)) throw e;
+        // The app has its own variable of that name: replace it only when the user says so
+        const ok = await confirm(`Replace ${escHtml(body.env_var_name)}?`,
+          `This app sets <code>${escHtml(body.env_var_name)}</code> itself. The connection takes its place and the old value is removed.`);
+        if (!ok) return;
+        done = await api.addConnection(APP_ID, { ...body, replace_env: true });
+      }
+      close();
+      toast('Connected');
+      try { app = await api.getApp(APP_ID); } catch {}
+      await offerRestart(done.restart);
+      renderConnections();
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.style.display = '';
+    }
+  };
 }
 
 /* ─── LOGS ──────────────────────────────────────────────────────────────── */
@@ -1572,6 +1704,15 @@ function initSettings() {
   const envContainer = document.getElementById('cfg-env-rows');
   envContainer.innerHTML = '';
   Object.keys(app.env_vars || {}).forEach(k => addEnvRow(envContainer, k, ''));
+  api.getConnections(APP_ID).then(c => {
+    reservedEnv = new Set(c.reserved_env);
+    const note = document.getElementById('cfg-env-managed');
+    if (note) {
+      note.style.display = c.reserved_env.length ? '' : 'none';
+      note.innerHTML = `Set by connections, so not editable here: ${c.reserved_env.map(k => `<code>${escHtml(k)}</code>`).join(', ')} (see the Connections tab).`;
+    }
+    envContainer.querySelectorAll('.env-row').forEach(r => { if (reservedEnv.has(r.querySelector('[data-env-key]').value.trim())) r.remove(); });
+  }).catch(() => {});
 
   const updateEnvCount = () => {
     const n = envContainer.querySelectorAll('.env-row').length;
@@ -1592,6 +1733,10 @@ function initSettings() {
     if (text == null) return;
     const vars = parseDotEnv(text);
     if (!Object.keys(vars).length) { toast('No variables found in that file', 'warn'); return; }
+    const skipped = Object.keys(vars).filter(k => reservedEnv.has(k));
+    skipped.forEach(k => delete vars[k]);        // a connection owns these: the file must not overwrite them
+    if (skipped.length) toast(`Not imported, set by a connection: ${skipped.join(', ')}`, 'warn');
+    if (!Object.keys(vars).length) return;
     const { added, updated } = mergeEnvIntoRows(envContainer, vars, (k, v) => addEnvRow(envContainer, k, v));
     updateEnvCount();
     toast(`Imported ${added + updated} variable(s): ${added} new, ${updated} updated. Click Save to apply.`, 'success');

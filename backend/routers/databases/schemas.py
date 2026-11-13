@@ -28,3 +28,4 @@ class PublicAccessRequest(BaseModel):
 class LinkRequest(BaseModel):
     app_id: int
     env_var_name: Optional[str] = Field(default=None, max_length=100)
+    replace_env: Optional[bool] = None       # the app sets that name itself: let the link take its place

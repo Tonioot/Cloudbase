@@ -117,6 +117,7 @@
         <button class="tab-btn" id="tab-deployments">Deployments</button>
         <button class="tab-btn" id="tab-stats">Metrics</button>
         <button class="tab-btn" id="tab-files">Files</button>
+        <button class="tab-btn" id="tab-connections">Connections</button>
         <button class="tab-btn" id="tab-settings">Settings</button>
         <button class="tab-btn" id="tab-activity">Activity</button>
       </nav>
@@ -443,6 +444,7 @@
               <header class="sv2-head"><h3>Environment variables</h3><p>Available to the app at runtime and to the build command.</p></header>
               <div class="s3-card">
                 <div class="s3-note" id="cfg-env-static-hint" style="display:none">Static sites have no server process — these variables are only used by the build command (e.g. <code>VITE_*</code>, <code>NEXT_PUBLIC_*</code>).</div>
+                <div class="s3-note" id="cfg-env-managed" style="display:none"></div>
                 <div id="cfg-env-rows" class="env-rows-scroll s3-env"></div>
                 <div class="s3-foot env-actions">
                   <button class="btn btn-sm" id="cfg-add-env">Add variable</button>
@@ -665,6 +667,20 @@
           </div>
         </div>
       </div><!-- /panel-settings -->
+
+      <!-- CONNECTIONS -->
+      <div class="tab-panel" id="panel-connections">
+        <div class="settings-panel">
+          <div class="settings-bar">
+            <span class="settings-bar-title">Connections</span>
+            <button class="btn btn-sm" id="btn-add-connection" data-perm="apps.configure">Add connection</button>
+          </div>
+          <div class="settings-content">
+            <p class="db-card-foot" style="margin:0 0 12px">Apps cannot reach each other or each other's databases unless you connect them here. A connection gives the app the address as an environment variable that nothing else can overwrite, and opens a private route between just these two.</p>
+            <div id="connections-wrap"><div class="apps-empty">Loading…</div></div>
+          </div>
+        </div>
+      </div><!-- /panel-connections -->
 
       <!-- INSTANCES -->
       <div class="tab-panel" id="panel-instances">

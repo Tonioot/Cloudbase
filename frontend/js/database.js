@@ -925,7 +925,7 @@ async function openLinkDialog() {
         <div class="field" style="margin:0">
           <label class="field-label" for="link-env">Environment variable</label>
           <input id="link-env" class="input input-mono" value="${esc(database.default_env_var)}" spellcheck="false" autocomplete="off" />
-          <div class="field-hint">Instances on <strong>${esc(database.node_name || 'the same node')}</strong> connect directly; instances on other nodes go through the primary.</div>
+          <div class="field-hint">Instances on <strong>${esc(database.node_name || 'the same node')}</strong> connect directly and privately; instances on other nodes connect over the node network. Nothing else can overwrite this variable.</div>
         </div>
         <div class="field-hint" id="link-error" style="color:var(--red);display:none;margin:0"></div>
       </div>
@@ -943,7 +943,16 @@ async function openLinkDialog() {
     const envVar = backdrop.querySelector('#link-env').value.trim().toUpperCase();
     const errEl = backdrop.querySelector('#link-error');
     try {
-      await api.linkDatabase(DB_ID, appId, envVar);
+      try {
+        await api.linkDatabase(DB_ID, appId, envVar);
+      } catch (e) {
+        if (!/already sets/.test(e.message)) throw e;
+        // The app has its own variable of that name: replace it only when the user says so
+        const ok = await confirm(`Replace ${esc(envVar)}?`,
+          `That app sets <code>${esc(envVar)}</code> itself. The link takes its place and the old value is removed.`);
+        if (!ok) return;
+        await api.linkDatabase(DB_ID, appId, envVar, true);
+      }
       close();
       const app = candidates.find(a => a.id === appId);
       toast(`Linked. Restart ${app ? app.name : 'the app'} to apply.`);

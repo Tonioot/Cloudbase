@@ -14,8 +14,10 @@ from routers.applications import scale
 from routers.applications import deploys
 from routers.applications import maintenance
 from routers.applications import webhook
+from routers.applications import connections
 
 router = APIRouter()
+router.include_router(connections.router)
 router.include_router(crud.router)
 router.include_router(create.router)
 router.include_router(update.router)

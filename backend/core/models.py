@@ -409,6 +409,20 @@ class DatabaseLink(Base):
     created_at   = Column(DateTime, default=datetime.utcnow)
 
 
+class AppLink(Base):
+    """An app reaches another app privately: the address of the target as an environment variable, and a network
+    that only these two share. One direction: the target does not get to call back unless it has a link of its own."""
+    __tablename__ = "app_links"
+    __table_args__ = (UniqueConstraint("app_id", "env_var_name", name="uq_app_links_app_env"),
+                      UniqueConstraint("app_id", "target_app_id", name="uq_app_links_pair"))
+
+    id            = Column(Integer, primary_key=True, index=True)
+    app_id        = Column(Integer, ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    target_app_id = Column(Integer, ForeignKey("applications.id", ondelete="CASCADE"), nullable=False, index=True)
+    env_var_name  = Column(String(100), nullable=False)
+    created_at    = Column(DateTime, default=datetime.utcnow)
+
+
 class NotificationChannel(Base):
     """Somewhere notifications are sent: Slack, PagerDuty, e-mail, a webhook…"""
     __tablename__ = "notification_channels"

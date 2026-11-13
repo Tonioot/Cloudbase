@@ -1,4 +1,5 @@
 DELETE  /api/apps/{app_id}
+DELETE  /api/apps/{app_id}/connections/{kind}/{link_id}
 DELETE  /api/apps/{app_id}/instances/{instance_id}
 DELETE  /api/apps/{app_id}/webhook
 DELETE  /api/databases/{database_id}
@@ -17,6 +18,8 @@ GET     /api/apps/{app_id}
 GET     /api/apps/{app_id}/branches
 GET     /api/apps/{app_id}/cloudbase-logs
 GET     /api/apps/{app_id}/commits
+GET     /api/apps/{app_id}/connections
+GET     /api/apps/{app_id}/connections/options
 GET     /api/apps/{app_id}/cron/runs
 GET     /api/apps/{app_id}/cron/runs/{run_id}
 GET     /api/apps/{app_id}/deployments
@@ -96,6 +99,7 @@ POST    /api/apps
 POST    /api/apps/check-repo
 POST    /api/apps/cron/preview
 POST    /api/apps/{app_id}/check-repo
+POST    /api/apps/{app_id}/connections
 POST    /api/apps/{app_id}/cron/pause
 POST    /api/apps/{app_id}/cron/resume
 POST    /api/apps/{app_id}/cron/run

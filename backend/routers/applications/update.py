@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import re
-from apps import autoscale
+from apps import app_links, autoscale
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
@@ -86,6 +86,12 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.docker_tmpfs_size_mb = req.docker_tmpfs_size_mb
     if req.env_vars is not None or req.env_var_keys is not None:
         existing = decrypt_env(app.env_vars or "")
+        reserved = await app_links.reserved_env_names(db, app.id)
+        clash = sorted(k for k in (req.env_vars or {}) if k in reserved)
+        if clash:
+            raise HTTPException(409, f"{', '.join(clash)} {'is' if len(clash) == 1 else 'are'} managed by a connection "
+                                     "(Connections tab). Remove the connection first, or use another name.")
+        existing = {k: v for k, v in existing.items() if k not in reserved}     # the connection wins; nothing to keep
         if req.env_var_keys is not None:
             # Keep only keys that are still present in the UI
             existing = {k: v for k, v in existing.items() if k in req.env_var_keys}
