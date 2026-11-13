@@ -14,7 +14,6 @@ import os
 import signal
 import subprocess
 import threading
-from typing import Optional
 
 from core import paths
 
