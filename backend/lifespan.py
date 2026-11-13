@@ -21,6 +21,7 @@ from notify import watch as notify_watch
 from dbs import backup_scheduler as dbs_backup_scheduler
 from dbs import workers as dbs_workers
 from workers.autoscaler import _autoscaler
+from workers.failover import _failover
 from containers.cleanup import cleanup_forever
 from nodes import local as nodes_local
 from workers.demo import _dev_demo_logs
@@ -62,6 +63,7 @@ async def _start_panel_tasks() -> list[asyncio.Task]:
         asyncio.create_task(_mesh_monitor()),
         asyncio.create_task(_stats_history_writer()),
         asyncio.create_task(_autoscaler()),
+        asyncio.create_task(_failover()),
         asyncio.create_task(cleanup_forever()),
         asyncio.create_task(_overview_sampler()),
         asyncio.create_task(workers_autodeploy.auto_deploy_loop()),
