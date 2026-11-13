@@ -91,8 +91,8 @@ def stop(database_id: int) -> dict:
 def restart(spec: dict) -> dict:
     client = _client()
     container = _get_container(client, int(spec["database_id"]))
-    if container is None:
-        return ensure_running(spec)
+    if container is None or _publishes_elsewhere(container, int(spec["database_id"])):
+        return ensure_running(spec)       # replaces a container that publishes on the wrong address
     container.restart(timeout=STOP_TIMEOUT_SECONDS)
     return {"container_id": container.id, "state": _container_state(container)}
 

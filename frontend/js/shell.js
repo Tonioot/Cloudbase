@@ -274,7 +274,7 @@ export function updateIndex(apps, nodes, databases, fromCache = false) {
       ? index.nodes.map(n => `
           <a class="menu-item${section === 'nodes' && n.id === currentId ? ' active' : ''}" href="/node?id=${n.id}">
             <span class="dot" style="background:${statusColor(n.status)}"></span>
-            <span class="menu-item-label">${esc(n.is_local ? 'primary' : n.name)}</span>
+            <span class="menu-item-label">${esc(n.is_local ? 'Primary' : n.name)}</span>
             <span class="menu-item-meta">${esc(n.is_local ? 'local' : n.status || '')}</span>
           </a>`).join('')
       : '<div class="flyout-empty">No nodes</div>';
@@ -309,7 +309,7 @@ function paletteCommands() {
     cmds.push({ group: 'Databases', label: d.name, dot: statusColor(d.status), meta: `${d.engine_label} ${d.version}`, run: go(`/database?id=${d.id}`), keywords: d.engine });
   }
   for (const n of index.nodes) {
-    cmds.push({ group: 'Nodes', label: n.is_local ? 'primary' : n.name, dot: statusColor(n.status), meta: n.status || '', run: go(`/node?id=${n.id}`), keywords: n.public_host || '' });
+    cmds.push({ group: 'Nodes', label: n.is_local ? 'Primary' : n.name, dot: statusColor(n.status), meta: n.status || '', run: go(`/node?id=${n.id}`), keywords: n.public_host || '' });
   }
   const tail = [
     ['btn-domain-ssl', 'Domain & SSL', ICONS.globe, 'nginx ssl certificate subdomain'],
