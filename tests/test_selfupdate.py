@@ -138,3 +138,17 @@ def test_a_node_reports_what_it_runs():
     from agent.registration import _build_capabilities
     caps = _build_capabilities()
     assert "code_commit" in caps and "code_version" in caps
+
+
+def test_an_update_leaves_with_the_exit_code_that_makes_systemd_start_the_service_again(monkeypatch):
+    """Not through atexit: uvicorn ends the process with SIGTERM, so no exit handler runs and systemd sees a clean stop."""
+    exits = []
+    monkeypatch.setattr(selfupdate.os, "_exit", lambda code: exits.append(code))
+    monkeypatch.setattr(selfupdate, "restart_requested", False)
+    selfupdate.exit_if_restarting()
+    assert exits == []                                          # an ordinary stop stays a stop
+    monkeypatch.setattr(selfupdate.threading, "Timer", lambda *a, **k: type("T", (), {"start": lambda s: None, "daemon": False})())
+    selfupdate.restart_soon(graceful=True)
+    assert selfupdate.restart_requested
+    selfupdate.exit_if_restarting()
+    assert exits == [selfupdate.RESTART_EXIT_CODE]

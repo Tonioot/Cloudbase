@@ -8,7 +8,6 @@ installs the Python dependencies before it starts.
 What needs root stays with the installer: system packages, nginx, the service file and the root-owned helpers.
 When the new version changes any of those (see SYSTEM_PATHS) nothing is touched and the answer says to run
 `cloudbase update` on that server instead, so a server is never left half updated."""
-import atexit
 import functools
 import os
 import signal
@@ -22,6 +21,9 @@ SYSTEM_PATHS = ("install.sh", "scripts/cloudbase-", "scripts/setup-")
 
 RESTART_EXIT_CODE = 75      # any non-zero exit makes systemd start the service again
 FETCH_TIMEOUT = 180
+FORCE_EXIT_SECONDS = 30     # the panel gets this long to finish its requests before it is cut off
+
+restart_requested = False
 
 
 def _git(*args: str, timeout: int = 30) -> subprocess.CompletedProcess:
@@ -100,14 +102,25 @@ def update() -> dict:
 def restart_soon(graceful: bool, delay: float = 3.0) -> None:
     """Exit with a non-zero code after `delay` seconds, so systemd starts the service again.
 
-    The panel (graceful) is stopped with SIGTERM, so uvicorn finishes its requests, and exits non-zero afterwards;
-    the node agent has nothing to finish and exits at once. Containers keep running: Docker owns them."""
+    The panel (graceful) is stopped with SIGTERM, so uvicorn finishes its requests, and the lifespan then calls
+    exit_if_restarting(). It cannot be done at exit: uvicorn sends SIGTERM to itself once it has stopped, the process
+    then dies of that signal, no exit handler runs and systemd counts it as a clean stop (no restart). The node agent
+    has nothing to finish and exits at once. Containers keep running: Docker owns them."""
+    global restart_requested
+
     def go():
         if graceful:
-            atexit.register(os._exit, RESTART_EXIT_CODE)
+            threading.Timer(FORCE_EXIT_SECONDS, os._exit, args=(RESTART_EXIT_CODE,)).start()   # if it hangs while stopping
             os.kill(os.getpid(), signal.SIGTERM)
         else:
             os._exit(RESTART_EXIT_CODE)
+    restart_requested = True
     timer = threading.Timer(delay, go)
     timer.daemon = True
     timer.start()
+
+
+def exit_if_restarting() -> None:
+    """The panel has stopped: when this was an update, leave with the code that makes systemd start it again."""
+    if restart_requested:
+        os._exit(RESTART_EXIT_CODE)

@@ -9,7 +9,7 @@ from fastapi import FastAPI
 
 from workers import autodeploy as workers_autodeploy
 from containers import processes as pm
-from core import auth, loopwatch
+from core import auth, loopwatch, selfupdate
 from core import system_config as _syscfg
 from core.database import AsyncSessionLocal, init_db
 from core.runtime import IS_NODE
@@ -113,3 +113,4 @@ async def lifespan(app: FastAPI):
             await asyncio.wait_for(asyncio.shield(task), timeout=4.0)
         except (asyncio.CancelledError, asyncio.TimeoutError):
             pass
+    selfupdate.exit_if_restarting()
