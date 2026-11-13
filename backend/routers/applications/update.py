@@ -90,7 +90,7 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         clash = sorted(k for k in (req.env_vars or {}) if k in reserved)
         if clash:
             raise HTTPException(409, f"{', '.join(clash)} {'is' if len(clash) == 1 else 'are'} managed by a connection "
-                                     "(Connections tab). Remove the connection first, or use another name.")
+                                     "(Settings, Connections). Remove the connection first, or use another name.")
         existing = {k: v for k, v in existing.items() if k not in reserved}     # the connection wins; nothing to keep
         if req.env_var_keys is not None:
             # Keep only keys that are still present in the UI

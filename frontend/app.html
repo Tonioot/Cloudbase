@@ -117,7 +117,6 @@
         <button class="tab-btn" id="tab-deployments">Deployments</button>
         <button class="tab-btn" id="tab-stats">Metrics</button>
         <button class="tab-btn" id="tab-files">Files</button>
-        <button class="tab-btn" id="tab-connections">Connections</button>
         <button class="tab-btn" id="tab-settings">Settings</button>
         <button class="tab-btn" id="tab-activity">Activity</button>
       </nav>
@@ -454,6 +453,17 @@
               </div>
             </section>
 
+            <!-- Connections -->
+            <section class="settings-group sv2-sec" id="set-connections" data-nav="Connections" data-icon="link" data-nosave>
+              <header class="sv2-head"><h3>Connections</h3><p>Apps cannot reach each other or each other's databases unless you connect them here. A connection gives this app the address in a variable that nothing else can overwrite, and opens a private route between just these two.</p></header>
+              <div class="s3-card">
+                <div id="connections-wrap"><div class="apps-empty">Loading…</div></div>
+                <div class="s3-foot env-actions">
+                  <button class="btn btn-sm" id="btn-add-connection" data-perm="apps.configure">Add connection</button>
+                </div>
+              </div>
+            </section>
+
             <!-- Resources -->
             <section class="settings-group sv2-sec" id="docker-runtime-section" data-nav="Resources" data-icon="cpu">
               <header class="sv2-head"><h3>Resources</h3><p>Limits per instance. Instances you add can override them.</p></header>
@@ -667,20 +677,6 @@
           </div>
         </div>
       </div><!-- /panel-settings -->
-
-      <!-- CONNECTIONS -->
-      <div class="tab-panel" id="panel-connections">
-        <div class="settings-panel">
-          <div class="settings-bar">
-            <span class="settings-bar-title">Connections</span>
-            <button class="btn btn-sm" id="btn-add-connection" data-perm="apps.configure">Add connection</button>
-          </div>
-          <div class="settings-content">
-            <p class="db-card-foot" style="margin:0 0 12px">Apps cannot reach each other or each other's databases unless you connect them here. A connection gives the app the address as an environment variable that nothing else can overwrite, and opens a private route between just these two.</p>
-            <div id="connections-wrap"><div class="apps-empty">Loading…</div></div>
-          </div>
-        </div>
-      </div><!-- /panel-connections -->
 
       <!-- INSTANCES -->
       <div class="tab-panel" id="panel-instances">

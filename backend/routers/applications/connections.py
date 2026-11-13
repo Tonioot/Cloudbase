@@ -1,4 +1,4 @@
-"""The Connections tab of an app: everything it is linked to (databases and other apps) in one place, and what is
+"""The Connections section in the Settings of an app: everything it is linked to (databases and other apps) in one place, and what is
 linked to it. A connection owns its environment variable: the app cannot set that name itself (see update.py)."""
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field

@@ -53,6 +53,7 @@ function _updateAppTypeVisibility(app) {
 
   // Cron jobs: no instances to keep running — runs instead of restart/boot/autoscale
   if (el('set-schedule'))        el('set-schedule').style.display = isCron ? '' : 'none';
+  if (el('set-connections'))     el('set-connections').style.display = isCron ? 'none' : '';     // a cron job's runs get no addresses
   if (el('cfg-restart-row'))     el('cfg-restart-row').style.display = isCron ? 'none' : '';
   if (el('set-autoscale'))       el('set-autoscale').style.display = isCron ? 'none' : '';
 
@@ -417,9 +418,9 @@ async function quickAction(action) {
 
 /* ─── Tabs ──────────────────────────────────────────────────────────────── */
 function initTabs() {
-  let tabs = ['runs', 'logs', 'stats', 'files', 'connections', 'instances', 'deployments', 'settings', 'activity'];
+  let tabs = ['runs', 'logs', 'stats', 'files', 'instances', 'deployments', 'settings', 'activity'];
   // A cron job has runs instead of instances and metrics; other apps have no runs
-  const hidden = app.cron ? ['instances', 'stats', 'connections'] : ['runs'];
+  const hidden = app.cron ? ['instances', 'stats'] : ['runs'];
   hidden.forEach(t => { document.getElementById(`tab-${t}`).style.display = 'none'; });
   if (app.cron) document.getElementById('tab-runs').style.display = '';
   tabs = tabs.filter(t => !hidden.includes(t));
@@ -467,7 +468,6 @@ function setupTab(t) {
   if (t === 'logs')      initLogs();
   if (t === 'stats')     initStats();
   if (t === 'files')     initFiles();
-  if (t === 'connections') initConnections();
   if (t === 'instances') initInstances();
   if (t === 'settings')  initSettings();
   if (t === 'deployments') initDeployments();
@@ -477,6 +477,18 @@ function setupTab(t) {
 
 /* ─── CONNECTIONS ───────────────────────────────────────────────────────── */
 let reservedEnv = new Set();      // variable names that a connection owns: the env list must not set them
+
+/** The environment variables list does not offer what a connection owns, and says where those are. */
+function showManagedEnv(names) {
+  const note = document.getElementById('cfg-env-managed');
+  if (note) {
+    note.style.display = names.length ? '' : 'none';
+    note.innerHTML = `Set by connections, so not editable here: ${names.map(k => `<code>${escHtml(k)}</code>`).join(', ')} (see Connections).`;
+  }
+  document.querySelectorAll('#cfg-env-rows .env-row').forEach(r => {
+    if (reservedEnv.has(r.querySelector('[data-env-key]').value.trim())) r.remove();
+  });
+}
 
 async function initConnections() {
   document.getElementById('btn-add-connection').onclick = openConnectionDialog;
@@ -488,6 +500,7 @@ async function renderConnections() {
   let c;
   try { c = await api.getConnections(APP_ID); } catch (e) { wrap.innerHTML = `<div class="apps-empty">${escHtml(e.message)}</div>`; return; }
   reservedEnv = new Set(c.reserved_env);
+  showManagedEnv(c.reserved_env);
   const row = (kind, l, detail) => `
     <div class="db-list-row">
       <div class="db-list-main">
@@ -498,14 +511,14 @@ async function renderConnections() {
       <button type="button" class="btn btn-sm btn-ghost" data-remove="${kind}:${l.id}" data-perm="apps.configure">Remove</button>
     </div>`;
   const section = (title, rows, empty) => `
-    <section class="db-card"><div class="db-card-head"><h2>${title}</h2></div>
-      <div class="db-list">${rows.length ? rows.join('') : `<div class="db-list-empty">${empty}</div>`}</div></section>`;
+    <h4 style="margin:14px 14px 2px;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${title}</h4>
+    <div class="db-list">${rows.length ? rows.join('') : `<div class="db-list-empty">${empty}</div>`}</div>`;
   wrap.innerHTML =
     section('Databases', c.databases.map(l => row('database', l, l.engine)), 'No databases connected.') +
     section('Apps this app calls', c.apps.map(l => row('app', l, '')), 'No apps connected.') +
     section('Apps that call this app', c.used_by.map(l => `
       <div class="db-list-row"><div class="db-list-main"><a href="/app?id=${l.app_id}" class="db-list-title">${escHtml(l.name)}</a></div></div>`),
-      "No app calls this one. Open that app's Connections tab to connect it.");
+      "No app calls this one. Connect it in that app's Settings, under Connections.");
   wrap.querySelectorAll('[data-remove]').forEach(btn => {
     btn.onclick = async () => {
       const [kind, id] = btn.dataset.remove.split(':');
@@ -1704,15 +1717,7 @@ function initSettings() {
   const envContainer = document.getElementById('cfg-env-rows');
   envContainer.innerHTML = '';
   Object.keys(app.env_vars || {}).forEach(k => addEnvRow(envContainer, k, ''));
-  api.getConnections(APP_ID).then(c => {
-    reservedEnv = new Set(c.reserved_env);
-    const note = document.getElementById('cfg-env-managed');
-    if (note) {
-      note.style.display = c.reserved_env.length ? '' : 'none';
-      note.innerHTML = `Set by connections, so not editable here: ${c.reserved_env.map(k => `<code>${escHtml(k)}</code>`).join(', ')} (see the Connections tab).`;
-    }
-    envContainer.querySelectorAll('.env-row').forEach(r => { if (reservedEnv.has(r.querySelector('[data-env-key]').value.trim())) r.remove(); });
-  }).catch(() => {});
+  initConnections();      // fills the Connections section, and hides what connections own from the list above
 
   const updateEnvCount = () => {
     const n = envContainer.querySelectorAll('.env-row').length;
@@ -1841,6 +1846,7 @@ const _SETTINGS_ICONS = {
   hammer: '<path d="m15 12-8.4 8.4a2.1 2.1 0 0 1-3-3L12 9"/><path d="M17.6 15 22 10.6M20.9 11.6l-1.2-1.2a2 2 0 0 1-.6-1.4v-.9L16.3 5.3A5.6 5.6 0 0 0 12.4 3.6H9l.9.8A6.2 6.2 0 0 1 12 9l2 2h1.3a2 2 0 0 1 1.4.6l1.2 1.2"/>',
   rocket: '<path d="M4.5 16.5c-1.5 1.3-2 5-2 5s3.7-.5 5-2c.7-.8.7-2.1-.1-2.9a2.2 2.2 0 0 0-2.9-.1z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.9A12.9 12.9 0 0 1 22 2c0 2.7-.8 7.5-6 11a22.4 22.4 0 0 1-4 2z"/><path d="M9 12H4s.6-3 2-4c1.6-1.1 5 0 5 0M12 15v5s3-.6 4-2c1.1-1.6 0-5 0-5"/>',
   globe:  '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+  link:   '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
   key:    '<circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3M17 6l3 3M14.5 8.5l2 2"/>',
   cpu:    '<rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>',
   layout: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/>',
