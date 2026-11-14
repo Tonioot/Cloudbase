@@ -78,6 +78,7 @@ export async function initNodePage() {
     document.getElementById('btn-refresh-logs').onclick = () => (activeTab === 'log' ? loadLogs() : loadHistory());
     document.getElementById('btn-docker-cleanup').onclick = cleanupDocker;
     document.getElementById('btn-update').onclick = updateCloudbase;
+    document.getElementById('btn-restart').onclick = restartNode;
     markIfBehind();
     initTabs();
 
@@ -767,6 +768,30 @@ async function waitForPanel(installing = false) {
         await new Promise(r => setTimeout(r, 2000));
     }
     location.reload();
+}
+
+async function restartNode() {
+    const btn = document.getElementById('btn-restart');
+    const what = node.is_local
+        ? 'This restarts <strong>the server the panel runs on</strong>. The panel and everything on it is unavailable for a minute or two; apps start again by themselves.'
+        : `This restarts the server <strong>${escHtml(node.name)}</strong>. Its instances are offline for a minute or two and start again by themselves.`;
+    if (!(await confirm('Restart node', what))) return;
+    btn.disabled = true;
+    btn.innerHTML = `${spinner} Restarting…`;
+    try {
+        const r = await api.restartNode(NODE_ID);
+        if (r.status === 'restarting') {
+            toast(`${node.name} is restarting…`);
+            if (node.is_local) { waitForPanel(true); return; }
+            setTimeout(refreshNode, 20000);
+        } else {
+            toast(r.message || 'The node did not restart', 'error');
+        }
+    } catch (e) {
+        toast(e.message, 'error');
+    }
+    btn.disabled = false;
+    btn.textContent = 'Restart node';
 }
 
 async function updateCloudbase() {

@@ -582,6 +582,13 @@ step_update_helper() {
   fi
 }
 
+step_power() {
+  # The restart button, and read access to the power counters (see scripts/setup-power.sh)
+  if ! bash "$INSTALL_DIR/scripts/setup-power.sh" "$RUN_USER"; then
+    add_warning "The power setup failed, so 'Restart node' and the power use reading are unavailable. Run: sudo bash $INSTALL_DIR/scripts/setup-power.sh $RUN_USER"
+  fi
+}
+
 step_code() {
   if [[ -d "$INSTALL_DIR/.git" ]]; then
     chown -R "$RUN_USER": "$INSTALL_DIR"
@@ -775,6 +782,7 @@ else
 fi
 add_step "Setting up the node network" step_wireguard
 add_step "Setting up updates from the panel" step_update_helper
+add_step "Setting up restart and power readings" step_power
 add_step "Starting Cloudbase" step_service
 run_steps
 

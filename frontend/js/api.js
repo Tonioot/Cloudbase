@@ -70,6 +70,7 @@ export const api = {
   pingNode:(nodeId) => request('POST', `/nodes/${nodeId}/ping`),
   getNodeWorkloads:(nodeId) => request('GET', `/nodes/${nodeId}/workloads`),
   updateNodeCloudbase:(nodeId) => request('POST', `/nodes/${nodeId}/update`),
+  restartNode:(nodeId) => request('POST', `/nodes/${nodeId}/restart`),
   cleanupNodeDocker:(nodeId) => request('POST', `/nodes/${nodeId}/docker-cleanup`),
   getNodeMetricsHistory:(nodeId, hours = 1) => request('GET', `/nodes/${nodeId}/metrics/history?hours=${hours}`),
   getNodeAgentLogs:(nodeId, limit) => request('GET', `/nodes/${nodeId}/agent-logs?limit=${limit || 200}`),

@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Root helper that restarts this server for Cloudbase ("Restart node" on the node's page). Installed by
+# scripts/setup-power.sh to /usr/local/lib/cloudbase/power; the service account may run it through sudo
+# and nothing else as root.
+#
+#   power check     exit 0 when this helper can run
+#   power reboot    restart the server in a few seconds (so the answer can still be sent first)
+set -euo pipefail
+
+[[ $EUID -eq 0 ]] || { echo "must run as root" >&2; exit 1; }
+command -v systemctl &>/dev/null || { echo "systemctl is missing" >&2; exit 1; }
+
+case "${1:-}" in
+  check)
+    ;;
+  reboot)
+    systemd-run --quiet --on-active=3s --unit=cloudbase-reboot --collect systemctl reboot
+    echo "restarting"
+    ;;
+  *)
+    echo "usage: power check | power reboot" >&2
+    exit 2
+    ;;
+esac

@@ -166,6 +166,23 @@ async def update_cloudbase(
     return res
 
 
+@router.post("/{node_id}/restart")
+async def restart_node(
+    node_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(_auth.require_permission("nodes.configure")),
+    actor: str = Depends(_auth.get_current_actor),
+):
+    """Restart the server of this node. For the primary that takes the panel down until it is back."""
+    node = await get_node_or_404(node_id, db)
+    if node.is_local and user.get("permissions") is not None and "system.manage" not in user["permissions"]:
+        raise HTTPException(403, "Restarting the primary takes the panel down: that needs the system.manage permission")
+    res = await node_updates.restart_node(node)
+    await log_audit(db, "node.restart", actor=actor, detail={"name": node.name, "node_id": node_id, "status": res.get("status")})
+    await db.commit()
+    return res
+
+
 @router.post("/{node_id}/ping")
 async def ping_node(node_id: int, _user: dict = Depends(_auth.require_permission("nodes.view")), db: AsyncSession = Depends(get_db)):
     node = await get_node_or_404(node_id, db)

@@ -1,7 +1,7 @@
 """The "Update Cloudbase" button of a node: the primary updates itself, a node is asked through its agent."""
 import asyncio
 
-from core import selfupdate
+from core import power, selfupdate
 from core.models import Node
 from nodes import commands as node_commands
 from nodes.state import _node_ws_connections
@@ -22,4 +22,19 @@ async def update_node(node: Node) -> dict:
     if done.status != "done":
         message = done.error_message or "The update failed"
         return {"status": "error", "message": _OLD_AGENT if "Unsupported command" in message else message}
+    return done.result or {"status": "error", "message": "The node gave no answer"}
+
+
+async def restart_node(node: Node) -> dict:
+    """Restart the server of a node ("Restart node"). Returns {"status": "restarting" | "error" | "skipped", "message": ...}.
+
+    The primary restarts itself: the panel is gone for a minute and everything on it comes back with the machine."""
+    if node.is_local:
+        return await asyncio.to_thread(power.reboot)
+    if node.id not in _node_ws_connections:
+        return {"status": "skipped", "message": "The node is not connected"}
+    done = await node_commands.ask(node.id, "reboot", {}, timeout=60)
+    if done.status != "done":
+        message = done.error_message or "The restart failed"
+        return {"status": "error", "message": "This node runs a Cloudbase that can't restart the server yet. Run once on that server: cloudbase update" if "Unsupported command" in message else message}
     return done.result or {"status": "error", "message": "The node gave no answer"}

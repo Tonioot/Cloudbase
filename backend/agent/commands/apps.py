@@ -1,7 +1,7 @@
 import os
 import asyncio
 import subprocess
-from core import selfupdate
+from core import power, selfupdate
 from containers import naming as containers_naming, cleanup as containers_cleanup, jobs as containers_jobs
 from agent.log import AGENT_LOG_FILE, _agent_log
 from agent.source import ensure_image
@@ -22,6 +22,11 @@ async def cmd_self_update(_client, _state, _main_id, _payload):
     if result["status"] == "updated":
         selfupdate.restart_soon(graceful=False)   # after the answer has been sent
     return result
+
+
+async def cmd_reboot(_client, _state, _main_id, _payload):
+    """Restart this node's server (needs the root helper; see core/power.py)."""
+    return await asyncio.to_thread(power.reboot)
 
 
 async def cmd_get_agent_logs(_client, _state, _main_id, payload):
