@@ -498,27 +498,29 @@ async function initConnections() {
 async function renderConnections() {
   const wrap = document.getElementById('connections-wrap');
   let c;
-  try { c = await api.getConnections(APP_ID); } catch (e) { wrap.innerHTML = `<div class="apps-empty">${escHtml(e.message)}</div>`; return; }
+  try { c = await api.getConnections(APP_ID); } catch (e) { wrap.innerHTML = `<div class="net-empty"><div class="net-empty-sub">${escHtml(e.message)}</div></div>`; return; }
   reservedEnv = new Set(c.reserved_env);
   showManagedEnv(c.reserved_env);
-  const row = (kind, l, detail) => `
-    <div class="db-list-row">
-      <div class="db-list-main">
-        <a href="${kind === 'database' ? '/database?id=' : '/app?id='}${l.target_id}" class="db-list-title">${escHtml(l.name)}</a>
-        ${detail ? `<span class="db-tag">${escHtml(detail)}</span>` : ''}
-        <code class="db-list-meta" title="Set by this connection; it cannot be changed in the environment variables">${escHtml(l.env_var_name)}</code>
-      </div>
+  const href = (kind, id) => `${kind === 'database' ? '/database?id=' : '/app?id='}${id}`;
+  const row = (kind, l) => `
+    <div class="s3-row">
+      <span class="s3-label">
+        <a href="${href(kind, l.target_id)}" class="s3-title">${escHtml(l.name)}</a>
+        <span class="s3-desc"><code>${escHtml(l.env_var_name)}</code>${kind === 'database' ? ` · ${escHtml(l.engine)}` : ''}</span>
+      </span>
       <button type="button" class="btn btn-sm btn-ghost" data-remove="${kind}:${l.id}" data-perm="apps.configure">Remove</button>
     </div>`;
-  const section = (title, rows, empty) => `
-    <h4 style="margin:14px 14px 2px;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.04em">${title}</h4>
-    <div class="db-list">${rows.length ? rows.join('') : `<div class="db-list-empty">${empty}</div>`}</div>`;
+  const group = (title, rows) => rows.length ? `<div class="conn-group">${title}</div>${rows.join('')}` : '';
+  const calledBy = c.used_by.map(l => `
+    <div class="s3-row">
+      <span class="s3-label"><a href="${href('app', l.app_id)}" class="s3-title">${escHtml(l.name)}</a><span class="s3-desc">Can reach this app</span></span>
+    </div>`);
   wrap.innerHTML =
-    section('Databases', c.databases.map(l => row('database', l, l.engine)), 'No databases connected.') +
-    section('Apps this app calls', c.apps.map(l => row('app', l, '')), 'No apps connected.') +
-    section('Apps that call this app', c.used_by.map(l => `
-      <div class="db-list-row"><div class="db-list-main"><a href="/app?id=${l.app_id}" class="db-list-title">${escHtml(l.name)}</a></div></div>`),
-      "No app calls this one. Connect it in that app's Settings, under Connections.");
+    group('Databases', c.databases.map(l => row('database', l))) +
+    group('Apps this app can reach', c.apps.map(l => row('app', l))) +
+    group('Apps that can reach this app', calledBy) ||
+    `<div class="net-empty"><div class="net-empty-title">No connections</div>
+       <div class="net-empty-sub">This app cannot reach any database or other app yet. Add a connection to give it one.</div></div>`;
   wrap.querySelectorAll('[data-remove]').forEach(btn => {
     btn.onclick = async () => {
       const [kind, id] = btn.dataset.remove.split(':');
