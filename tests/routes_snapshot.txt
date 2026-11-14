@@ -143,6 +143,7 @@ POST    /api/nodes/{node_id}/disable
 POST    /api/nodes/{node_id}/docker-cleanup
 POST    /api/nodes/{node_id}/enable
 POST    /api/nodes/{node_id}/ping
+POST    /api/nodes/{node_id}/restart
 POST    /api/nodes/{node_id}/update
 POST    /api/notifications/channels
 POST    /api/notifications/channels/test
