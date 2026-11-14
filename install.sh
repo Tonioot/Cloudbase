@@ -70,6 +70,7 @@ RUN_USER=""
 ASSUME_YES=false
 KEEP_DATA=false
 
+ORIG_ARGS=("$@")   # kept to start again as the new version (see below)
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --primary)      ROLE="primary" ;;
@@ -152,6 +153,16 @@ if [[ -z "$INSTALL_DIR" && -f "$SCRIPT_PATH" ]]; then
 fi
 INSTALL_DIR="${INSTALL_DIR:-${unit_dir:-$DEFAULT_DIR}}"
 AGENT_STATE="$INSTALL_DIR/backend/agent_state.json"
+
+# An update runs the newest installer, not the one that is installed: this copy knows nothing of steps added in
+# the new version. So fetch the new code first and start over as that version (once).
+if [[ "$ACTION" == "update" && -z "${CLOUDBASE_REEXEC:-}" && -d "$INSTALL_DIR/.git" ]]; then
+  chown -R "$RUN_USER": "$INSTALL_DIR" 2>/dev/null || true
+  if as_user git -C "$INSTALL_DIR" fetch origin "$BRANCH" >> "$LOG_FILE" 2>&1      && as_user git -C "$INSTALL_DIR" checkout -q -B "$BRANCH" "origin/$BRANCH" >> "$LOG_FILE" 2>&1      && as_user git -C "$INSTALL_DIR" reset -q --hard "origin/$BRANCH" >> "$LOG_FILE" 2>&1; then
+    rm -rf "$STATE_DIR"   # exec skips the exit trap
+    CLOUDBASE_REEXEC=1 exec bash "$INSTALL_DIR/install.sh" "${ORIG_ARGS[@]}"
+  fi
+fi
 
 # The primary a node is connected to, if any.
 connected_primary() {
