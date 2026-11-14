@@ -10,7 +10,7 @@ _OLD_AGENT = ("This node runs a Cloudbase that can't update itself yet. Run once
 
 
 async def update_node(node: Node) -> dict:
-    """Returns {"status": "updated" | "current" | "needs_system" | "error" | "skipped", "message": ...}."""
+    """Returns {"status": "updated" | "installing" | "current" | "needs_system" | "error" | "skipped", "message": ...}."""
     if node.is_local:
         result = await asyncio.to_thread(selfupdate.update)
         if result["status"] == "updated":

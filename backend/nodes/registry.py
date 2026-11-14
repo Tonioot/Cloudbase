@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from core import selfupdate
+from core import hardware, selfupdate
 from core.models import Node
 from nodes.commands import _utcnow
 from nodes.state import _node_ws_connections
@@ -215,6 +215,7 @@ def _local_system_info() -> dict:
             pass
     except Exception:
         info.setdefault("hostname", _socket.gethostname())
+    info["hardware"] = hardware.collect()
     return info
 
 

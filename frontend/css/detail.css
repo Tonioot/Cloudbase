@@ -365,6 +365,8 @@
 .node-detail-label { font-size: 13px; color: var(--muted); text-transform: none; letter-spacing: 0; flex-shrink: 0; }
 .node-detail-value { font-family: var(--font-mono); font-size: 12px; font-weight: 400; color: var(--text); text-align: right; overflow-wrap: anywhere; }
 .node-detail-value.node-detail-value-live { color: var(--green); }
+.node-detail-value.node-detail-value-warn { color: var(--yellow); }
+.node-detail-value.node-detail-value-bad { color: var(--red); }
 
 .node-log-view {
   margin: 0;

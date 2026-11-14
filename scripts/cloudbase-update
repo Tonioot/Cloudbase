@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# Root helper that lets Cloudbase finish its own update when the new version also changes system files
+# (packages, nginx, the service file, the other root helpers). Installed by scripts/setup-update.sh to
+# /usr/local/lib/cloudbase/update; the service account may run it through sudo and nothing else as root.
+#
+#   update check          exit 0 when this helper can run (used before an update touches anything)
+#   update run [branch]   run `install.sh --update` in the background, as its own systemd unit
+#
+# The installer restarts Cloudbase itself, so it cannot run inside the Cloudbase service: it would be
+# stopped with it. A transient unit keeps it running; its output goes to /var/log/cloudbase-install.log.
+set -euo pipefail
+
+SERVICE_FILE="/etc/systemd/system/cloudbase.service"
+UNIT="cloudbase-update"
+
+[[ $EUID -eq 0 ]] || { echo "must run as root" >&2; exit 1; }
+[[ -f "$SERVICE_FILE" ]] || { echo "Cloudbase is not installed as a service here" >&2; exit 1; }
+
+INSTALL_DIR="$(sed -n 's/^WorkingDirectory=//p' "$SERVICE_FILE" | head -n 1)"
+RUN_USER="$(sed -n 's/^User=//p' "$SERVICE_FILE" | head -n 1)"
+[[ -f "$INSTALL_DIR/install.sh" && -d "$INSTALL_DIR/.git" ]] || { echo "no Cloudbase checkout in $INSTALL_DIR" >&2; exit 1; }
+id "$RUN_USER" &>/dev/null || { echo "user $RUN_USER does not exist" >&2; exit 1; }
+command -v systemd-run &>/dev/null || { echo "systemd-run is missing" >&2; exit 1; }
+
+case "${1:-}" in
+  check)
+    ;;
+  run)
+    BRANCH="${2:-main}"
+    [[ "$BRANCH" =~ ^[A-Za-z0-9._/-]{1,100}$ && "$BRANCH" != -* ]] || { echo "invalid branch" >&2; exit 1; }
+    if systemctl is-active --quiet "$UNIT"; then
+      echo "an update is already running"
+      exit 0
+    fi
+    systemctl reset-failed "$UNIT" 2>/dev/null || true
+    systemd-run --quiet --unit="$UNIT" --collect --description="Cloudbase update" \
+      /bin/bash "$INSTALL_DIR/install.sh" --update --yes --branch "$BRANCH" --user "$RUN_USER" --dir "$INSTALL_DIR"
+    echo "started"
+    ;;
+  *)
+    echo "usage: update check | update run [branch]" >&2
+    exit 2
+    ;;
+esac

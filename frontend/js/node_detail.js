@@ -282,6 +282,35 @@ function _detailItem(label, val, { valueClass = '', html = false } = {}) {
     return `<div class="node-detail-item"><span class="node-detail-label">${label}</span><span class="${classes}">${html ? val : escHtml(val)}</span></div>`;
 }
 
+/* What the machine says about its own health (core/hardware.py); only what this server has */
+function hardwareItems(hw) {
+    if (!hw) return [];
+    const items = [];
+    if (hw.model) items.push(_detailItem('Hardware', hw.model));
+    if (hw.temperature_c != null) {
+        const t = hw.temperature_c;
+        items.push(_detailItem('Temperature', `${t.toFixed(1)} °C`, { valueClass: t >= 80 ? 'node-detail-value-bad' : t >= 70 ? 'node-detail-value-warn' : '' }));
+    }
+    for (const fan of hw.fans || []) items.push(_detailItem(`Fan ${fan.name}`, `${fan.rpm} rpm`));
+    const power = hw.power || {};
+    if (power.now || power.since_boot) {
+        const now = power.now || [], past = (power.since_boot || []).filter(x => !now.includes(x));
+        const text = now.length ? `${now.join(', ')} now` : past.length ? `OK now; since boot: ${past.join(', ')}` : 'OK';
+        items.push(_detailItem('Power supply', text, { valueClass: now.length ? 'node-detail-value-bad' : past.length ? 'node-detail-value-warn' : 'node-detail-value-live' }));
+    }
+    if (power.battery_percent != null) items.push(_detailItem('Battery', `${power.battery_percent}%${power.on_ac ? ' · plugged in' : ''}`));
+    if (hw.cpu_mhz) items.push(_detailItem('Clock speed', `${hw.cpu_mhz} MHz`));
+    if (hw.swap_percent != null) items.push(_detailItem('Swap', `${hw.swap_percent}% of ${hw.swap_total_mb} MB`));
+    for (const d of hw.disks || []) items.push(_detailItem(`Disk ${d.mount}`, `${d.percent}% of ${d.total_gb} GB · ${d.fstype}`));
+    if (hw.interfaces && hw.interfaces.length) {
+        items.push(_detailItem('Network', hw.interfaces.map(i => i.speed_mbps ? `${i.name} (${i.speed_mbps} Mbit/s)` : i.name).join(', ')));
+    }
+    if (hw.processes) items.push(_detailItem('Processes', String(hw.processes)));
+    if (hw.kernel) items.push(_detailItem('Kernel', hw.kernel, { valueClass: 'node-detail-value-mono' }));
+    if (hw.reboot_required) items.push(_detailItem('Restart needed', 'Yes, a system update is waiting', { valueClass: 'node-detail-value-warn' }));
+    return items;
+}
+
 function renderAbout() {
     const meta = node.metadata || {};
     const connected = node.is_local || node.websocket_connected;
@@ -296,6 +325,7 @@ function renderAbout() {
         meta.ram_total_mb ? _detailItem('Memory', `${Math.round(meta.ram_total_mb / 1024)} GB`) : '',
         meta.disk_total_gb ? _detailItem('Storage', `${meta.disk_total_gb} GB`) : '',
         meta.uptime_secs ? _detailItem('Uptime', fmtUptime(meta.uptime_secs)) : '',
+        ...hardwareItems(meta.hardware),
         _detailItem('Cloudbase', cloudbaseLabel(node), { valueClass: 'node-detail-value-mono' }),
         _detailItem('Agent', node.agent_version || '—'),
         _detailItem('Last seen', connected ? 'Connected now' : timeAgo(node.last_seen), { valueClass: connected ? 'node-detail-value-live' : '' }),
@@ -677,10 +707,17 @@ async function markIfBehind() {
     } catch { /* the hint is optional */ }
 }
 
-async function waitForPanel() {
+async function waitForPanel(installing = false) {
     // The primary restarts: wait until it answers again, then show the new version
     await new Promise(r => setTimeout(r, 6000));
-    for (let i = 0; i < 60; i++) {
+    if (installing) {
+        // The installer works first (packages, nginx) and only restarts at the end: wait for the panel to go down
+        for (let i = 0; i < 90; i++) {
+            try { await fetch('/api/health', { cache: 'no-store' }); } catch { break; }
+            await new Promise(r => setTimeout(r, 2000));
+        }
+    }
+    for (let i = 0; i < 90; i++) {
         try {
             const r = await fetch('/api/health', { cache: 'no-store' });
             if (r.ok) { location.reload(); return; }
@@ -705,6 +742,10 @@ async function updateCloudbase() {
             toast(`Updated to ${r.commit}. Cloudbase is restarting…`);
             restarting = true;
             if (node.is_local) { waitForPanel(); return; }
+        } else if (r.status === 'installing') {
+            toast(`Updating to ${r.commit}, including system files. This takes a minute or two…`);
+            restarting = true;
+            if (node.is_local) { waitForPanel(true); return; }
         } else if (r.status === 'current') {
             toast('Already up to date');
         } else {

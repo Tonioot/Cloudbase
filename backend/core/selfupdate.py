@@ -19,7 +19,8 @@ from core import paths
 # Files whose changes have to be installed as root by `cloudbase update`
 SYSTEM_PATHS = ("install.sh", "scripts/cloudbase-", "scripts/setup-")
 
-RESTART_EXIT_CODE = 75      # any non-zero exit makes systemd start the service again
+UPDATE_HELPER = "/usr/local/lib/cloudbase/update"   # root helper, see scripts/cloudbase-update
+RESTART_EXIT_CODE = 75     # any non-zero exit makes systemd start the service again
 FETCH_TIMEOUT = 180
 FORCE_EXIT_SECONDS = 30     # the panel gets this long to finish its requests before it is cut off
 
@@ -60,7 +61,9 @@ def update() -> dict:
     """Fetch and apply the newest version of the branch this checkout follows. Blocking.
 
     Returns {"status": ..., "message": ...} with status "current" (nothing new), "updated" (the caller must now call
-    restart_soon), "needs_system" (run `cloudbase update` on the server) or "error"."""
+    restart_soon), "installing" (the new version also changes system files: the root installer is running and
+    restarts Cloudbase itself), "needs_system" (that, but this server has no update helper yet: run
+    `cloudbase update` once) or "error"."""
     if not os.path.isdir(os.path.join(paths.REPO_DIR, ".git")):
         return {"status": "error", "message": "This installation is not a Git checkout, so it can't update itself. Run: cloudbase update"}
     if not under_systemd():
@@ -83,9 +86,9 @@ def update() -> dict:
         return {"status": "current", "message": "Already up to date", "commit": old, "version": current()["version"]}
     changed = _out("diff", "--name-only", f"HEAD..origin/{branch}").splitlines()
     system = needs_system(changed)
-    if system:
+    if system and not helper_available():
         return {"status": "needs_system", "files": system, "commit": old,
-                "message": "This version also changes system files (the installer or the node network). Run on this server: cloudbase update"}
+                "message": "This version also changes system files (the installer or the node network) and this server has no update helper yet. Run on this server once: cloudbase update"}
     reset = _git("reset", "--hard", f"origin/{branch}")
     if reset.returncode != 0:
         return {"status": "error", "message": f"Could not apply the new version: {(reset.stderr or reset.stdout).strip()[-300:]}"}
@@ -96,7 +99,41 @@ def update() -> dict:
             version = f.read().strip()
     except OSError:
         pass
+    if system:
+        # The installer does the rest as root and restarts Cloudbase itself
+        started, why = run_installer(branch)
+        if started:
+            return {"status": "installing", "message": "Updating the system files too; Cloudbase restarts when that is done",
+                    "from": old, "commit": new, "version": version}
+        # The new code is in place, so restart on it; only the system part is left
+        return {"status": "updated", "from": old, "commit": new, "version": version,
+                "message": f"Updated, but the system files could not be updated ({why}). Run on this server: cloudbase update"}
     return {"status": "updated", "message": "Updated; Cloudbase is restarting", "from": old, "commit": new, "version": version}
+
+
+def _helper(*args: str) -> subprocess.CompletedProcess | None:
+    override = os.environ.get("CLOUDBASE_UPDATE_HELPER")        # tests point this at a fake
+    command = override.split() if override else ["sudo", "-n", UPDATE_HELPER]
+    try:
+        return subprocess.run([*command, *args], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def helper_available() -> bool:
+    """Whether the root helper that runs the installer is installed and may be used by this account."""
+    r = _helper("check")
+    return r is not None and r.returncode == 0
+
+
+def run_installer(branch: str) -> tuple[bool, str]:
+    """Start the installer as root, detached. Returns (started, reason when not)."""
+    r = _helper("run", branch)
+    if r is None:
+        return False, "the update helper did not answer"
+    if r.returncode != 0:
+        return False, (r.stderr or r.stdout).strip()[-200:] or "the update helper failed"
+    return True, ""
 
 
 def restart_soon(graceful: bool, delay: float = 3.0) -> None:

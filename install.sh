@@ -575,6 +575,13 @@ step_wireguard() {
   fi
 }
 
+step_update_helper() {
+  # Lets the panel or node finish an update that changes system files, without `cloudbase update` (see core/selfupdate.py)
+  if ! bash "$INSTALL_DIR/scripts/setup-update.sh" "$RUN_USER"; then
+    add_warning "The update helper could not be set up, so updates that change system files need: cloudbase update"
+  fi
+}
+
 step_code() {
   if [[ -d "$INSTALL_DIR/.git" ]]; then
     chown -R "$RUN_USER": "$INSTALL_DIR"
@@ -767,6 +774,7 @@ else
   add_step "Registering with the primary" step_register
 fi
 add_step "Setting up the node network" step_wireguard
+add_step "Setting up updates from the panel" step_update_helper
 add_step "Starting Cloudbase" step_service
 run_steps
 

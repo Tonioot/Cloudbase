@@ -5,7 +5,7 @@ from typing import Any, Optional
 import httpx
 import psutil
 from agent.state import AgentState
-from core import selfupdate, sysmetrics
+from core import hardware, selfupdate, sysmetrics
 
 def _collect_node_metrics() -> dict:
     return sysmetrics.collect()
@@ -74,6 +74,7 @@ def _collect_system_info() -> dict:
         except Exception: pass
     except Exception:
         info.setdefault("hostname", _socket.gethostname())
+    info["hardware"] = hardware.collect()
     return info
 
 

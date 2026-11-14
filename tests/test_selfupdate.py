@@ -53,8 +53,9 @@ def test_a_new_version_is_applied(repos):
     assert (local / "app.py").read_text() == "two"
 
 
-def test_a_version_that_changes_system_files_is_left_alone(repos):
+def test_a_version_that_changes_system_files_is_left_alone_without_the_update_helper(repos, monkeypatch):
     remote, local = repos
+    monkeypatch.setenv("CLOUDBASE_UPDATE_HELPER", "false")     # no helper that works
     _push(remote, "install.sh", "echo new")
     _push(remote, "app.py", "two")
     r = selfupdate.update()
@@ -62,6 +63,46 @@ def test_a_version_that_changes_system_files_is_left_alone(repos):
     assert (local / "app.py").read_text() == "one"            # nothing was applied: never half updated
     _push(remote, "scripts/cloudbase-wireguard", "x")
     assert selfupdate.update()["status"] == "needs_system"
+
+
+@pytest.fixture
+def helper(tmp_path, monkeypatch):
+    """A stand-in for the root helper: records what it was asked to do."""
+    import sys
+    log = tmp_path / "helper.log"
+    script = tmp_path / "helper.py"
+    script.write_text("\n".join([
+        "import sys, pathlib",
+        f"pathlib.Path({str(log)!r}).open('a').write(' '.join(sys.argv[1:]) + chr(10))",
+        "sys.exit(1 if 'fail' in sys.argv else 0)",
+    ]))
+    monkeypatch.setenv("CLOUDBASE_UPDATE_HELPER", f"{sys.executable} {script}")
+    return log
+
+
+def test_system_files_are_updated_through_the_root_helper(repos, helper):
+    remote, local = repos
+    _push(remote, "install.sh", "echo new")
+    _push(remote, "app.py", "two")
+    r = selfupdate.update()
+    assert r["status"] == "installing"                          # the installer restarts Cloudbase, not us
+    assert (local / "app.py").read_text() == "two"
+    assert helper.read_text().splitlines() == ["check", "run main"]
+
+
+def test_without_system_files_the_helper_is_not_used_to_install(repos, helper):
+    remote, _ = repos
+    _push(remote, "app.py", "two")
+    assert selfupdate.update()["status"] == "updated"
+    assert "run" not in helper.read_text() if helper.exists() else True
+
+
+def test_when_the_installer_cannot_start_the_new_code_still_restarts(repos, monkeypatch, helper):
+    remote, local = repos
+    _push(remote, "install.sh", "echo new")
+    monkeypatch.setattr(selfupdate, "run_installer", lambda branch: (False, "boom"))
+    r = selfupdate.update()
+    assert r["status"] == "updated" and "cloudbase update" in r["message"] and "boom" in r["message"]
 
 
 def test_files_changed_by_hand_are_not_overwritten(repos):
