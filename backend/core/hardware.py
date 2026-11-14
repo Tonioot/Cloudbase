@@ -8,6 +8,7 @@ import glob
 import os
 import shutil
 import subprocess
+import time
 
 import psutil
 
@@ -96,6 +97,88 @@ def power() -> dict | None:
     return out or None
 
 
+_last_rapl: dict[str, tuple[float, int]] = {}      # domain -> (time, energy in µJ) at the previous reading
+
+
+def _vcgencmd(*args: str) -> str:
+    if not shutil.which("vcgencmd"):
+        return ""
+    try:
+        return subprocess.run(["vcgencmd", *args], capture_output=True, text=True, timeout=3).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def _pmic_watts() -> float | None:
+    """Raspberry Pi 5: the power chip measures voltage and current of each supply rail; their sum is what the board uses."""
+    volts, amps = {}, {}
+    for line in _vcgencmd("pmic_read_adc").splitlines():
+        name, _, rest = line.strip().partition(" ")
+        value = rest.partition("=")[2].rstrip("VA ")
+        try:
+            number = float(value)
+        except ValueError:
+            continue
+        if name.endswith("_V"):
+            volts[name[:-2]] = number
+        elif name.endswith("_A"):
+            amps[name[:-2]] = number
+    total = sum(volts[r] * amps[r] for r in amps if r in volts)
+    return round(total, 2) if total > 0 else None
+
+
+def _hwmon_watts() -> float | None:
+    """A power sensor the kernel exposes (some boards, add-on chips such as the INA219, GPUs): µW in power*_input."""
+    for path in sorted(glob.glob("/sys/class/hwmon/hwmon*/power*_input")):
+        raw = _read(path)
+        if raw.isdigit() and int(raw) > 0:
+            return round(int(raw) / 1e6, 2)
+    return None
+
+
+def _battery_watts() -> float | None:
+    """A battery that is discharging reports what the whole machine draws."""
+    for base in sorted(glob.glob("/sys/class/power_supply/BAT*")):
+        if _read(f"{base}/status").lower() != "discharging":
+            continue
+        power = _read(f"{base}/power_now")
+        if power.isdigit() and int(power) > 0:
+            return round(int(power) / 1e6, 2)
+        current, voltage = _read(f"{base}/current_now"), _read(f"{base}/voltage_now")
+        if current.isdigit() and voltage.isdigit() and int(current) > 0:
+            return round(int(current) * int(voltage) / 1e12, 2)
+    return None
+
+
+def _rapl_watts() -> float | None:
+    """Intel and AMD processors count the energy they use (RAPL); the watts are the difference between two readings.
+    Kernels since 2020 only let root read it, so this is empty for the service account unless it is allowed to."""
+    now, total, found = time.monotonic(), 0.0, False
+    for base in glob.glob("/sys/class/powercap/*-rapl:[0-9]"):         # the packages, not their sub-domains
+        raw = _read(f"{base}/energy_uj")
+        if not raw.isdigit():
+            continue
+        energy, previous = int(raw), _last_rapl.get(base)
+        _last_rapl[base] = (now, energy)
+        if previous and now > previous[0] and energy >= previous[1]:
+            total += (energy - previous[1]) / 1e6 / (now - previous[0])
+            found = True
+    return round(total, 1) if found else None
+
+
+def watts() -> dict | None:
+    """How much power this machine uses, with what it was measured by. The first source that has an answer wins:
+    the whole board or machine before the processor alone. None when it cannot be measured (most servers and Pis before the 5)."""
+    for source, fn in (("board", _pmic_watts), ("sensor", _hwmon_watts), ("battery", _battery_watts), ("cpu", _rapl_watts)):
+        try:
+            value = fn()
+        except Exception:
+            continue
+        if value is not None:
+            return {"watts": value, "source": source}
+    return None
+
+
 def disks() -> list[dict]:
     """The real file systems (not the virtual ones) with their usage."""
     out, seen = [], set()
@@ -133,7 +216,7 @@ def interfaces() -> list[dict]:
 def collect() -> dict:
     """Everything above that this machine has, in one dict. Never raises."""
     out: dict = {}
-    for key, fn in (("model", model), ("temperature_c", temperature), ("fans", fans), ("power", power),
+    for key, fn in (("model", model), ("temperature_c", temperature), ("fans", fans), ("power", power), ("consumption", watts),
                     ("disks", disks), ("interfaces", interfaces)):
         try:
             value = fn()

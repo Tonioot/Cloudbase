@@ -1042,3 +1042,19 @@ a.icon-btn { text-decoration: none; }
 
 /* Autoscaling: the last scale actions under the settings */
 .s3-group { margin: 24px 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+
+/* (i) next to a label: the explanation shows on hover or focus */
+.info-tip {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; margin-left: 6px; border: 1px solid var(--line); border-radius: 50%;
+  font: 600 9px/1 var(--font-mono); color: var(--muted); cursor: help; vertical-align: 1px;
+}
+.info-tip:hover, .info-tip:focus { color: var(--text); border-color: var(--muted); outline: none; }
+.info-tip::after {
+  content: attr(data-tip); position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 20;
+  width: max-content; max-width: 260px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface, var(--bg)); color: var(--text); box-shadow: 0 6px 24px rgba(0, 0, 0, .25);
+  font: 400 12px/1.45 var(--font-sans, inherit); text-align: left; white-space: normal;
+  opacity: 0; pointer-events: none; transition: opacity .12s;
+}
+.info-tip:hover::after, .info-tip:focus::after { opacity: 1; }

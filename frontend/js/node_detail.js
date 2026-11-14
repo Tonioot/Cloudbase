@@ -277,9 +277,47 @@ function renderRunning() {
 
 /* ─── This server ──────────────────────────────────────────────────────── */
 // Values are escaped (most come from the node's own registration); html: true for trusted markup.
+/* The small explanation behind the (i) next to a label; a label that starts with a key here gets that text */
+const DETAIL_HINTS = {
+    'Hostname': 'The name this server calls itself on the network.',
+    'IP address': 'The address of this server on the local network.',
+    'Node network address': 'The address on the private node network (WireGuard), which the primary uses to reach this node. It stays the same wherever the node is.',
+    'Operating system': 'The operating system and its kernel version.',
+    'Architecture': 'The type of processor: x86_64 is a normal PC or server, aarch64/arm64 is a Raspberry Pi or other ARM board.',
+    'Processor': 'The model of the processor.',
+    'CPU cores': 'Physical cores, and logical ones when the processor can run two threads per core.',
+    'Memory': 'The installed RAM.',
+    'Storage': 'The size of the main disk.',
+    'Uptime': 'How long this server has been on since it last started.',
+    'Cloudbase': 'The version of Cloudbase that runs here (the Git commit). Highlighted when the primary runs a different one.',
+    'Agent': 'The version of the program on this node that talks to the primary.',
+    'Last seen': 'When this node last reported to the primary.',
+    'Node ID': 'The number Cloudbase uses for this node internally.',
+    'Hardware': 'What the machine says it is: the board (Raspberry Pi) or the maker and model of the PC or virtual machine.',
+    'Temperature': 'Processor temperature. Above about 70 °C it is warm; above 80 °C the processor slows itself down.',
+    'Fan': 'Speed of a fan, in rotations per minute. Zero while it should be spinning means it is stuck.',
+    'Power supply': 'Whether the power supply keeps up. On a Raspberry Pi, undervoltage means a weak adapter or cable, the usual reason for crashes and slowness. "Since boot" shows problems that happened and are gone.',
+    'Power use': 'How much power this machine draws, in watts. "Board" is the whole Raspberry Pi 5, "sensor" a power meter on the machine, "battery" what a laptop draws, "processor" only the CPU. Most servers cannot measure this at all.',
+    'Battery': 'Charge of the battery, for laptops and machines with a UPS that reports to the system.',
+    'Clock speed': 'The speed the processor runs at right now; it is lower when idle or when it is held back by heat or power.',
+    'Swap': 'Disk space used as extra memory when RAM is full. A lot of swap in use makes a server slow, and wears out an SD card.',
+    'Disk': 'How full this file system is, its size and its type.',
+    'Network': 'The network connections that are up, with their speed when the machine knows it.',
+    'Processes': 'How many programs are running on the server.',
+    'Kernel': 'The version of the core of the operating system.',
+    'Restart needed': 'A system update has been installed that only takes effect after the server restarts.',
+};
+
+function _hintFor(label) {
+    const key = Object.keys(DETAIL_HINTS).find(k => label === k || label.startsWith(k + ' '));
+    return key ? DETAIL_HINTS[key] : '';
+}
+
 function _detailItem(label, val, { valueClass = '', html = false } = {}) {
     const classes = ['node-detail-value', valueClass].filter(Boolean).join(' ');
-    return `<div class="node-detail-item"><span class="node-detail-label">${label}</span><span class="${classes}">${html ? val : escHtml(val)}</span></div>`;
+    const hint = _hintFor(label);
+    const info = hint ? `<span class="info-tip" tabindex="0" data-tip="${escHtml(hint)}" aria-label="${escHtml(hint)}">i</span>` : '';
+    return `<div class="node-detail-item"><span class="node-detail-label">${label}${info}</span><span class="${classes}">${html ? val : escHtml(val)}</span></div>`;
 }
 
 /* What the machine says about its own health (core/hardware.py); only what this server has */
@@ -297,6 +335,10 @@ function hardwareItems(hw) {
         const now = power.now || [], past = (power.since_boot || []).filter(x => !now.includes(x));
         const text = now.length ? `${now.join(', ')} now` : past.length ? `OK now; since boot: ${past.join(', ')}` : 'OK';
         items.push(_detailItem('Power supply', text, { valueClass: now.length ? 'node-detail-value-bad' : past.length ? 'node-detail-value-warn' : 'node-detail-value-live' }));
+    }
+    if (hw.consumption) {
+        const sources = { board: 'whole board', sensor: 'power sensor', battery: 'battery', cpu: 'processor only' };
+        items.push(_detailItem('Power use', `${hw.consumption.watts} W · ${sources[hw.consumption.source] || hw.consumption.source}`));
     }
     if (power.battery_percent != null) items.push(_detailItem('Battery', `${power.battery_percent}%${power.on_ac ? ' · plugged in' : ''}`));
     if (hw.cpu_mhz) items.push(_detailItem('Clock speed', `${hw.cpu_mhz} MHz`));
