@@ -22,6 +22,10 @@ def ensure_running(spec: dict) -> dict:
         log.info("[db] %s publishes on another address than this node's; replacing it (the data stays)", container_name(db_id))
         container.remove(force=True, v=True)
         container = None
+    elif container is not None and _on_removed_network(container):
+        log.info("[db] %s is set to a network that no longer exists; replacing it (the data stays)", container_name(db_id))
+        container.remove(force=True, v=True)
+        container = None
     if container is not None:
         if _container_state(container) == "stopped":
             container.start()
@@ -65,6 +69,14 @@ def _publishes_elsewhere(container, database_id: int) -> bool:
     return bool(address) and published_binding(container) != (address, published_port(database_id))
 
 
+def _on_removed_network(container) -> bool:
+    """Made by a version that had one shared network. The database was moved to its own network, but the container
+    is still set to start on the shared one, which has been removed since: starting or restarting it fails
+    ("network cloudbase not found"), also when the server boots."""
+    mode = ((container.attrs.get("HostConfig") or {}).get("NetworkMode") or "")
+    return mode == naming.LEGACY_NETWORK
+
+
 def recreate(spec: dict) -> dict:
     """Replace the container (e.g. after changing limits). The volume is kept."""
     client = _client()
@@ -91,8 +103,8 @@ def stop(database_id: int) -> dict:
 def restart(spec: dict) -> dict:
     client = _client()
     container = _get_container(client, int(spec["database_id"]))
-    if container is None or _publishes_elsewhere(container, int(spec["database_id"])):
-        return ensure_running(spec)       # replaces a container that publishes on the wrong address
+    if container is None or _publishes_elsewhere(container, int(spec["database_id"])) or _on_removed_network(container):
+        return ensure_running(spec)       # replaces a container that publishes on the wrong address or cannot start
     container.restart(timeout=STOP_TIMEOUT_SECONDS)
     return {"container_id": container.id, "state": _container_state(container)}
 
