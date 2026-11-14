@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.models import Application, Instance
 from nginx import paths as nginx_paths
-from containers import apps as containers_apps
+from containers import apps as containers_apps, naming
 
 async def _assign_external_port(requested: Optional[int], node_id: int, db: AsyncSession) -> int:
     """Return requested port if free, else the next free port of the instance range, for an instance on this node."""
@@ -76,6 +76,15 @@ def _validate_docker_runtime_settings(
 
 
 # names the panel itself uses (its own nginx site and automatic subdomain)
+def _network_access(value: str | None, default: str = "open") -> str:
+    """What an app may connect to (containers/naming.NETWORK_ACCESS); an unknown word is an error, not a guess."""
+    if value is None or value == "":
+        return default
+    if value not in naming.NETWORK_ACCESS:
+        raise HTTPException(400, f"network_access must be one of: {', '.join(naming.NETWORK_ACCESS)}")
+    return value
+
+
 _RESERVED_APP_NAMES = {"cloudbase", "cloudbase-default", "zz-cloudbase-acme", "default"}
 
 

@@ -75,15 +75,27 @@ def _isolate_from_host() -> None:
         log.warning("[docker] Apps can still reach this machine's own ports: %s (run: cloudbase update)", exc)
 
 
-def ensure_apps_network(local_network: bool = False) -> str:
-    """The network app containers run on. Both have inter-container communication off; what differs is the firewall
-    around them (scripts/cloudbase-wireguard): apps on the first cannot reach private addresses, apps on the second can."""
-    if local_network:
-        ensure_network(naming.APPS_LAN_NETWORK, "cbappl0", isolated=True)
-    else:
-        ensure_network(naming.APPS_NETWORK, "cbapps0", isolated=True)
+# access -> (network, bridge). All three have inter-container communication off; what differs is the firewall around
+# them (scripts/cloudbase-wireguard): open has none, internet cannot reach private addresses, none cannot connect out.
+_ACCESS_NETWORKS = {
+    "open": (naming.APPS_LAN_NETWORK, "cbappl0"),
+    "internet": (naming.APPS_NETWORK, "cbapps0"),
+    "none": (naming.APPS_CLOSED_NETWORK, "cbappx0"),
+}
+
+
+def network_access(docker_options: dict) -> str:
+    """What the app may connect to. A spec from before the setting has none: open, as it always was."""
+    value = (docker_options or {}).get("network_access")
+    return value if value in _ACCESS_NETWORKS else "open"
+
+
+def ensure_apps_network(access: str = "internet") -> str:
+    """The network app containers run on for that access."""
+    name, bridge = _ACCESS_NETWORKS[access]
+    ensure_network(name, bridge, isolated=True)
     _isolate_from_host()
-    return naming.APPS_LAN_NETWORK if local_network else naming.APPS_NETWORK
+    return name
 
 
 def ensure_database_network(database_id: int) -> str:
@@ -196,21 +208,18 @@ def _host_port(external_port: int, docker_options: dict):
     return (bind_host, external_port) if bind_host else external_port
 
 
-def _may_reach_local_network(docker_options: dict, linked: list[dict], job: bool) -> bool:
-    """Apps from before the setting have no key: not blocked. A cron job with a database on another node needs that
-    node's address, which only the instances' firewall list has, so such a job runs unblocked."""
-    if not docker_options.get("block_local_network"):
-        return True
-    return job and len(db_proxy.local_database_ids(linked)) < len(linked)
-
-
-def _apply_linked_databases(client, run_kwargs: dict, docker_options: dict, job: bool = False) -> list[tuple[str, list[str]]]:
+def _apply_linked_databases(client, run_kwargs: dict, docker_options: dict) -> list[tuple[str, list[str]]]:
     """Put the container on the apps network, where it cannot reach other apps, and add what its links give it: the
     URLs of linked databases (direct on the database's node, over the node network elsewhere) and of linked apps.
     A link wins when the app has an env var of the same name (an imported .env must not silently cut the connection).
     Returns the extra networks to join (name, aliases): those of the databases and apps it is linked to."""
     linked = docker_options.get("linked_databases") or []
-    run_kwargs["network"] = ensure_apps_network(_may_reach_local_network(docker_options, linked, job))
+    access = network_access(docker_options)
+    run_kwargs["network"] = ensure_apps_network(access)
+    if access == "none":
+        # Docker's own resolver looks names up from the server itself, past the firewall. With nothing to ask, outside
+        # names fail while the names of connected apps and databases (answered inside Docker) keep working.
+        run_kwargs["dns"] = ["127.0.0.1"]
     linked_env = db_proxy.resolve_links(linked) if linked else {}
     networks = _join_database_networks(client, linked) if linked else []
     app_env, app_networks = _link_apps(docker_options)

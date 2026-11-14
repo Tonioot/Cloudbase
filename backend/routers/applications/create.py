@@ -14,7 +14,7 @@ from apps import health as health_app
 from apps.git import _normalize_repo_url, _encrypt_github_token, _deploy_app, _resolve_token
 from apps.nginx_sync import _write_app_nginx_config
 from apps.serializers import _app_to_dict
-from apps.validation import _check_new_app_name, _validate_docker_runtime_settings, _check_domain_conflicts, _check_repo_url
+from apps.validation import _network_access, _check_new_app_name, _validate_docker_runtime_settings, _check_domain_conflicts, _check_repo_url
 from routers.applications.schemas import DeployRequest
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
@@ -90,7 +90,7 @@ async def deploy_app(
         docker_cpu_limit=req.docker_cpu_limit,
         docker_memory_limit_mb=req.docker_memory_limit_mb,
         docker_read_only_root=bool(req.docker_read_only_root) if req.docker_read_only_root is not None else False,
-        block_local_network=True if req.block_local_network is None else bool(req.block_local_network),
+        network_access=_network_access(req.network_access, default="internet"),
         docker_tmpfs_enabled=bool(req.docker_tmpfs_enabled) if req.docker_tmpfs_enabled is not None else False,
         docker_tmpfs_size_mb=req.docker_tmpfs_size_mb,
         source_revision=req.source_revision,

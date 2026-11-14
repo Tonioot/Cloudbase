@@ -247,9 +247,13 @@ def forward_between_nodes() -> None:
 
 
 APPS_CHAIN = "CLOUDBASE-APPS"
-APP_INTERFACES = ("cbapps0", "cbappl0", "cbdb+")   # the bridges of the apps networks and of the database networks
+APP_INTERFACES = ("cbapps0", "cbappl0", "cbdb+", "cbl+")   # the bridges of the apps networks, the database networks and the app links
+CLOSED_INPUT_CHAIN = "CLOUDBASE-APPS-CLOSED"      # for cbappx0 (no outgoing connections): see isolate_apps
+# cbapps0: internet only. cbappx0: no outgoing connections. (cbappl0, for apps with open access, has no rules)
 EGRESS_CHAIN = "CLOUDBASE-EGRESS"
-EGRESS_BRIDGE = "cbapps0"                   # the apps that may not reach the local network (cbappl0 is for those that may)
+EGRESS_BRIDGE = "cbapps0"
+CLOSED_CHAIN = "CLOUDBASE-EGRESS-CLOSED"
+CLOSED_BRIDGE = "cbappx0"
 EGRESS_STORE = "egress.json"
 MAX_ALLOWED = 20000
 PRIVATE_NETWORKS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10")
@@ -261,6 +265,14 @@ def _ensure_jump(parent: str, interface: str, chain: str) -> None:
         run(["iptables", "-C", *jump])
     except HelperError:
         run(["iptables", "-I", *jump])                            # first, before the firewall's own rules
+
+
+def _ensure_nat_bypass(interface: str) -> None:
+    rule = ["PREROUTING", "-i", interface, "-m", "addrtype", "--dst-type", "LOCAL", "-j", "ACCEPT"]
+    try:
+        run(["iptables", "-t", "nat", "-C", *rule])
+    except HelperError:
+        run(["iptables", "-t", "nat", "-I", *rule])               # first, before Docker's own rule
 
 
 def _fill_chain(chain: str, rules: list[list[str]]) -> None:
@@ -287,6 +299,17 @@ def isolate_apps() -> None:
                              ["-j", "DROP"]])
     for interface in APP_INTERFACES:
         _ensure_jump("INPUT", interface, APPS_CHAIN)
+    # An app that may not connect to anything gets no web traffic to this machine either: through nginx on 80/443 it
+    # could reach the other apps by their domain. It only gets the answers to what came in.
+    _fill_chain(CLOSED_INPUT_CHAIN, [["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
+                                     ["-j", "DROP"]])
+    _ensure_jump("INPUT", "cbappx0", CLOSED_INPUT_CHAIN)
+    # Docker turns a connection to one of this machine's addresses and a published port into a connection to that other
+    # container, from any network (it only leaves out the container's own). That is how an app would reach another
+    # app's port, or a database, past the separate networks. From these bridges it does not do that: the connection
+    # stays a connection to this machine, which the rules above refuse.
+    for interface in (*APP_INTERFACES, "cbappx0"):
+        _ensure_nat_bypass(interface)
 
 
 def check_allowed(items) -> list[tuple[str, int]]:
@@ -302,9 +325,9 @@ def check_allowed(items) -> list[tuple[str, int]]:
 
 
 def apply_egress(allowed: list[tuple[str, int]]) -> None:
-    """Containers on the apps network that may not reach the local network can connect to the internet, to DNS, to what
-    is listed (the apps and databases they are connected to on other nodes) and to nothing else that is private: not
-    the home network, not the other nodes, not a cloud provider's internal network or its metadata address."""
+    """Containers on the apps network with internet-only access can connect to the internet, to DNS, to what is listed
+    (the apps and databases they are connected to on other nodes) and to nothing else that is private: not the home
+    network, not the other nodes, not a cloud provider's internal network or its metadata address."""
     state = load_state()
     private = list(PRIVATE_NETWORKS)
     if state.get("address"):
@@ -316,6 +339,13 @@ def apply_egress(allowed: list[tuple[str, int]]) -> None:
     rules += [["-d", network, "-j", "DROP"] for network in private]
     _fill_chain(EGRESS_CHAIN, rules)
     _ensure_jump("FORWARD", EGRESS_BRIDGE, EGRESS_CHAIN)
+    # Apps without outgoing connections: answers to what came in, the listed destinations, and nothing else (not even
+    # DNS: names of the apps they are connected to are resolved by Docker itself, inside the container)
+    closed = [["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"]]
+    closed += [["-d", ip, "-p", "tcp", "--dport", str(port), "-j", "ACCEPT"] for ip, port in allowed]
+    closed += [["-j", "DROP"]]
+    _fill_chain(CLOSED_CHAIN, closed)
+    _ensure_jump("FORWARD", CLOSED_BRIDGE, CLOSED_CHAIN)
 
 
 def load_egress() -> list[tuple[str, int]]:

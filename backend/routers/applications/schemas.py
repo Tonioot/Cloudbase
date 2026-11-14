@@ -17,7 +17,7 @@ class DeployRequest(BaseModel):
     docker_cpu_limit: Optional[float] = None
     docker_memory_limit_mb: Optional[int] = None
     docker_read_only_root: Optional[bool] = None
-    block_local_network: Optional[bool] = None
+    network_access: Optional[str] = None      # open | internet | none
     docker_tmpfs_enabled: Optional[bool] = None
     docker_tmpfs_size_mb: Optional[int] = None
     env_vars: Optional[dict] = None
@@ -49,7 +49,7 @@ class UpdateRequest(BaseModel):
     docker_cpu_limit: Optional[float] = None
     docker_memory_limit_mb: Optional[int] = None
     docker_read_only_root: Optional[bool] = None
-    block_local_network: Optional[bool] = None
+    network_access: Optional[str] = None      # open | internet | none
     docker_tmpfs_enabled: Optional[bool] = None
     docker_tmpfs_size_mb: Optional[int] = None
     env_vars: Optional[dict] = None       # new/changed values only (write-only UI)

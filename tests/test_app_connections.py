@@ -120,8 +120,31 @@ def test_the_default_variable_is_made_from_the_name_of_the_target():
     assert app_links.default_env_var(Application(name="2fa")) == "_2FA_URL"
 
 
-def test_an_app_can_be_blocked_from_the_local_network_and_old_apps_are_not(admin, two_apps):
+def test_what_an_app_may_connect_to_can_be_set_and_old_apps_are_open(admin, two_apps):
     front, _back = two_apps
-    assert admin.get(f"/api/apps/{front}").json()["block_local_network"] is False        # made before the setting existed
-    assert admin.put(f"/api/apps/{front}", json={"block_local_network": True}).status_code == 200
-    assert admin.get(f"/api/apps/{front}").json()["block_local_network"] is True
+    assert admin.get(f"/api/apps/{front}").json()["network_access"] == "open"             # made before the setting existed
+    for value in ("internet", "none", "open"):
+        assert admin.put(f"/api/apps/{front}", json={"network_access": value}).status_code == 200
+        assert admin.get(f"/api/apps/{front}").json()["network_access"] == value
+
+
+def test_an_unknown_network_access_is_refused_and_changes_nothing(admin, two_apps):
+    front, _back = two_apps
+    admin.put(f"/api/apps/{front}", json={"network_access": "internet"})
+    for value in ("everything", "NONE", "true"):
+        reply = admin.put(f"/api/apps/{front}", json={"network_access": value})
+        assert reply.status_code == 400 and "network_access must be one of" in reply.json()["detail"]
+    assert admin.get(f"/api/apps/{front}").json()["network_access"] == "internet"
+
+
+def test_the_access_reaches_the_instance_spec_and_new_apps_start_on_internet_only():
+    from apps import runtime
+    from apps.validation import _network_access
+    assert runtime._docker_runtime_options(Application(name="x", network_access="none"))["network_access"] == "none"
+    assert runtime._docker_runtime_options(Application(name="x", network_access=None))["network_access"] == "open"
+    assert _network_access(None, default="internet") == "internet" and _network_access("none", default="internet") == "none"
+
+
+def test_the_column_is_added_to_existing_databases_as_open():
+    default = Application.__table__.c.network_access.default
+    assert default.is_scalar and default.arg == "open"          # core.database._add_new_columns gives old rows this value

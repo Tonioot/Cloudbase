@@ -480,10 +480,14 @@
                   <span class="s3-label"><span class="s3-title">Read-only filesystem</span><span class="s3-desc">The container can’t change its own files — only /tmp, when enabled below.</span></span>
                   <span class="toggle"><input type="checkbox" id="cfg-docker-readonly" /><span class="toggle-slider"></span></span>
                 </label>
-                <label class="s3-row">
-                  <span class="s3-label"><span class="s3-title">Can reach the local network</span><span class="s3-desc">Off: the app can use the internet and what it is connected to, but not other devices on your network, other nodes, or a cloud provider’s internal addresses. Turn it on for an app that needs one of those.</span></span>
-                  <span class="toggle"><input type="checkbox" id="cfg-local-network" /><span class="toggle-slider"></span></span>
-                </label>
+                <div class="s3-row">
+                  <span class="s3-label"><label class="s3-title" for="cfg-network-access">Outgoing connections</label><span class="s3-desc">What the app may connect to, after its next restart. <strong>Internet only</strong>: no other devices on your network, other nodes or a cloud provider’s internal addresses. <strong>Only its connections</strong>: it just answers requests and reaches the apps and databases it is connected to.</span></span>
+                  <span class="s3-ctl"><select class="input" id="cfg-network-access">
+                    <option value="open">Everything</option>
+                    <option value="internet">Internet only</option>
+                    <option value="none">Only its connections</option>
+                  </select></span>
+                </div>
                 <label class="s3-row">
                   <span class="s3-label"><span class="s3-title">Memory-backed /tmp</span><span class="s3-desc">A fast /tmp in memory, wiped on every restart.</span></span>
                   <span class="toggle"><input type="checkbox" id="cfg-docker-tmpfs-enabled" /><span class="toggle-slider"></span></span>

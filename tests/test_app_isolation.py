@@ -105,28 +105,39 @@ def link(database_id, node_id=1):
 
 
 def test_apps_run_on_a_network_where_containers_cannot_reach_each_other(docker):
-    for blocked, network, bridge in ((True, naming.APPS_NETWORK, "cbapps0"), (False, naming.APPS_LAN_NETWORK, "cbappl0")):
+    for access, network, bridge in (("open", naming.APPS_LAN_NETWORK, "cbappl0"), ("internet", naming.APPS_NETWORK, "cbapps0"),
+                                    ("none", naming.APPS_CLOSED_NETWORK, "cbappx0")):
         kwargs = {}
-        assert cc._apply_linked_databases(docker, kwargs, {"block_local_network": blocked}) == []
+        assert cc._apply_linked_databases(docker, kwargs, {"network_access": access}) == []
         assert kwargs["network"] == network
         options = docker.network_list[network].options
         assert options["com.docker.network.bridge.enable_icc"] == "false"         # whichever it is: apps do not see each other
         assert options["com.docker.network.bridge.name"] == bridge
 
 
-def test_an_app_from_before_the_setting_is_not_blocked_and_a_new_one_is(docker):
-    old, new = {}, {}
-    cc._apply_linked_databases(docker, old, {})                                    # a spec without the key
-    cc._apply_linked_databases(docker, new, {"block_local_network": True})
-    assert (old["network"], new["network"]) == (naming.APPS_LAN_NETWORK, naming.APPS_NETWORK)
+def test_an_app_from_before_the_setting_is_open_and_an_unknown_value_is_too(docker):
+    for options, network in (({}, naming.APPS_LAN_NETWORK), ({"network_access": None}, naming.APPS_LAN_NETWORK),
+                             ({"network_access": "nonsense"}, naming.APPS_LAN_NETWORK),
+                             ({"network_access": "internet"}, naming.APPS_NETWORK), ({"network_access": "none"}, naming.APPS_CLOSED_NETWORK)):
+        kwargs = {}
+        cc._apply_linked_databases(docker, kwargs, options)
+        assert kwargs["network"] == network, options
 
 
-def test_a_cron_job_with_a_database_on_another_node_is_not_blocked(docker):
-    options = {"block_local_network": True, "linked_databases": [link(8, node_id=2)]}
-    job, instance = {}, {}
-    cc._apply_linked_databases(docker, job, options, job=True)                    # the firewall list is made from instances only
-    cc._apply_linked_databases(docker, instance, options)
-    assert (job["network"], instance["network"]) == (naming.APPS_LAN_NETWORK, naming.APPS_NETWORK)
+def test_outside_names_are_not_looked_up_for_an_app_without_outgoing_connections(docker):
+    """Docker's own resolver asks the server, past the firewall; with 127.0.0.1 to ask, only Docker's own names work."""
+    dns = {}
+    for access in ("open", "internet", "none"):
+        kwargs = {}
+        cc._apply_linked_databases(docker, kwargs, {"network_access": access})
+        dns[access] = kwargs.get("dns")
+    assert dns == {"open": None, "internet": None, "none": ["127.0.0.1"]}
+
+
+def test_every_access_has_its_own_network_and_bridge():
+    bridges = [bridge for _, bridge in cc._ACCESS_NETWORKS.values()]
+    names = [name for name, _ in cc._ACCESS_NETWORKS.values()]
+    assert len(set(bridges)) == len(set(names)) == 3 and set(cc._ACCESS_NETWORKS) == set(naming.NETWORK_ACCESS)
 
 
 def test_a_database_network_lets_containers_reach_each_other(docker):
@@ -153,7 +164,7 @@ def test_the_link_wins_over_an_env_var_with_the_same_name(docker):
 def test_the_extra_networks_are_joined_before_the_app_starts(docker):
     docker.container_list["cloudbase-db-7"] = FakeContainer("cloudbase-db-7")
     kwargs = {"name": "app", "detach": True}
-    networks = cc._apply_linked_databases(docker, kwargs, {"block_local_network": True, "linked_databases": [link(7)]})
+    networks = cc._apply_linked_databases(docker, kwargs, {"network_access": "internet", "linked_databases": [link(7)]})
     container = cc.start_container(docker, "img", kwargs, networks)
     assert container.started and container.networks == {naming.APPS_NETWORK, "cloudbase-db-7"}
     assert "detach" not in docker.created[0]
@@ -161,7 +172,7 @@ def test_the_extra_networks_are_joined_before_the_app_starts(docker):
 
 def test_an_old_spec_that_names_the_shared_network_is_ignored(docker):
     kwargs = {}
-    cc._apply_linked_databases(docker, kwargs, {"network": "cloudbase", "block_local_network": True})
+    cc._apply_linked_databases(docker, kwargs, {"network": "cloudbase", "network_access": "internet"})
     assert kwargs["network"] == naming.APPS_NETWORK
 
 
@@ -234,11 +245,11 @@ def test_a_target_joins_the_network_of_each_link_to_it_under_its_name(docker):
 
 
 # ── what blocked apps may still connect to ────────────────────────────────────
-def _entry(desired="running", block=True, **options):
-    return {"desired": desired, "spec": {"docker_options": {"block_local_network": block, **options}}}
+def _entry(desired="running", access="internet", **options):
+    return {"desired": desired, "spec": {"docker_options": {"network_access": access, **options}}}
 
 
-def test_the_firewall_list_has_the_other_nodes_targets_of_blocked_apps_only(monkeypatch):
+def test_the_firewall_list_has_the_other_nodes_targets_of_restricted_apps_only(monkeypatch):
     from containers import egress
     monkeypatch.setattr(db_proxy, "local_node_id", lambda: 1)
     remote_app = app_link([{"node_id": 2, "port": 20002, "address": "10.0.0.2"}])
@@ -247,7 +258,7 @@ def test_the_firewall_list_has_the_other_nodes_targets_of_blocked_apps_only(monk
     database["remote_url"] = "postgresql://user:p%40ss@10.0.0.2:30008/app"
     entries = {
         1: _entry(linked_apps=[remote_app, same_node], linked_databases=[database, link(7, node_id=1)]),
-        2: _entry(block=False, linked_apps=[app_link([{"node_id": 3, "port": 20003, "address": "10.0.0.3"}], link_id=7)]),   # may reach it anyway
+        2: _entry(access="open", linked_apps=[app_link([{"node_id": 3, "port": 20003, "address": "10.0.0.3"}], link_id=7)]),   # may reach it anyway
         3: _entry(desired="stopped", linked_apps=[app_link([{"node_id": 4, "port": 20004, "address": "10.0.0.4"}], link_id=8)]),
     }
     assert egress.allowed_targets(entries) == [{"ip": "10.0.0.2", "port": 20002}, {"ip": "10.0.0.2", "port": 30008}]
@@ -274,3 +285,50 @@ def test_the_helper_is_only_called_when_the_list_changes(monkeypatch):
     assert sent == [[{"ip": "10.0.0.2", "port": 20002}]]
     egress.apply({})
     assert sent[-1] == []                                   # a connection that is gone is closed again
+
+
+def test_apps_without_outgoing_connections_are_listed_too(monkeypatch):
+    from containers import egress
+    monkeypatch.setattr(db_proxy, "local_node_id", lambda: 1)
+    options = {"linked_apps": [app_link([{"node_id": 2, "port": 20002, "address": "10.0.0.2"}])]}
+    assert egress.targets_of({"network_access": "none", **options}) == {("10.0.0.2", 20002)}
+    assert egress.targets_of({"network_access": "internet", **options}) == {("10.0.0.2", 20002)}
+    assert egress.targets_of({"network_access": "open", **options}) == set()
+    assert egress.targets_of(options) == set()                                      # a spec from before the setting
+
+
+def test_a_cron_job_opens_what_it_needs_while_it_runs_and_closes_it_after(monkeypatch):
+    from containers import egress
+    from mesh import helper
+    sent = []
+    monkeypatch.setattr(db_proxy, "local_node_id", lambda: 1)
+    monkeypatch.setattr(helper, "set_egress", lambda allowed: sent.append(allowed))
+    monkeypatch.setattr(egress, "_applied", None)
+    monkeypatch.setattr(egress, "_instances", set())
+    monkeypatch.setattr(egress, "_jobs", {})
+    database = {**link(8, node_id=2), "remote_url": "postgresql://u:p@10.0.0.2:30008/app"}
+    options = {"network_access": "internet", "linked_databases": [database]}
+    egress.apply({1: _entry(linked_apps=[app_link([{"node_id": 2, "port": 20002, "address": "10.0.0.2"}])])})
+    egress.open_for_job("cbtest-cron", options)
+    assert sent[-1] == [{"ip": "10.0.0.2", "port": 20002}, {"ip": "10.0.0.2", "port": 30008}]       # the instances' and the job's
+    egress.open_for_job("cbtest-open-job", {"network_access": "open", "linked_databases": [database]})
+    assert len(sent) == 2                                                          # an open job needs nothing
+    egress.close_job("cbtest-cron")
+    assert sent[-1] == [{"ip": "10.0.0.2", "port": 20002}]
+    egress.close_job("cbtest-cron")                                                # closing twice is harmless
+    assert len(sent) == 3
+
+
+def test_an_instance_list_does_not_close_what_a_running_job_needs(monkeypatch):
+    from containers import egress
+    from mesh import helper
+    sent = []
+    monkeypatch.setattr(db_proxy, "local_node_id", lambda: 1)
+    monkeypatch.setattr(helper, "set_egress", lambda allowed: sent.append(allowed))
+    monkeypatch.setattr(egress, "_applied", None)
+    monkeypatch.setattr(egress, "_instances", set())
+    monkeypatch.setattr(egress, "_jobs", {})
+    database = {**link(8, node_id=2), "remote_url": "postgresql://u:p@10.0.0.2:30008/app"}
+    egress.open_for_job("cbtest-cron", {"network_access": "none", "linked_databases": [database]})
+    egress.apply({})                                                               # the reconciler sees a new list meanwhile
+    assert sent[-1] == [{"ip": "10.0.0.2", "port": 30008}]

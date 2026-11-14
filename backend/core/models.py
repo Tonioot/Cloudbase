@@ -91,9 +91,10 @@ class Application(Base):
     docker_cpu_limit = Column(Float, nullable=True)
     docker_memory_limit_mb = Column(Integer, nullable=True)
     docker_read_only_root = Column(Boolean, default=False)
-    # True: the app cannot reach private addresses (the home network, other nodes) except what it is connected to.
-    # Apps from before this setting stay unblocked; new apps start blocked.
-    block_local_network = Column(Boolean, default=False)
+    # What the app may connect to: open (everything), internet (not the home network, other nodes or a cloud
+    # provider's internal addresses, except what it is connected to) or none (only what it is connected to).
+    # Apps from before this setting stay open; new apps start on internet.
+    network_access = Column(String(10), default="open")
     docker_tmpfs_enabled = Column(Boolean, default=False)
     docker_tmpfs_size_mb = Column(Integer, nullable=True)
     no_web           = Column(Boolean, default=False)   # True = no web server, skip nginx + port
@@ -414,7 +415,8 @@ class DatabaseLink(Base):
 
 class AppLink(Base):
     """An app reaches another app privately: the address of the target as an environment variable, and a network
-    that only these two share. One direction: the target does not get to call back unless it has a link of its own."""
+    that only these two share. The route works both ways between the two (it is a network); only the calling app is
+    given the address."""
     __tablename__ = "app_links"
     __table_args__ = (UniqueConstraint("app_id", "env_var_name", name="uq_app_links_app_env"),
                       UniqueConstraint("app_id", "target_app_id", name="uq_app_links_pair"))

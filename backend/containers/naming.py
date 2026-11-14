@@ -22,7 +22,11 @@ def job_container_name(app_id: int, run_id: int) -> str:
 # ── Networks ──────────────────────────────────────────────────────────────────
 
 APPS_NETWORK = "cloudbase-apps"      # every app container; containers on it cannot reach each other
-APPS_LAN_NETWORK = "cloudbase-apps-lan"   # the same, for apps that may reach the local network
+APPS_LAN_NETWORK = "cloudbase-apps-lan"   # the same, for apps with open access (the local network too)
+APPS_CLOSED_NETWORK = "cloudbase-apps-closed"   # the same, for apps that may not connect to anything but what they are connected to
+
+# What an app may connect to, from where it runs: everything, the internet only, or nothing but its connections
+NETWORK_ACCESS = ("open", "internet", "none")
 LEGACY_NETWORK = "cloudbase"         # the one shared network of earlier versions
 
 
