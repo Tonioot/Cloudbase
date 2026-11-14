@@ -91,6 +91,9 @@ class Application(Base):
     docker_cpu_limit = Column(Float, nullable=True)
     docker_memory_limit_mb = Column(Integer, nullable=True)
     docker_read_only_root = Column(Boolean, default=False)
+    # True: the app cannot reach private addresses (the home network, other nodes) except what it is connected to.
+    # Apps from before this setting stay unblocked; new apps start blocked.
+    block_local_network = Column(Boolean, default=False)
     docker_tmpfs_enabled = Column(Boolean, default=False)
     docker_tmpfs_size_mb = Column(Integer, nullable=True)
     no_web           = Column(Boolean, default=False)   # True = no web server, skip nginx + port

@@ -90,6 +90,7 @@ async def deploy_app(
         docker_cpu_limit=req.docker_cpu_limit,
         docker_memory_limit_mb=req.docker_memory_limit_mb,
         docker_read_only_root=bool(req.docker_read_only_root) if req.docker_read_only_root is not None else False,
+        block_local_network=True if req.block_local_network is None else bool(req.block_local_network),
         docker_tmpfs_enabled=bool(req.docker_tmpfs_enabled) if req.docker_tmpfs_enabled is not None else False,
         docker_tmpfs_size_mb=req.docker_tmpfs_size_mb,
         source_revision=req.source_revision,

@@ -1680,6 +1680,7 @@ function initSettings() {
   document.getElementById('cfg-docker-cpu').value = app.docker_cpu_limit || '';
   document.getElementById('cfg-docker-memory').value = app.docker_memory_limit_mb || '';
   document.getElementById('cfg-docker-readonly').checked = !!app.docker_read_only_root;
+  document.getElementById('cfg-local-network').checked = !app.block_local_network;
   document.getElementById('cfg-docker-tmpfs-enabled').checked = !!app.docker_tmpfs_enabled;
   document.getElementById('cfg-docker-tmpfs-size').value = app.docker_tmpfs_size_mb || '';
   const dockerSection = document.getElementById('docker-runtime-section');
@@ -3089,6 +3090,7 @@ async function saveSettings() {
     docker_cpu_limit: Number.isFinite(dockerCpu) ? dockerCpu : null,
     docker_memory_limit_mb: Number.isInteger(dockerMemory) ? dockerMemory : null,
     docker_read_only_root: document.getElementById('cfg-docker-readonly').checked,
+    block_local_network: !document.getElementById('cfg-local-network').checked,
     docker_tmpfs_enabled: document.getElementById('cfg-docker-tmpfs-enabled').checked,
     docker_tmpfs_size_mb: Number.isInteger(dockerTmpfsSize) ? dockerTmpfsSize : null,
     autoscale_enabled:      document.getElementById('cfg-autoscale-enabled').checked,

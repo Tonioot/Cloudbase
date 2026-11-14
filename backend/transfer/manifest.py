@@ -24,6 +24,7 @@ PLAIN_FIELDS = (
     "repo_url", "domain", "app_type", "start_command", "build_command", "port", "no_web",
     "restart_policy", "auto_deploy", "deploy_branch", "deploy_strategy", "auto_deploy_interval",
     "docker_cpu_limit", "docker_memory_limit_mb", "docker_read_only_root", "docker_tmpfs_enabled", "docker_tmpfs_size_mb",
+    "block_local_network",
     "autoscale_enabled", "autoscale_min_instances", "autoscale_max_instances", "autoscale_cpu_target",
     "autoscale_memory_target_mb", "autoscale_up_seconds", "autoscale_down_minutes", "autoscale_max_step_up",
     "autoscale_max_step_down", "autoscale_cooldown_seconds",

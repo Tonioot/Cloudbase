@@ -55,5 +55,10 @@ def isolate_apps() -> None:
     _run(["isolate"])
 
 
+def set_egress(allowed: list[dict]) -> None:
+    """The destinations ({"ip", "port"}) that apps which may not reach the local network can still connect to."""
+    _run(["egress"], stdin=json.dumps({"allow": allowed}))
+
+
 def status() -> dict:
     return json.loads(_run(["status"]))

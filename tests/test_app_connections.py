@@ -118,3 +118,10 @@ def test_the_start_of_an_app_learns_where_its_targets_run_and_who_reaches_it(two
 def test_the_default_variable_is_made_from_the_name_of_the_target():
     assert app_links.default_env_var(Application(name="my-backend")) == "MY_BACKEND_URL"
     assert app_links.default_env_var(Application(name="2fa")) == "_2FA_URL"
+
+
+def test_an_app_can_be_blocked_from_the_local_network_and_old_apps_are_not(admin, two_apps):
+    front, _back = two_apps
+    assert admin.get(f"/api/apps/{front}").json()["block_local_network"] is False        # made before the setting existed
+    assert admin.put(f"/api/apps/{front}", json={"block_local_network": True}).status_code == 200
+    assert admin.get(f"/api/apps/{front}").json()["block_local_network"] is True

@@ -75,9 +75,15 @@ def _isolate_from_host() -> None:
         log.warning("[docker] Apps can still reach this machine's own ports: %s (run: cloudbase update)", exc)
 
 
-def ensure_apps_network() -> None:
-    ensure_network(naming.APPS_NETWORK, "cbapps0", isolated=True)
+def ensure_apps_network(local_network: bool = False) -> str:
+    """The network app containers run on. Both have inter-container communication off; what differs is the firewall
+    around them (scripts/cloudbase-wireguard): apps on the first cannot reach private addresses, apps on the second can."""
+    if local_network:
+        ensure_network(naming.APPS_LAN_NETWORK, "cbappl0", isolated=True)
+    else:
+        ensure_network(naming.APPS_NETWORK, "cbapps0", isolated=True)
     _isolate_from_host()
+    return naming.APPS_LAN_NETWORK if local_network else naming.APPS_NETWORK
 
 
 def ensure_database_network(database_id: int) -> str:
@@ -113,6 +119,16 @@ def _join_database_networks(client, linked: list[dict]) -> list[tuple[str, list[
     return joined
 
 
+def link_route(entry: dict, me: int | None) -> tuple[str, dict | None]:
+    """How an app reaches a target it is connected to: ("here", None) by its name over a network they share, or
+    ("remote", target) at the address its node publishes it on. The lowest node first, so it is the same every time."""
+    targets = entry.get("targets") or []
+    remote = sorted((t for t in targets if t.get("address")), key=lambda t: t["node_id"])
+    if me is None or any(t["node_id"] == me for t in targets) or not remote:
+        return "here", None
+    return "remote", remote[0]
+
+
 def _link_apps(docker_options: dict) -> tuple[dict, list[tuple[str, list[str]]]]:
     """The links to other apps: the address of each as an env var, and the networks it is reached on.
 
@@ -122,14 +138,12 @@ def _link_apps(docker_options: dict) -> tuple[dict, list[tuple[str, list[str]]]]
     me = db_proxy.local_node_id()
     env, joined = {}, []
     for entry in docker_options.get("linked_apps") or []:
-        targets = entry.get("targets") or []
-        remote = sorted((t for t in targets if t.get("address")), key=lambda t: t["node_id"])
-        here = me is None or any(t["node_id"] == me for t in targets) or not remote
-        if here:
+        route, target = link_route(entry, me)
+        if route == "here":
             env[entry["env_var"]] = f"http://{entry['alias']}:{entry['port']}"
             joined.append((ensure_link_network(entry["network"]), []))
         else:
-            env[entry["env_var"]] = f"http://{remote[0]['address']}:{remote[0]['port']}"
+            env[entry["env_var"]] = f"http://{target['address']}:{target['port']}"
     for entry in docker_options.get("exposed_to") or []:
         joined.append((ensure_link_network(entry["network"]), [entry["alias"]]))
     return env, joined
@@ -182,14 +196,21 @@ def _host_port(external_port: int, docker_options: dict):
     return (bind_host, external_port) if bind_host else external_port
 
 
-def _apply_linked_databases(client, run_kwargs: dict, docker_options: dict) -> list[tuple[str, list[str]]]:
+def _may_reach_local_network(docker_options: dict, linked: list[dict], job: bool) -> bool:
+    """Apps from before the setting have no key: not blocked. A cron job with a database on another node needs that
+    node's address, which only the instances' firewall list has, so such a job runs unblocked."""
+    if not docker_options.get("block_local_network"):
+        return True
+    return job and len(db_proxy.local_database_ids(linked)) < len(linked)
+
+
+def _apply_linked_databases(client, run_kwargs: dict, docker_options: dict, job: bool = False) -> list[tuple[str, list[str]]]:
     """Put the container on the apps network, where it cannot reach other apps, and add what its links give it: the
     URLs of linked databases (direct on the database's node, over the node network elsewhere) and of linked apps.
     A link wins when the app has an env var of the same name (an imported .env must not silently cut the connection).
     Returns the extra networks to join (name, aliases): those of the databases and apps it is linked to."""
-    ensure_apps_network()
-    run_kwargs["network"] = naming.APPS_NETWORK
     linked = docker_options.get("linked_databases") or []
+    run_kwargs["network"] = ensure_apps_network(_may_reach_local_network(docker_options, linked, job))
     linked_env = db_proxy.resolve_links(linked) if linked else {}
     networks = _join_database_networks(client, linked) if linked else []
     app_env, app_networks = _link_apps(docker_options)

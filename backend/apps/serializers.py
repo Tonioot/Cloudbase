@@ -92,6 +92,7 @@ def _app_to_dict(
         "docker_cpu_limit": app.docker_cpu_limit,
         "docker_memory_limit_mb": app.docker_memory_limit_mb,
         "docker_read_only_root": bool(app.docker_read_only_root),
+        "block_local_network": bool(app.block_local_network),
         "docker_tmpfs_enabled": bool(app.docker_tmpfs_enabled),
         "docker_tmpfs_size_mb": app.docker_tmpfs_size_mb,
         "autoscale_enabled":      bool(app.autoscale_enabled),

@@ -80,6 +80,8 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         app.docker_memory_limit_mb = req.docker_memory_limit_mb
     if req.docker_read_only_root is not None:
         app.docker_read_only_root = req.docker_read_only_root
+    if req.block_local_network is not None:
+        app.block_local_network = req.block_local_network
     if req.docker_tmpfs_enabled is not None:
         app.docker_tmpfs_enabled = req.docker_tmpfs_enabled
     if req.docker_tmpfs_size_mb is not None:

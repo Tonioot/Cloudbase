@@ -23,6 +23,8 @@ Commands (all print JSON or a public key on stdout; errors go to stderr with exi
   boot                                     bring the interface up from the saved state (at boot), and isolate apps
   down                                     take the interface down
   isolate                                  keep app containers from starting connections to this machine itself
+  egress                                   JSON {"allow": [{"ip", "port"}]} on stdin: the private destinations apps that may
+                                           not reach the local network can still connect to
 """
 import ipaddress
 import json
@@ -245,7 +247,30 @@ def forward_between_nodes() -> None:
 
 
 APPS_CHAIN = "CLOUDBASE-APPS"
-APP_INTERFACES = ("cbapps0", "cbdb+")       # the bridges of the apps network and of the database networks
+APP_INTERFACES = ("cbapps0", "cbappl0", "cbdb+")   # the bridges of the apps networks and of the database networks
+EGRESS_CHAIN = "CLOUDBASE-EGRESS"
+EGRESS_BRIDGE = "cbapps0"                   # the apps that may not reach the local network (cbappl0 is for those that may)
+EGRESS_STORE = "egress.json"
+MAX_ALLOWED = 20000
+PRIVATE_NETWORKS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10")
+
+
+def _ensure_jump(parent: str, interface: str, chain: str) -> None:
+    jump = [parent, "-i", interface, "-j", chain]
+    try:
+        run(["iptables", "-C", *jump])
+    except HelperError:
+        run(["iptables", "-I", *jump])                            # first, before the firewall's own rules
+
+
+def _fill_chain(chain: str, rules: list[list[str]]) -> None:
+    try:
+        run(["iptables", "-N", chain])
+    except HelperError:
+        pass                                                      # it exists
+    run(["iptables", "-F", chain])
+    for rule in rules:
+        run(["iptables", "-A", chain, *rule])
 
 
 def isolate_apps() -> None:
@@ -254,30 +279,70 @@ def isolate_apps() -> None:
     on this machine's addresses, which undoes the isolation between apps. What stays: answers to connections the
     machine started (nginx to an app, the panel to a database), web traffic to ports 80 and 443 (an app that calls
     its own domain on this server), DNS and ping. Traffic to other machines is forwarded, not input, and is untouched."""
-    try:
-        run(["iptables", "-N", APPS_CHAIN])
-    except HelperError:
-        pass                                                      # it exists
-    run(["iptables", "-F", APPS_CHAIN])
-    for rule in (["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
-                 ["-p", "tcp", "-m", "multiport", "--dports", "80,443", "-j", "ACCEPT"],
-                 ["-p", "udp", "--dport", "53", "-j", "ACCEPT"],
-                 ["-p", "tcp", "--dport", "53", "-j", "ACCEPT"],
-                 ["-p", "icmp", "-j", "ACCEPT"],
-                 ["-j", "DROP"]):
-        run(["iptables", "-A", APPS_CHAIN, *rule])
+    _fill_chain(APPS_CHAIN, [["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
+                             ["-p", "tcp", "-m", "multiport", "--dports", "80,443", "-j", "ACCEPT"],
+                             ["-p", "udp", "--dport", "53", "-j", "ACCEPT"],
+                             ["-p", "tcp", "--dport", "53", "-j", "ACCEPT"],
+                             ["-p", "icmp", "-j", "ACCEPT"],
+                             ["-j", "DROP"]])
     for interface in APP_INTERFACES:
-        jump = ["INPUT", "-i", interface, "-j", APPS_CHAIN]
-        try:
-            run(["iptables", "-C", *jump])
-        except HelperError:
-            run(["iptables", "-I", *jump])                        # first, before the firewall's own rules
+        _ensure_jump("INPUT", interface, APPS_CHAIN)
+
+
+def check_allowed(items) -> list[tuple[str, int]]:
+    """The destinations an app that may not reach the local network is still allowed to connect to."""
+    if not isinstance(items, list) or len(items) > MAX_ALLOWED:
+        raise HelperError("expected a list of at most %d destinations" % MAX_ALLOWED)
+    found = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise HelperError("each destination must be an object")
+        found.append((check_ip(item.get("ip")), check_port(item.get("port"))))
+    return sorted(set(found))
+
+
+def apply_egress(allowed: list[tuple[str, int]]) -> None:
+    """Containers on the apps network that may not reach the local network can connect to the internet, to DNS, to what
+    is listed (the apps and databases they are connected to on other nodes) and to nothing else that is private: not
+    the home network, not the other nodes, not a cloud provider's internal network or its metadata address."""
+    state = load_state()
+    private = list(PRIVATE_NETWORKS)
+    if state.get("address"):
+        private.append(str(ipaddress.ip_interface(check_interface(state["address"])).network))
+    rules = [["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
+             ["-p", "udp", "--dport", "53", "-j", "ACCEPT"],
+             ["-p", "tcp", "--dport", "53", "-j", "ACCEPT"]]
+    rules += [["-d", ip, "-p", "tcp", "--dport", str(port), "-j", "ACCEPT"] for ip, port in allowed]
+    rules += [["-d", network, "-j", "DROP"] for network in private]
+    _fill_chain(EGRESS_CHAIN, rules)
+    _ensure_jump("FORWARD", EGRESS_BRIDGE, EGRESS_CHAIN)
+
+
+def load_egress() -> list[tuple[str, int]]:
+    try:
+        with open(_path(EGRESS_STORE)) as f:
+            return check_allowed(json.load(f).get("allow", []))
+    except (FileNotFoundError, ValueError, AttributeError):
+        return []
 
 
 # ── commands ───────────────────────────────────────────────────────────────────
 def cmd_isolate(_args) -> str:
     isolate_apps()
     return json.dumps({"isolated": True})
+
+
+def cmd_egress(_args, stdin_text: str | None = None) -> str:
+    text = sys.stdin.read(MAX_STDIN + 1) if stdin_text is None else stdin_text
+    if len(text) > MAX_STDIN:
+        raise HelperError("input too large")
+    try:
+        allowed = check_allowed(json.loads(text).get("allow", []))
+    except (ValueError, AttributeError):
+        raise HelperError("input is not JSON")
+    _write(_path(EGRESS_STORE), json.dumps({"allow": [{"ip": ip, "port": port} for ip, port in allowed]}))   # kept for the next boot
+    apply_egress(allowed)
+    return json.dumps({"allowed": len(allowed)})
 
 
 def cmd_keygen(_args) -> str:
@@ -368,7 +433,8 @@ def cmd_boot(_args) -> str:
         if state.get("role") == "hub":
             forward_between_nodes()
         up = True
-    isolate_apps()                                  # the rule does not survive a reboot
+    isolate_apps()                                  # the rules do not survive a reboot
+    apply_egress(load_egress())
     return json.dumps({"up": up})
 
 
@@ -379,7 +445,7 @@ def cmd_down(_args) -> str:
 
 
 COMMANDS = {"keygen": cmd_keygen, "hub": cmd_hub, "node": cmd_node, "peers": cmd_peers,
-            "status": cmd_status, "boot": cmd_boot, "down": cmd_down, "isolate": cmd_isolate}
+            "status": cmd_status, "boot": cmd_boot, "down": cmd_down, "isolate": cmd_isolate, "egress": cmd_egress}
 
 
 def main(argv: list[str]) -> int:

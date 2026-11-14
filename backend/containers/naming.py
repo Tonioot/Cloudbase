@@ -22,6 +22,7 @@ def job_container_name(app_id: int, run_id: int) -> str:
 # ── Networks ──────────────────────────────────────────────────────────────────
 
 APPS_NETWORK = "cloudbase-apps"      # every app container; containers on it cannot reach each other
+APPS_LAN_NETWORK = "cloudbase-apps-lan"   # the same, for apps that may reach the local network
 LEGACY_NETWORK = "cloudbase"         # the one shared network of earlier versions
 
 

@@ -127,8 +127,52 @@ def test_apps_may_not_start_connections_to_the_machine_but_keep_what_they_need(w
     assert ["-p", "tcp", "-m", "multiport", "--dports", "80,443", "-j", "ACCEPT"] in chain      # an app calling its own domain
     assert chain[-1] == ["-j", "DROP"]                                                           # everything else is refused
     jumps = [c for c in calls if c[:2] == ["iptables", "-I"]]
-    assert jumps == [["iptables", "-I", "INPUT", "-i", "cbapps0", "-j", wg.APPS_CHAIN],
-                     ["iptables", "-I", "INPUT", "-i", "cbdb+", "-j", wg.APPS_CHAIN]]
+    assert jumps == [["iptables", "-I", "INPUT", "-i", bridge, "-j", wg.APPS_CHAIN] for bridge in ("cbapps0", "cbappl0", "cbdb+")]
+
+
+def _fake_iptables(wg, monkeypatch):
+    calls, present = [], set()
+
+    def run(args, stdin=None):
+        calls.append(args)
+        if args[:2] == ["iptables", "-N"] and ("N", args[2]) in present:
+            raise wg.HelperError("chain exists")
+        if args[:2] == ["iptables", "-N"]:
+            present.add(("N", args[2]))
+        if args[:2] == ["iptables", "-C"] and tuple(args[2:]) not in present:
+            raise wg.HelperError("no such rule")
+        if args[:2] == ["iptables", "-I"]:
+            present.add(tuple(args[2:]))
+        return ""
+    monkeypatch.setattr(wg, "run", run)
+    return calls
+
+
+def test_blocked_apps_reach_the_internet_dns_and_what_is_listed_but_no_private_address(wg, monkeypatch):
+    calls = _fake_iptables(wg, monkeypatch)
+    wg.save_state({"role": "node", "address": "10.77.0.3/32", "peers": []})
+    wg.apply_egress(wg.check_allowed([{"ip": "10.77.0.2", "port": 20042}, {"ip": "10.77.0.2", "port": 20042}]))
+    rules = [c[3:] for c in calls if c[:3] == ["iptables", "-A", wg.EGRESS_CHAIN]]
+    assert rules[0] == ["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"]
+    assert ["-p", "udp", "--dport", "53", "-j", "ACCEPT"] in rules                       # the resolver is often on the home network
+    accepted = rules.index(["-d", "10.77.0.2", "-p", "tcp", "--dport", "20042", "-j", "ACCEPT"])
+    assert rules.count(rules[accepted]) == 1                                              # listed twice, opened once
+    drops = [r for r in rules if r[-1] == "DROP"]
+    assert ["-d", "192.168.0.0/16", "-j", "DROP"] in drops and ["-d", "169.254.0.0/16", "-j", "DROP"] in drops
+    assert ["-d", "10.0.0.0/8", "-j", "DROP"] in drops                                       # the node network is inside it
+    assert accepted < rules.index(drops[0])                                               # what is listed is allowed before the drops
+    assert [c for c in calls if c[:2] == ["iptables", "-I"]] == [["iptables", "-I", "FORWARD", "-i", "cbapps0", "-j", wg.EGRESS_CHAIN]]
+
+
+def test_the_destinations_are_checked_and_kept_for_the_next_boot(wg, monkeypatch):
+    calls = _fake_iptables(wg, monkeypatch)
+    with pytest.raises(wg.HelperError):
+        wg.cmd_egress([], stdin_text=json.dumps({"allow": [{"ip": "8.8.8.8", "port": 443}]}))      # only private addresses
+    with pytest.raises(wg.HelperError):
+        wg.cmd_egress([], stdin_text=json.dumps({"allow": [{"ip": "10.77.0.2", "port": 80}]}))     # only published ports
+    assert not calls
+    wg.cmd_egress([], stdin_text=json.dumps({"allow": [{"ip": "10.77.0.2", "port": 20042}]}))
+    assert wg.load_egress() == [("10.77.0.2", 20042)]
 
 
 def test_peers_are_refused_on_a_node(wg):

@@ -191,6 +191,7 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
         docker_cpu_limit=entry.get("docker_cpu_limit"),
         docker_memory_limit_mb=entry.get("docker_memory_limit_mb"),
         docker_read_only_root=bool(entry.get("docker_read_only_root")),
+        block_local_network=bool(entry.get("block_local_network")),
         docker_tmpfs_enabled=bool(entry.get("docker_tmpfs_enabled")),
         docker_tmpfs_size_mb=entry.get("docker_tmpfs_size_mb"),
         source_revision=entry.get("source_revision"),

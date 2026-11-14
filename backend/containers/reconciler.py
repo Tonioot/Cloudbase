@@ -19,7 +19,7 @@ import asyncio
 import logging
 import time
 
-from containers import processes as pm, instances as containers_instances
+from containers import egress, processes as pm, instances as containers_instances
 
 _logger = logging.getLogger("cloudbase.agent")      # the node-agent log, also where the primary's reconciler writes
 
@@ -109,6 +109,10 @@ class Reconciler:
             del self.observed[instance_id]
             self.attempts.pop(instance_id, None)
             self.started_at.pop(instance_id, None)
+        try:       # before anything starts: a connection to another node must be open when the instance needs it
+            await asyncio.to_thread(egress.apply, self.entries)
+        except Exception as exc:
+            _log(f"[reconcile] could not set the network rules ({exc}); run: cloudbase update")
         _log(f"[reconcile] list received: {sum(e['desired'] == 'running' for e in self.entries.values())} to run, "
                    f"{sum(e['desired'] != 'running' for e in self.entries.values())} stopped")
         self.reconcile_now.set()

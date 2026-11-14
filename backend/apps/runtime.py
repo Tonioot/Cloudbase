@@ -35,6 +35,7 @@ def _docker_runtime_options(app: Application) -> dict:
         "tmpfs_enabled": bool(app.docker_tmpfs_enabled),
         "tmpfs_size_mb": app.docker_tmpfs_size_mb,
         "restart_policy": app.restart_policy or "no",
+        "block_local_network": bool(app.block_local_network),
         # Reached through nginx on localhost: then the host port must not be open to the
         # internet as well. Without a domain the host port is the only way in, so it stays
         # public. (On another node the agent binds it to its node-network address instead.)
