@@ -74,6 +74,7 @@ async def build_image_local(local_id: int, app_dir: str, spec: dict, push=None) 
         app_type, start_cmd, port,
         build_command=build_command, build_env=build_env,
         source_revision=revision,
+        linked_databases=(spec.get("docker_options") or {}).get("linked_databases"),
     )
     _log(f"[build] Image {img} ready")
     return img

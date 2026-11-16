@@ -1,5 +1,6 @@
 from core.models import Application
 from core.env_crypto import decrypt_env
+from dbs import links as db_links
 
 def _image_port(app: Application) -> int:
     """The port the image is built for; 0 for workers and cron jobs (no EXPOSE)."""
@@ -11,6 +12,7 @@ def _image_build_kwargs(app: Application) -> dict:
     return {
         "build_command": app.build_command or "",
         "build_env": decrypt_env(app.env_vars or ""),
+        "linked_databases": db_links.runtime_options(app.id).get("linked_databases"),
     }
 
 

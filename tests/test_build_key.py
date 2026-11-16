@@ -78,7 +78,7 @@ def test_a_built_image_carries_the_revision_and_the_key(repo, monkeypatch):
     seen = {}
     monkeypatch.setattr(build, "_cleanup_before_build", lambda *a, **k: None)
     monkeypatch.setattr(build, "buildkit_available", lambda: False)
-    monkeypatch.setattr(build, "_run_build", lambda app_id, app_dir, img, push, buildargs=None, labels=None, secret_env=None: seen.update(labels=labels))
+    monkeypatch.setattr(build, "_run_build", lambda app_id, app_dir, img, push, buildargs=None, labels=None, secret_env=None, host_network=False: seen.update(labels=labels))
     build.build_image(1, str(repo), lambda *a: None, "python", "python app.py", 8000)
     revision = build.source_revision_of(str(repo))
     assert seen["labels"][build.REVISION_LABEL] == revision

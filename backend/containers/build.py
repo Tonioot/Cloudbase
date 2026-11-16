@@ -3,6 +3,7 @@ import logging
 import os
 import subprocess
 from collections import deque
+from dbs import lifecycle as dbs_lifecycle, proxy as db_proxy
 from containers.buildkit import _BUILD_SECRET_ID, buildkit_available
 from containers.cleanup import _cleanup_before_build
 from containers.client import _get_client
@@ -157,6 +158,33 @@ def image_key(app_id: int) -> str | None:
         return None
 
 
+def linked_build_env(linked_databases) -> tuple[dict, bool]:
+    """What the build gets from the databases the app is linked to: ({env var: URL}, whether the build needs the
+    host network).
+
+    A running app joins the database's own Docker network and reaches it by container name. A build cannot join a
+    network (BuildKit only knows default, host and none), so the URL points at the container's IP and the build
+    runs on the host network, which can reach it. Without this the variable does not exist during the build
+    (frameworks that read it, or fetch data, while building fail), and its host name would not resolve."""
+    if not linked_databases:
+        return {}, False
+    env = db_proxy.resolve_links(linked_databases)
+    me = db_proxy.local_node_id()
+    host_network = False
+    for link in linked_databases:
+        if not db_proxy.is_local(link, me):
+            continue            # on another node: the URL already is that node's address on the node network
+        try:
+            ip, _port = dbs_lifecycle.container_address(int(link["database_id"]))
+        except Exception as exc:
+            log.warning("[build] database %s is not reachable for the build: %s", link.get("database_id"), exc)
+            continue
+        url = env.get(link["env_var"], "")
+        env[link["env_var"]] = url.replace(f"@{link['host']}:", f"@{ip}:", 1)
+        host_network = True
+    return env, host_network
+
+
 def _write_secret_file(build_env: dict) -> str:
     """Env vars as `export K='v'` lines in a 0600 temp file (BuildKit secret source)."""
     import shlex
@@ -170,7 +198,7 @@ def _write_secret_file(build_env: dict) -> str:
 
 def _build_with_cli(
     app_id: int, app_dir: str, img: str, push_line_fn,
-    buildargs=None, labels=None, secret_env=None,
+    buildargs=None, labels=None, secret_env=None, host_network=False,
 ) -> None:
     """Build through `docker build` so BuildKit does the work; stream its plain log.
 
@@ -179,6 +207,8 @@ def _build_with_cli(
     process environment (`--build-arg NAME` without a value).
     """
     cmd = ["docker", "build", "--progress=plain", "-t", img]
+    if host_network:
+        cmd += ["--network", "host"]
     env = {**os.environ, "DOCKER_BUILDKIT": "1"}
     for k, v in (buildargs or {}).items():
         if k == "CB_ENV_HASH":
@@ -204,14 +234,20 @@ def _build_with_cli(
             text=True, encoding="utf-8", errors="replace", bufsize=1,
             env=env,
         )
-        tail: deque = deque(maxlen=15)
+        tail: deque = deque(maxlen=60)
         for raw in proc.stdout:
             line = raw.rstrip()
             if line:
                 tail.append(line)
                 push_line_fn(app_id, f"[Docker build] {line}")
         if proc.wait() != 0:
-            raise RuntimeError(f"docker build failed (exit {proc.returncode}): " + " | ".join(list(tail)[-5:]))
+            lines = list(tail)
+            # BuildKit ends with the output of the failed step, then a "Dockerfile:N" excerpt
+            # and a generic ERROR line. The excerpt says nothing; the step's output is the cause.
+            cut = next((i for i in range(len(lines) - 1, -1, -1) if lines[i].startswith("Dockerfile:")), None)
+            body = lines[:cut] if cut else [l for l in lines if not l.startswith("ERROR: failed to")]
+            shown = [l for l in body if l.strip("- ")][-12:]
+            raise RuntimeError(f"docker build failed (exit {proc.returncode}): " + " | ".join(shown))
     finally:
         if secret_path:
             try:
@@ -222,11 +258,11 @@ def _build_with_cli(
 
 def _run_build(
     app_id: int, app_dir: str, img: str, push_line_fn,
-    buildargs=None, labels=None, secret_env=None,
+    buildargs=None, labels=None, secret_env=None, host_network=False,
 ) -> None:
     if buildkit_available():
         try:
-            return _build_with_cli(app_id, app_dir, img, push_line_fn, buildargs, labels, secret_env)
+            return _build_with_cli(app_id, app_dir, img, push_line_fn, buildargs, labels, secret_env, host_network)
         except FileNotFoundError:
             pass  # docker CLI vanished: fall back to the classic builder below
     client = _get_client()
@@ -255,8 +291,12 @@ def build_image(
     build_command: str = "",
     build_env: dict | None = None,
     source_revision: str | None = None,
+    linked_databases: list | None = None,
 ) -> str:
     """Build Docker image, streaming build output via push_line_fn. Returns image tag.
+
+    linked_databases (docker_options["linked_databases"]) put the URLs of the linked databases in the build env,
+    like they are in the running container. They are not part of the build key: the address can change per build.
 
     build_command runs once inside the image build (e.g. `npm run build`);
     build_env reaches the build as a BuildKit secret (not as build args, which
@@ -273,6 +313,11 @@ def build_image(
     img = image_name(app_id)
     build_env = {k: str(v) for k, v in (build_env or {}).items() if _ARG_NAME_RE.match(str(k))}
     try:
+        link_env, host_network = linked_build_env(linked_databases)
+        key_env = build_env                                  # what the key is made from: the settings, not addresses
+        build_env = {**build_env, **{k: v for k, v in link_env.items() if _ARG_NAME_RE.match(k)}}   # a link wins, as at runtime
+        if link_env:
+            push_line_fn(app_id, f"[Docker] Build env gets the linked database(s): {', '.join(sorted(link_env))}")
         ensure_dockerfile(
             app_dir, app_type, start_command, port,
             build_command=build_command, build_env_keys=build_env.keys(),
@@ -289,7 +334,7 @@ def build_image(
         # ARGs, so the values stay out of the image history and layers.
         use_secret = bool(build_env) and buildkit_available()
         if "CB_ENV_HASH" in declared:
-            buildargs["CB_ENV_HASH"] = _env_hash(build_env)
+            buildargs["CB_ENV_HASH"] = _env_hash(key_env)
         if build_env and not use_secret and not buildargs:
             push_line_fn(
                 app_id,
@@ -300,7 +345,7 @@ def build_image(
         _cleanup_before_build(app_id, push_line_fn)
         push_line_fn(app_id, f"[Docker] Building image {img} …")
         revision = source_revision or source_revision_of(app_dir)
-        key = build_key(app_type, start_command, port, build_command, build_env, revision)
+        key = build_key(app_type, start_command, port, build_command, key_env, revision)
         labels = {REVISION_LABEL: revision} if revision else {}
         if key:
             labels[KEY_LABEL] = key
@@ -309,6 +354,7 @@ def build_image(
             buildargs=buildargs,
             labels=labels or None,
             secret_env=build_env if use_secret else None,
+            host_network=host_network and use_secret,
         )
     except RuntimeError:
         raise
@@ -332,6 +378,7 @@ def build_image_unless_current(
     build_command: str = "",
     build_env: dict | None = None,
     source_revision: str | None = None,
+    linked_databases: list | None = None,
 ) -> tuple[str, bool]:
     """Like build_image, but does nothing when the image on this machine was built from the same code and settings.
 
@@ -345,5 +392,6 @@ def build_image_unless_current(
         push_line_fn(app_id, f"[Docker] {img} is current (revision {revision[:8]}, same settings): not rebuilding.")
         return img, False
     build_image(app_id, app_dir, push_line_fn, app_type, start_command, port,
-                build_command=build_command, build_env=build_env, source_revision=revision)
+                build_command=build_command, build_env=build_env, source_revision=revision,
+                linked_databases=linked_databases)
     return img, True

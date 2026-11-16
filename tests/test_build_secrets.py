@@ -118,3 +118,29 @@ def test_secret_file_round_trips_awkward_values():
             assert out == expected, key
     finally:
         os.remove(path)
+
+
+def test_failure_message_shows_the_failed_step_not_the_dockerfile_excerpt(monkeypatch):
+    out = ["#9 4.2 Error: connect ECONNREFUSED 10.0.0.5:5432", "------", "Dockerfile:8", "--------------------",
+           ">>> RUN npm run build", "--------------------", "ERROR: failed to build: exit code: 1"]
+    monkeypatch.setattr(containers_build.subprocess, "Popen", lambda cmd, **kw: _FakeProc(out, code=1))
+    with pytest.raises(RuntimeError, match="ECONNREFUSED") as e:
+        containers_build._build_with_cli(1, "/app", "img", lambda *a: None)
+    assert "RUN npm run build" not in str(e.value)
+
+
+def test_host_network_is_only_asked_for_when_needed(popen):
+    containers_build._build_with_cli(1, "/app", "img", lambda *a: None)
+    assert "host" not in popen.calls[0]["cmd"]
+    containers_build._build_with_cli(1, "/app", "img", lambda *a: None, host_network=True)
+    assert popen.calls[1]["cmd"][popen.calls[1]["cmd"].index("--network") + 1] == "host"
+
+
+def test_linked_database_url_points_at_the_container_ip_for_the_build(monkeypatch):
+    link = {"database_id": 3, "node_id": 1, "env_var": "DATABASE_URL", "host": "cb-db-3",
+            "direct_url": "postgresql://u:p@cb-db-3:5432/d", "remote_url": None}
+    monkeypatch.setattr(containers_build.db_proxy, "local_node_id", lambda: 1)
+    monkeypatch.setattr(containers_build.dbs_lifecycle, "container_address", lambda i: ("172.20.0.5", 5432))
+    env, host = containers_build.linked_build_env([link])
+    assert env == {"DATABASE_URL": "postgresql://u:p@172.20.0.5:5432/d"} and host is True
+    assert containers_build.linked_build_env([]) == ({}, False)
