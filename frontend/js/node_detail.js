@@ -318,8 +318,7 @@ function _detailItem(label, val, { valueClass = '', html = false, hint: hintOver
     const classes = ['node-detail-value', valueClass].filter(Boolean).join(' ');
     const hint = hintOverride || _hintFor(label);
     const info = hint ? `<span class="info-tip" tabindex="0" data-tip="${escHtml(hint)}" aria-label="${escHtml(hint)}">i</span>` : '';
-    const wide = !html && String(val).length > 26 ? ' node-detail-wide' : '';
-    return `<div class="node-detail-item${wide}"><span class="node-detail-label">${label}${info}</span><span class="${classes}">${html ? val : escHtml(val)}</span></div>`;
+    return `<div class="node-detail-item"><span class="node-detail-label">${label}${info}</span><span class="${classes}">${html ? val : escHtml(val)}</span></div>`;
 }
 
 /* What a power reading measures, per source (core/hardware.py): a suffix for the value and an explanation that fits it */
@@ -393,16 +392,15 @@ function renderAbout() {
             meta.uptime_secs ? _detailItem('Uptime', fmtUptime(meta.uptime_secs)) : '',
             hw.reboot_required ? _detailItem('Restart needed', 'Yes, a system update is waiting', { valueClass: 'node-detail-value-warn' }) : '',
         ]),
-        _group('Health and power', healthText, healthItems(hw)),
         _group('Storage', 'The disks of this server and how full they are.', (hw.disks || []).map(d =>
             _detailItem(`Disk ${d.mount}`, `${d.percent}% of ${d.total_gb} GB · ${d.fstype}`,
                 { valueClass: d.percent >= 90 ? 'node-detail-value-bad' : d.percent >= 80 ? 'node-detail-value-warn' : '' }))),
+        _group('Health and power', healthText, healthItems(hw)),
         _group('Network', 'How this server is reached, by the primary and on the local network.', [
             meta.hostname ? _detailItem('Hostname', meta.hostname) : '',
             meta.ip ? _detailItem('IP address', meta.ip, { valueClass: 'node-detail-value-mono' }) : '',
             node.wg_ip ? _detailItem('Node network address', node.wg_ip, { valueClass: 'node-detail-value-mono' }) : '',
-            hw.interfaces && hw.interfaces.length
-                ? _detailItem('Network', hw.interfaces.map(i => i.speed_mbps ? `${i.name} (${i.speed_mbps} Mbit/s)` : i.name).join(', ')) : '',
+            ...(hw.interfaces || []).map(i => _detailItem(i.name, i.speed_mbps ? `${i.speed_mbps} Mbit/s` : 'up')),
         ]),
         _group('Cloudbase', 'The Cloudbase software on this server and its connection to the primary.', [
             _detailItem('Cloudbase', cloudbaseLabel(node), { valueClass: 'node-detail-value-mono' }),
