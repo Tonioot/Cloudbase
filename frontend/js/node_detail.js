@@ -358,11 +358,24 @@ function healthItems(hw) {
    A block without items is left out. */
 function _group(title, description, items) {
     const rows = items.filter(Boolean);
-    if (!rows.length) return '';
-    return `<div class="node-group">
+    if (!rows.length) return null;
+    return { rows: rows.length, html: `<div class="node-group">
         <div class="node-group-head"><h3>${escHtml(title)}</h3><p>${escHtml(description)}</p></div>
         <div class="node-details-grid">${rows.join('')}</div>
-    </div>`;
+    </div>` };
+}
+
+/* Two columns of equal height: the cards stay in order, and the split is the one where the columns differ least
+   (a card counts its rows plus the room of its heading). The last card of each column then takes what is left. */
+function _twoColumns(groups) {
+    const size = g => g.rows + 2.5;
+    let best = { diff: Infinity, left: groups, right: [] };
+    for (let mask = 0; mask < (1 << groups.length); mask++) {
+        const left = groups.filter((_, i) => mask >> i & 1), right = groups.filter((_, i) => !(mask >> i & 1));
+        const diff = Math.abs(left.reduce((n, g) => n + size(g), 0) - right.reduce((n, g) => n + size(g), 0));
+        if (diff < best.diff) best = { diff, left, right };
+    }
+    return [best.left, best.right].filter(c => c.length).map(c => `<div class="node-col">${c.map(g => g.html).join('')}</div>`).join('');
 }
 
 const VIRTUAL_RE = /amazon|google|microsoft|vmware|virtualbox|kvm|qemu|digitalocean|hetzner|virtual/i;
@@ -380,7 +393,7 @@ function renderAbout() {
         : (VIRTUAL_RE.test(hw.model || '')
             ? 'A virtual machine: temperature and power are handled by the provider and cannot be seen from here.'
             : 'This machine does not report temperature or power.');
-    document.getElementById('node-info-grid').innerHTML = [
+    document.getElementById('node-info-grid').innerHTML = _twoColumns([
         _group('Machine', 'The hardware and the system it runs.', [
             hw.model ? _detailItem('Hardware', hw.model) : '',
             meta.os ? _detailItem('Operating system', meta.os_short || meta.os) : '',
@@ -408,7 +421,7 @@ function renderAbout() {
             _detailItem('Last seen', connected ? 'Connected now' : timeAgo(node.last_seen), { valueClass: connected ? 'node-detail-value-live' : '' }),
             _detailItem('Node ID', `#${node.id}`, { valueClass: 'node-detail-value-mono' }),
         ]),
-    ].join('');
+    ].filter(Boolean));
 }
 
 /* ─── Live updates ─────────────────────────────────────────────────────── */

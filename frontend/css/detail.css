@@ -349,22 +349,26 @@
 .env-count { color: var(--faint); }
 
 /* ─── Node detail pieces ────────────────────────────────────────────────── */
-/* This server: one card per topic, filled top to bottom in two columns; each row is a label with its value next to it */
-.node-groups { columns: 2; column-gap: 20px; }
-.node-group { break-inside: avoid; margin: 0 0 20px; padding: 18px 20px 8px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface, transparent); }
-.node-group-head { margin-bottom: 8px; }
-.node-group-head h3 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -.005em; color: var(--text); }
-.node-group-head p { margin: 3px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+/* This server: one card per topic, in the look of the settings cards (transparent, hairline border, rows with dividers), filled top to bottom in two columns */
+.node-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: stretch; }
+.node-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+/* The last card of a column grows to the height of the other column, and its rows share the extra room */
+.node-col > .node-group:last-child { flex: 1; display: flex; flex-direction: column; }
+.node-col > .node-group:last-child .node-details-grid { flex: 1; display: flex; flex-direction: column; }
+.node-col > .node-group:last-child .node-detail-item { flex: 1; align-items: center; }
+.node-group { border: 1px solid var(--line); border-radius: var(--radius); }
+.node-group-head { padding: 16px 18px 12px; }
+.node-group-head h3 { margin: 0; font-size: 13px; font-weight: 500; color: var(--text); }
+.node-group-head p { margin: 3px 0 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
 .node-group .node-details-grid { display: block; }
-.node-group .node-detail-item { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: baseline; gap: 16px; padding: 10px 0; border: 0; border-top: 1px solid var(--line); }
-.node-group .node-detail-item:first-child { border-top: 1px solid var(--line); }
+.node-group .node-detail-item { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: baseline; gap: 16px; padding: 12px 18px; border: 0; border-top: 1px solid var(--line); border-radius: 0; }
 .node-group .node-detail-label { font-size: 13px; color: var(--muted); display: inline-flex; align-items: center; }
 .node-group .node-detail-value { font-family: inherit; font-size: 13px; text-align: left; color: var(--text); overflow-wrap: anywhere; }
-.node-group .node-detail-value.node-detail-value-mono { font-family: var(--font-mono); font-size: 12.5px; }
+.node-group .node-detail-value.node-detail-value-mono { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
 .node-group .node-detail-value.node-detail-value-live { color: var(--green); }
 .node-group .node-detail-value.node-detail-value-warn { color: var(--yellow); }
 .node-group .node-detail-value.node-detail-value-bad { color: var(--red); }
-@media (max-width: 900px) { .node-groups { columns: 1; } }
+@media (max-width: 900px) { .node-groups { grid-template-columns: 1fr; } }
 @media (max-width: 480px) { .node-group .node-detail-item { grid-template-columns: 1fr; gap: 2px; } }
 .node-details-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 24px; }
 .node-detail-item {
