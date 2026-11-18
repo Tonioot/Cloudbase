@@ -34,6 +34,10 @@ def clean_system_settings(body: dict) -> dict:
             "db_public_min": _int(ports.get("db_public_min"), 1024, 65000, _cfg.get_port("db_public_min")),
             "db_public_max": _int(ports.get("db_public_max"), 1024, 65000, _cfg.get_port("db_public_max")),
         }
+        sections["ports"]["db_proxy_min"] = _int(ports.get("db_proxy_min"), 1024, 65000, _cfg.get_port("db_proxy_min"))
+        sections["ports"]["db_proxy_max"] = _int(ports.get("db_proxy_max"), 1024, 65000, _cfg.get_port("db_proxy_max"))
+        if sections["ports"]["db_proxy_min"] > sections["ports"]["db_proxy_max"]:
+            raise HTTPException(400, "The node network port range must start below its end")
         if sections["ports"]["db_public_min"] > sections["ports"]["db_public_max"]:
             raise HTTPException(400, "The database port range must start below its end")
     if limits:

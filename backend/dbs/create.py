@@ -11,7 +11,7 @@ from core.env_crypto import encrypt_text
 from core.models import Database, Node
 from dbs.ops import _node_reachable, _spawn, _start_operation
 from dbs.state import claim
-from dbs.provision import NAME_RE, _new_credentials, _next_database_id, _validate_limits
+from dbs.provision import NAME_RE, assign_node_port, _new_credentials, _next_database_id, _validate_limits
 
 
 async def create_database_now(db: AsyncSession, *, name_in, engine_in, version_in=None, node_id=None,
@@ -60,6 +60,9 @@ async def create_database_now(db: AsyncSession, *, name_in, engine_in, version_i
     except IntegrityError:
         await db.rollback()
         raise HTTPException(409, f"A database named '{name}' already exists")
+    if not await assign_node_port(db, database):
+        await db.rollback()
+        raise HTTPException(409, "All ports of the database node-network range are in use. Widen it in config.yaml (db_proxy_min / db_proxy_max).")
     await log_audit(db, "database.create", actor=actor, detail={
         "database_id": database.id, "name": name, "engine": engine.key, "version": version, "node": node.name,
     })

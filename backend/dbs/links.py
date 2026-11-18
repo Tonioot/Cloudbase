@@ -46,9 +46,9 @@ def node_address(node) -> str | None:
     return node.wg_ip or None
 
 
-def _remote_url(engine, creds: dict, database_id: int, node) -> str | None:
+def _remote_url(engine, creds: dict, database, node) -> str | None:
     address = node_address(node)
-    return engine.url(creds, address, dbs_docker.published_port(database_id)) if address else None
+    return engine.url(creds, address, dbs_docker.published_port(database.id, database.node_port)) if address else None
 
 
 def decrypt_credentials(database) -> dict:
@@ -76,7 +76,7 @@ async def refresh(db: AsyncSession) -> None:
                 "env_var": link.env_var_name,
                 "host": host,
                 "direct_url": engine.url(creds, host, engine.port),
-                "remote_url": _remote_url(engine, creds, database.id, nodes.get(database.node_id)),
+                "remote_url": _remote_url(engine, creds, database, nodes.get(database.node_id)),
             })
         except Exception:
             log.warning("[db-links] cannot build URLs for database %s", database.id, exc_info=True)

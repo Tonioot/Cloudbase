@@ -200,6 +200,7 @@ function renderDomain(root) {
 const SYS_FIELDS = [
   ['auth', 'token_expire_seconds', 'sys-token-expire'],
   ['ports', 'instance_min', 'sys-inst-min'], ['ports', 'instance_max', 'sys-inst-max'],
+  ['ports', 'db_proxy_min', 'sys-dbn-min'], ['ports', 'db_proxy_max', 'sys-dbn-max'],
   ['ports', 'db_public_min', 'sys-dbp-min'], ['ports', 'db_public_max', 'sys-dbp-max'],
   ['limits', 'max_apps', 'sys-max-apps'], ['limits', 'max_instances', 'sys-max-inst'],
   ['limits', 'max_nodes', 'sys-max-nodes'],
@@ -231,7 +232,12 @@ function renderSystem(root) {
         ${numField('sys-dbp-min', 'From', '', 'min="1024" max="65000"')}
         ${numField('sys-dbp-max', 'To', '', 'min="1024" max="65000"')}
       </div>
-      <div class="field-hint">A database whose port falls outside a new range gets a new port within seconds; update your firewall first.</div>`)}
+      <div class="field-hint">A database whose port falls outside a new range gets a new port within seconds; update your firewall first.</div>
+      <div class="field-hint" style="margin-top:12px">Between nodes: each database also publishes one port on its node for apps on other nodes, over the private node network only (no firewall rule needed). Only new databases use a changed range; existing ones keep their port.</div>
+      <div class="form-pair">
+        ${numField('sys-dbn-min', 'From', '', 'min="1024" max="65000"')}
+        ${numField('sys-dbn-max', 'To', '', 'min="1024" max="65000"')}
+      </div>`)}
     ${group('Node network', 'Instances on other nodes are reached through a private WireGuard network between the primary and each node. Nothing else is exposed.',
       `<div id="wg-status" class="field-hint">Checking…</div>
       <div class="field">

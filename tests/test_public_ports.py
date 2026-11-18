@@ -31,3 +31,4 @@ def test_a_database_keeps_its_port_while_it_is_in_the_range(monkeypatch):
 def test_a_full_range_gives_nothing(monkeypatch):
     monkeypatch.setattr(_cfg, "get_port", lambda k: {"db_public_min": 31000, "db_public_max": 31001}[k])
     assert pick_public_port(_db(5), {31000, 31001}) is None
+

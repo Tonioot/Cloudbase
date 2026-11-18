@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from core import config as _cfg
 from dbs import engines as db_engines, links as db_links
 from core.models import SystemConfig, Database
 
@@ -30,6 +31,7 @@ def _spec(database: Database) -> dict:
         "credentials": db_links.decrypt_credentials(database),
         "cpu_limit": database.cpu_limit,
         "memory_limit_mb": database.memory_limit_mb,
+        "node_port": database.node_port,
         "initialized": database.initialized_at is not None,
         "volume_token": _volume_token(database),
     }
@@ -53,6 +55,23 @@ async def _next_database_id(db: AsyncSession) -> int:
     else:
         row.value = str(next_id)
     return next_id
+
+
+async def assign_node_port(db: AsyncSession, database: Database) -> bool:
+    """Give the database the port it publishes on its node for the other nodes: the old scheme's one (range start +
+    id) when free, else the lowest free one of the db_proxy range. Kept for as long as the database exists, also when
+    the range is changed later (its container publishes there). False when the range is full."""
+    if database.node_port:
+        return True
+    low, high = _cfg.get_port("db_proxy_min"), _cfg.get_port("db_proxy_max")
+    taken = set((await db.execute(
+        select(Database.node_port).where(Database.id != database.id, Database.node_port.is_not(None)))).scalars())
+    legacy = low + database.id
+    port = legacy if legacy <= high and legacy not in taken else next((p for p in range(low, high + 1) if p not in taken), None)
+    if port is None:
+        return False
+    database.node_port = port
+    return True
 
 
 def _data_dir(database: Database) -> str:

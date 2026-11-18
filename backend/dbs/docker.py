@@ -139,11 +139,14 @@ def _pull(client, ref: str, database_id: int) -> None:
     log.info("[db] Pulled %s", ref)
 
 
-def published_port(database_id: int) -> int:
-    """The port a database publishes on its node's address on the node network."""
+def published_port(database_id: int, port: Optional[int] = None) -> int:
+    """The port a database publishes on its node's address on the node network: the one it was given (spec
+    "node_port"), or for a spec from before ports were given out, the range start plus its id."""
+    if port:
+        return int(port)
     port = _cfg.get_port("db_proxy_min") + int(database_id)
     if port > _cfg.get_port("db_proxy_max"):
-        raise RuntimeError(f"Database id {database_id} is outside the db_proxy port range in config.yaml")
+        raise RuntimeError(f"Database id {database_id} has no port in the db_proxy range in config.yaml")
     return port
 
 
@@ -207,7 +210,7 @@ def _run_container(client, spec: dict):
     }
     address = publish_address()
     if address:      # apps on other nodes (and the primary's public access) connect here; see dbs/proxy.py
-        run_kwargs["ports"] = {f"{engine.port}/tcp": (address, published_port(db_id))}
+        run_kwargs["ports"] = {f"{engine.port}/tcp": (address, published_port(db_id, spec.get("node_port")))}
     command = engine.command(creds, mem_mb)
     if command:
         run_kwargs["command"] = command

@@ -86,5 +86,5 @@ async def open_db_stream(database_id: int) -> db_proxy.Stream:
     address = node_address(node)
     if not address:
         raise RuntimeError(f"Node '{node.name}' is not on the node network")
-    reader, writer = await asyncio.open_connection(address, dbs_lifecycle.published_port(database_id))
+    reader, writer = await asyncio.open_connection(address, dbs_lifecycle.published_port(database_id, database.node_port))
     return db_proxy.TcpStream(reader, writer)

@@ -22,7 +22,7 @@ def test_restart_replaces_such_a_container_instead_of_restarting_it(monkeypatch)
     old = _container("cloudbase")
     monkeypatch.setattr(lifecycle, "_client", lambda: object())
     monkeypatch.setattr(lifecycle, "_get_container", lambda client, db_id: old)
-    monkeypatch.setattr(lifecycle, "_publishes_elsewhere", lambda c, db_id: False)
+    monkeypatch.setattr(lifecycle, "_publishes_elsewhere", lambda c, db_id, port=None: False)
     monkeypatch.setattr(lifecycle, "ensure_running", lambda spec: {"state": "running", "replaced": True})
     assert lifecycle.restart({"database_id": 7}) == {"state": "running", "replaced": True}
 
@@ -32,7 +32,7 @@ def test_ensure_running_removes_such_a_container_and_makes_a_new_one(monkeypatch
     fresh = SimpleNamespace(id="c2")
     monkeypatch.setattr(lifecycle, "_client", lambda: SimpleNamespace(volumes=SimpleNamespace(get=lambda n: object())))
     monkeypatch.setattr(lifecycle, "_get_container", lambda client, db_id: old)
-    monkeypatch.setattr(lifecycle, "_publishes_elsewhere", lambda c, db_id: False)
+    monkeypatch.setattr(lifecycle, "_publishes_elsewhere", lambda c, db_id, port=None: False)
     monkeypatch.setattr(lifecycle, "_volume_exists", lambda client, db_id: True)
     monkeypatch.setattr(lifecycle, "_run_container", lambda client, spec: fresh)
     monkeypatch.setattr(lifecycle, "_container_state", lambda c: "running")
