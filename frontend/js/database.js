@@ -23,6 +23,23 @@ let database = null;
 let credentials = null;     // fetched on demand; every fetch is audit-logged
 let revealed = false;
 let myIp = null;
+
+/** The public IP of this browser. Asked from an outside service, because the panel only sees the address of whatever
+ *  sits in front of it (Cloudflare, a tunnel, a proxy). Falls back to what the panel sees when that cannot be reached. */
+async function findMyIp() {
+  const valid = ip => typeof ip === 'string' && /^[0-9a-fA-F:.]{3,45}$/.test(ip.trim());
+  for (const url of ['https://api.ipify.org?format=json', 'https://api64.ipify.org?format=json']) {
+    try {
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), 4000);
+      const res = await fetch(url, { signal: ctl.signal, cache: 'no-store', credentials: 'omit' });
+      clearTimeout(timer);
+      const ip = (await res.json()).ip;
+      if (valid(ip)) return ip.trim();
+    } catch { /* blocked or offline: try the next one */ }
+  }
+  try { return (await api.getMyIp()).ip || null; } catch { return null; }
+}
 let pollTimer = null;
 let logsTimer = null;
 let backups = null;       // last /backups response
@@ -99,7 +116,7 @@ export async function initDatabasePage() {
     else copyValue(btn.dataset.copy);
   });
 
-  api.getMyIp().then(r => { myIp = r.ip || null; if (database) renderAccess(); }).catch(() => {});
+  findMyIp().then(ip => { myIp = ip; if (database) renderAccess(); });
   await load();
   showTab(TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'overview', false);
   loadStats();
@@ -315,7 +332,7 @@ function renderAccess() {
   myBtn.textContent = myIp ? `Add my IP (${myIp})` : 'Add my IP';
   myBtn.disabled = !myIp || entries.includes(myIp);
   document.getElementById('allow-hint').textContent = myIp
-    ? `Your IP as seen by this panel is ${myIp}. If your database client connects through a VPN or another network (IPv4 or IPv6), add that address too.`
+    ? `Your public IP is ${myIp}. If your database client connects through a VPN or another network (IPv4 or IPv6), add that address too.`
     : '';
 
   const tlsIn = document.getElementById('pub-tls');
