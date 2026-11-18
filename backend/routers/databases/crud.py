@@ -16,9 +16,9 @@ from core.database import get_db
 from core.models import DatabaseStatsHistory, DatabaseLink, Database, Node
 from dbs.ops import _get_or_404, _links_for, _node_for, _node_reachable, _run_on_node, _spawn, _start_operation
 from dbs.provision import _data_dir, _validate_limits
-from dbs.public import _public_host, sync_public_access
+from dbs.public import _public_host, assign_public_port, sync_public_access
 from dbs.state import _busy, _operation, claim, release
-from dbs.view import _as_dict, _client_ip, _safe_public_port
+from dbs.view import _as_dict, _client_ip
 from routers.databases.schemas import CreateDatabaseRequest, PublicAccessRequest, UpdateDatabaseRequest
 from dbs.backups import run_backup
 
@@ -206,7 +206,7 @@ async def get_credentials(
     }
     if database.engine in ("mysql", "mariadb"):
         result["root_password"] = creds["root_password"]
-    public_port = _safe_public_port(database.id)
+    public_port = database.public_port
     if database.public_enabled and public_port and _public_host():
         engine = db_engines.get_engine(database.engine)
         url = engine.url(creds, _public_host(), public_port)
@@ -230,8 +230,8 @@ async def set_public_access(
         db_proxy.parse_allowlist(entries)
     except ValueError as e:
         raise HTTPException(400, f"Invalid IP address or range: {e}")
-    if req.enabled and _safe_public_port(database.id) is None:
-        raise HTTPException(409, "This database id is outside the db_public port range in config.yaml")
+    if req.enabled and not await assign_public_port(db, database):
+        raise HTTPException(409, "All ports of the database port range are in use. Widen the range in the system settings.")
     database.public_enabled = req.enabled
     database.public_allowlist = json.dumps(entries)
     if req.tls is not None:

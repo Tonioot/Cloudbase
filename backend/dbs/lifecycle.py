@@ -139,7 +139,9 @@ def states(database_ids: list[int]) -> dict[str, dict]:
     for db_id in database_ids:
         container = _get_container(client, int(db_id))
         state = _container_state(container) if container is not None else "missing"
-        out[str(db_id)] = {"state": state, "volume": _volume_exists(client, int(db_id))}
+        out[str(db_id)] = {"state": state, "volume": _volume_exists(client, int(db_id)),
+                           # False: it publishes its port somewhere else than where this node's address is now
+                           "published": container is None or not _publishes_elsewhere(container, int(db_id))}
     return out
 
 

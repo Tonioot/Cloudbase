@@ -97,6 +97,20 @@ async def _monitor_tick() -> None:
                 _spawn(db_id, lambda db_id=db_id: _start_operation(db_id, "ensure"))
                 continue
 
+            if state == "running" and info.get("published") is False:
+                # Made while the node network was down (or on another address): it has no port for the other nodes.
+                now = time.monotonic()
+                if d.id not in _last_heal or now - _last_heal[d.id] >= HEAL_BACKOFF_SECONDS:
+                    try:
+                        claim(d.id)
+                    except HTTPException:
+                        continue
+                    _last_heal[d.id] = now
+                    log.info("[db-monitor] database %s (%s) does not publish its port on the node network, replacing the container", d.name, d.id)
+                    db_id = d.id
+                    _spawn(db_id, lambda db_id=db_id: _start_operation(db_id, "ensure"))
+                    continue
+
             status, error = _state_to_status(state)
             if status != d.status or (error or None) != (d.last_error or None) or (status == "running" and d.initialized_at is None):
                 await _set_status(d.id, status, error)

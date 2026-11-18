@@ -7,13 +7,6 @@ from dbs.ops import _allowlist, _node_reachable
 from dbs.public import _public_host
 from dbs.state import _busy, _operation, _remote_progress, _update_info
 
-def _safe_public_port(database_id: int) -> Optional[int]:
-    try:
-        return db_proxy.public_port(database_id)
-    except RuntimeError:
-        return None
-
-
 def _client_ip(request: Request) -> str:
     """The browser's public IP, also behind the local nginx or Cloudflare. Only used
     to prefill the allowlist, never to grant access, so forwarded headers are fine."""
@@ -65,7 +58,7 @@ def _as_dict(database: Database, node: Optional[Node], link_count: int = 0) -> d
         "can_restore": bool(engine and engine.can_restore),
         "public_enabled": bool(database.public_enabled),
         "public_allowlist": _allowlist(database),
-        "public_port": _safe_public_port(database.id),
+        "public_port": database.public_port,
         "public_host": _public_host(),
         "public_listening": db_proxy.public_listening(database.id),
         "public_tls": bool(database.public_tls),

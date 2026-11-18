@@ -35,7 +35,7 @@ _DEFAULTS = {
         # (port = db_proxy_min + database id; the name is from when these were proxies).
         "db_proxy_min": 30000,
         "db_proxy_max": 30999,
-        # Public database access on the primary (port = db_public_min + database id).
+        # Public database access on the primary: each database takes one free port from this range.
         "db_public_min": 31000,
         "db_public_max": 31999,
     },

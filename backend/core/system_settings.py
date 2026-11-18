@@ -31,7 +31,11 @@ def clean_system_settings(body: dict) -> dict:
         sections["ports"] = {
             "instance_min": _int(ports.get("instance_min"), 1024, 65000, _cfg.get_port("instance_min")),
             "instance_max": _int(ports.get("instance_max"), 1024, 65000, _cfg.get_port("instance_max")),
+            "db_public_min": _int(ports.get("db_public_min"), 1024, 65000, _cfg.get_port("db_public_min")),
+            "db_public_max": _int(ports.get("db_public_max"), 1024, 65000, _cfg.get_port("db_public_max")),
         }
+        if sections["ports"]["db_public_min"] > sections["ports"]["db_public_max"]:
+            raise HTTPException(400, "The database port range must start below its end")
     if limits:
         sections["limits"] = {
             "max_apps":                _int(limits.get("max_apps"),                1, 100000, _cfg.get_limit("max_apps")),

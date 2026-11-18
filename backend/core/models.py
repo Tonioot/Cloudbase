@@ -351,7 +351,8 @@ class Database(Base):
     # Set after the first successful start. From then on a missing data volume is an
     # error and never a reason to initialise a fresh, empty database.
     initialized_at  = Column(DateTime, nullable=True)
-    # Public access through the primary (port = db_public_min + id).
+    # Public access through the primary, on a port from the db_public range that is kept for as long as the database exists.
+    public_port      = Column(Integer, nullable=True)
     public_enabled   = Column(Boolean, default=False, nullable=False)
     public_allowlist = Column(Text, nullable=True)  # JSON list of IPs / CIDRs; empty = everyone
     public_tls       = Column(Boolean, default=True, nullable=False)  # require TLS on the public port

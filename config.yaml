@@ -25,7 +25,8 @@ ports:
   db_proxy_max: 30999
 
   # Public database access on the primary, when enabled per database.
-  # Port = db_public_min + database id; open this range in your firewall if you use it.
+  # Each database with public access takes one free port from this range (also set in System settings);
+  # open this range in your firewall if you use it.
   db_public_min: 31000
   db_public_max: 31999
 

@@ -200,6 +200,7 @@ function renderDomain(root) {
 const SYS_FIELDS = [
   ['auth', 'token_expire_seconds', 'sys-token-expire'],
   ['ports', 'instance_min', 'sys-inst-min'], ['ports', 'instance_max', 'sys-inst-max'],
+  ['ports', 'db_public_min', 'sys-dbp-min'], ['ports', 'db_public_max', 'sys-dbp-max'],
   ['limits', 'max_apps', 'sys-max-apps'], ['limits', 'max_instances', 'sys-max-inst'],
   ['limits', 'max_nodes', 'sys-max-nodes'],
   ['limits', 'max_restarts_per_window', 'sys-max-restarts'], ['limits', 'restart_window_seconds', 'sys-restart-window'],
@@ -225,6 +226,12 @@ function renderSystem(root) {
         ${numField('sys-inst-max', 'To', '', 'min="1024" max="65000"')}
       </div>
       <div class="field-hint">Takes effect after a Cloudbase restart. Keep the range free of other services.</div>`)}
+    ${group('Database ports', 'Public access to a database (from the internet) uses one port of this range on the primary. Open exactly this range in your firewall. A port stays with its database; when the database is deleted it is free again.',
+      `<div class="form-pair">
+        ${numField('sys-dbp-min', 'From', '', 'min="1024" max="65000"')}
+        ${numField('sys-dbp-max', 'To', '', 'min="1024" max="65000"')}
+      </div>
+      <div class="field-hint">A database whose port falls outside a new range gets a new port within seconds; update your firewall first.</div>`)}
     ${group('Node network', 'Instances on other nodes are reached through a private WireGuard network between the primary and each node. Nothing else is exposed.',
       `<div id="wg-status" class="field-hint">Checking…</div>
       <div class="field">

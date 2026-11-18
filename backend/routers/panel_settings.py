@@ -102,6 +102,8 @@ async def get_system_settings(_: dict = Depends(auth.require_permission("system.
         "ports": {
             "instance_min": _cfg.get_port("instance_min"),
             "instance_max": _cfg.get_port("instance_max"),
+            "db_public_min": _cfg.get_port("db_public_min"),
+            "db_public_max": _cfg.get_port("db_public_max"),
         },
         "wireguard": {"endpoint": _cfg.get_wireguard().get("endpoint") or ""},
         "limits": {
