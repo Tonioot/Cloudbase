@@ -7,6 +7,7 @@ import { statusColor, shownStatus, esc } from './shell.js';
 
 let appsData = [];
 let nodesData = [];
+let databasesData = [];
 let _noAppsPermission  = false;
 let _noNodesPermission = false;
 let _databasesTimer = null;
@@ -29,10 +30,11 @@ export function drawDashboardFromCache() {
     if (!cached) return;
     appsData = cached.apps || [];
     nodesData = cached.nodes || [];
+    databasesData = cached.databases || [];
     renderKpis();
     renderApps();
     renderNodes();
-    renderDatabasesTable(document.getElementById('databases-grid'), cached.databases || []);
+    renderDatabasesTable(document.getElementById('databases-grid'), databasesData);
   } catch { /* nothing remembered yet */ }
 }
 
@@ -119,7 +121,9 @@ async function loadDatabases() {
     _databasesTimer = setTimeout(loadDatabases, 15000);
     return;
   }
+  databasesData = databases;
   renderDatabasesTable(document.getElementById('databases-grid'), databases);
+  if (nodesData.length) renderNodes();             // the databases on each node
   // Poll faster while a database is being created, started or stopped.
   const busy = databases.some(d => d.busy || ['creating', 'starting', 'stopping'].includes(d.status));
   _databasesTimer = setTimeout(loadDatabases, busy ? 3000 : 10000);
@@ -256,12 +260,15 @@ function nodeRowHTML(n) {
   const apps = appsData
     .map(a => ({ app: a, reps: instancesOnNode(a, n) }))
     .filter(x => x.reps.length);
-  const chips = apps.length
-    ? apps.map(({ app, reps }) => {
-        const up = reps.filter(r => r.status === 'running').length;
-        return `<a class="app-chip" href="/app?id=${app.id}"><span class="dot" style="background:${statusColor(shownStatus(app))}"></span>${esc(app.name)}<span class="app-chip-count">×${up}</span></a>`;
-      }).join('')
-    : '<span class="node-apps-empty">No apps on this node</span>';
+  const appChips = apps.map(({ app, reps }) => {
+    const up = reps.filter(r => r.status === 'running').length;
+    return `<a class="app-chip" href="/app?id=${app.id}"><span class="dot" style="background:${statusColor(shownStatus(app))}"></span>${esc(app.name)}<span class="app-chip-count">×${up}</span></a>`;
+  });
+  const dbChips = databasesData.filter(d => d.node_id === n.id).map(d =>
+    `<a class="app-chip" href="/database?id=${d.id}" title="${esc(`${d.engine || 'Database'} ${d.version || ''}`.trim())}"><span class="dot" style="background:${statusColor(d.status)}"></span>${esc(d.name)}<span class="app-chip-count">db</span></a>`);
+  const chips = appChips.length || dbChips.length
+    ? appChips.concat(dbChips).join('')
+    : '<span class="node-apps-empty">Nothing runs on this node</span>';
 
   const meters = online
     ? meterHTML('CPU', m.cpu_percent) + meterHTML('Memory', m.memory_percent) + meterHTML('Disk', m.disk_percent)

@@ -2602,8 +2602,12 @@ async function initInstances() {
       }
 
       // Connection info: local, or over the node network
+      // A worker (no web server) has no port to reach and no health check: only a broken node network is worth showing
+      const noTraffic = !!app?.no_web;
       let connHtml;
-      if (inst.node_is_local) {
+      if (noTraffic && (inst.node_is_local || inst.wg_state === 'up')) {
+        connHtml = `<span style="font-size:12px;color:var(--text-muted)">no traffic</span>`;
+      } else if (inst.node_is_local) {
         connHtml = `<span style="font-size:12px;color:var(--text-muted)">local</span>`;
       } else if (inst.wg_state === 'up') {
         connHtml = `<span style="font-size:12px;color:var(--green);display:flex;align-items:center;gap:4px">
@@ -2617,16 +2621,18 @@ async function initInstances() {
       // Starting up: the line fills as the node reports each step; once live, it shows complete for a moment
       let startupHtml = '';
       if (isStarting) {
+        const allSteps = noTraffic ? STARTUP_STEPS.filter(st => st.key !== 'health_check') : STARTUP_STEPS;
         const steps = inst.substatus === 'waiting_for_network'
           ? [{ key: 'waiting_for_network', label: 'Waiting for the node network' }]
-          : STARTUP_STEPS;
+          : allSteps;
         const found = steps.findIndex(st => st.key === inst.substatus);
         const active = found >= 0 ? found : 0;
         startupHtml = _startupBarHTML(steps, active, startupAt.has(inst.id) ? startupAt.get(inst.id) : active);
         startupAt.set(inst.id, active);
       } else if (isRunning && wentLive.has(inst.id)) {
         const live = wentLive.get(inst.id);
-        startupHtml = _startupBarHTML(STARTUP_STEPS, STARTUP_STEPS.length, live.from, now - live.at);
+        const doneSteps = noTraffic ? STARTUP_STEPS.filter(st => st.key !== 'health_check') : STARTUP_STEPS;
+        startupHtml = _startupBarHTML(doneSteps, doneSteps.length, live.from, now - live.at);
       }
 
       // Live metrics
@@ -2655,7 +2661,7 @@ async function initInstances() {
           <span class="inst-id"><label class="inst-check"><input type="checkbox" class="inst-select" data-perm="apps.scale" data-id="${inst.id}" aria-label="Select instance ${inst.id}" ${selected.has(inst.id) ? 'checked' : ''} ${pendingRemovals.has(inst.id) ? 'disabled' : ''} /><span class="inst-check-box" aria-hidden="true"></span></label>#${inst.id}</span>
           <span class="inst-status" style="color:${statusColor}"><span class="dot" style="background:${statusDot}"></span>${inst.status}</span>
           <span class="inst-node">${escHtml(nodeName)}</span>
-          <span class="inst-port">:${inst.external_port || '—'}</span>
+          <span class="inst-port">${noTraffic || !inst.external_port ? '—' : ':' + inst.external_port}</span>
           <span class="inst-conn">${connHtml}</span>
           <span class="inst-usage">${usageText}</span>
           <span class="inst-uptime">${uptimeStr}</span>
@@ -3251,11 +3257,17 @@ async function pullAndDeploy(strategy) {
 }
 
 /** Every deploy, rebuild and rollback goes through the one deploy endpoint. Its progress is not shown here:
- *  the Logs tab (all instances) carries the build, the deploy steps and the instances starting up. */
+ *  the Cloudbase log in the Logs tab carries the build, the deploy steps and the instances starting up. */
 async function streamDeploy(title, body) {
   switchTab('logs');
   const select = document.getElementById('log-instance-select');
-  if (select && select.value !== 'all') { select.value = 'all'; _switchLogInstance(); }
+  if (select && select.value !== LOG_CLOUDBASE) {
+    if (![...select.options].some(o => o.value === LOG_CLOUDBASE)) {      // the list of instances is still loading
+      select.insertAdjacentHTML('beforeend', `<option value="${LOG_CLOUDBASE}">Cloudbase · deploys, scaling, nginx…</option>`);
+    }
+    select.value = LOG_CLOUDBASE;
+    _switchLogInstance();
+  }
   try {
     const res = await api.streamAction(`/apps/${APP_ID}/deploy/stream`, body, () => {});
     toast(res?.message || 'Deploy finished');
