@@ -100,6 +100,8 @@ async def deploy_stream(
         except Exception as exc:
             result_holder["error"] = str(exc)
         finally:
+            if "error" in result_holder:
+                log(f"[Deploy] Failed: {result_holder['error']}")     # the Logs tab is where a deploy is followed
             loop.call_soon_threadsafe(lines.put_nowait, _DEPLOY_STREAM_DONE)
 
     asyncio.create_task(_run())

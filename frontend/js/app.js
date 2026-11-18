@@ -3250,54 +3250,21 @@ async function pullAndDeploy(strategy) {
   return streamDeploy(titles[strategy] || 'Deploy', { commit: commit || null, strategy });
 }
 
-/** Every deploy, rebuild and rollback goes through the one deploy endpoint; its progress shows in a dialog. */
+/** Every deploy, rebuild and rollback goes through the one deploy endpoint. Its progress is not shown here:
+ *  the Logs tab (all instances) carries the build, the deploy steps and the instances starting up. */
 async function streamDeploy(title, body) {
-  const dlg = openActionLogsDialog(title);
+  switchTab('logs');
+  const select = document.getElementById('log-instance-select');
+  if (select && select.value !== 'all') { select.value = 'all'; _switchLogInstance(); }
   try {
-    const res = await api.streamAction(`/apps/${APP_ID}/deploy/stream`, body, line => dlg.append(line));
-    dlg.setStatus('Done');
+    const res = await api.streamAction(`/apps/${APP_ID}/deploy/stream`, body, () => {});
     toast(res?.message || 'Deploy finished');
   } catch (e) {
-    dlg.append(`[Error] ${e.message}`);
-    dlg.setStatus('Failed');
     toast(e.message, 'error');
   } finally {
     try { app = await api.getApp(APP_ID); updateHeaderStatus(); } catch { /* keep the header */ }
     if (activeTab === 'deployments') loadDeployments();
   }
-}
-
-function openActionLogsDialog(title) {
-  const backdrop = document.createElement('div');
-  backdrop.className = 'dialog-backdrop';
-  backdrop.innerHTML = `
-    <div class="dialog dialog-modern action-log-dialog" style="max-width:760px;width:min(760px,92vw)">
-      <div class="dialog-title">${escHtml(title)}</div>
-      <div class="dialog-body action-log-body">
-        <pre class="action-log-pre" id="action-log-pre"></pre>
-      </div>
-      <div class="dialog-actions action-log-actions">
-        <div class="action-log-status" id="action-log-status">Running…</div>
-        <button class="btn btn-primary" id="action-log-close">Close</button>
-      </div>
-    </div>`;
-  document.body.appendChild(backdrop);
-
-  const pre = backdrop.querySelector('#action-log-pre');
-  const status = backdrop.querySelector('#action-log-status');
-  const close = () => backdrop.remove();
-  backdrop.querySelector('#action-log-close').onclick = close;
-  backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
-
-  return {
-    append(line) {
-      pre.textContent += `${stripAnsi(line)}\n`;
-      pre.scrollTop = pre.scrollHeight;
-    },
-    setStatus(text) {
-      status.textContent = text;
-    },
-  };
 }
 
 async function openCommitPicker() {
