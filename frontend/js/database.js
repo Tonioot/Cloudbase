@@ -80,6 +80,7 @@ export async function initDatabasePage() {
   document.getElementById('btn-refresh-logs').onclick = loadLogs;
   document.getElementById('btn-delete').onclick = deleteDatabase;
   document.getElementById('btn-rotate').onclick = openRotateDialog;
+  document.getElementById('btn-move').onclick = openMoveDialog;
   document.getElementById('btn-check-update').onclick = checkUpdate;
   document.getElementById('btn-update').onclick = updateEngine;
   document.getElementById('pub-enabled').addEventListener('change', togglePublic);
@@ -199,6 +200,7 @@ function render() {
   const blocked = d.busy || TRANSITIONAL.includes(d.status) || !d.node_online;
   document.getElementById('btn-start').style.display = stopped ? '' : 'none';
   document.getElementById('btn-stop').style.display = stopped ? 'none' : '';
+  document.getElementById('btn-move').disabled = blocked || !['running', 'unhealthy'].includes(d.status);
   document.getElementById('btn-rotate').disabled = blocked || !['running', 'unhealthy'].includes(d.status);
   ['btn-start', 'btn-stop', 'btn-restart', 'btn-save-limits'].forEach(id => {
     document.getElementById(id).disabled = blocked;
@@ -847,6 +849,48 @@ async function updateEngine() {
 }
 
 /* ─── Dialogs ───────────────────────────────────────────────────────────── */
+
+async function openMoveDialog() {
+  const d = database;
+  let nodes;
+  try { nodes = (await api.listNodes()).filter(n => n.id !== d.node_id && n.enabled !== false && (n.is_local || n.status === 'online')); }
+  catch (e) { toast(e.message, 'error'); return; }
+  if (!nodes.length) { toast('There is no other online node to move to', 'error'); return; }
+  const apps = (d.links || []).map(l => l.app_name);
+  const backdrop = document.createElement('div');
+  backdrop.className = 'dialog-backdrop';
+  backdrop.innerHTML = `
+    <div class="dialog dialog-modern form-dialog" role="dialog" aria-modal="true" aria-labelledby="mv-title">
+      <div class="dialog-title" id="mv-title">Move ${esc(d.name)}</div>
+      <div class="dialog-body">
+        <p class="form-dialog-intro">A backup is made, loaded on the new node and then removed from ${esc(d.node_name || 'this node')}. The database is unavailable meanwhile and anything written after the backup is lost. If something fails it stays where it is.</p>
+        <label class="field-label" for="mv-node">New node</label>
+        <select id="mv-node" class="input">${nodes.map(n => `<option value="${n.id}">${esc(n.name)}</option>`).join('')}</select>
+        ${apps.length ? `<p class="field-hint">${esc(apps.join(', '))} need a restart afterwards to find the database.</p>` : ''}
+      </div>
+      <div class="dialog-actions">
+        <button class="btn" id="mv-cancel">Cancel</button>
+        <button class="btn btn-primary" id="mv-ok">Move</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  const close = () => backdrop.remove();
+  backdrop.querySelector('#mv-cancel').onclick = close;
+  backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
+  const ok = backdrop.querySelector('#mv-ok');
+  ok.onclick = async () => {
+    ok.disabled = true;
+    try {
+      await api.moveDatabase(DB_ID, Number(backdrop.querySelector('#mv-node').value));
+      close();
+      toast('Moving the database…');
+      load();
+    } catch (e) {
+      toast(e.message, 'error');
+      ok.disabled = false;
+    }
+  };
+}
 
 function openRotateDialog() {
   const d = database;

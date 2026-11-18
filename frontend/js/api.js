@@ -85,6 +85,7 @@ export const api = {
   restartDatabase:     (id)        => request('POST',   `/databases/${id}/restart`),
   getDatabaseCredentials: (id)     => request('GET',    `/databases/${id}/credentials`),
   rotateDatabasePassword: (id)     => request('POST',   `/databases/${id}/rotate-password`),
+  moveDatabase:        (id, nodeId) => request('POST',   `/databases/${id}/move`, { node_id: nodeId }),
   checkDatabaseUpdate: (id)        => request('POST',   `/databases/${id}/check-update`),
   updateDatabaseEngine:(id)        => request('POST',   `/databases/${id}/update`),
   setDatabasePublic:   (id, data)  => request('PUT',    `/databases/${id}/public`, data),

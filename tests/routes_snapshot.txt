@@ -125,6 +125,7 @@ POST    /api/databases/{database_id}/backups
 POST    /api/databases/{database_id}/backups/upload
 POST    /api/databases/{database_id}/check-update
 POST    /api/databases/{database_id}/links
+POST    /api/databases/{database_id}/move
 POST    /api/databases/{database_id}/restart
 POST    /api/databases/{database_id}/restore
 POST    /api/databases/{database_id}/rotate-password

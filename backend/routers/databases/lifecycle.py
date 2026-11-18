@@ -11,7 +11,10 @@ from dbs import updates as dbs_updates
 from core.audit import log_audit
 from core.database import AsyncSessionLocal, get_db
 from core.env_crypto import encrypt_text
-from core.models import Database
+from core.models import Database, Node
+from dbs import engines as db_engines
+from dbs.move import move_database
+from routers.databases.schemas import MoveDatabaseRequest
 from dbs.ops import _begin, _get_or_404, _links_for, _node_for, _node_reachable, _run_on_node, _set_status, _spawn, _start_operation
 from dbs.provision import _spec
 from dbs.state import PROVISION_TIMEOUT_SECONDS, _operation, _update_info, claim, release
@@ -170,3 +173,39 @@ async def update_database_engine(
 
     _spawn(database.id, op)
     return {"ok": True}
+
+
+@router.post("/{database_id}/move")
+async def move_database_to_node(
+    database_id: int,
+    req: MoveDatabaseRequest,
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(_auth.require_permission("databases.manage")),
+    actor: str = Depends(_auth.get_current_actor),
+):
+    """Move the database and its data to another node. It is unavailable while it moves, and writes made after
+    the backup (taken first) are lost. Linked apps pick up the new address when they restart."""
+    database, node = await _begin(database_id, db, "Moving…")
+    try:
+        target = await db.get(Node, req.node_id)
+        if target is None:
+            raise HTTPException(404, "Node not found")
+        if target.id == node.id:
+            raise HTTPException(400, "The database already runs on that node")
+        if not _node_reachable(target):
+            raise HTTPException(409, f"Node '{target.name}' is offline or disabled")
+        if database.status not in ("running", "unhealthy"):
+            raise HTTPException(409, "The database must be running to move it")
+        engine = db_engines.get_engine(database.engine)
+        if not engine.backup or not engine.can_restore:
+            raise HTTPException(409, f"{engine.label} cannot be moved: its backups cannot be restored yet")
+        await log_audit(db, "database.move_start", actor=actor, detail={
+            "database_id": database.id, "name": database.name, "from": node.name, "to": target.name})
+        database.status = "starting"
+        await db.commit()
+    except BaseException:
+        release(database_id)
+        raise
+    links = await _links_for(database_id, db)
+    _spawn(database_id, lambda: move_database(database_id, req.node_id, actor))
+    return {"ok": True, "apps": [{"id": l["app_id"], "name": l["app_name"]} for l in links]}

@@ -19,6 +19,10 @@ class UpdateDatabaseRequest(BaseModel):
     clear_memory_limit: bool = False
 
 
+class MoveDatabaseRequest(BaseModel):
+    node_id: int
+
+
 class PublicAccessRequest(BaseModel):
     enabled: bool
     allowlist: list[str] = Field(default_factory=list, max_length=100)
