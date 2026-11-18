@@ -10,6 +10,7 @@ When the new version changes any of those (see SYSTEM_PATHS) nothing is touched 
 `cloudbase update` on that server instead, so a server is never left half updated."""
 import functools
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -37,16 +38,25 @@ def _out(*args: str) -> str:
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
-@functools.lru_cache(maxsize=1)
-def current() -> dict:
-    """What this installation runs: {"commit": "abc1234", "version": "2.0.0"}. Fixed until the next start."""
-    version = ""
+def version_name() -> str:
+    """The version of what is checked out, worked out from Git so nobody has to remember to bump it: the latest release
+    tag (V2.1.0) and, when there are commits after it, how many ("2.1.0+14"). Without tags (or without Git) the VERSION
+    file is used."""
+    described = _out("describe", "--tags", "--long", "--match", "V[0-9]*")
+    found = re.fullmatch(r"V?(\d+(?:\.\d+)*)-(\d+)-g[0-9a-f]+", described)
+    if found:
+        return found.group(1) if found.group(2) == "0" else f"{found.group(1)}+{found.group(2)}"
     try:
         with open(paths.VERSION_FILE, encoding="utf-8") as f:
-            version = f.read().strip()
+            return f.read().strip()
     except OSError:
-        pass
-    return {"commit": _out("rev-parse", "--short", "HEAD"), "version": version}
+        return ""
+
+
+@functools.lru_cache(maxsize=1)
+def current() -> dict:
+    """What this installation runs: {"commit": "abc1234", "version": "2.0.0+14"}. Fixed until the next start."""
+    return {"commit": _out("rev-parse", "--short", "HEAD"), "version": version_name()}
 
 
 def under_systemd() -> bool:
@@ -93,12 +103,7 @@ def update() -> dict:
     if reset.returncode != 0:
         return {"status": "error", "message": f"Could not apply the new version: {(reset.stderr or reset.stdout).strip()[-300:]}"}
     new = _out("rev-parse", "--short", "HEAD")
-    version = ""
-    try:
-        with open(paths.VERSION_FILE, encoding="utf-8") as f:
-            version = f.read().strip()
-    except OSError:
-        pass
+    version = version_name()
     if system:
         # The installer does the rest as root and restarts Cloudbase itself
         started, why = run_installer(branch)

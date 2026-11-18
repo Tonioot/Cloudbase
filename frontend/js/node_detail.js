@@ -318,7 +318,8 @@ function _detailItem(label, val, { valueClass = '', html = false, hint: hintOver
     const classes = ['node-detail-value', valueClass].filter(Boolean).join(' ');
     const hint = hintOverride || _hintFor(label);
     const info = hint ? `<span class="info-tip" tabindex="0" data-tip="${escHtml(hint)}" aria-label="${escHtml(hint)}">i</span>` : '';
-    return `<div class="node-detail-item"><span class="node-detail-label">${label}${info}</span><span class="${classes}">${html ? val : escHtml(val)}</span></div>`;
+    const wide = !html && String(val).length > 26 ? ' node-detail-wide' : '';
+    return `<div class="node-detail-item${wide}"><span class="node-detail-label">${label}${info}</span><span class="${classes}">${html ? val : escHtml(val)}</span></div>`;
 }
 
 /* What a power reading measures, per source (core/hardware.py): a suffix for the value and an explanation that fits it */

@@ -349,19 +349,20 @@
 .env-count { color: var(--faint); }
 
 /* ─── Node detail pieces ────────────────────────────────────────────────── */
-.node-groups { display: flex; flex-direction: column; gap: 16px; }
+.node-groups { display: flex; flex-direction: column; gap: 20px; }
 .node-group-head { margin-bottom: 4px; }
 .node-group-head h3 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: -.005em; color: var(--text); }
 .node-group-head p { margin: 2px 0 0; font-size: 12.5px; color: var(--muted); line-height: 1.5; }
 /* Label above value, as many columns as fit: no gap between a label and its value, and no empty half rows */
-.node-group .node-details-grid { display: flex; flex-wrap: wrap; gap: 12px 32px; margin-top: 10px; }
-/* Each item is as wide as its content: short ones sit next to each other, a long one takes its own line when it must and is broken when even that is too narrow */
-.node-group .node-detail-item { flex: 0 1 auto; max-width: 100%; }
+.node-group .node-details-grid { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 16px 40px; margin-top: 14px; }
+/* A long value (operating system, processor, interfaces) takes two columns; when even that is too narrow it breaks */
+.node-group .node-detail-wide { grid-column: span 2; }
+@media (max-width: 520px) { .node-group .node-detail-wide { grid-column: auto; } }
 .node-group .node-detail-item { flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 3px; padding: 0; border: 0; }
 .node-group .node-detail-label { font-size: 11.5px; font-weight: 500; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); display: inline-flex; align-items: center; }
 .node-group .info-tip { text-transform: none; letter-spacing: 0; font-weight: 600; }
 .node-group .node-detail-value { font-size: 13px; text-align: left; }
-.node-group + .node-group { padding-top: 16px; border-top: 1px solid var(--line); }
+.node-group + .node-group { padding-top: 20px; border-top: 1px solid var(--line); }
 .node-details-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 24px; }
 .node-detail-item {
   display: flex;
