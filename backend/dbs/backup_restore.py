@@ -2,6 +2,7 @@ import gzip
 import hashlib
 import logging
 import os
+import re
 import shutil
 import tarfile
 import time
@@ -130,6 +131,22 @@ def restore_from_file(spec: dict, in_path: str, source_db_name: Optional[str] = 
     if code != 0:
         raise RuntimeError(f"Restore failed (exit {code}): {_tail((err or b'') + (out or b'')) or 'no output'}")
     return {"ok": True}
+
+
+def count_objects(spec: dict) -> int:
+    """How many tables / collections / keys the database holds: moving a database compares it before and after."""
+    engine = db_engines.get_engine(spec["engine"])
+    if not engine.count:
+        raise RuntimeError(f"{engine.label} cannot be counted")
+    container = _running_container(int(spec["database_id"]))
+    api = container.client.api
+    exec_id = api.exec_create(container.id, ["sh", "-c", engine.count], stdout=True, stderr=True)["Id"]
+    out, err = api.exec_start(exec_id, demux=True)
+    code = api.exec_inspect(exec_id).get("ExitCode")
+    numbers = re.findall(r"\d+", (out or b"").decode("utf-8", errors="replace"))
+    if code != 0 or not numbers:
+        raise RuntimeError(f"Counting failed (exit {code}): {_tail((err or b'') + (out or b'')) or 'no output'}")
+    return int(numbers[-1])
 
 
 # ── Password rotation ─────────────────────────────────────────────────────────

@@ -4,7 +4,7 @@ import asyncio
 from typing import Optional, Callable, Dict, Any
 import httpx
 from agent.commands.apps import cmd_cron_run, cmd_docker_cleanup, cmd_get_agent_logs, cmd_get_instance_logs, cmd_reboot, cmd_self_update
-from agent.commands.databases import cmd_db_backup, cmd_db_check_updates, cmd_db_ensure, cmd_db_logs, cmd_db_recreate, cmd_db_remove, cmd_db_restart, cmd_db_restore, cmd_db_rotate_password, cmd_db_stats, cmd_db_stop, cmd_db_update
+from agent.commands.databases import cmd_db_backup, cmd_db_check_updates, cmd_db_count, cmd_db_ensure, cmd_db_logs, cmd_db_recreate, cmd_db_remove, cmd_db_restart, cmd_db_restore, cmd_db_rotate_password, cmd_db_stats, cmd_db_stop, cmd_db_update
 from agent.log import _agent_log
 from agent.registration import _report_result
 from agent.state import AgentState
@@ -25,6 +25,7 @@ COMMAND_HANDLERS: Dict[str, Callable] = {
     "db_rotate_password": cmd_db_rotate_password,
     "db_check_updates": cmd_db_check_updates,
     "db_update": cmd_db_update,
+    "db_count": cmd_db_count,
     "get_instance_logs": cmd_get_instance_logs,
     "docker_cleanup": cmd_docker_cleanup,
     "get_agent_logs": cmd_get_agent_logs,

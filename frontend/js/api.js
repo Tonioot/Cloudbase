@@ -149,6 +149,7 @@ export const api = {
   getDatabaseStatsHistory: (id, hours = 24) => request('GET', `/databases/${id}/stats/history?hours=${hours}`),
   linkDatabase:        (id, appId, envVarName, replaceEnv = false) => request('POST', `/databases/${id}/links`, { app_id: appId, env_var_name: envVarName || null, replace_env: replaceEnv }),
   getConnections:      (id)        => request('GET',    `/apps/${id}/connections`),
+  getConnectionValues: (id)        => request('GET',    `/apps/${id}/connections/values`),
   getConnectionOptions:(id)        => request('GET',    `/apps/${id}/connections/options`),
   addConnection:       (id, body)  => request('POST',   `/apps/${id}/connections`, body),
   removeConnection:    (id, kind, linkId) => request('DELETE', `/apps/${id}/connections/${kind}/${linkId}`),

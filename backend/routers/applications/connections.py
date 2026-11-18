@@ -7,13 +7,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps import app_links
+from apps.images import _image_port
 from apps.serializers import _get_or_404
 from core import auth as _auth
 from core.audit import log_audit
 from core.database import get_db
 from core.env_crypto import decrypt_env, encrypt_env
 from core.models import AppLink, Application, Database, DatabaseLink
-from dbs import engines as db_engines, link_ops
+from containers import naming
+from dbs import engines as db_engines, link_ops, links as db_links
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
@@ -45,6 +47,33 @@ async def list_connections(app_id: int, db: AsyncSession = Depends(get_db),
         "used_by": [{"id": l.id, "app_id": a.id, "name": a.name} for l, a in incoming],
         "reserved_env": sorted(await app_links.reserved_env_names(db, app_id)),
     }
+
+
+@router.get("/{app_id}/connections/values")
+async def connection_values(app_id: int, db: AsyncSession = Depends(get_db),
+                            user: dict = Depends(_auth.require_permission("apps.view")),
+                            actor: str = Depends(_auth.get_current_actor)):
+    """The value each connection gives the app in its variable. A database's holds its password, so that part needs
+    the permission to see credentials (and is logged like looking at them); without it only the apps are returned.
+    An instance on another node than the database's gets the address on the node network instead."""
+    app = await _get_or_404(app_id, db)
+    out: dict = {"databases": {}, "apps": {}}
+    for link, target in (await db.execute(
+            select(AppLink, Application).join(Application, Application.id == AppLink.target_app_id)
+            .where(AppLink.app_id == app_id))).all():
+        out["apps"][str(link.id)] = f"http://{naming.app_alias(target.id)}:{_image_port(target) or 80}"
+    perms = user.get("permissions")
+    if perms is None or "databases.credentials" in perms:
+        rows = (await db.execute(
+            select(DatabaseLink, Database).join(Database, Database.id == DatabaseLink.database_id)
+            .where(DatabaseLink.app_id == app_id))).all()
+        for link, database in rows:
+            out["databases"][str(link.id)] = db_links.connection_url(database, db_links.decrypt_credentials(database))
+        if rows:
+            await log_audit(db, "database.credentials_view", actor=actor, app_id=app_id,
+                            detail={"app": app.name, "via": "connections"})
+            await db.commit()
+    return out
 
 
 @router.get("/{app_id}/connections/options")

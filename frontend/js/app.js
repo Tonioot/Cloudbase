@@ -501,12 +501,23 @@ async function renderConnections() {
   try { c = await api.getConnections(APP_ID); } catch (e) { wrap.innerHTML = `<div class="net-empty"><div class="net-empty-sub">${escHtml(e.message)}</div></div>`; return; }
   reservedEnv = new Set(c.reserved_env);
   showManagedEnv(c.reserved_env);
+  let values = { databases: {}, apps: {} };
+  try { values = await api.getConnectionValues(APP_ID); } catch { /* the list still works without the values */ }
   const href = (kind, id) => `${kind === 'database' ? '/database?id=' : '/app?id='}${id}`;
+  const valueLine = (kind, l) => {
+    const v = (kind === 'database' ? values.databases : values.apps)[String(l.id)];
+    if (!v) return '';
+    const secret = kind === 'database';      // it holds the password
+    return `<span class="s3-desc conn-value"><code data-value="${escHtml(v)}" data-secret="${secret ? 1 : 0}">${secret ? '••••••••' : escHtml(v)}</code>
+      ${secret ? '<button type="button" class="btn btn-sm btn-ghost" data-reveal>Show</button>' : ''}
+      <button type="button" class="btn btn-sm btn-ghost" data-copy-value>Copy</button></span>`;
+  };
   const row = (kind, l) => `
     <div class="s3-row">
       <span class="s3-label">
         <a href="${href(kind, l.target_id)}" class="s3-title">${escHtml(l.name)}</a>
         <span class="s3-desc"><code>${escHtml(l.env_var_name)}</code>${kind === 'database' ? ` · ${escHtml(l.engine)}` : ''}</span>
+        ${valueLine(kind, l)}
       </span>
       <button type="button" class="btn btn-sm btn-ghost" data-remove="${kind}:${l.id}" data-perm="apps.configure">Remove</button>
     </div>`;
@@ -521,6 +532,18 @@ async function renderConnections() {
     group('Apps that can reach this app', calledBy) ||
     `<div class="net-empty"><div class="net-empty-title">No connections</div>
        <div class="net-empty-sub">This app cannot reach any database or other app yet. Add a connection to give it one.</div></div>`;
+  wrap.querySelectorAll('.conn-value').forEach(line => {
+    const code = line.querySelector('code');
+    const reveal = line.querySelector('[data-reveal]');
+    if (reveal) reveal.onclick = () => {
+      const hidden = code.textContent.startsWith('•');
+      code.textContent = hidden ? code.dataset.value : '••••••••';
+      reveal.textContent = hidden ? 'Hide' : 'Show';
+    };
+    line.querySelector('[data-copy-value]').onclick = async () => {
+      try { await navigator.clipboard.writeText(code.dataset.value); toast('Copied'); } catch { toast('Could not copy', 'error'); }
+    };
+  });
   wrap.querySelectorAll('[data-remove]').forEach(btn => {
     btn.onclick = async () => {
       const [kind, id] = btn.dataset.remove.split(':');

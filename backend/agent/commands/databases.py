@@ -97,3 +97,7 @@ async def cmd_db_update(_client, _state, _main_id, payload):
 async def cmd_db_logs(_client, _state, _main_id, payload):
     lines = await asyncio.to_thread(dbs_lifecycle.logs, int(payload["database_id"]), int(payload.get("lines", 300)))
     return {"lines": lines}
+
+
+async def cmd_db_count(_client, _state, _main_id, payload):
+    return {"count": await asyncio.to_thread(dbs_backup_restore.count_objects, payload["spec"])}

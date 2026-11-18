@@ -1058,3 +1058,5 @@ a.icon-btn { text-decoration: none; }
   opacity: 0; pointer-events: none; transition: opacity .12s;
 }
 .info-tip:hover::after, .info-tip:focus::after { opacity: 1; }
+.conn-value { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; }
+.conn-value code { word-break: break-all; }

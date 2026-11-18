@@ -20,6 +20,7 @@ GET     /api/apps/{app_id}/cloudbase-logs
 GET     /api/apps/{app_id}/commits
 GET     /api/apps/{app_id}/connections
 GET     /api/apps/{app_id}/connections/options
+GET     /api/apps/{app_id}/connections/values
 GET     /api/apps/{app_id}/cron/runs
 GET     /api/apps/{app_id}/cron/runs/{run_id}
 GET     /api/apps/{app_id}/deployments

@@ -39,6 +39,9 @@ class Engine:
     # Restore with a helper container instead of a command in the running one
     # (Redis / Valkey load their data only at startup).
     restore_via_helper: Optional[dict] = None  # {"server": ..., "cli": ...}
+    # Prints one number (tables, collections, keys) to compare a database before and after it moves.
+    count: Optional[str] = None
+    count_approximate: bool = False  # keys expire, so the count may drop a little by itself
 
     @property
     def can_restore(self) -> bool:
@@ -151,6 +154,7 @@ ENGINES: dict[str, Engine] = {
         backup={"ext": "dump", "gzip": False,
                 "dump": 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc --no-owner'},
         restore=_pg_restore,
+        count='psql -tA -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select count(*) from information_schema.tables where table_schema not in (\x27pg_catalog\x27,\x27information_schema\x27)"',
         tls_url=lambda u: _with_param(u, "sslmode=require"),
         tls_verify_url=lambda u: _with_param(u, "sslmode=verify-full&sslrootcert=cloudbase-database-ca.crt"),
     ),
@@ -176,6 +180,7 @@ ENGINES: dict[str, Engine] = {
                 "dump": 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqldump -uroot --single-transaction --routines '
                         '--triggers --events --set-gtid-purged=OFF "$MYSQL_DATABASE"'},
         restore=lambda ctx: f'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot "$MYSQL_DATABASE" < {ctx["path"]}',
+        count='MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysql -uroot -N -B -e "select count(*) from information_schema.tables where table_schema=\x27$MYSQL_DATABASE\x27"',
         tls_url=lambda u: _with_param(u, "ssl-mode=REQUIRED"),
     ),
     "mariadb": Engine(
@@ -199,6 +204,7 @@ ENGINES: dict[str, Engine] = {
                 "dump": 'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb-dump -uroot --single-transaction --routines '
                         '--triggers --events "$MARIADB_DATABASE"'},
         restore=lambda ctx: f'MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb -uroot "$MARIADB_DATABASE" < {ctx["path"]}',
+        count='MYSQL_PWD="$MARIADB_ROOT_PASSWORD" mariadb -uroot -N -B -e "select count(*) from information_schema.tables where table_schema=\x27$MARIADB_DATABASE\x27"',
         tls_url=lambda u: _with_param(u, "ssl-mode=REQUIRED"),
     ),
     "redis": Engine(
@@ -215,6 +221,7 @@ ENGINES: dict[str, Engine] = {
         url=lambda c, host, port: f"redis://default:{c['password']}@{host}:{port}/0",
         backup={"ext": "rdb.gz", "gzip": True, "dump": _redis_dump("redis-cli")},
         restore_via_helper={"server": "redis-server", "cli": "redis-cli"},
+        count="redis-cli dbsize", count_approximate=True,
         tls_url=lambda u: "rediss://" + u.split("://", 1)[1],
         tls_verify_url=lambda u: "rediss://" + u.split("://", 1)[1],  # pass the CA to the client (--cacert)
     ),
@@ -232,6 +239,7 @@ ENGINES: dict[str, Engine] = {
         url=lambda c, host, port: f"redis://default:{c['password']}@{host}:{port}/0",
         backup={"ext": "rdb.gz", "gzip": True, "dump": _redis_dump("valkey-cli")},
         restore_via_helper={"server": "valkey-server", "cli": "valkey-cli"},
+        count="valkey-cli dbsize", count_approximate=True,
         tls_url=lambda u: "rediss://" + u.split("://", 1)[1],
         tls_verify_url=lambda u: "rediss://" + u.split("://", 1)[1],  # pass the CA to the client (--cacert)
     ),
@@ -254,6 +262,7 @@ ENGINES: dict[str, Engine] = {
         backup={"ext": "archive.gz", "gzip": False,
                 "dump": f"mongodump --quiet --archive --gzip {_MONGO_AUTH}"},
         restore=_mongo_restore,
+        count=f'mongosh --quiet {_MONGO_AUTH} "$MONGO_INITDB_DATABASE" --eval "db.getCollectionNames().length"',
         # Self-signed by the Cloudbase CA: encrypt without verifying, or use tlsCAFile.
         tls_url=lambda u: _with_param(u, "tls=true&tlsAllowInvalidCertificates=true"),
         tls_verify_url=lambda u: _with_param(u, "tls=true&tlsCAFile=cloudbase-database-ca.crt"),
