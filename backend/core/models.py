@@ -104,7 +104,7 @@ class Application(Base):
     autoscale_cpu_target   = Column(Float,   default=70.0)  # % CPU per instance (limits: apps/autoscale.py)
     autoscale_memory_target_mb = Column(Integer, nullable=True)  # MB per instance; None = CPU only
     autoscale_up_seconds   = Column(Integer, default=60)     # scale up on the average over this long
-    autoscale_down_minutes = Column(Integer, default=5)      # scale down on the peak over this long
+    autoscale_down_seconds = Column(Integer, default=300)    # scale down on the peak over this long
     autoscale_max_step_up   = Column(Integer, nullable=True) # None = as many as needed at once
     autoscale_max_step_down = Column(Integer, nullable=True)
     autoscale_cooldown_seconds = Column(Integer, nullable=True)  # pause after a scale action; None = as the scale up window

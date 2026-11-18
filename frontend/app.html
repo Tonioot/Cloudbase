@@ -504,16 +504,16 @@
               <header class="sv2-head"><h3>Autoscaling</h3><p>Adds instances on the least-loaded nodes when the load is high and removes them when it drops, straight to the number it needs.</p></header>
               <div class="s3-card" id="cfg-autoscale-card">
                 <label class="s3-row">
-                  <span class="s3-label"><span class="s3-title">Autoscaling</span><span class="s3-desc">Off: the app keeps the instances you give it.</span></span>
+                  <span class="s3-label"><span class="s3-title">Autoscaling</span><span class="s3-desc">When on, Cloudbase adds and removes instances by itself. When off, the app keeps the number of instances you set yourself.</span></span>
                   <span class="toggle"><input type="checkbox" id="cfg-autoscale-enabled" /><span class="toggle-slider"></span></span>
                 </label>
                 <div id="autoscale-options">
                   <div class="s3-row s3-row--sub">
-                    <span class="s3-label"><label class="s3-title" for="cfg-autoscale-min">Minimum instances</label></span>
+                    <span class="s3-label"><label class="s3-title" for="cfg-autoscale-min">Minimum instances</label><span class="s3-desc">The autoscaler never goes below this number.</span></span>
                     <span class="s3-ctl"><input class="input" id="cfg-autoscale-min" type="number" min="1" step="1" placeholder="1" /></span>
                   </div>
                   <div class="s3-row s3-row--sub">
-                    <span class="s3-label"><label class="s3-title" for="cfg-autoscale-max">Maximum instances</label></span>
+                    <span class="s3-label"><label class="s3-title" for="cfg-autoscale-max">Maximum instances</label><span class="s3-desc">The autoscaler never goes above this number. It only limits the autoscaler: if you add instances by hand, it removes the extra ones again.</span></span>
                     <span class="s3-ctl"><input class="input" id="cfg-autoscale-max" type="number" min="1" step="1" placeholder="4" /></span>
                   </div>
                   <div class="s3-row s3-row--sub">
@@ -526,8 +526,8 @@
                 <p class="s3-group">Fine-tuning</p>
                 <div class="s3-card">
                   <div class="s3-row">
-                    <span class="s3-label"><label class="s3-title" for="cfg-autoscale-mem">Memory target</label><span class="s3-desc">Optional. In MB per instance: also enough instances that each uses less than this.</span></span>
-                    <span class="s3-ctl"><input class="input" id="cfg-autoscale-mem" type="number" min="16" step="16" placeholder="Off" /></span>
+                    <span class="s3-label"><label class="s3-title" for="cfg-autoscale-mem">Memory target</label><span class="s3-desc">Optional. In MB per instance: also enough instances that each uses less than this. Empty: memory is not looked at.</span></span>
+                    <span class="s3-ctl"><input class="input" id="cfg-autoscale-mem" type="number" min="16" step="16" placeholder="Not used" /></span>
                   </div>
                   <div class="s3-row">
                     <span class="s3-label"><label class="s3-title" for="cfg-autoscale-up">Scale up after</label><span class="s3-desc">In seconds: the average over this long must be above target. Also the pause after an action.</span></span>
@@ -538,8 +538,8 @@
                     <span class="s3-ctl"><input class="input" id="cfg-autoscale-cooldown" type="number" min="5" max="3600" step="5" placeholder="Same as scale up" /></span>
                   </div>
                   <div class="s3-row">
-                    <span class="s3-label"><label class="s3-title" for="cfg-autoscale-down">Scale down after</label><span class="s3-desc">In minutes: the peak over this long must stay well below target.</span></span>
-                    <span class="s3-ctl"><input class="input" id="cfg-autoscale-down" type="number" min="1" max="60" step="1" placeholder="5" /></span>
+                    <span class="s3-label"><label class="s3-title" for="cfg-autoscale-down">Scale down after</label><span class="s3-desc">In seconds: the peak over this long must stay well below target.</span></span>
+                    <span class="s3-ctl"><input class="input" id="cfg-autoscale-down" type="number" min="60" max="3600" step="30" placeholder="300" /></span>
                   </div>
                   <div class="s3-row">
                     <span class="s3-label"><label class="s3-title" for="cfg-autoscale-step-up">Most added per step</label><span class="s3-desc">Empty: as many as needed at once.</span></span>

@@ -101,7 +101,7 @@ def _app_to_dict(
         "autoscale_cpu_target":   app.autoscale_cpu_target or 70.0,
         "autoscale_memory_target_mb": app.autoscale_memory_target_mb,
         "autoscale_up_seconds":   app.autoscale_up_seconds or 60,
-        "autoscale_down_minutes": app.autoscale_down_minutes or 5,
+        "autoscale_down_seconds": app.autoscale_down_seconds or 300,
         "autoscale_max_step_up":  app.autoscale_max_step_up,
         "autoscale_max_step_down": app.autoscale_max_step_down,
         "autoscale_cooldown_seconds": app.autoscale_cooldown_seconds,

@@ -2,7 +2,7 @@
 
 How many: enough that the load per instance stays under the app's targets (CPU %, and optionally memory per
 instance), in one step, not one instance at a time (desired_instances). Fast up: the average over the last
-`autoscale_up_seconds`. Slow down: the peak over the last `autoscale_down_minutes`, with some headroom, so the
+`autoscale_up_seconds`. Slow down: the peak over the last `autoscale_down_seconds`, with some headroom, so the
 remaining instances are not at their target straight away. Optional per app: at most this many added or removed
 per step. The window (down to 5 s) and the pause after an action (`autoscale_cooldown_seconds`, by default as long as
 the window) decide how fast it reacts; a new instance still needs its start and startup check before it takes load.
@@ -40,7 +40,7 @@ CHECK_INTERVAL = 5           # seconds between checks
 DOWN_HEADROOM = 0.75         # after scaling down, the peak load per instance is at most this part of the target
 
 DEFAULT_UP_SECONDS = 60
-DEFAULT_DOWN_MINUTES = 5
+DEFAULT_DOWN_SECONDS = 300
 
 
 # ── The rule ─────────────────────────────────────────────────────────────────
@@ -86,7 +86,7 @@ def settings(app) -> dict:
         "memory_target_mb": app.autoscale_memory_target_mb or None,
         "up_seconds": app.autoscale_up_seconds or DEFAULT_UP_SECONDS,
         "cooldown_seconds": app.autoscale_cooldown_seconds or app.autoscale_up_seconds or DEFAULT_UP_SECONDS,
-        "down_seconds": (app.autoscale_down_minutes or DEFAULT_DOWN_MINUTES) * 60,
+        "down_seconds": app.autoscale_down_seconds or DEFAULT_DOWN_SECONDS,
         "max_step_up": app.autoscale_max_step_up or None,
         "max_step_down": app.autoscale_max_step_down or None,
     }
@@ -119,6 +119,10 @@ async def history_peak(db, app_id: int, seconds: int) -> Optional[tuple[float, f
     if not rows or min(r.timestamp for r in rows) > since + _dt.timedelta(seconds=60):
         return None
     return max(r.cpu_percent for r in rows), max(r.memory_mb for r in rows)
+
+
+def _duration(seconds: int) -> str:
+    return f"{seconds // 60} min" if seconds % 60 == 0 else f"{seconds} s"
 
 
 def _describe(load: tuple, s: dict) -> str:
@@ -247,7 +251,7 @@ async def check_app(db, app, local_node: Node, now: float) -> None:
         action = _scale_up(app.id, count, change, reason)
     else:
         if down is not None and count <= s["max"]:
-            reason = f"Peak {_describe(down, s)} over the last {s['down_seconds'] // 60} min"
+            reason = f"Peak {_describe(down, s)} over the last {_duration(s['down_seconds'])}"
         else:
             reason = f"Above the maximum of {s['max']}"
         victims = pick_victims(instances, local_node.id, -change)

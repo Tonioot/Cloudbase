@@ -8,7 +8,7 @@ from workers import autoscaler as scaler
 
 def _app(**kw):
     base = dict(id=1, autoscale_min_instances=1, autoscale_max_instances=10, autoscale_cpu_target=40.0,
-                autoscale_memory_target_mb=None, autoscale_up_seconds=60, autoscale_down_minutes=5,
+                autoscale_memory_target_mb=None, autoscale_up_seconds=60, autoscale_down_seconds=300,
                 autoscale_max_step_up=None, autoscale_max_step_down=None, autoscale_cooldown_seconds=None)
     return types.SimpleNamespace(**{**base, **kw})
 
@@ -57,7 +57,7 @@ def test_new_instances_are_spread_and_remote_ones_go_first():
 
 def test_the_settings_are_kept_within_their_limits():
     assert autoscale.clean("autoscale_cpu_target", 200) == 95
-    assert autoscale.clean("autoscale_down_minutes", 0) == 1
+    assert autoscale.clean("autoscale_down_seconds", 0) == 60
     assert autoscale.clean("autoscale_up_seconds", 1) == 5               # fast: a window of a few seconds is allowed
     assert autoscale.clean("autoscale_cooldown_seconds", 0) is None      # as long as the scale up window
     assert autoscale.clean("autoscale_cooldown_seconds", 10) == 10
@@ -78,11 +78,11 @@ def test_the_settings_can_be_saved_and_read_back(admin, client):
             return app.id
     app_id = asyncio.run(make())
     body = {"autoscale_enabled": True, "autoscale_memory_target_mb": 512, "autoscale_up_seconds": 90,
-            "autoscale_down_minutes": 0, "autoscale_max_step_up": 2, "autoscale_max_step_down": 0}
+            "autoscale_down_seconds": 0, "autoscale_max_step_up": 2, "autoscale_max_step_down": 0}
     assert admin.put(f"/api/apps/{app_id}", json=body).status_code == 200, "save"
     app = admin.get(f"/api/apps/{app_id}").json()
-    assert (app["autoscale_memory_target_mb"], app["autoscale_up_seconds"], app["autoscale_down_minutes"],
-            app["autoscale_max_step_up"], app["autoscale_max_step_down"]) == (512, 90, 1, 2, None)
+    assert (app["autoscale_memory_target_mb"], app["autoscale_up_seconds"], app["autoscale_down_seconds"],
+            app["autoscale_max_step_up"], app["autoscale_max_step_down"]) == (512, 90, 60, 2, None)
 
     async def drop():
         async with AsyncSessionLocal() as db:

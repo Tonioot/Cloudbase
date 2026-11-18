@@ -1752,7 +1752,7 @@ function initSettings() {
   document.getElementById('cfg-autoscale-cpu').value = app.autoscale_cpu_target || 70;
   document.getElementById('cfg-autoscale-mem').value = app.autoscale_memory_target_mb || '';
   document.getElementById('cfg-autoscale-up').value = app.autoscale_up_seconds || 60;
-  document.getElementById('cfg-autoscale-down').value = app.autoscale_down_minutes || 5;
+  document.getElementById('cfg-autoscale-down').value = app.autoscale_down_seconds || 300;
   document.getElementById('cfg-autoscale-step-up').value = app.autoscale_max_step_up || '';
   document.getElementById('cfg-autoscale-step-down').value = app.autoscale_max_step_down || '';
   document.getElementById('cfg-autoscale-cooldown').value = app.autoscale_cooldown_seconds || '';
@@ -3165,7 +3165,7 @@ async function saveSettings() {
     autoscale_cpu_target:   parseFloat(document.getElementById('cfg-autoscale-cpu').value) || 70,
     autoscale_memory_target_mb: parseInt(document.getElementById('cfg-autoscale-mem').value) || 0,      // 0 = off
     autoscale_up_seconds:   parseInt(document.getElementById('cfg-autoscale-up').value) || 60,
-    autoscale_down_minutes: parseInt(document.getElementById('cfg-autoscale-down').value) || 5,
+    autoscale_down_seconds: parseInt(document.getElementById('cfg-autoscale-down').value) || 300,
     autoscale_max_step_up:  parseInt(document.getElementById('cfg-autoscale-step-up').value) || 0,      // 0 = no limit
     autoscale_max_step_down: parseInt(document.getElementById('cfg-autoscale-step-down').value) || 0,
     autoscale_cooldown_seconds: parseInt(document.getElementById('cfg-autoscale-cooldown').value) || 0,   // 0 = as the scale up time

@@ -65,7 +65,7 @@ class UpdateRequest(BaseModel):
     autoscale_cpu_target:   Optional[float] = None
     autoscale_memory_target_mb: Optional[int] = None    # 0 = off
     autoscale_up_seconds:   Optional[int]   = None
-    autoscale_down_minutes: Optional[int]   = None
+    autoscale_down_seconds: Optional[int]   = None
     autoscale_max_step_up:  Optional[int]   = None      # 0 = no limit
     autoscale_max_step_down: Optional[int]  = None      # 0 = no limit
     autoscale_cooldown_seconds: Optional[int] = None    # 0 = as the scale up window

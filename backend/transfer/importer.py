@@ -157,6 +157,9 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
 
     scaling = {f: _opt(entry, f, bool if f == "autoscale_enabled" else float) for f in autoscale.FIELDS}
     scaling = {f: autoscale.clean(f, v) for f, v in scaling.items() if v is not None}
+    old_minutes = _opt(entry, "autoscale_down_minutes", float)      # exports from before this was in seconds
+    if old_minutes and "autoscale_down_seconds" not in scaling:
+        scaling["autoscale_down_seconds"] = autoscale.clean("autoscale_down_seconds", old_minutes * 60)
     # Optional settings: only passed when the file has them, so a missing one keeps its default.
     optional = {k: v for k, v in {
         "auto_deploy": _opt(entry, "auto_deploy", bool),
