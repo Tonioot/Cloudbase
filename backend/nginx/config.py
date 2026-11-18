@@ -106,7 +106,9 @@ def generate_config(
         upstream_name = f"cloudbase_app_{app_id}" if app_id else "cloudbase_" + _re.sub(r"[^a-z0-9_]", "_", app_name.lower())
         upstream_block = f"upstream {upstream_name} {{\n"
         for backend in port:
-            upstream_block += f"    server {backend};\n"
+            # One failed connection takes a backend out for a few seconds, so a dead node costs a request one short
+            # connect timeout (below) and then no request at all, instead of one in N waiting a minute
+            upstream_block += f"    server {backend} max_fails=1 fail_timeout=5s;\n"
         upstream_block += "}\n\n"
         return _proxy_config(domain, f"http://{upstream_name}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, upstream_block=upstream_block, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames)
 
@@ -170,6 +172,12 @@ def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_cache_bypass $http_upgrade;
+        # A backend that does not even accept the connection (a node that is gone) fails fast: the default wait is
+        # 60 s. With several instances the request goes to the next one (only after errors and timeouts of the
+        # connection, never after the app answered), within a few seconds at most.
+        proxy_connect_timeout 3s;
+        proxy_next_upstream error timeout;
+        proxy_next_upstream_timeout 8s;
         proxy_intercept_errors on;
         # Declaring error_page here stops the server-level ones from being inherited,
         # so only upstream outages are intercepted. The app's own 404s pass through

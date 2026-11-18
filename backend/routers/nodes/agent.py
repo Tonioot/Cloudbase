@@ -13,7 +13,7 @@ from core.audit import log_audit
 from mesh import hub
 from core import config as _cfg, system_config as _syscfg
 from nodes import desired, metrics as node_metrics, observed, reports as node_reports, snapshot
-from nodes.liveness import node_gone
+from nodes.liveness import HEARTBEAT_SECONDS, node_gone, note_interval
 from nodes import commands as node_commands
 from nodes.commands import _commit_with_sqlite_lock_retry, _utcnow
 from nodes.registry import _as_node_dict, get_node_by_token_or_401
@@ -198,7 +198,7 @@ async def agent_ws(websocket: WebSocket):
         await websocket.send_json({
             "type": "auth_ok",
             "node_id": node_id,
-            "heartbeat_interval": node.heartbeat_interval,
+            "heartbeat_interval": HEARTBEAT_SECONDS,
             "server_time": _utcnow().isoformat(),
             # Agents registered over plain http move to this address themselves
             "panel_url": f"https://{panel_domain}" if panel_domain else None,
@@ -237,6 +237,7 @@ async def agent_ws(websocket: WebSocket):
                     msg_type = (incoming or {}).get("type")
                     if msg_type == "heartbeat":
                         log.debug("WS heartbeat from node id=%d", node_id)
+                        note_interval(node_id, incoming.get("heartbeat_interval"))
                         async with AsyncSessionLocal() as db:
                             live_node = await get_node_by_token_or_401(token, db)
                             live_node.status = "online"

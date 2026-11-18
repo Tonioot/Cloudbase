@@ -224,3 +224,24 @@ def test_a_newer_connection_replaces_the_old_one_without_marking_the_node_offlin
     finally:
         ws2.__exit__(None, None, None)
         ws1.__exit__(None, None, None)
+
+
+def test_a_node_is_silent_after_two_missed_heartbeats_and_an_old_agent_keeps_the_old_rule():
+    import types
+    from nodes import liveness
+    node = types.SimpleNamespace(id=987001, heartbeat_interval=15)
+    assert liveness.stale_after(node) == 32                     # an agent that never says its pace: sends every 15 s
+    liveness.note_interval(node.id, 5)
+    assert liveness.stale_after(node) == 12                     # an agent that sends every 5 s
+    liveness.note_interval(node.id, None)
+    assert liveness.stale_after(node) == 32
+
+
+def test_nginx_gives_up_on_a_dead_backend_in_seconds_and_tries_the_next():
+    from nginx import config
+    for backends in (["10.0.0.2:9001", "10.0.0.3:9002"], ["10.0.0.2:9001"]):
+        text = config.generate_config("a", "a.example.com", backends, app_id=7)
+        assert "proxy_connect_timeout 3s" in text and "proxy_next_upstream error timeout" in text
+    assert text.count("max_fails=1 fail_timeout=5s") == 0       # one backend: no upstream block
+    two = config.generate_config("a", "a.example.com", ["10.0.0.2:9001", "10.0.0.3:9002"], app_id=7)
+    assert two.count("max_fails=1 fail_timeout=5s") == 2

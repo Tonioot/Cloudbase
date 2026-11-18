@@ -15,6 +15,24 @@ from nodes.state import _node_ws_connections, _push_node_event
 
 log = logging.getLogger("cloudbase.nodes")
 
+# A node tells us every HEARTBEAT_SECONDS that it is there; it is gone after two missed ones (plus a little room, as
+# one heartbeat may be skipped when the database is locked). An agent from before this was shortened still sends
+# one per 15 s and never says otherwise, so it keeps the old, longer rule.
+HEARTBEAT_SECONDS = 5
+OLD_HEARTBEAT_SECONDS = 15
+_agent_interval: dict[int, int] = {}      # node id → the interval its agent says it uses (set by the heartbeat)
+
+
+def note_interval(node_id: int, seconds) -> None:
+    """The agent says how often it sends heartbeats; without it we assume the old 15 s."""
+    _agent_interval[node_id] = int(seconds) if isinstance(seconds, (int, float)) and 1 <= seconds <= 300 else OLD_HEARTBEAT_SECONDS
+
+
+def stale_after(node: Node) -> int:
+    """Seconds without a heartbeat after which the node counts as gone."""
+    interval = _agent_interval.get(node.id, node.heartbeat_interval or OLD_HEARTBEAT_SECONDS)
+    return max(interval * 2 + 2, 12)
+
 
 async def mark_instances_offline(db: AsyncSession, node_id: int) -> set[int]:
     """The primary cannot reach this node: its live instances leave rotation and are picked up again when it is back
@@ -62,7 +80,7 @@ async def mark_stale_nodes_offline(db: AsyncSession) -> None:
     for node in result.scalars().all():
         if not node.last_seen:
             continue
-        threshold = max(node.heartbeat_interval * 2, 20)
+        threshold = stale_after(node)
         delta = (now - node.last_seen).total_seconds()
         affected = await mark_offline(db, node) if delta > threshold else None
         if affected is not None:

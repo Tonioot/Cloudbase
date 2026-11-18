@@ -1,4 +1,5 @@
 import json
+import random
 import secrets
 import socket
 import asyncio
@@ -48,7 +49,7 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState, reco
         ws_url = _ws_url(state.main_url)
         _agent_log(f"[agent] Connecting websocket to {ws_url} (attempt {attempt})")
         try:
-            async with websockets.connect(ws_url, max_size=2**22, ping_interval=20, ping_timeout=20) as ws:
+            async with websockets.connect(ws_url, max_size=2**22, ping_interval=5, ping_timeout=10) as ws:
                 attempt = 0
                 alive.set_connected(True)
                 _agent_log(f"[agent] WebSocket connected to {ws_url}")
@@ -66,6 +67,7 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState, reco
                         await asyncio.sleep(state.heartbeat_interval)
                         await _ws_send(json.dumps({
                             "type": "heartbeat",
+                            "heartbeat_interval": state.heartbeat_interval,      # the primary judges "silent" by this
                             "node_metrics": _collect_node_metrics(),
                             "metadata_json": _collect_system_info(),
                             "capabilities": _build_capabilities()
@@ -97,6 +99,8 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState, reco
                         elif mtype == "ping":
                             await _ws_send(json.dumps({"type": "pong", "ping_id": data.get("ping_id", "")}))
                         elif mtype == "auth_ok":
+                            if isinstance(data.get("heartbeat_interval"), (int, float)) and data["heartbeat_interval"] >= 1:
+                                state.heartbeat_interval = int(data["heartbeat_interval"])     # the primary decides the pace
                             if await _maybe_upgrade_to_https(client, state, data.get("panel_url")):
                                 break  # reconnect on the new address
                 finally:
@@ -108,7 +112,9 @@ async def _run_websocket_loop(client: httpx.AsyncClient, state: AgentState, reco
                         except asyncio.CancelledError:
                             pass
         except Exception as e:
-            backoff = min(0.5 * (2 ** attempt), 60)
+            # Quick to come back (a restarted primary is wanted again within seconds), with some spread so many nodes
+            # do not all knock at the same moment
+            backoff = min(0.5 * (2 ** attempt), 5) * random.uniform(0.8, 1.2)
             _agent_log(f"[agent] websocket loop error (attempt {attempt}): {type(e).__name__}: {e} — retrying in {backoff:.1f}s")
             attempt += 1
             await asyncio.sleep(backoff)

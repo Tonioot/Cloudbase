@@ -869,7 +869,7 @@ PYEOF
     fi
 
     success "Launching Cloudbase on port $PORT"
-    exec "$VENV_PATH/bin/uvicorn" main:app --host 0.0.0.0 --port "$PORT" --timeout-graceful-shutdown 8
+    exec "$VENV_PATH/bin/uvicorn" main:app --host 0.0.0.0 --port "$PORT" --timeout-graceful-shutdown 8 --ws-ping-interval 5 --ws-ping-timeout 10
 }
 
 

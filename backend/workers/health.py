@@ -13,4 +13,4 @@ async def _node_health_monitor():
             return
         except Exception:
             pass
-        await asyncio.sleep(5)
+        await asyncio.sleep(2)
