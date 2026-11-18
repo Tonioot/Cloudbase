@@ -314,18 +314,24 @@ function _hintFor(label) {
     return key ? DETAIL_HINTS[key] : '';
 }
 
-function _detailItem(label, val, { valueClass = '', html = false } = {}) {
+function _detailItem(label, val, { valueClass = '', html = false, hint: hintOverride = '' } = {}) {
     const classes = ['node-detail-value', valueClass].filter(Boolean).join(' ');
-    const hint = _hintFor(label);
+    const hint = hintOverride || _hintFor(label);
     const info = hint ? `<span class="info-tip" tabindex="0" data-tip="${escHtml(hint)}" aria-label="${escHtml(hint)}">i</span>` : '';
     return `<div class="node-detail-item"><span class="node-detail-label">${label}${info}</span><span class="${classes}">${html ? val : escHtml(val)}</span></div>`;
 }
 
-/* What the machine says about its own health (core/hardware.py); only what this server has */
-function hardwareItems(hw) {
-    if (!hw) return [];
+/* What a power reading measures, per source (core/hardware.py): a suffix for the value and an explanation that fits it */
+const POWER_SOURCES = {
+    board: ['', 'Measured on the whole board by its power chip: this is what the machine really draws.'],
+    sensor: ['', 'Measured by a power sensor on the machine.'],
+    battery: ['', 'What the machine draws from its battery while it is not plugged in.'],
+    cpu: ['processor only', 'Measured on the processor alone. The whole machine (board, disks, fans, power supply) draws more than this, so do not compare it with the reading of a whole board.'],
+};
+
+/* Health and power as the machine reports them (core/hardware.py); only what this server has */
+function healthItems(hw) {
     const items = [];
-    if (hw.model) items.push(_detailItem('Hardware', hw.model));
     if (hw.temperature_c != null) {
         const t = hw.temperature_c;
         items.push(_detailItem('Temperature', `${t.toFixed(1)} °C`, { valueClass: t >= 80 ? 'node-detail-value-bad' : t >= 70 ? 'node-detail-value-warn' : '' }));
@@ -334,45 +340,75 @@ function hardwareItems(hw) {
     const power = hw.power || {};
     if (power.now || power.since_boot) {
         const now = power.now || [], past = (power.since_boot || []).filter(x => !now.includes(x));
-        const text = now.length ? `${now.join(', ')} now` : past.length ? `OK now; since boot: ${past.join(', ')}` : 'OK';
+        const text = now.length ? `${now.join(', ')} now` : past.length ? `OK now · earlier since boot: ${past.join(', ')}` : 'OK, no problems since boot';
         items.push(_detailItem('Power supply', text, { valueClass: now.length ? 'node-detail-value-bad' : past.length ? 'node-detail-value-warn' : 'node-detail-value-live' }));
     }
     if (hw.consumption) {
-        const sources = { board: 'whole board', sensor: 'power sensor', battery: 'battery', cpu: 'processor only' };
-        items.push(_detailItem('Power use', `${hw.consumption.watts} W · ${sources[hw.consumption.source] || hw.consumption.source}`));
+        const [suffix, hint] = POWER_SOURCES[hw.consumption.source] || ['', 'How much power this machine draws, in watts.'];
+        items.push(_detailItem('Power use', `${hw.consumption.watts} W${suffix ? ` · ${suffix}` : ''}`, { hint }));
     }
     if (power.battery_percent != null) items.push(_detailItem('Battery', `${power.battery_percent}%${power.on_ac ? ' · plugged in' : ''}`));
     if (hw.cpu_mhz) items.push(_detailItem('Clock speed', `${hw.cpu_mhz} MHz`));
     if (hw.swap_percent != null) items.push(_detailItem('Swap', `${hw.swap_percent}% of ${hw.swap_total_mb} MB`));
-    for (const d of hw.disks || []) items.push(_detailItem(`Disk ${d.mount}`, `${d.percent}% of ${d.total_gb} GB · ${d.fstype}`));
-    if (hw.interfaces && hw.interfaces.length) {
-        items.push(_detailItem('Network', hw.interfaces.map(i => i.speed_mbps ? `${i.name} (${i.speed_mbps} Mbit/s)` : i.name).join(', ')));
-    }
     if (hw.processes) items.push(_detailItem('Processes', String(hw.processes)));
-    if (hw.kernel) items.push(_detailItem('Kernel', hw.kernel, { valueClass: 'node-detail-value-mono' }));
-    if (hw.reboot_required) items.push(_detailItem('Restart needed', 'Yes, a system update is waiting', { valueClass: 'node-detail-value-warn' }));
     return items;
 }
 
+/* One block of the "This server" section: a heading, a line that says what it is about, and its items.
+   A block without items is left out. */
+function _group(title, description, items) {
+    const rows = items.filter(Boolean);
+    if (!rows.length) return '';
+    return `<div class="node-group">
+        <div class="node-group-head"><h3>${escHtml(title)}</h3><p>${escHtml(description)}</p></div>
+        <div class="node-details-grid">${rows.join('')}</div>
+    </div>`;
+}
+
+const VIRTUAL_RE = /amazon|google|microsoft|vmware|virtualbox|kvm|qemu|digitalocean|hetzner|virtual/i;
+
 function renderAbout() {
     const meta = node.metadata || {};
+    const hw = meta.hardware || {};
     const connected = node.is_local || node.websocket_connected;
+    const reportsHealth = hw.temperature_c != null || hw.power || hw.consumption || (hw.fans || []).length;
+    // The line under "Health and power" says what this machine can actually tell
+    const healthText = reportsHealth
+        ? (/raspberry/i.test(hw.model || '')
+            ? 'Temperature and power supply as the Pi reports them. Undervoltage points to a weak adapter or cable.'
+            : 'What this machine reports about its temperature and power.')
+        : (VIRTUAL_RE.test(hw.model || '')
+            ? 'A virtual machine: temperature and power are handled by the provider and cannot be seen from here.'
+            : 'This machine does not report temperature or power.');
     document.getElementById('node-info-grid').innerHTML = [
-        meta.hostname ? _detailItem('Hostname', meta.hostname) : '',
-        meta.ip ? _detailItem('IP address', meta.ip, { valueClass: 'node-detail-value-mono' }) : '',
-        node.wg_ip ? _detailItem('Node network address', node.wg_ip, { valueClass: 'node-detail-value-mono' }) : '',
-        meta.os ? _detailItem('Operating system', meta.os_short || meta.os) : '',
-        meta.arch ? _detailItem('Architecture', meta.arch) : '',
-        meta.cpu_model ? _detailItem('Processor', meta.cpu_model) : '',
-        meta.cpu_count ? _detailItem('CPU cores', `${meta.cpu_count} physical / ${meta.cpu_count_logical || meta.cpu_count} logical`) : '',
-        meta.ram_total_mb ? _detailItem('Memory', `${Math.round(meta.ram_total_mb / 1024)} GB`) : '',
-        meta.disk_total_gb ? _detailItem('Storage', `${meta.disk_total_gb} GB`) : '',
-        meta.uptime_secs ? _detailItem('Uptime', fmtUptime(meta.uptime_secs)) : '',
-        ...hardwareItems(meta.hardware),
-        _detailItem('Cloudbase', cloudbaseLabel(node), { valueClass: 'node-detail-value-mono' }),
-        _detailItem('Agent', node.agent_version || '—'),
-        _detailItem('Last seen', connected ? 'Connected now' : timeAgo(node.last_seen), { valueClass: connected ? 'node-detail-value-live' : '' }),
-        _detailItem('Node ID', `#${node.id}`, { valueClass: 'node-detail-value-mono' }),
+        _group('Machine', 'The hardware and the system it runs.', [
+            hw.model ? _detailItem('Hardware', hw.model) : '',
+            meta.os ? _detailItem('Operating system', meta.os_short || meta.os) : '',
+            hw.kernel ? _detailItem('Kernel', hw.kernel, { valueClass: 'node-detail-value-mono' }) : '',
+            meta.arch ? _detailItem('Architecture', meta.arch) : '',
+            meta.cpu_model ? _detailItem('Processor', meta.cpu_model) : '',
+            meta.cpu_count ? _detailItem('CPU cores', `${meta.cpu_count} physical / ${meta.cpu_count_logical || meta.cpu_count} logical`) : '',
+            meta.ram_total_mb ? _detailItem('Memory', `${Math.round(meta.ram_total_mb / 1024)} GB`) : '',
+            meta.uptime_secs ? _detailItem('Uptime', fmtUptime(meta.uptime_secs)) : '',
+            hw.reboot_required ? _detailItem('Restart needed', 'Yes, a system update is waiting', { valueClass: 'node-detail-value-warn' }) : '',
+        ]),
+        _group('Health and power', healthText, healthItems(hw)),
+        _group('Storage', 'The disks of this server and how full they are.', (hw.disks || []).map(d =>
+            _detailItem(`Disk ${d.mount}`, `${d.percent}% of ${d.total_gb} GB · ${d.fstype}`,
+                { valueClass: d.percent >= 90 ? 'node-detail-value-bad' : d.percent >= 80 ? 'node-detail-value-warn' : '' }))),
+        _group('Network', 'How this server is reached, by the primary and on the local network.', [
+            meta.hostname ? _detailItem('Hostname', meta.hostname) : '',
+            meta.ip ? _detailItem('IP address', meta.ip, { valueClass: 'node-detail-value-mono' }) : '',
+            node.wg_ip ? _detailItem('Node network address', node.wg_ip, { valueClass: 'node-detail-value-mono' }) : '',
+            hw.interfaces && hw.interfaces.length
+                ? _detailItem('Network', hw.interfaces.map(i => i.speed_mbps ? `${i.name} (${i.speed_mbps} Mbit/s)` : i.name).join(', ')) : '',
+        ]),
+        _group('Cloudbase', 'The Cloudbase software on this server and its connection to the primary.', [
+            _detailItem('Cloudbase', cloudbaseLabel(node), { valueClass: 'node-detail-value-mono' }),
+            _detailItem('Agent', node.agent_version || '—'),
+            _detailItem('Last seen', connected ? 'Connected now' : timeAgo(node.last_seen), { valueClass: connected ? 'node-detail-value-live' : '' }),
+            _detailItem('Node ID', `#${node.id}`, { valueClass: 'node-detail-value-mono' }),
+        ]),
     ].join('');
 }
 
