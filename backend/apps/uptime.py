@@ -147,16 +147,29 @@ async def summary(db: AsyncSession, app_id: int, today: Optional[date] = None, n
         "recent_ms": [r[2] for r in recent[-60:]],   # the last hour, for the small chart; None = a failed check
         "incidents": [{"from": i["from"].isoformat() + "Z", "until": i["until"].isoformat() + "Z" if i["until"] else None}
                       for i in incidents([(r[0], r[1]) for r in recent], needed)][:20],
+        "failing": next((i for i, r in enumerate(reversed(recent)) if r[1]), len(recent)),   # failed checks in a row, up to now
         "last_check": {"at": last[0].isoformat() + "Z", "ok": last[1], "response_ms": last[2], "detail": last[3]} if last else None,
     }
 
 
-def state_of(app, running: bool, last_check: Optional[dict]) -> str:
-    """up | down | maintenance | stopped | unknown"""
+async def check_log(db: AsyncSession, app_id: int, limit: int = 200, failed_only: bool = False) -> list[dict]:
+    """The individual checks of the last 7 days, newest first: when, whether it answered, how fast and what happened."""
+    query = select(UptimeCheck).where(UptimeCheck.app_id == app_id)
+    if failed_only:
+        query = query.where(UptimeCheck.ok == False)  # noqa: E712
+    rows = (await db.execute(query.order_by(UptimeCheck.timestamp.desc()).limit(limit))).scalars().all()
+    return [{"at": r.timestamp.isoformat() + "Z", "ok": bool(r.ok), "response_ms": r.response_ms, "detail": r.detail} for r in rows]
+
+
+def state_of(app, running: bool, last_check: Optional[dict], failing: Optional[int] = None, needed: int = 1) -> str:
+    """up | down | maintenance | stopped | unknown. With `failing` (failed checks in a row) the app is only down once
+    that reaches `needed`, the same number that raises an outage: one failed check does not turn the page red."""
     if app.maintenance_mode:
         return "maintenance"
     if not running:
         return "stopped"
     if not last_check:
         return "unknown"
-    return "up" if last_check["ok"] else "down"
+    if last_check["ok"] or (failing is not None and failing < needed):
+        return "up"
+    return "down"

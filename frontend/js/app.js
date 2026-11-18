@@ -1547,6 +1547,42 @@ function initAutoDeploySettings() {
 
 }
 
+/** The individual uptime checks, newest first, optionally only the failed ones. */
+async function openUptimeLog() {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'dialog-backdrop';
+  backdrop.innerHTML = `
+    <div class="dialog dialog-modern form-dialog" role="dialog" aria-modal="true" aria-labelledby="ul-title" style="max-width:720px;width:100%">
+      <div class="dialog-title" id="ul-title">Uptime check log</div>
+      <div class="dialog-body">
+        <label class="toggle-row form-toggle"><span><span class="field-label">Only failed checks</span></span>
+          <span class="toggle"><input type="checkbox" id="ul-failed" /><span class="toggle-slider"></span></span></label>
+        <div id="ul-list" style="max-height:50vh;overflow:auto;font-size:12.5px"></div>
+      </div>
+      <div class="dialog-actions"><button class="btn" id="ul-close">Close</button></div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  const close = () => backdrop.remove();
+  backdrop.querySelector('#ul-close').onclick = close;
+  backdrop.addEventListener('click', e => { if (e.target === backdrop) close(); });
+  const list = backdrop.querySelector('#ul-list');
+  const load = async () => {
+    list.textContent = 'Loading…';
+    try {
+      const { checks } = await api.getUptimeChecks(APP_ID, backdrop.querySelector('#ul-failed').checked);
+      list.innerHTML = checks.length ? `<table style="width:100%;border-collapse:collapse">${checks.map(c => `
+        <tr style="border-top:1px solid var(--line)">
+          <td style="padding:5px 8px;white-space:nowrap">${escHtml(new Date(c.at).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit' }))}</td>
+          <td style="padding:5px 8px;color:var(--${c.ok ? 'green' : 'red'})">${c.ok ? 'OK' : 'Failed'}</td>
+          <td style="padding:5px 8px">${c.response_ms == null ? '' : c.response_ms + ' ms'}</td>
+          <td style="padding:5px 8px"><code>${escHtml(c.detail || '')}</code></td>
+        </tr>`).join('')}</table>` : '<div class="field-hint">No checks to show.</div>';
+    } catch (e) { list.textContent = e.message; }
+  };
+  backdrop.querySelector('#ul-failed').onchange = load;
+  load();
+}
+
 /** What the uptime checks found, under the status page switch. */
 async function showUptimeHint() {
   const hint = document.getElementById('cfg-uptime-hint');
@@ -1730,6 +1766,7 @@ function initSettings() {
   document.getElementById('cfg-uptime-path').value = app.uptime_path || '';
   document.getElementById('cfg-uptime-expect').value = app.uptime_expect || '';
   showUptimeHint();
+  document.getElementById('btn-uptime-log').onclick = openUptimeLog;
   document.getElementById('cfg-health-timeout').value = app.health_timeout_seconds || 600;
   const showAutoscale = on => ['autoscale-options', 'autoscale-more'].forEach(id => { document.getElementById(id).style.display = on ? '' : 'none'; });
   showAutoscale(autoscaleEnabled);

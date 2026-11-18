@@ -158,6 +158,7 @@ export const api = {
   deploy:   (payload)  => request('POST',   '/apps', payload),
   updateApp:(id, data) => request('PUT',    `/apps/${id}`, data),
   getUptime:     id => request('GET',    `/apps/${id}/uptime`),
+  getUptimeChecks: (id, failed) => request('GET', `/apps/${id}/uptime/checks?limit=300${failed ? '&failed=true' : ''}`),
   getWebhook:    id => request('GET',    `/apps/${id}/webhook`),
   newWebhook:    id => request('POST',   `/apps/${id}/webhook`),
   removeWebhook: id => request('DELETE', `/apps/${id}/webhook`),

@@ -32,6 +32,7 @@ GET     /api/apps/{app_id}/instances/stats
 GET     /api/apps/{app_id}/source-archive
 GET     /api/apps/{app_id}/stats/history
 GET     /api/apps/{app_id}/uptime
+GET     /api/apps/{app_id}/uptime/checks
 GET     /api/apps/{app_id}/webhook
 GET     /api/audit-log
 GET     /api/auth/check

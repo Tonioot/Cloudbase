@@ -325,3 +325,13 @@ def test_the_number_of_failed_checks_for_an_outage_is_per_app(monkeypatch, admin
     _run(worker.check_app(app_id, "Site", "http://site.test", "/", "", 60, 4))
     assert events == ["uptime.down"]
     assert [i["until"] for i in uptime.incidents([(datetime(2026, 11, 1) + timedelta(minutes=i), False) for i in range(3)], 4)] == []
+
+
+def test_one_failed_check_does_not_turn_the_status_down_before_the_outage_threshold():
+    from apps import uptime
+
+    class A:
+        maintenance_mode = False
+    down = {"ok": False}
+    assert uptime.state_of(A(), True, down, failing=1, needed=2) == "up"
+    assert uptime.state_of(A(), True, down, failing=2, needed=2) == "down"

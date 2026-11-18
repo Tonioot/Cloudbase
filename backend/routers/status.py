@@ -1,7 +1,7 @@
 """Uptime: the public status page (only apps that opted in) and the uptime of one app for the panel."""
 import time
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,7 +46,7 @@ async def public_status():
         items = []
         for app in apps:
             data = await apps_uptime.summary(db, app.id, needed=app.uptime_failures or apps_uptime.FAILURES_FOR_OUTAGE)
-            items.append({"name": app.name, "status": apps_uptime.state_of(app, app.id in running, data["last_check"]), **data})
+            items.append({"name": app.name, "status": apps_uptime.state_of(app, app.id in running, data["last_check"], data["failing"], app.uptime_failures or apps_uptime.FAILURES_FOR_OUTAGE), **data})
     result = {"overall": overall_state([i["status"] for i in items]), "apps": items}
     _cache = (now, result)
     return result
@@ -57,4 +57,12 @@ async def app_uptime(app_id: int, db: AsyncSession = Depends(get_db), _user: dic
     app = await _get_or_404(app_id, db)
     running = await _running_app_ids(db)
     data = await apps_uptime.summary(db, app_id, needed=app.uptime_failures or apps_uptime.FAILURES_FOR_OUTAGE)
-    return {"status": apps_uptime.state_of(app, app_id in running, data["last_check"]), **data}
+    return {"status": apps_uptime.state_of(app, app_id in running, data["last_check"], data["failing"], app.uptime_failures or apps_uptime.FAILURES_FOR_OUTAGE), **data}
+
+
+@router.get("/api/apps/{app_id}/uptime/checks")
+async def app_uptime_checks(app_id: int, limit: int = Query(default=200, ge=1, le=1000), failed: bool = False,
+                            db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("apps.view"))):
+    """The log of the uptime checks (kept for 7 days)."""
+    await _get_or_404(app_id, db)
+    return {"checks": await apps_uptime.check_log(db, app_id, limit, failed)}
