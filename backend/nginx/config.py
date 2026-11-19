@@ -113,7 +113,7 @@ def generate_config(
         return _proxy_config(domain, f"http://{upstream_name}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, upstream_block=upstream_block, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames)
 
     # One port: the panel itself
-    return _proxy_config(domain, f"http://127.0.0.1:{port}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames)
+    return _proxy_config(domain, f"http://127.0.0.1:{port}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames, panel=True)
 
 
 def _build_strict_host_guard(all_domains: list[str]) -> str:
@@ -133,7 +133,14 @@ def _build_strict_host_guard(all_domains: list[str]) -> str:
   }}"""
 
 
-def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None, upstream_block: str = "", fallback_filename: str = "downtime.html", strict_hostnames: bool = False) -> str:
+def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None, upstream_block: str = "", fallback_filename: str = "downtime.html", strict_hostnames: bool = False, panel: bool = False) -> str:
+    # The panel receives uploads from nodes (database backups, app sources) that are far larger than the 1 MB nginx
+    # accepts by default, which answered 413. No limit here; the panel streams the body to disk itself.
+    body_limit = """
+        client_max_body_size 0;
+        proxy_request_buffering off;
+        proxy_send_timeout 1h;
+        proxy_read_timeout 1h;""" if panel else ""
     # NOTE: proxy_intercept_errors must be inside the proxying location block.
     # We use a regular 'internal' location (not named @) so that try_files works.
     # Named locations don't support try_files, which caused the file to not be served.
@@ -171,7 +178,7 @@ def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
+        proxy_cache_bypass $http_upgrade;{body_limit}
         # A backend that does not even accept the connection (a node that is gone) fails fast: the default wait is
         # 60 s. With several instances the request goes to the next one (only after errors and timeouts of the
         # connection, never after the app answered), within a few seconds at most.
