@@ -169,7 +169,8 @@ async def init_db():
         # Every app and database belongs to a project; the first one holds what existed before projects
         default = (await session.execute(select(Project).where(Project.is_default == True))).scalar_one_or_none()  # noqa: E712
         if default is None:
-            default = Project(name="Default", description="Everything from before projects", is_default=True)
+            # Holds what belongs to no project; the panel shows it as "No project", not as a project of its own
+            default = Project(name="No project", is_default=True)
             session.add(default)
             await session.flush()
         for model in (Application, Database):

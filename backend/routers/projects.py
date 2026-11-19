@@ -76,7 +76,8 @@ def _summary(p: Project, apps: Counter, running: Counter, databases: Counter, us
         "env_count": len(decrypt_env(p.env_vars or "")),
         # what this user may do here, so the panel shows only what works
         "can": {perm: core_projects.can(user, p.id, perm) for perm in
-                ("apps.view", "apps.deploy", "apps.configure", "databases.view", "databases.create", "projects.manage")},
+                ("apps.view", "apps.deploy", "apps.configure", "databases.view", "databases.create", "databases.manage",
+                 "projects.manage")},
     }
 
 

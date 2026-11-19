@@ -239,15 +239,14 @@ export function updateIndexApp(app) {
   updateIndex(index.apps.map(a => a.id === app.id ? { ...a, status: app.status, activity: app.activity } : a), index.nodes, index.databases, false, index.projects);
 }
 
-/** Items grouped under the name of their project, in the order of the projects; plain when there is only one. */
+/** Items of no project first, as they always were; then those of each project under its name. */
 function byProject(items, render) {
-  const projects = index.projects || [];
-  if (projects.length < 2) return items.map(render).join('');
-  const known = new Set(projects.map(p => p.id));
-  return projects.map(p => {
+  const projects = (index.projects || []).filter(p => !p.is_default);
+  const inProject = new Set(projects.map(p => p.id));
+  return items.filter(i => !inProject.has(i.project_id)).map(render).join('') + projects.map(p => {
     const mine = items.filter(i => i.project_id === p.id);
     return mine.length ? `<div class="sb-group">${esc(p.name)}</div>${mine.map(render).join('')}` : '';
-  }).join('') + items.filter(i => !known.has(i.project_id)).map(render).join('');
+  }).join('');
 }
 
 export function updateIndex(apps, nodes, databases, fromCache = false, projects = null) {
@@ -264,13 +263,14 @@ export function updateIndex(apps, nodes, databases, fromCache = false, projects 
 
   const projectsEl = document.getElementById('rail-projects-list');
   if (projectsEl) {
-    document.getElementById('rail-projects-count').textContent = index.projects.length || '';
-    projectsEl.innerHTML = index.projects.map(p => `
+    const real = index.projects.filter(p => !p.is_default);
+    document.getElementById('rail-projects-count').textContent = real.length || '';
+    projectsEl.innerHTML = real.length ? real.map(p => `
           <a class="menu-item${section === 'projects' && p.id === currentId ? ' active' : ''}" href="/project?id=${p.id}">
             <span class="sb-project-mark">${ICONS.folder}</span>
             <span class="menu-item-label">${esc(p.name)}</span>
             <span class="menu-item-meta">${p.apps + p.databases || ''}</span>
-          </a>`).join('');
+          </a>`).join('') : '<div class="flyout-empty">No projects</div>';
   }
 
   const appsEl = document.getElementById('rail-apps-list');
@@ -325,6 +325,7 @@ function paletteCommands() {
   const onDashboard = currentSection() === 'overview';
   const cmds = [
     { group: 'Actions', label: 'New app', icon: ICONS.plus, run: onDashboard && document.getElementById('btn-deploy') ? click('btn-deploy') : go('/?action=new-app'), keywords: 'deploy create application' },
+    { group: 'Actions', label: 'New project', icon: ICONS.folder, run: go('/project?new=1'), keywords: 'group team client folder' },
     { group: 'Actions', label: 'New database', icon: ICONS.database, run: onDashboard && document.getElementById('btn-new-database') ? click('btn-new-database') : go('/?action=new-database'), keywords: 'create postgres mysql mariadb redis valkey mongodb' },
     { group: 'Actions', label: 'Add node', icon: ICONS.nodes, run: onDashboard && document.getElementById('btn-add-node') ? click('btn-add-node') : go('/?action=add-node'), keywords: 'server invite' },
     { group: 'Actions', label: 'Toggle theme', icon: ICONS.moon, run: () => { window.cbTheme?.cycle(); syncThemeButton(); }, keywords: 'dark light appearance' },
@@ -338,7 +339,7 @@ function paletteCommands() {
   for (const a of index.apps) {
     cmds.push({ group: 'Apps', label: a.name, dot: statusColor(a.status), meta: a.status || '', run: go(`/app?id=${a.id}`), keywords: `${a.domain || ''} ${a.app_type || ''}` });
   }
-  for (const p of index.projects || []) {
+  for (const p of (index.projects || []).filter(p => !p.is_default)) {
     cmds.push({ group: 'Projects', label: p.name, icon: ICONS.folder, run: go(`/project?id=${p.id}`), keywords: `project ${p.description || ''}` });
   }
   for (const d of index.databases) {

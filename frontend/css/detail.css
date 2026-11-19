@@ -765,6 +765,9 @@ label.s3-row { cursor: pointer; }
 /* Every control on the right has the same width */
 .s3-ctl { width: 240px; flex-shrink: 0; display: flex; justify-content: flex-end; }
 .s3-ctl > .input { width: 100%; }
+.s3-ctl--pair { width: 300px; gap: 8px; align-items: center; }
+.s3-ctl--pair > .input { flex: 1; min-width: 0; width: auto; }
+.s3-ctl--pair > .btn { flex-shrink: 0; }
 .s3-row .toggle { flex-shrink: 0; }
 .s3-row--stack > .input, .s3-inline { width: 100%; }
 .s3-inline { display: flex; gap: 8px; align-items: center; }

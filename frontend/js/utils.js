@@ -275,13 +275,16 @@ export function fmtDate(iso) {
   return new Date(iso).toLocaleString();
 }
 
+/** How a project is called in the panel: the default one holds what belongs to no project. */
+export const projectLabel = p => (p && p.is_default ? 'No project' : p?.name || '');
+
 /** Fill a <select> with the projects this user may create something in (`permission`), the given or the default
  *  one chosen; the field around it stays hidden when there is only one. Returns the projects. */
 export async function fillProjectSelect(select, permission, chosenId = null) {
   let projects = [];
   try { projects = (await (await import('./api.js')).api.listProjects()).filter(p => p.can?.[permission]); } catch { /* no projects: the server picks */ }
   if (!select) return projects;
-  select.innerHTML = projects.map(p => `<option value="${p.id}">${String(p.name).replace(/&/g, '&amp;').replace(/</g, '&lt;')}</option>`).join('');
+  select.innerHTML = projects.map(p => `<option value="${p.id}">${String(projectLabel(p)).replace(/&/g, '&amp;').replace(/</g, '&lt;')}</option>`).join('');
   const chosen = projects.find(p => p.id === chosenId) || projects.find(p => p.is_default) || projects[0];
   if (chosen) select.value = String(chosen.id);
   const field = select.closest('.field');

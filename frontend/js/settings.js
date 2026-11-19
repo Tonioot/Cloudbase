@@ -1011,7 +1011,7 @@ function renderChannelList(state, typeLabel, reload) {
   const appName = id => state.apps.find(a => a.id === id)?.name || `app ${id}`;
   list.innerHTML = state.channels.map(ch => {
     const tone = !ch.enabled ? '' : ch.last_status === 'failed' ? 'bad' : ch.last_status === 'sent' ? 'ok' : '';
-    const projectName = id => (state.projects || []).find(p => p.id === id)?.name || `project ${id}`;
+    const projectName = id => { const p = (state.projects || []).find(x => x.id === id); return p ? (p.is_default ? 'no project' : p.name) : `project ${id}`; };
     const scope = ch.app_ids.length ? `Only ${ch.app_ids.map(appName).map(esc).join(', ')}`
       : (ch.project_ids || []).length ? `Only project ${ch.project_ids.map(projectName).map(esc).join(', ')}`
       : 'All apps and the platform';
@@ -1184,7 +1184,7 @@ function openChannelDialog(state, ch, reload) {
         <div class="check-list nc-projects">
           ${state.projects.map(p => `
             <label class="check-row"><input type="checkbox" value="${p.id}" ${edit && (ch.project_ids || []).includes(p.id) ? 'checked' : ''} />
-              <span class="check-row-name">${esc(p.name)}</span></label>`).join('')}
+              <span class="check-row-name">${esc(p.is_default ? 'No project' : p.name)}</span></label>`).join('')}
         </div>
       </div>
     </details>` : ''}

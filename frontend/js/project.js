@@ -81,12 +81,13 @@ function databaseRow(d) {
 }
 
 function render(p) {
+  if (p.is_default) p = { ...p, name: 'No project', description: 'Apps and databases that belong to no project' };
   document.title = `Cloudbase — ${p.name}`;
   const manage = p.can['projects.manage'];
   root().innerHTML = `
     <div class="page-title-row">
       <h1>${esc(p.name)}</h1>
-      <span class="page-title-meta">${esc(p.description || (p.is_default ? 'Everything from before projects' : 'Project'))}</span>
+      <span class="page-title-meta">${esc(p.description || 'Project')}</span>
       <div class="page-title-actions">
         ${p.can['databases.create'] ? '<button class="btn" id="pj-new-db">New database</button>' : ''}
         ${p.can['apps.deploy'] ? '<button class="btn btn-primary" id="pj-new-app">New app</button>' : ''}
@@ -114,7 +115,7 @@ function render(p) {
         : '<div class="apps-empty">No databases in this project yet.</div>'}
     </section>` : ''}
 
-    ${manage ? `<section class="section">
+    ${manage && !p.is_default ? `<section class="section">
       <div class="section-head"><h2>Settings</h2></div>
       ${group('General', 'How the project is called in the panel.', `
         <div class="form-pair">
