@@ -90,11 +90,12 @@ const FOLDED_KEY = 'cb-rail-folded';
 function foldedSections() {
   try { return new Set(JSON.parse(localStorage.getItem(FOLDED_KEY) || '[]')); } catch { return new Set(); }
 }
-function railSection(key, label, extra = '', end = '') {
+function railSection(key, label, extra = '', end = '', href = '', countId = '') {
   const folded = foldedSections().has(key);
   return `<div class="sb-section sb-fold${folded ? ' folded' : ''}" data-fold="${key}" ${extra}>
-      <button type="button" class="sb-fold-btn" aria-expanded="${!folded}">${ICONS.arrow}<span>${label}</span></button>
-      <span class="sb-section-end"><span class="sb-count" id="rail-${key}-count"></span>${end}</span>
+      <button type="button" class="sb-fold-btn" aria-expanded="${!folded}" aria-label="Fold ${label}">${ICONS.arrow}</button>
+      ${href ? `<a class="sb-section-link" href="${href}">${label}</a>` : `<span class="sb-section-label">${label}</span>`}
+      <span class="sb-section-end"><span class="sb-count" id="${countId || `rail-${key}-count`}"></span>${end}</span>
     </div>`;
 }
 function wireFolding(rail) {
@@ -110,22 +111,6 @@ function wireFolding(rail) {
   });
 }
 
-/* Recent: the last apps, databases and nodes opened on this browser, newest first */
-const RECENT_KEY = 'cb-recent';
-const RECENT_MAX = 5;
-function recentVisits() {
-  try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]').filter(r => r && r.kind && Number.isInteger(r.id)); } catch { return []; }
-}
-function noteVisit(section) {
-  const kind = { apps: 'app', databases: 'database', nodes: 'node' }[section];
-  const id = parseInt(new URLSearchParams(location.search).get('id'), 10);
-  if (!kind || !Number.isInteger(id)) return;
-  const list = [{ kind, id }, ...recentVisits().filter(r => !(r.kind === kind && r.id === id))].slice(0, 12);
-  try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); } catch { /* fine: not remembered */ }
-}
-
-/* What needs attention: apps, databases and nodes in a bad state */
-const BAD = new Set(['error', 'crashed', 'unhealthy', 'offline', 'node_offline', 'failed']);
 
 function railHTML(active) {
   const nav = (key, href, label, extra = '', count = '') =>
@@ -151,15 +136,17 @@ function railHTML(active) {
       ${nav('audit', '/audit', 'Audit log', 'data-perm="audit.view"')}
       ${nav('settings', '/settings', 'Settings')}
 
-      <div class="sb-attention" id="rail-attention-block" hidden>
-        ${railSection('attention', 'Needs attention')}
-        <div class="sb-list" id="rail-attention-list"></div>
-      </div>
+      ${railSection('nodes', 'Nodes', '', '', '', 'rail-list-nodes-count')}
+      <div class="sb-list" id="rail-nodes-list"><div class="flyout-empty">Loading…</div></div>
 
-      <div id="rail-recent-block" hidden>
-        ${railSection('recent', 'Recent')}
-        <div class="sb-list" id="rail-recent-list"></div>
-      </div>
+      ${railSection('projects', 'Projects', '', `<a class="sb-add" href="/project?new=1" data-perm="projects.manage" title="New project" aria-label="New project">${ICONS.plus}</a>`)}
+      <div class="sb-list" id="rail-projects-list"></div>
+
+      ${railSection('apps', 'Apps', '', '', '', 'rail-list-apps-count')}
+      <div class="sb-list" id="rail-apps-list"><div class="flyout-empty">Loading…</div></div>
+
+      ${railSection('databases', 'Databases', 'data-perm="databases.view"', '', '', 'rail-list-databases-count')}
+      <div class="sb-list" id="rail-databases-list" data-perm="databases.view"><div class="flyout-empty">Loading…</div></div>
 
       <div class="sb-settings-links" id="settings-links" hidden>
       ${setting('btn-domain-ssl', 'domain', 'globe', 'Domain &amp; SSL', 'data-perm="system.manage"')}
@@ -171,9 +158,6 @@ function railHTML(active) {
       ${setting('btn-github-tokens', 'tokens', 'key', 'Git tokens', 'data-perm="tokens.manage"')}
       ${setting('btn-export-import', 'transfer', 'transfer', 'Export / Import', 'data-perm="apps.configure"')}
       </div>
-
-      ${railSection('projects', 'Projects', '', `<a class="sb-add" href="/project?new=1" data-perm="projects.manage" title="New project" aria-label="New project">${ICONS.plus}</a>`)}
-      <div class="sb-list" id="rail-projects-list"></div>
     </nav>
 
     <div class="sb-help">
@@ -288,15 +272,22 @@ export function updateIndexApp(app) {
   updateIndex(index.apps.map(a => a.id === app.id ? { ...a, status: app.status, activity: app.activity } : a), index.nodes, index.databases, false, index.projects);
 }
 
+/** At most `limit` items (the open one always among them), then "Show all N" to the page with every one. */
+const RAIL_LIMIT = 8;
+function shortList(items, render, isActive, allHref, limit = RAIL_LIMIT) {
+  if (items.length <= limit) return items.map(render).join('');
+  let shown = items.slice(0, limit);
+  const active = items.find(isActive);
+  if (active && !shown.includes(active)) shown = [...shown.slice(0, limit - 1), active];
+  return shown.map(render).join('') + `<a class="sb-more" href="${allHref}">Show all ${items.length}${ICONS.arrow}</a>`;
+}
+
 /** The project an app or database belongs to, for its tooltip ("" for none). */
 function projectOf(item) {
   const p = (index.projects || []).find(x => x.id === item.project_id);
   return p && !p.is_default ? ` title="${esc(item.name)} · ${esc(p.name)}"` : '';
 }
 const byName = items => [...items].sort((a, b) => String(a.name).localeCompare(String(b.name)));
-function byProject(items, render) {
-  return byName(items).map(render).join('');
-}
 
 export function updateIndex(apps, nodes, databases, fromCache = false, projects = null) {
   index = { apps: apps || [], nodes: nodes || [], databases: databases || [], projects: projects || index.projects || [], loaded: true };
@@ -311,46 +302,12 @@ export function updateIndex(apps, nodes, databases, fromCache = false, projects 
   const currentId = parseInt(q.get('id'), 10);
 
   const count = (id, n) => { const el = document.getElementById(id); if (el) el.textContent = n || ''; };
-  count('rail-apps-count', index.apps.length);
-  count('rail-databases-count', index.databases.length);
-  count('rail-nodes-count', index.nodes.length);
-
-  const item = (kind, x, active) => {
-    const href = `/${kind}?id=${x.id}`;
-    const status = kind === 'app' ? shownStatus(x) : x.status;
-    const name = kind === 'node' && x.is_local ? 'Primary' : x.name;
-    const meta = kind === 'app' ? (x.cron ? 'cron' : x.no_web ? 'worker' : 'app') : kind === 'database' ? x.engine : 'node';
-    return `<a class="menu-item${active ? ' active' : ''}" href="${href}"${kind !== 'node' ? projectOf(x) : ''}>
-        <span class="dot" style="background:${statusColor(status)}"></span>
-        <span class="menu-item-label">${esc(name)}</span>
-        <span class="menu-item-meta">${esc(kind === 'app' && BAD.has(status) ? status : meta)}</span>
-      </a>`;
-  };
-  const lookup = { app: index.apps, database: index.databases, node: index.nodes };
-  const sectionKind = { apps: 'app', databases: 'database', nodes: 'node' }[section];
-
-  // Needs attention: only when something is wrong
-  const attention = [
-    ...index.apps.filter(a => BAD.has(shownStatus(a))).map(a => ['app', a]),
-    ...index.databases.filter(d => BAD.has(d.status)).map(d => ['database', d]),
-    ...index.nodes.filter(n => !n.is_local && n.enabled !== false && BAD.has(n.status)).map(n => ['node', n]),
-  ];
-  const attentionBlock = document.getElementById('rail-attention-block');
-  if (attentionBlock) {
-    attentionBlock.hidden = !attention.length;
-    count('rail-attention-count', attention.length);
-    document.getElementById('rail-attention-list').innerHTML = attention.slice(0, 8)
-      .map(([kind, x]) => item(kind, x, sectionKind === kind && x.id === currentId)).join('');
+  for (const [key, list] of [['apps', index.apps], ['databases', index.databases], ['nodes', index.nodes]]) {
+    count(`rail-${key}-count`, list.length);          // on the link to the page
+    count(`rail-list-${key}-count`, list.length);     // and on the heading of the list below
   }
 
-  // Recent: what was opened last on this browser (and still exists)
-  const recent = recentVisits().map(r => [r.kind, (lookup[r.kind] || []).find(x => x.id === r.id)]).filter(([, x]) => x).slice(0, RECENT_MAX);
-  const recentBlock = document.getElementById('rail-recent-block');
-  if (recentBlock) {
-    recentBlock.hidden = !recent.length;
-    document.getElementById('rail-recent-list').innerHTML = recent
-      .map(([kind, x]) => item(kind, x, sectionKind === kind && x.id === currentId)).join('');
-  }
+
 
   const projectsEl = document.getElementById('rail-projects-list');
   if (projectsEl) {
@@ -366,40 +323,37 @@ export function updateIndex(apps, nodes, databases, fromCache = false, projects 
 
   const appsEl = document.getElementById('rail-apps-list');
   if (appsEl) {
-    document.getElementById('rail-apps-count').textContent = index.apps.length || '';
     appsEl.innerHTML = index.apps.length
-      ? byProject(index.apps, a => `
+      ? shortList(byName(index.apps), a => `
           <a class="menu-item${section === 'apps' && a.id === currentId ? ' active' : ''}" href="/app?id=${a.id}"${projectOf(a)}>
             <span class="dot" style="background:${statusColor(shownStatus(a))}"></span>
             <span class="menu-item-label">${esc(a.name)}</span>
             <span class="menu-item-meta">${esc(a.cron ? 'cron' : a.no_web ? 'worker' : a.app_type === 'static' ? 'static' : a.app_type || '')}</span>
-          </a>`)
+          </a>`, a => section === 'apps' && a.id === currentId, '/apps')
       : '<div class="flyout-empty">No apps yet</div>';
   }
 
   const dbsEl = document.getElementById('rail-databases-list');
   if (dbsEl) {
-    document.getElementById('rail-databases-count').textContent = index.databases.length || '';
     dbsEl.innerHTML = index.databases.length
-      ? byProject(index.databases, d => `
+      ? shortList(byName(index.databases), d => `
           <a class="menu-item${section === 'databases' && d.id === currentId ? ' active' : ''}" href="/database?id=${d.id}"${projectOf(d)}>
             <span class="dot" style="background:${statusColor(d.status)}"></span>
             <span class="menu-item-label">${esc(d.name)}</span>
             <span class="menu-item-meta">${esc(d.engine)}</span>
-          </a>`)
+          </a>`, d => section === 'databases' && d.id === currentId, '/databases', 6)
       : '<div class="flyout-empty">No databases yet</div>';
   }
 
   const nodesEl = document.getElementById('rail-nodes-list');
   if (nodesEl) {
-    document.getElementById('rail-nodes-count').textContent = index.nodes.length || '';
     nodesEl.innerHTML = index.nodes.length
-      ? index.nodes.map(n => `
+      ? shortList(index.nodes, n => `
           <a class="menu-item${section === 'nodes' && n.id === currentId ? ' active' : ''}" href="/node?id=${n.id}">
             <span class="dot" style="background:${statusColor(n.status)}"></span>
             <span class="menu-item-label">${esc(n.is_local ? 'Primary' : n.name)}</span>
             <span class="menu-item-meta">${esc(n.is_local ? 'local' : n.status || '')}</span>
-          </a>`).join('')
+          </a>`, n => section === 'nodes' && n.id === currentId, '/nodes', 5)
       : '<div class="flyout-empty">No nodes</div>';
   }
 }
@@ -555,7 +509,6 @@ function mount() {
   const section = currentSection();
   rail.innerHTML = railHTML(section);
   wireFolding(rail);
-  noteVisit(section);
   try {
     const cached = JSON.parse(sessionStorage.getItem(INDEX_KEY) || 'null');
     if (cached) updateIndex(cached.apps, cached.nodes, cached.databases, true, cached.projects);
