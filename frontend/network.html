@@ -25,6 +25,9 @@
       <div class="page-title-row">
         <h1>Network</h1>
         <span class="page-title-meta">How the primary and its nodes are connected</span>
+        <div class="page-title-actions">
+          <button type="button" class="btn" id="btn-net-how">How it works</button>
+        </div>
       </div>
 
       <section class="kpis" id="net-kpis" aria-label="At a glance"></section>
@@ -46,14 +49,16 @@
         <div class="net-table-wrap" id="net-table"></div>
       </section>
 
-      <section class="section" aria-label="How it works">
-        <div class="section-head"><h2>How the network works</h2></div>
-        <ol class="net-how" id="net-how"></ol>
-      </section>
-
     </div>
   </main>
 
+</div>
+
+<div class="dialog-backdrop net-how-dialog" id="net-how-dialog" hidden>
+  <div class="dialog dialog-modern" role="dialog" aria-modal="true" aria-labelledby="net-how-title">
+    <div class="dialog-title"><span id="net-how-title">How the network works</span><button type="button" class="dialog-close" aria-label="Close">×</button></div>
+    <div class="dialog-body"><ol class="net-how" id="net-how"></ol></div>
+  </div>
 </div>
 
 <div id="toast-container"></div>

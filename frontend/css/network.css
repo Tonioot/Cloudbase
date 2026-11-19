@@ -61,6 +61,8 @@
 .topo-split.single { grid-template-columns: 26px 1fr; margin-top: 14px; }
 .topo-split.single .topo-side { gap: 8px; }
 .topo-side { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 28px 8px; }
+.topo-split:not(.single) .topo-side.left { justify-content: end; }      /* the tiles stand against the trunk */
+.topo-split:not(.single) .topo-side.right { justify-content: start; }
 .topo-channel { min-height: 1px; }
 
 /* A node */
@@ -120,7 +122,12 @@ button.topo-primary { width: min(620px, 100%); }
 .nd-group dd.none { color: var(--faint); }
 
 /* ─── How it works ─────────────────────────────────────────────────────── */
-.net-how { list-style: none; counter-reset: how; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px 28px; }
+.net-how-dialog[hidden] { display: none; }
+.net-how-dialog .dialog { width: 600px; }
+.net-how-dialog .dialog-title { justify-content: space-between; }
+.dialog-close { background: none; border: 0; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; padding: 2px 6px; border-radius: var(--radius-xs); }
+.dialog-close:hover { color: var(--text); background: var(--hover); }
+.net-how { list-style: none; counter-reset: how; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 18px; }
 .net-how li { counter-increment: how; position: relative; padding-left: 34px; }
 .net-how li::before {
   content: counter(how); position: absolute; left: 0; top: 0; width: 22px; height: 22px; border-radius: 50%;

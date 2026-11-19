@@ -112,7 +112,7 @@ function primaryCard(p) {
     </button>`;
 }
 
-function nodeCard(n) {
+function nodeCard(n, style = '') {
   const link = linkOf(n);
   const m = n.node_metrics || {};
   const ping = pings.get(n.id);
@@ -128,7 +128,7 @@ function nodeCard(n) {
   // A server under load says so where the latency normally is (one line, so every tile stays the same height)
   const hot = m.cpu_percent >= 85 ? `CPU ${pct(m.cpu_percent)}%` : m.memory_percent >= 85 ? `Memory ${pct(m.memory_percent)}%` : '';
   return `
-    <button type="button" class="topo-node ${link.key}${n.id === selectedId ? ' selected' : ''}" data-select="${n.id}" aria-pressed="${n.id === selectedId}" title="${esc(tip)}">
+    <button type="button" class="topo-node ${link.key}${n.id === selectedId ? ' selected' : ''}" data-select="${n.id}" aria-pressed="${n.id === selectedId}" title="${esc(tip)}"${style ? ` style="${style}"` : ''}>
       <div class="tn-head">
         <i class="tn-dot"></i>
         <strong>${esc(n.name)}</strong>
@@ -147,19 +147,34 @@ let splitMode = null;
 function splitNodes(remote) {
   const width = document.getElementById('net-map')?.clientWidth || 0;
   splitMode = width >= SPLIT_FROM_PX;
-  let left = [], right = remote;
-  if (splitMode) {
-    // How many tiles fit on one side (see .topo-split / .topo-side in network.css)
-    const side = (width - 32 - 36) / 2;
-    const cols = Math.max(1, Math.floor((side + 10) / (168 + 10)));
-    left = []; right = [];
-    remote.forEach((n, i) => ((i % (2 * cols)) < cols ? left : right).push(n));
-  }
-  return `
-    <div class="topo-split${splitMode ? '' : ' single'}" id="topo-split">
-      ${splitMode ? `<div class="topo-side left">${left.map(nodeCard).join('')}</div>` : ''}
+  if (!splitMode) {
+    return `
+    <div class="topo-split single" id="topo-split">
       <div class="topo-channel" id="topo-channel"></div>
-      <div class="topo-side right">${right.map(nodeCard).join('')}</div>
+      <div class="topo-side right">${remote.map(n => nodeCard(n)).join('')}</div>
+    </div>`;
+  }
+  // How many tiles fit on one side (see .topo-split / .topo-side in network.css)
+  const cols = Math.max(1, Math.floor(((width - 36 - 36) / 2 + 8) / (168 + 8)));
+  // Row by row, half on the left of the trunk and half on the right, so a few nodes sit evenly around it
+  const left = [], right = [];
+  for (let i = 0; i < remote.length; i += 2 * cols) {
+    const row = remote.slice(i, i + 2 * cols);
+    const half = Math.ceil(row.length / 2);
+    left.push(...row.slice(0, half));
+    right.push(...row.slice(half));
+  }
+  const lc = Math.min(cols, left.length), rc = Math.min(cols, right.length);
+  // The tiles stand against the trunk: the left side's last, shorter row starts further right
+  const short = lc ? left.length % lc : 0;
+  const leftHtml = left.map((n, i) =>
+    nodeCard(n, short && i === left.length - short ? `grid-column-start:${lc - short + 1}` : '')).join('');
+  const columns = c => `grid-template-columns:repeat(${c}, minmax(0, 240px))`;
+  return `
+    <div class="topo-split" id="topo-split">
+      <div class="topo-side left" style="${columns(lc || 1)}">${leftHtml}</div>
+      <div class="topo-channel" id="topo-channel"></div>
+      <div class="topo-side right" style="${columns(rc || 1)}">${right.map(n => nodeCard(n)).join('')}</div>
     </div>`;
 }
 
@@ -454,7 +469,18 @@ async function refresh() {
   }
 }
 
+function wireHowDialog() {
+  const dialog = document.getElementById('net-how-dialog');
+  const open = document.getElementById('btn-net-how');
+  if (!dialog || !open) return;
+  const close = () => { dialog.hidden = true; open.focus(); };
+  open.addEventListener('click', () => { renderHow(); dialog.hidden = false; dialog.querySelector('.dialog-close')?.focus(); });
+  dialog.addEventListener('click', e => { if (e.target === dialog || e.target.closest('.dialog-close')) close(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !dialog.hidden) close(); });
+}
+
 export function initNetwork() {
+  wireHowDialog();
   // Selecting a server on the map shows its details under it
   document.getElementById('net-map')?.addEventListener('click', e => {
     const target = e.target.closest('[data-select]');

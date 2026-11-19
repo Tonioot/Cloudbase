@@ -12,7 +12,7 @@
   /* Surfaces */
   --bg:          #08090a;
   --surface:     #0d0e10;   /* panels that must sit apart from the page   */
-  --pop:         #121417;   /* menus, dialogs, tooltips                  */
+  --pop:         #0d0e10;   /* menus, dialogs, tooltips: as dark as the page, set apart by their border and shadow */
   --hover:       #16181b;
   --field:       #0f1012;   /* inputs, segmented controls                */
   --code:        #0b0c0e;
