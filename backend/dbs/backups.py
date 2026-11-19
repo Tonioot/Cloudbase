@@ -9,7 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dbs import engines as db_engines, offsite as db_offsite, state as dbs_state, ops as dbs_ops, provision as dbs_provision
 from dbs import backup_restore as dbs_backup_restore
 from notify import emit as notify_emit
+from core import config as _cfg
 from core.audit import log_audit
+from mesh import addressing
 from core.database import DATA_DIR, AsyncSessionLocal
 from core.models import DatabaseBackup, Database, Node
 from nodes.registry import get_node_by_token_or_401
@@ -31,6 +33,15 @@ _restores: dict[int, dict] = {}
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _hub_url(node: Node) -> Optional[str]:
+    """The panel as the node reaches it over the node network (private, straight to the panel, no nginx in between),
+    or None when there is no node network. The agent checks it answers before using it."""
+    cfg = _cfg.get_wireguard()
+    if not cfg.get("enabled") or not node.wg_ip:
+        return None
+    return f"http://{addressing.hub_ip(cfg['subnet'])}:{_cfg.get_server_port()}"
+
 
 def _path(backup: DatabaseBackup) -> str:
     return os.path.join(BACKUP_DIR, backup.file_name)
@@ -210,9 +221,11 @@ async def run_backup(database_id: int, trigger: str, actor: Optional[str] = None
         if node.is_local:
             info = await asyncio.to_thread(dbs_backup_restore.backup_to_file, spec, path)
         else:
-            # The agent dumps on its node and streams the file to the upload endpoint below.
-            await dbs_ops._run_on_node(node, None, "db_backup", {"spec": spec, "backup_id": backup_id},
-                                   timeout=BACKUP_TIMEOUT_SECONDS)
+            # The agent streams the dump to the upload endpoint (agent_upload_backup), over the node network
+            # when there is one.
+            await dbs_ops._run_on_node(node, None, "db_backup",
+                                       {"spec": spec, "backup_id": backup_id, "hub_url": _hub_url(node)},
+                                       timeout=BACKUP_TIMEOUT_SECONDS)
             if not os.path.exists(path):
                 raise RuntimeError("The node reported success, but the backup file never arrived")
             info = {"size_bytes": os.path.getsize(path), "sha256": await asyncio.to_thread(dbs_backup_restore._sha256, path)}

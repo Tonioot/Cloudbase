@@ -25,10 +25,14 @@ async def agent_upload_backup(
     path = _path(backup)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     part = path + ".part"
-    with open(part, "wb") as out:
-        async for chunk in request.stream():
-            out.write(chunk)
-    os.replace(part, path)
+    try:
+        with open(part, "wb") as out:
+            async for chunk in request.stream():
+                out.write(chunk)
+        os.replace(part, path)          # only a stream that ended cleanly becomes a backup
+    finally:
+        if os.path.exists(part):
+            os.remove(part)
     os.chmod(path, 0o600)
     return {"ok": True, "size_bytes": os.path.getsize(path)}
 

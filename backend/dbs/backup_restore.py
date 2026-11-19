@@ -41,32 +41,38 @@ def _tail(data: bytes, limit: int = 1500) -> str:
     return text[-limit:] if len(text) > limit else text
 
 
-def backup_to_file(spec: dict, out_path: str) -> dict:
-    """Dump the database to `out_path`. Returns {size_bytes, sha256}."""
+def dump_to_stream(spec: dict, sink) -> None:
+    """Dump the database into `sink` (anything with write()), as it is produced: nothing is kept on disk. Raises when
+    the dump fails; what was already written is then incomplete and must be thrown away."""
     engine = db_engines.get_engine(spec["engine"])
     if not engine.backup:
         raise RuntimeError(f"{engine.label} backups are not supported")
     container = _running_container(int(spec["database_id"]))
     api = container.client.api
 
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-    part = out_path + ".part"
     exec_id = api.exec_create(container.id, ["sh", "-c", engine.backup["dump"]], stdout=True, stderr=True)["Id"]
     stderr = bytearray()
+    out = gzip.GzipFile(fileobj=sink, mode="wb", compresslevel=6, mtime=0) if engine.backup["gzip"] else sink
+    for chunk_out, chunk_err in api.exec_start(exec_id, stream=True, demux=True):
+        if chunk_out:
+            out.write(chunk_out)
+        if chunk_err:
+            stderr += chunk_err
+            del stderr[:-8192]
+    if out is not sink:
+        out.close()
+    code = api.exec_inspect(exec_id).get("ExitCode")
+    if code != 0:
+        raise RuntimeError(f"Dump failed (exit {code}): {_tail(bytes(stderr)) or 'no output'}")
+
+
+def backup_to_file(spec: dict, out_path: str) -> dict:
+    """Dump the database to `out_path`. Returns {size_bytes, sha256}."""
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    part = out_path + ".part"
     try:
         with open(part, "wb") as raw:
-            out = gzip.GzipFile(fileobj=raw, mode="wb", compresslevel=6, mtime=0) if engine.backup["gzip"] else raw
-            for chunk_out, chunk_err in api.exec_start(exec_id, stream=True, demux=True):
-                if chunk_out:
-                    out.write(chunk_out)
-                if chunk_err:
-                    stderr += chunk_err
-                    del stderr[:-8192]
-            if out is not raw:
-                out.close()
-        code = api.exec_inspect(exec_id).get("ExitCode")
-        if code != 0:
-            raise RuntimeError(f"Dump failed (exit {code}): {_tail(bytes(stderr)) or 'no output'}")
+            dump_to_stream(spec, raw)
         os.replace(part, out_path)
     finally:
         if os.path.exists(part):
