@@ -82,6 +82,7 @@ GET     /api/users
 GET     /app
 GET     /assets/cloudbase-mark.png
 GET     /audit
+GET     /network
 GET     /cloudbase.png
 GET     /database
 GET     /favicon.png

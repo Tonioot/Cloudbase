@@ -1,0 +1,37 @@
+/* The network page: the primary in the middle, every node on a line to it. */
+
+.net-map { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 8px; overflow-x: auto; }
+.net-svg { display: block; width: 100%; min-width: 560px; height: auto; }
+.net-svg a { cursor: pointer; }
+
+.net-line { stroke-width: 1.6; fill: none; }
+.net-line.up { stroke: var(--green); }
+.net-line.down { stroke: var(--red); stroke-dasharray: 5 5; }
+.net-line.idle { stroke: var(--faint); stroke-dasharray: 2 5; }
+
+.net-box { fill: var(--pop); stroke: var(--line-strong); stroke-width: 1; }
+.net-hub .net-box { stroke: var(--accent-border); fill: var(--accent-fill); }
+.net-node:hover .net-box { stroke: var(--text-2); }
+.net-name { fill: var(--text); font: 500 13px var(--font-sans); }
+.net-sub { fill: var(--muted); font: 11px var(--font-mono); }
+.net-edge-label { fill: var(--text-2); font: 11px var(--font-mono); paint-order: stroke; stroke: var(--surface); stroke-width: 4px; }
+.net-status.up { fill: var(--green); }
+.net-status.down { fill: var(--red); }
+.net-status.idle { fill: var(--faint); }
+
+.net-legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+.net-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.net-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.net-dot.up { background: var(--green); }
+.net-dot.down { background: var(--red); }
+.net-dot.idle { background: var(--faint); }
+
+.net-table-wrap { overflow-x: auto; }
+.net-table { min-width: 720px; }
+.net-table td { padding-top: 12px; padding-bottom: 12px; }
+.net-table .net-who { font-weight: 500; color: var(--text); }
+.net-table .net-who a { color: inherit; }
+.net-table .net-who a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.net-table .net-state { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.net-table .net-mono { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); white-space: nowrap; }
+.net-note { font-size: 12px; color: var(--muted); }

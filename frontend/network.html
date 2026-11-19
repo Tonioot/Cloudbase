@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cloudbase — Network</title>
+  <link rel="icon" type="image/png" href="/cloudbase.png" />
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="css/fonts.css" />
+  <link rel="stylesheet" href="css/variables.css" />
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/components.css" />
+  <link rel="stylesheet" href="css/pages.css" />
+  <link rel="stylesheet" href="css/network.css" />
+</head>
+<body>
+
+<div class="shell">
+
+  <aside class="rail" id="rail"></aside>
+
+  <main class="main-content">
+    <div class="page">
+
+      <div class="page-title-row">
+        <h1>Network</h1>
+        <span class="page-title-meta">How the primary and its nodes are connected</span>
+      </div>
+
+      <section class="kpis" id="net-kpis" aria-label="At a glance"></section>
+
+      <section class="section" aria-label="Map">
+        <div class="section-head"><h2>Map</h2><span class="section-note" id="net-map-note"></span></div>
+        <div class="net-map" id="net-map"><div class="apps-empty">Loading…</div></div>
+        <div class="net-legend">
+          <span><i class="net-dot up"></i>Connected</span>
+          <span><i class="net-dot down"></i>Offline or network down</span>
+          <span><i class="net-dot idle"></i>Not on the node network</span>
+        </div>
+      </section>
+
+      <section class="section" aria-label="Links">
+        <div class="section-head"><h2>Links</h2></div>
+        <div class="net-table-wrap" id="net-table"></div>
+      </section>
+
+    </div>
+  </main>
+
+</div>
+
+<div id="toast-container"></div>
+
+<script type="module">
+  import { api } from './js/api.js';
+  import { initNetwork } from './js/network.js';
+  import { initSidebar } from './js/sidebar.js';
+
+  try {
+    await api.checkAuth();
+  } catch {
+    location.href = '/login';
+  }
+
+  await initSidebar();
+  initNetwork();
+</script>
+</body>
+</html>

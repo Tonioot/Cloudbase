@@ -265,6 +265,9 @@ def _as_node_dict(node: Node) -> dict:
                 "disk_percent": node.node_disk_percent,
             } if node.node_cpu_percent is not None else None
         ),
+        # Counters since boot: the panel works out the speed from two readings
+        "net_rx_bytes": node.node_net_rx,
+        "net_tx_bytes": node.node_net_tx,
         "websocket_connected": node.id in _node_ws_connections if node.id else False,
         "created_at": node.created_at.isoformat() if node.created_at else None,
         "updated_at": node.updated_at.isoformat() if node.updated_at else None,

@@ -96,6 +96,10 @@ def register(app: FastAPI) -> None:
         async def database_page(request: Request):
             return _page(request, "database.html")
 
+        @app.get("/network", include_in_schema=False)
+        async def network_page(request: Request):
+            return _page(request, "network.html")
+
         @app.get("/audit", include_in_schema=False)
         async def audit_page(request: Request):
             return _page(request, "audit.html")
@@ -127,7 +131,7 @@ def register(app: FastAPI) -> None:
             if ext and ext not in {".html", ".htm"}:
                 return JSONResponse({"detail": "Not Found"}, status_code=404)
             # Known SPA routes — serve the shell
-            _SPA_PREFIXES = ("", "app", "node", "login", "settings", "nodes")
+            _SPA_PREFIXES = ("", "app", "node", "login", "settings", "nodes", "network")
             root = full_path.split("/")[0]
             if root not in _SPA_PREFIXES:
                 return JSONResponse({"detail": "Not Found"}, status_code=404)
