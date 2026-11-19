@@ -250,6 +250,7 @@ def _as_node_dict(node: Node) -> dict:
         "metadata": json.loads(node.metadata_json or "{}"),
         "last_seen": node.last_seen.isoformat() + "Z" if node.last_seen else None,
         "offline_since": node.offline_since.isoformat() + "Z" if node.offline_since else None,
+        "online_since": node.online_since.isoformat() + "Z" if node.online_since else None,
         "last_error": node.last_error,
         "agent_version": node.agent_version,
         "code_commit": selfupdate.current()["commit"] if node.is_local else node.code_commit,

@@ -13,7 +13,7 @@ from core.audit import log_audit
 from mesh import hub
 from core import config as _cfg, system_config as _syscfg
 from nodes import desired, metrics as node_metrics, observed, reports as node_reports, snapshot
-from nodes.liveness import HEARTBEAT_SECONDS, node_gone, note_interval
+from nodes.liveness import HEARTBEAT_SECONDS, mark_online, node_gone, note_interval
 from nodes import commands as node_commands
 from nodes.commands import _commit_with_sqlite_lock_retry, _utcnow
 from nodes.registry import _as_node_dict, get_node_by_token_or_401
@@ -171,9 +171,7 @@ async def agent_ws(websocket: WebSocket):
 
         async with AsyncSessionLocal() as db:
             node = await get_node_by_token_or_401(token, db)
-            node.status = "online"
-            node.last_seen = _utcnow()
-            node.offline_since = None
+            mark_online(node)
             await db.commit()
 
         node_id = int(node.id)
@@ -240,9 +238,7 @@ async def agent_ws(websocket: WebSocket):
                         note_interval(node_id, incoming.get("heartbeat_interval"))
                         async with AsyncSessionLocal() as db:
                             live_node = await get_node_by_token_or_401(token, db)
-                            live_node.status = "online"
-                            live_node.last_seen = _utcnow()
-                            live_node.offline_since = None
+                            mark_online(live_node)
                             caps = incoming.get("capabilities") or {}
                             if caps:
                                 live_node.capabilities = json.dumps(caps)

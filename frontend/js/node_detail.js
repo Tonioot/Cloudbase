@@ -418,7 +418,9 @@ function renderAbout() {
         _group('Cloudbase', 'The Cloudbase software on this server and its connection to the primary.', [
             _detailItem('Cloudbase', cloudbaseLabel(node), { valueClass: 'node-detail-value-mono' }),
             _detailItem('Agent', node.agent_version || '—'),
-            _detailItem('Last seen', connected ? 'Connected now' : timeAgo(node.last_seen), { valueClass: connected ? 'node-detail-value-live' : '' }),
+            _detailItem('Connected', connected
+                ? (node.online_since ? `For ${fmtUptime(Math.max(0, Math.floor((Date.now() - new Date(node.online_since).getTime()) / 1000)))}` : 'Now')
+                : `Offline, last seen ${timeAgo(node.last_seen)}`, { valueClass: connected ? 'node-detail-value-live' : '' }),
             _detailItem('Node ID', `#${node.id}`, { valueClass: 'node-detail-value-mono' }),
         ]),
     ].filter(Boolean));

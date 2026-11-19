@@ -141,6 +141,7 @@ class Node(Base):
     heartbeat_interval = Column(Integer, default=15)
     last_seen = Column(DateTime, nullable=True)
     offline_since = Column(DateTime, nullable=True)
+    online_since = Column(DateTime, nullable=True)       # since when it has been online without a break
     last_error = Column(Text, nullable=True)
     agent_version       = Column(String(40), nullable=True)
     code_commit         = Column(String(20), nullable=True)   # what the node runs (Git commit), from its heartbeat

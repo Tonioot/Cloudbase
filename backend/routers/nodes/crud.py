@@ -67,6 +67,7 @@ async def disable_node(node_id: int, db: AsyncSession = Depends(get_db), _user: 
         raise HTTPException(400, "Local node cannot be disabled")
     node.enabled = False
     node.status = "offline"
+    node.online_since = None
     if node.offline_since is None:
         node.offline_since = _utcnow()
     await log_audit(db, "node.disable", actor=actor, detail={"name": node.name, "node_id": node_id})

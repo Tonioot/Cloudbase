@@ -47,12 +47,23 @@ async def mark_instances_offline(db: AsyncSession, node_id: int) -> set[int]:
     return app_ids
 
 
+def mark_online(node: Node) -> None:
+    """The node is heard from. `online_since` starts when it was not online before and stays through the heartbeats."""
+    now = _utcnow()
+    if node.status != "online" or node.online_since is None:
+        node.online_since = now
+    node.status = "online"
+    node.last_seen = now
+    node.offline_since = None
+
+
 async def mark_offline(db: AsyncSession, node: Node) -> set[int] | None:
     """The one place that decides what "this node is offline" means. None when it already was; otherwise the apps
     whose nginx config must follow, once the caller has committed."""
     if node.status == "offline":
         return None
     node.status = "offline"
+    node.online_since = None
     if node.offline_since is None:
         node.offline_since = _utcnow()
     return await mark_instances_offline(db, node.id)
