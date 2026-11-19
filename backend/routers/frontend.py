@@ -96,6 +96,18 @@ def register(app: FastAPI) -> None:
         async def database_page(request: Request):
             return _page(request, "database.html")
 
+        @app.get("/apps", include_in_schema=False)
+        async def apps_page(request: Request):
+            return _page(request, "apps.html")
+
+        @app.get("/databases", include_in_schema=False)
+        async def databases_page(request: Request):
+            return _page(request, "databases.html")
+
+        @app.get("/nodes", include_in_schema=False)
+        async def nodes_page(request: Request):
+            return _page(request, "nodes.html")
+
         @app.get("/project", include_in_schema=False)
         async def project_page(request: Request):
             return _page(request, "project.html")

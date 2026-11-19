@@ -39,6 +39,7 @@ export const ICONS = {
   folder:   svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>', 14),
   bell:     svg('<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>', 15),
 };
+ICONS.databases = ICONS.database;
 
 const STATUS_COLOR = {
   running: 'var(--green)', online: 'var(--green)', scheduled: 'var(--green)',
@@ -109,9 +110,26 @@ function wireFolding(rail) {
   });
 }
 
+/* Recent: the last apps, databases and nodes opened on this browser, newest first */
+const RECENT_KEY = 'cb-recent';
+const RECENT_MAX = 5;
+function recentVisits() {
+  try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]').filter(r => r && r.kind && Number.isInteger(r.id)); } catch { return []; }
+}
+function noteVisit(section) {
+  const kind = { apps: 'app', databases: 'database', nodes: 'node' }[section];
+  const id = parseInt(new URLSearchParams(location.search).get('id'), 10);
+  if (!kind || !Number.isInteger(id)) return;
+  const list = [{ kind, id }, ...recentVisits().filter(r => !(r.kind === kind && r.id === id))].slice(0, 12);
+  try { localStorage.setItem(RECENT_KEY, JSON.stringify(list)); } catch { /* fine: not remembered */ }
+}
+
+/* What needs attention: apps, databases and nodes in a bad state */
+const BAD = new Set(['error', 'crashed', 'unhealthy', 'offline', 'node_offline', 'failed']);
+
 function railHTML(active) {
-  const nav = (key, href, label, extra = '') =>
-    `<a class="sb-item${active === key ? ' active' : ''}" href="${href}" ${extra}>${ICONS[key]}<span>${label}</span></a>`;
+  const nav = (key, href, label, extra = '', count = '') =>
+    `<a class="sb-item${active === key ? ' active' : ''}" href="${href}" ${extra}>${ICONS[key]}<span>${label}</span>${count ? `<span class="sb-item-count" id="${count}"></span>` : ''}</a>`;
   const settingKey = active === 'settings' ? (new URLSearchParams(location.search).get('s') || 'domain') : null;
   const setting = (id, key, icon, label, extra = '') =>
     `<a class="sb-item${settingKey === key ? ' active' : ''}" id="${id}" href="/settings?s=${key}" ${extra}>${ICONS[icon]}<span>${label}</span></a>`;
@@ -126,22 +144,22 @@ function railHTML(active) {
 
     <nav class="sb-nav" aria-label="Main">
       ${nav('overview', '/', 'Overview')}
+      ${nav('apps', '/apps', 'Apps', '', 'rail-apps-count')}
+      ${nav('databases', '/databases', 'Databases', 'data-perm="databases.view"', 'rail-databases-count')}
+      ${nav('nodes', '/nodes', 'Nodes', '', 'rail-nodes-count')}
       ${nav('network', '/network', 'Network', 'data-perm="nodes.view"')}
       ${nav('audit', '/audit', 'Audit log', 'data-perm="audit.view"')}
-
       ${nav('settings', '/settings', 'Settings')}
 
-      ${railSection('projects', 'Projects', '', `<a class="sb-add" href="/project?new=1" data-perm="projects.manage" title="New project" aria-label="New project">${ICONS.plus}</a>`)}
-      <div class="sb-list" id="rail-projects-list"></div>
+      <div class="sb-attention" id="rail-attention-block" hidden>
+        ${railSection('attention', 'Needs attention')}
+        <div class="sb-list" id="rail-attention-list"></div>
+      </div>
 
-      ${railSection('apps', 'Apps')}
-      <div class="sb-list" id="rail-apps-list"><div class="flyout-empty">Loading…</div></div>
-
-      ${railSection('databases', 'Databases', 'data-perm="databases.view"')}
-      <div class="sb-list" id="rail-databases-list" data-perm="databases.view"><div class="flyout-empty">Loading…</div></div>
-
-      ${railSection('nodes', 'Nodes')}
-      <div class="sb-list" id="rail-nodes-list"><div class="flyout-empty">Loading…</div></div>
+      <div id="rail-recent-block" hidden>
+        ${railSection('recent', 'Recent')}
+        <div class="sb-list" id="rail-recent-list"></div>
+      </div>
 
       <div class="sb-settings-links" id="settings-links" hidden>
       ${setting('btn-domain-ssl', 'domain', 'globe', 'Domain &amp; SSL', 'data-perm="system.manage"')}
@@ -153,6 +171,9 @@ function railHTML(active) {
       ${setting('btn-github-tokens', 'tokens', 'key', 'Git tokens', 'data-perm="tokens.manage"')}
       ${setting('btn-export-import', 'transfer', 'transfer', 'Export / Import', 'data-perm="apps.configure"')}
       </div>
+
+      ${railSection('projects', 'Projects', '', `<a class="sb-add" href="/project?new=1" data-perm="projects.manage" title="New project" aria-label="New project">${ICONS.plus}</a>`)}
+      <div class="sb-list" id="rail-projects-list"></div>
     </nav>
 
     <div class="sb-help">
@@ -289,6 +310,48 @@ export function updateIndex(apps, nodes, databases, fromCache = false, projects 
   const q = new URLSearchParams(location.search);
   const currentId = parseInt(q.get('id'), 10);
 
+  const count = (id, n) => { const el = document.getElementById(id); if (el) el.textContent = n || ''; };
+  count('rail-apps-count', index.apps.length);
+  count('rail-databases-count', index.databases.length);
+  count('rail-nodes-count', index.nodes.length);
+
+  const item = (kind, x, active) => {
+    const href = `/${kind}?id=${x.id}`;
+    const status = kind === 'app' ? shownStatus(x) : x.status;
+    const name = kind === 'node' && x.is_local ? 'Primary' : x.name;
+    const meta = kind === 'app' ? (x.cron ? 'cron' : x.no_web ? 'worker' : 'app') : kind === 'database' ? x.engine : 'node';
+    return `<a class="menu-item${active ? ' active' : ''}" href="${href}"${kind !== 'node' ? projectOf(x) : ''}>
+        <span class="dot" style="background:${statusColor(status)}"></span>
+        <span class="menu-item-label">${esc(name)}</span>
+        <span class="menu-item-meta">${esc(kind === 'app' && BAD.has(status) ? status : meta)}</span>
+      </a>`;
+  };
+  const lookup = { app: index.apps, database: index.databases, node: index.nodes };
+  const sectionKind = { apps: 'app', databases: 'database', nodes: 'node' }[section];
+
+  // Needs attention: only when something is wrong
+  const attention = [
+    ...index.apps.filter(a => BAD.has(shownStatus(a))).map(a => ['app', a]),
+    ...index.databases.filter(d => BAD.has(d.status)).map(d => ['database', d]),
+    ...index.nodes.filter(n => !n.is_local && n.enabled !== false && BAD.has(n.status)).map(n => ['node', n]),
+  ];
+  const attentionBlock = document.getElementById('rail-attention-block');
+  if (attentionBlock) {
+    attentionBlock.hidden = !attention.length;
+    count('rail-attention-count', attention.length);
+    document.getElementById('rail-attention-list').innerHTML = attention.slice(0, 8)
+      .map(([kind, x]) => item(kind, x, sectionKind === kind && x.id === currentId)).join('');
+  }
+
+  // Recent: what was opened last on this browser (and still exists)
+  const recent = recentVisits().map(r => [r.kind, (lookup[r.kind] || []).find(x => x.id === r.id)]).filter(([, x]) => x).slice(0, RECENT_MAX);
+  const recentBlock = document.getElementById('rail-recent-block');
+  if (recentBlock) {
+    recentBlock.hidden = !recent.length;
+    document.getElementById('rail-recent-list').innerHTML = recent
+      .map(([kind, x]) => item(kind, x, sectionKind === kind && x.id === currentId)).join('');
+  }
+
   const projectsEl = document.getElementById('rail-projects-list');
   if (projectsEl) {
     const real = index.projects.filter(p => !p.is_default);
@@ -358,6 +421,9 @@ function paletteCommands() {
     { group: 'Actions', label: 'Add node', icon: ICONS.nodes, run: onDashboard && document.getElementById('btn-add-node') ? click('btn-add-node') : go('/?action=add-node'), keywords: 'server invite' },
     { group: 'Actions', label: 'Toggle theme', icon: ICONS.moon, run: () => { window.cbTheme?.cycle(); syncThemeButton(); }, keywords: 'dark light appearance' },
     { group: 'Go to', label: 'Overview', icon: ICONS.overview, run: go('/'), keywords: 'dashboard home' },
+    { group: 'Go to', label: 'Apps', icon: ICONS.apps, run: go('/apps'), keywords: 'applications services workers cron' },
+    { group: 'Go to', label: 'Databases', icon: ICONS.database, run: go('/databases'), keywords: 'postgres mysql redis mongodb' },
+    { group: 'Go to', label: 'Nodes', icon: ICONS.nodes, run: go('/nodes'), keywords: 'servers' },
     { group: 'Go to', label: 'Network', icon: ICONS.network, run: go('/network'), keywords: 'nodes map wireguard links latency traffic' },
     { group: 'Go to', label: 'Audit log', icon: ICONS.audit, run: go('/audit'), keywords: 'history events' },
     { group: 'Go to', label: 'Notifications', icon: ICONS.bell, run: go('/notifications'), keywords: 'alerts inbox problems' },
@@ -489,6 +555,7 @@ function mount() {
   const section = currentSection();
   rail.innerHTML = railHTML(section);
   wireFolding(rail);
+  noteVisit(section);
   try {
     const cached = JSON.parse(sessionStorage.getItem(INDEX_KEY) || 'null');
     if (cached) updateIndex(cached.apps, cached.nodes, cached.databases, true, cached.projects);

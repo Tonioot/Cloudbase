@@ -49,7 +49,25 @@ function renderSettingsTabs(current) {
   return items.map(i => i.key);
 }
 
+// Switching tabs swaps the section in place (no page load): what the previous one left running stops first
+let stopActiveSection = null;
+
 export function initSettingsPage() {
+  showSettingsSection();
+  document.getElementById('settings-tabs')?.addEventListener('click', e => {
+    const tab = e.target.closest('a.settings-tab');
+    if (!tab || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;     // a new tab: let the browser do it
+    e.preventDefault();
+    if (tab.classList.contains('active')) return;
+    history.pushState(null, '', tab.getAttribute('href'));
+    showSettingsSection();
+  });
+  window.addEventListener('popstate', () => showSettingsSection());
+}
+
+function showSettingsSection() {
+  stopActiveSection?.();
+  stopActiveSection = null;
   const asked = new URLSearchParams(location.search).get('s');
   const allowed = renderSettingsTabs(asked || '');
   // No section asked for, or one this user cannot open: the first one they can
@@ -404,6 +422,7 @@ function renderLogs(root) {
   };
   window.addEventListener('pagehide', () => viewer.stop(), { once: true });
 
+  stopActiveSection = () => viewer.stop();          // the live stream ends when another tab is opened
   loadSources().then(() => { syncUrl(); viewer.start(); });
 }
 

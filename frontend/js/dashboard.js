@@ -34,7 +34,8 @@ export function drawDashboardFromCache() {
     renderKpis();
     renderApps();
     renderNodes();
-    renderDatabasesTable(document.getElementById('databases-grid'), databasesData);
+    const dbGrid = document.getElementById('databases-grid');
+    if (dbGrid) renderDatabasesTable(dbGrid, databasesData);
   } catch { /* nothing remembered yet */ }
 }
 
@@ -43,7 +44,7 @@ export async function initDashboard() {
     toast(`"${app.name}" deployed successfully`);
     window.location.href = `/app?id=${app.id}`;
   });
-  document.getElementById('btn-deploy').addEventListener('click', openDeploy);
+  document.getElementById('btn-deploy')?.addEventListener('click', openDeploy);
   document.getElementById('btn-add-node')?.addEventListener('click', () => openAddNodeModal());
   document.getElementById('btn-new-database')?.addEventListener('click', () => openCreateDatabaseDialog());
 
@@ -58,7 +59,7 @@ export async function initDashboard() {
   // Deep links from the command palette on other pages
   const action = new URLSearchParams(location.search).get('action');
   if (action) {
-    history.replaceState(null, '', '/');
+    history.replaceState(null, '', location.pathname);
     if (action === 'new-app') openDeploy();
     if (action === 'add-node') openAddNodeModal();
     if (action === 'new-database') openCreateDatabaseDialog();
@@ -122,7 +123,8 @@ async function loadDatabases() {
     return;
   }
   databasesData = databases;
-  renderDatabasesTable(document.getElementById('databases-grid'), databases);
+  const dbGrid = document.getElementById('databases-grid');
+  if (dbGrid) renderDatabasesTable(dbGrid, databases);
   if (nodesData.length) renderNodes();             // the databases on each node
   // Poll faster while a database is being created, started or stopped.
   const busy = databases.some(d => d.busy || ['creating', 'starting', 'stopping'].includes(d.status));

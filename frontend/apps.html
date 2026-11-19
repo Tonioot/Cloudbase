@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cloudbase — Apps</title>
+  <link rel="icon" type="image/png" href="/cloudbase.png" />
+  <script src="/js/theme.js"></script>
+  <link rel="stylesheet" href="css/fonts.css" />
+  <link rel="stylesheet" href="css/variables.css" />
+  <link rel="stylesheet" href="css/base.css" />
+  <link rel="stylesheet" href="css/components.css" />
+  <link rel="stylesheet" href="css/pages.css" />
+  <link rel="stylesheet" href="css/overview.css" />
+</head>
+<body>
+
+<div class="shell">
+
+  <aside class="rail" id="rail"></aside>
+
+  <main class="main-content">
+    <div class="page">
+
+      <div class="page-title-row">
+        <h1>Apps</h1>
+        <span class="page-title-meta">Every app, worker, static site and cron job, with its status and load</span>
+        <div class="page-title-actions"><button class="btn btn-primary" id="btn-deploy" data-perm="apps.deploy"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg> New app</button></div>
+      </div>
+
+      <section class="section section--page" aria-labelledby="apps-heading">
+        <div class="section-head" id="apps-section">
+          <h2 id="apps-heading">Applications</h2>
+          <div class="segmented apps-filter" role="group" aria-label="Filter applications" id="apps-filter">
+            <button type="button" data-filter="all" aria-pressed="true">All</button>
+            <button type="button" data-filter="web" aria-pressed="false">Web</button>
+            <button type="button" data-filter="static" aria-pressed="false">Static</button>
+            <button type="button" data-filter="worker" aria-pressed="false">Workers</button>
+            <button type="button" data-filter="cron" aria-pressed="false">Cron</button>
+          </div>
+        </div>
+        <div class="apps-table-wrap" id="apps-grid">
+          <div class="skeleton" style="width:100%;height:44px;margin-top:8px"></div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+</div>
+
+<div id="toast-container"></div>
+
+<script type="module">
+  import { api } from './js/api.js';
+  import { initDashboard, drawDashboardFromCache } from './js/dashboard.js';
+  import { initSidebar } from './js/sidebar.js';
+
+  drawDashboardFromCache();
+  try {
+    await api.checkAuth();
+  } catch {
+    location.href = '/login';
+  }
+  await initSidebar();
+  initDashboard();
+</script>
+</body>
+</html>

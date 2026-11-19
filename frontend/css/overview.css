@@ -103,3 +103,8 @@
   .node-apps { justify-content: flex-start; }
   .node-row-remove { position: static; transform: none; opacity: 1; justify-self: start; }
 }
+
+/* A list on a page of its own (Apps, Databases, Nodes): the page title is the heading */
+.section--page { border-top: 0; padding-top: 0; }
+.section--page .section-head h2 { display: none; }
+.section--page .section-head:not(:has(> :not(h2))) { display: none; }
