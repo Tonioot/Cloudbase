@@ -1,37 +1,126 @@
-/* The network page: the primary in the middle, every node on a line to it. */
+/* The network page: the internet, the primary where everything comes in, and the node network below it.
+   Compact on purpose: there can be dozens of nodes, and the traffic is what matters. */
 
-.net-map { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 8px; overflow-x: auto; }
-.net-svg { display: block; width: 100%; min-width: 560px; height: auto; }
-.net-svg a { cursor: pointer; }
+.net-map { border: 1px solid var(--line); border-radius: 20px; background: var(--surface); overflow: hidden; }
 
-.net-line { stroke-width: 1.6; fill: none; }
-.net-line.up { stroke: var(--green); }
-.net-line.down { stroke: var(--red); stroke-dasharray: 5 5; }
-.net-line.idle { stroke: var(--faint); stroke-dasharray: 2 5; }
+/* ─── The tree ─────────────────────────────────────────────────────────── */
+.topo {
+  position: relative;
+  padding: 18px 16px 16px;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  background-image: radial-gradient(var(--line) 1px, transparent 1px);
+  background-size: 16px 16px;
+}
+.topo-wires { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+.topo-tier { position: relative; display: flex; justify-content: center; width: 100%; }
 
-.net-box { fill: var(--pop); stroke: var(--line-strong); stroke-width: 1; }
-.net-hub .net-box { stroke: var(--accent-border); fill: var(--accent-fill); }
-.net-node:hover .net-box { stroke: var(--text-2); }
-.net-name { fill: var(--text); font: 500 13px var(--font-sans); }
-.net-sub { fill: var(--muted); font: 11px var(--font-mono); }
-.net-edge-label { fill: var(--text-2); font: 11px var(--font-mono); paint-order: stroke; stroke: var(--surface); stroke-width: 4px; }
-.net-status.up { fill: var(--green); }
-.net-status.down { fill: var(--red); }
-.net-status.idle { fill: var(--faint); }
+.wire { fill: none; stroke-width: 1.5; stroke-linecap: round; }
+.wire.up { stroke: var(--green-border); }
+.wire.up.flow { stroke: var(--green); stroke-dasharray: 2 6; animation: wire-flow 1s linear infinite; }
+.wire.down { stroke: var(--red); stroke-dasharray: 5 5; opacity: .75; }
+.wire.idle { stroke: var(--line-strong); stroke-dasharray: 2 5; }
+@keyframes wire-flow { to { stroke-dashoffset: -16; } }
+@media (prefers-reduced-motion: reduce) { .wire.up.flow { animation: none; } }
 
-.net-legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 12px; font-size: 12px; color: var(--muted); }
+.mono { font-family: var(--font-mono); font-size: 11px; }
+
+/* Internet: a small pill */
+.topo-internet {
+  position: relative; z-index: 1;
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12px; color: var(--text-2);
+  background: var(--pop); border: 1px solid var(--line-strong); border-radius: 999px; padding: 4px 12px;
+}
+.topo-internet strong { font-weight: 500; color: var(--text); }
+
+/* Labels on the wires */
+.topo-wire-label {
+  position: relative; z-index: 1;
+  display: inline-flex; align-items: center; gap: 5px;
+  font: 10.5px var(--font-mono); color: var(--muted);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px;
+}
+.topo-wire-label.up { color: var(--green); border-color: var(--green-border); }
+.topo-wire-label.down { color: var(--red); border-color: var(--red-border); }
+
+/* The primary: one row */
+.topo-primary {
+  position: relative; z-index: 1;
+  display: flex; align-items: center; gap: 12px; width: min(560px, 100%);
+  padding: 9px 16px 9px 10px; border-radius: 16px;
+  background: var(--pop); border: 1px solid var(--accent-border); box-shadow: 0 0 0 3px var(--accent-fill);
+  color: var(--text); text-decoration: none; transition: border-color var(--transition);
+}
+.topo-primary:hover { border-color: var(--accent); }
+.topo-icon { flex: none; display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 10px; }
+.topo-icon--accent { background: var(--accent-fill); color: var(--accent); }
+.topo-title { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.topo-title strong { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topo-title strong em { font-style: normal; font-weight: 400; font-size: 10.5px; color: var(--accent); margin-left: 7px; }
+.topo-title span { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topo-traffic-big { display: flex; flex-direction: column; align-items: flex-end; font: 12px var(--font-mono); color: var(--text); white-space: nowrap; }
+.topo-load { display: inline-flex; gap: 8px; font: 10px var(--font-mono); color: var(--faint); white-space: nowrap; }
+.topo-primary .topo-load { flex-direction: column; gap: 1px; align-items: flex-end; }
+.topo-load .warn { color: var(--yellow); }
+.topo-load .bad { color: var(--red); }
+
+/* The node network: one block of small tiles, however many nodes there are */
+.topo-group {
+  position: relative; z-index: 1; width: 100%;
+  border: 1px solid var(--line-strong); border-radius: 18px;
+  background: var(--surface); padding: 12px;
+}
+.topo-group.up { border-color: var(--green-border); }
+.topo-group.down { border-color: var(--red-border); }
+.topo-group-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; padding: 0 2px 8px; }
+.topo-group-head strong { font-size: 12px; font-weight: 600; color: var(--text); }
+.topo-group-head .mono { color: var(--muted); }
+.topo-group-count { margin-left: auto; font-size: 11px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+
+.topo-nodes {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 6px;
+  max-height: 420px; overflow-y: auto;
+}
+.topo-node {
+  display: flex; flex-direction: column; gap: 4px; min-width: 0;
+  position: relative; overflow: hidden;
+  padding: 7px 11px 7px 13px; border-radius: 12px;
+  background: var(--pop); border: 1px solid var(--line);
+  color: var(--text); text-decoration: none; transition: background var(--transition);
+}
+.topo-node:hover { background: var(--hover); }
+/* The state as a rounded bar inside the tile (a coloured left border would square off the corners) */
+.topo-node::before { content: ''; position: absolute; left: 4px; top: 7px; bottom: 7px; width: 3px; border-radius: 999px; background: var(--faint); }
+.topo-node.up::before { background: var(--green); }
+.topo-node.down::before { background: var(--red); }
+.topo-node.idle { opacity: .7; }
+.topo-node-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.topo-node-head .net-dot { width: 6px; height: 6px; box-shadow: none; }
+.topo-node-head strong { flex: 1; min-width: 0; font-size: 12px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.topo-latency { flex: none; font: 10px var(--font-mono); color: var(--text-2); }
+.topo-node-off { flex: none; font-size: 10px; color: var(--red); }
+.topo-node.idle .topo-node-off { color: var(--muted); }
+.topo-node-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 6px; min-width: 0; }
+.topo-node-traffic { font: 10.5px var(--font-mono); color: var(--text-2); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+
+/* ─── Legend and table ─────────────────────────────────────────────────── */
+.net-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 12px; color: var(--muted); }
 .net-legend span { display: inline-flex; align-items: center; gap: 6px; }
-.net-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
-.net-dot.up { background: var(--green); }
-.net-dot.down { background: var(--red); }
+.net-dot { display: inline-block; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.net-dot.up { background: var(--green); box-shadow: 0 0 0 3px var(--green-halo); }
+.net-dot.down { background: var(--red); box-shadow: 0 0 0 3px var(--red-halo); }
 .net-dot.idle { background: var(--faint); }
 
 .net-table-wrap { overflow-x: auto; }
-.net-table { min-width: 720px; }
-.net-table td { padding-top: 12px; padding-bottom: 12px; }
+.net-table { min-width: 820px; }
+.net-table td { padding-top: 10px; padding-bottom: 10px; }
 .net-table .net-who { font-weight: 500; color: var(--text); }
 .net-table .net-who a { color: inherit; }
 .net-table .net-who a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .net-table .net-state { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .net-table .net-mono { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); white-space: nowrap; }
 .net-note { font-size: 12px; color: var(--muted); }
+
+@media (max-width: 560px) {
+  .topo-primary .topo-load { display: none; }
+}

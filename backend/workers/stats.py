@@ -160,6 +160,8 @@ async def _overview_sampler():
                             mem_used += total * mem / 100
                     if cpu is not None:
                         cpu_vals.append(cpu)
+                    if n.is_local:
+                        node_metrics.note_traffic(n.id, readings)    # nodes: from their heartbeats
                     db.add(node_metrics.history_row(n.id, now, readings))
 
                 db.add(OverviewHistory(

@@ -9,7 +9,7 @@ from core.database import get_db
 from core.models import Node, NodeInvite
 from core.audit import log_audit
 from core import auth as _auth
-from mesh import hub
+from mesh import hub, probe as mesh_probe
 from nodes import commands as node_commands
 from nodes.commands import _utcnow
 from nodes import workloads as node_workloads
@@ -192,8 +192,18 @@ async def ping_node(node_id: int, _user: dict = Depends(_auth.require_permission
         return {"reachable": True, "latency_ms": 0, "transport": "local"}
 
     if node.status == "offline" or not node.enabled:
-        return {"reachable": False, "latency_ms": None, "transport": "none", "error": "Node is offline"}
+        return {"reachable": False, "latency_ms": None, "transport": "none", "error": "Node is offline",
+                "wg_latency_ms": None}
 
+    # Both at once: the agent over its websocket, and the node network itself
+    wg = asyncio.create_task(mesh_probe.rtt_ms(node.wg_ip)) if node.wg_ip and hub._hub["up"] else None
+    result = await _agent_ping(node_id)
+    result["wg_latency_ms"] = await wg if wg else None
+    return result
+
+
+async def _agent_ping(node_id: int) -> dict:
+    """A message to the agent and back over its websocket."""
     ws = _node_ws_connections.get(node_id)
     if ws:
         ping_id = secrets.token_hex(4)

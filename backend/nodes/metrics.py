@@ -4,6 +4,8 @@ Besides CPU, memory and disk usage a server reports its network traffic, its dis
 counters that only ever go up, since boot) and its load. Counters are stored as they come; the charts show
 the rate between two samples.
 """
+import time
+
 from core.models import Node, NodeMetricsHistory
 
 # counter / reading in a report -> column on the node -> column in the history
@@ -20,8 +22,37 @@ RATES = {"net_rx_bytes": "net_in", "net_tx_bytes": "net_out", "disk_read_bytes":
 CHART_KEYS = ("cpu", "mem", "disk", "net_in", "net_out", "disk_read", "disk_write", "load")
 
 
+# The current network speed per node, worked out here from two readings of its counters, so a page has it at once
+# instead of after its own second look: node id -> {rx, tx, at, rate}
+_traffic: dict[int, dict] = {}
+
+
+def note_traffic(node_id: int, readings: dict, now: float | None = None) -> None:
+    """A new reading of a node's network counters. Readings less than a second apart are skipped (too noisy)."""
+    rx, tx = readings.get("net_rx_bytes"), readings.get("net_tx_bytes")
+    if rx is None or tx is None:
+        return
+    now = time.monotonic() if now is None else now
+    prev = _traffic.get(node_id)
+    if prev and now - prev["at"] < 1:
+        return
+    rate = None
+    if prev and rx >= prev["rx"] and tx >= prev["tx"]:          # a counter that went down: the server restarted
+        seconds = now - prev["at"]
+        rate = {"in": (rx - prev["rx"]) / seconds, "out": (tx - prev["tx"]) / seconds}
+    _traffic[node_id] = {"rx": rx, "tx": tx, "at": now, "rate": rate}
+
+
+def traffic_rate(node_id: int) -> dict | None:
+    """{in, out} in bytes per second, or None while there is only one reading."""
+    entry = _traffic.get(node_id)
+    return entry["rate"] if entry else None
+
+
 def store_heartbeat(node: Node, metrics: dict) -> None:
     """Keep the latest readings of a node on the node."""
+    if node.id is not None:
+        note_traffic(node.id, metrics)
     node.node_cpu_percent = metrics.get("cpu_percent")
     node.node_memory_percent = metrics.get("memory_percent")
     node.node_disk_percent = metrics.get("disk_percent")

@@ -6,8 +6,10 @@ from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+import psutil
 from core import hardware, selfupdate
 from core.models import Node
+from nodes import metrics as node_metrics
 from nodes.commands import _utcnow
 from nodes.state import _node_ws_connections
 
@@ -236,6 +238,19 @@ def _local_metrics() -> dict:
         return {}
 
 
+def _traffic_of(node: Node) -> dict | None:
+    """The node's network speed now ({in, out} bytes per second), None when offline or not known yet."""
+    if node.id is None or node.status != "online":
+        return None
+    if node.is_local:
+        try:
+            net = psutil.net_io_counters()
+            node_metrics.note_traffic(node.id, {"net_rx_bytes": net.bytes_recv, "net_tx_bytes": net.bytes_sent})
+        except Exception:
+            pass
+    return node_metrics.traffic_rate(node.id)
+
+
 def _as_node_dict(node: Node) -> dict:
     return {
         "id": node.id,
@@ -265,9 +280,7 @@ def _as_node_dict(node: Node) -> dict:
                 "disk_percent": node.node_disk_percent,
             } if node.node_cpu_percent is not None else None
         ),
-        # Counters since boot: the panel works out the speed from two readings
-        "net_rx_bytes": node.node_net_rx,
-        "net_tx_bytes": node.node_net_tx,
+        "traffic": _traffic_of(node),
         "websocket_connected": node.id in _node_ws_connections if node.id else False,
         "created_at": node.created_at.isoformat() if node.created_at else None,
         "updated_at": node.updated_at.isoformat() if node.updated_at else None,
