@@ -139,7 +139,7 @@ function railHTML(active) {
       ${railSection('nodes', 'Nodes', '', '', '', 'rail-list-nodes-count')}
       <div class="sb-list" id="rail-nodes-list"><div class="flyout-empty">Loading…</div></div>
 
-      ${railSection('projects', 'Projects', '', `<a class="sb-add" href="/project?new=1" data-perm="projects.manage" title="New project" aria-label="New project">${ICONS.plus}</a>`)}
+      ${railSection('projects', 'Projects')}
       <div class="sb-list" id="rail-projects-list"></div>
 
       ${railSection('apps', 'Apps', '', '', '', 'rail-list-apps-count')}
