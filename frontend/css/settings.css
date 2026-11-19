@@ -5,6 +5,12 @@
 .settings-head h1 { font-size: 22px; font-weight: 500; letter-spacing: -0.02em; margin-bottom: 6px; }
 .settings-head p { color: var(--muted); max-width: 640px; line-height: 1.55; }
 
+/* The menu of the settings pages */
+.settings-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 18px 0 8px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.settings-tab { padding: 6px 11px; border-radius: 8px; font-size: 13px; color: var(--muted); text-decoration: none; transition: color var(--transition), background var(--transition); }
+.settings-tab:hover { color: var(--text); background: var(--hover); }
+.settings-tab.active { color: var(--text); background: var(--hover); box-shadow: inset 0 0 0 1px var(--line-strong); }
+
 .settings-page .settings-bar { top: 52px; margin-bottom: 4px; }
 .settings-bar-title code,
 .settings-group code { font-size: 11.5px; color: var(--text-2); background: var(--hover); padding: 1px 5px; border-radius: 4px; }

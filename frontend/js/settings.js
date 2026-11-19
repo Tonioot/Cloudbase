@@ -35,9 +35,27 @@ const RENDER = {
   account: renderAccount,
 };
 
+/** The menu of the settings pages: the sections this user may open (the sidebar keeps their links, hidden, with the
+ *  same permission rules), plus Account. Returns their keys. */
+function renderSettingsTabs(current) {
+  const tabs = document.getElementById('settings-tabs');
+  const links = [...document.querySelectorAll('#settings-links a')].filter(a => getComputedStyle(a).display !== 'none');
+  const items = links.map(a => ({ key: new URL(a.href).searchParams.get('s'), label: a.textContent.trim() }));
+  items.push({ key: 'account', label: 'Account' });
+  if (tabs) {
+    tabs.innerHTML = items.map(i =>
+      `<a class="settings-tab${i.key === current ? ' active' : ''}" href="/settings?s=${i.key}">${esc(i.label)}</a>`).join('');
+  }
+  return items.map(i => i.key);
+}
+
 export function initSettingsPage() {
-  const key = new URLSearchParams(location.search).get('s') || 'domain';
-  const section = SETTINGS_SECTIONS[key] ? key : 'domain';
+  const asked = new URLSearchParams(location.search).get('s');
+  const allowed = renderSettingsTabs(asked || '');
+  // No section asked for, or one this user cannot open: the first one they can
+  const key = asked && allowed.includes(asked) ? asked : allowed[0] || 'account';
+  if (key !== asked) renderSettingsTabs(key);
+  const section = SETTINGS_SECTIONS[key] ? key : 'account';
   const meta = SETTINGS_SECTIONS[section];
 
   document.title = `${meta.title} — Cloudbase`;

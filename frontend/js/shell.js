@@ -84,6 +84,31 @@ const DEFAULT_CRUMBS = {
 
 /* ─── Sidebar ───────────────────────────────────────────────────────────── */
 
+/* A section of the sidebar that folds away; which ones are folded is remembered on this browser. */
+const FOLDED_KEY = 'cb-rail-folded';
+function foldedSections() {
+  try { return new Set(JSON.parse(localStorage.getItem(FOLDED_KEY) || '[]')); } catch { return new Set(); }
+}
+function railSection(key, label, extra = '', end = '') {
+  const folded = foldedSections().has(key);
+  return `<div class="sb-section sb-fold${folded ? ' folded' : ''}" data-fold="${key}" ${extra}>
+      <button type="button" class="sb-fold-btn" aria-expanded="${!folded}">${ICONS.arrow}<span>${label}</span></button>
+      <span class="sb-section-end"><span class="sb-count" id="rail-${key}-count"></span>${end}</span>
+    </div>`;
+}
+function wireFolding(rail) {
+  rail.addEventListener('click', e => {
+    const btn = e.target.closest('.sb-fold-btn');
+    if (!btn) return;
+    const section = btn.closest('.sb-fold');
+    const folded = section.classList.toggle('folded');
+    btn.setAttribute('aria-expanded', String(!folded));
+    const set = foldedSections();
+    folded ? set.add(section.dataset.fold) : set.delete(section.dataset.fold);
+    try { localStorage.setItem(FOLDED_KEY, JSON.stringify([...set])); } catch { /* fine: just not remembered */ }
+  });
+}
+
 function railHTML(active) {
   const nav = (key, href, label, extra = '') =>
     `<a class="sb-item${active === key ? ' active' : ''}" href="${href}" ${extra}>${ICONS[key]}<span>${label}</span></a>`;
@@ -104,19 +129,21 @@ function railHTML(active) {
       ${nav('network', '/network', 'Network', 'data-perm="nodes.view"')}
       ${nav('audit', '/audit', 'Audit log', 'data-perm="audit.view"')}
 
-      <div class="sb-section"><span>Projects</span><span class="sb-section-end"><span class="sb-count" id="rail-projects-count"></span><a class="sb-add" href="/project?new=1" data-perm="projects.manage" title="New project" aria-label="New project">${ICONS.plus}</a></span></div>
+      ${nav('settings', '/settings', 'Settings')}
+
+      ${railSection('projects', 'Projects', '', `<a class="sb-add" href="/project?new=1" data-perm="projects.manage" title="New project" aria-label="New project">${ICONS.plus}</a>`)}
       <div class="sb-list" id="rail-projects-list"></div>
 
-      <div class="sb-section"><span>Apps</span><span class="sb-count" id="rail-apps-count"></span></div>
+      ${railSection('apps', 'Apps')}
       <div class="sb-list" id="rail-apps-list"><div class="flyout-empty">Loading…</div></div>
 
-      <div class="sb-section" data-perm="databases.view"><span>Databases</span><span class="sb-count" id="rail-databases-count"></span></div>
+      ${railSection('databases', 'Databases', 'data-perm="databases.view"')}
       <div class="sb-list" id="rail-databases-list" data-perm="databases.view"><div class="flyout-empty">Loading…</div></div>
 
-      <div class="sb-section"><span>Nodes</span><span class="sb-count" id="rail-nodes-count"></span></div>
+      ${railSection('nodes', 'Nodes')}
       <div class="sb-list" id="rail-nodes-list"><div class="flyout-empty">Loading…</div></div>
 
-      <div class="sb-section"><span>Settings</span></div>
+      <div class="sb-settings-links" id="settings-links" hidden>
       ${setting('btn-domain-ssl', 'domain', 'globe', 'Domain &amp; SSL', 'data-perm="system.manage"')}
       ${setting('btn-system-settings', 'system', 'sliders', 'System settings', 'data-perm="system.manage"')}
       ${setting('btn-manage-users', 'users', 'users', 'Users &amp; roles', 'style="display:none"')}
@@ -125,6 +152,7 @@ function railHTML(active) {
       ${setting('btn-system-logs', 'logs', 'logs', 'System logs', 'data-perm="system.manage"')}
       ${setting('btn-github-tokens', 'tokens', 'key', 'Git tokens', 'data-perm="tokens.manage"')}
       ${setting('btn-export-import', 'transfer', 'transfer', 'Export / Import', 'data-perm="apps.configure"')}
+      </div>
     </nav>
 
     <div class="sb-help">
@@ -239,14 +267,14 @@ export function updateIndexApp(app) {
   updateIndex(index.apps.map(a => a.id === app.id ? { ...a, status: app.status, activity: app.activity } : a), index.nodes, index.databases, false, index.projects);
 }
 
-/** Items of no project first, as they always were; then those of each project under its name. */
+/** The project an app or database belongs to, for its tooltip ("" for none). */
+function projectOf(item) {
+  const p = (index.projects || []).find(x => x.id === item.project_id);
+  return p && !p.is_default ? ` title="${esc(item.name)} · ${esc(p.name)}"` : '';
+}
+const byName = items => [...items].sort((a, b) => String(a.name).localeCompare(String(b.name)));
 function byProject(items, render) {
-  const projects = (index.projects || []).filter(p => !p.is_default);
-  const inProject = new Set(projects.map(p => p.id));
-  return items.filter(i => !inProject.has(i.project_id)).map(render).join('') + projects.map(p => {
-    const mine = items.filter(i => i.project_id === p.id);
-    return mine.length ? `<div class="sb-group">${esc(p.name)}</div>${mine.map(render).join('')}` : '';
-  }).join('');
+  return byName(items).map(render).join('');
 }
 
 export function updateIndex(apps, nodes, databases, fromCache = false, projects = null) {
@@ -278,7 +306,7 @@ export function updateIndex(apps, nodes, databases, fromCache = false, projects 
     document.getElementById('rail-apps-count').textContent = index.apps.length || '';
     appsEl.innerHTML = index.apps.length
       ? byProject(index.apps, a => `
-          <a class="menu-item${section === 'apps' && a.id === currentId ? ' active' : ''}" href="/app?id=${a.id}">
+          <a class="menu-item${section === 'apps' && a.id === currentId ? ' active' : ''}" href="/app?id=${a.id}"${projectOf(a)}>
             <span class="dot" style="background:${statusColor(shownStatus(a))}"></span>
             <span class="menu-item-label">${esc(a.name)}</span>
             <span class="menu-item-meta">${esc(a.cron ? 'cron' : a.no_web ? 'worker' : a.app_type === 'static' ? 'static' : a.app_type || '')}</span>
@@ -291,7 +319,7 @@ export function updateIndex(apps, nodes, databases, fromCache = false, projects 
     document.getElementById('rail-databases-count').textContent = index.databases.length || '';
     dbsEl.innerHTML = index.databases.length
       ? byProject(index.databases, d => `
-          <a class="menu-item${section === 'databases' && d.id === currentId ? ' active' : ''}" href="/database?id=${d.id}">
+          <a class="menu-item${section === 'databases' && d.id === currentId ? ' active' : ''}" href="/database?id=${d.id}"${projectOf(d)}>
             <span class="dot" style="background:${statusColor(d.status)}"></span>
             <span class="menu-item-label">${esc(d.name)}</span>
             <span class="menu-item-meta">${esc(d.engine)}</span>
@@ -460,6 +488,7 @@ function mount() {
   if (!rail) return;
   const section = currentSection();
   rail.innerHTML = railHTML(section);
+  wireFolding(rail);
   try {
     const cached = JSON.parse(sessionStorage.getItem(INDEX_KEY) || 'null');
     if (cached) updateIndex(cached.apps, cached.nodes, cached.databases, true, cached.projects);
