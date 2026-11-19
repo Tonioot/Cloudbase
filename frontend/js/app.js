@@ -831,6 +831,22 @@ function _historyTime(iso) {
   return sameDay ? time : `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${time}`;
 }
 
+// A range longer than the output is kept for could only find what "All" finds: such buttons are switched off
+function _historyRangeFitsRetention(days) {
+  if (!days) return;
+  for (const btn of document.querySelectorAll('#log-h-range .seg-btn')) {
+    if (!btn.dataset.label) btn.dataset.label = btn.title;          // the button's own description, kept once
+    if (btn.textContent === 'All') { btn.title = `Everything that is kept (${days} days)`; continue; }
+    const tooLong = Number(btn.dataset.hours) > days * 24;
+    btn.disabled = tooLong;
+    btn.title = tooLong ? `Output is kept for ${days} days` : btn.dataset.label;
+    if (tooLong && btn.classList.contains('active')) {
+      btn.classList.remove('active');
+      document.querySelector('#log-h-range .seg-btn[data-hours="8784"]')?.classList.add('active');
+    }
+  }
+}
+
 async function _historyLoad(reset) {
   const terminal = document.getElementById('log-terminal');
   if (!terminal) return;
@@ -854,6 +870,7 @@ async function _historyLoad(reset) {
     return;
   }
   if (seq !== _hist.seq) return;                         // a newer search was started meanwhile
+  _historyRangeFitsRetention(res.retention_days);
   _hist.before = res.next_before_ns;
   _hist.hasMore = res.has_more;
   _hist.shown = [...res.entries.slice().reverse(), ..._hist.shown];
