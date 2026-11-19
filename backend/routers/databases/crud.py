@@ -21,6 +21,7 @@ from dbs.state import _busy, _operation, claim, release
 from dbs.view import _as_dict, _client_ip
 from routers.databases.schemas import CreateDatabaseRequest, PublicAccessRequest, UpdateDatabaseRequest
 from dbs.backups import run_backup
+from core import projects as core_projects
 
 router = APIRouter(prefix="/api/databases", tags=["databases"])
 
@@ -52,7 +53,7 @@ async def my_ip(request: Request, _user: dict = Depends(_auth.require_permission
 async def list_databases(
     app_id: Optional[int] = Query(default=None),
     db: AsyncSession = Depends(get_db),
-    _user: dict = Depends(_auth.require_permission("databases.view")),
+    _user: dict = Depends(_auth.require_project_permission("databases.view")),
 ):
     query = select(Database).order_by(Database.name)
     if app_id is not None:
@@ -62,19 +63,21 @@ async def list_databases(
     counts = dict((await db.execute(
         select(DatabaseLink.database_id, func.count()).group_by(DatabaseLink.database_id)
     )).all())
-    return [_as_dict(d, nodes.get(d.node_id), counts.get(d.id, 0)) for d in databases]
+    return [_as_dict(d, nodes.get(d.node_id), counts.get(d.id, 0)) for d in databases
+            if core_projects.can(_user, d.project_id, "databases.view")]
 
 
 @router.post("")
 async def create_database(
     req: CreateDatabaseRequest,
     db: AsyncSession = Depends(get_db),
-    _user: dict = Depends(_auth.require_permission("databases.create")),
+    _user: dict = Depends(_auth.require_project_permission("databases.create")),
     actor: str = Depends(_auth.get_current_actor),
 ):
+    project_id = await core_projects.project_for_new(db, _user, req.project_id, "databases.create")
     database, node = await create_database_now(
         db, name_in=req.name, engine_in=req.engine, version_in=req.version, node_id=req.node_id,
-        cpu_limit=req.cpu_limit, memory_limit_mb=req.memory_limit_mb, actor=actor)
+        cpu_limit=req.cpu_limit, memory_limit_mb=req.memory_limit_mb, actor=actor, project_id=project_id)
     return _as_dict(database, node)
 
 

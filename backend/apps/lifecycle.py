@@ -13,8 +13,8 @@ from apps.state import app_lock, locked
 from core import activity
 from containers import processes as pm
 from core.audit import log_audit
-from core.env_crypto import decrypt_env
 from cron import scheduler as _cron
+from core import projects as core_projects
 
 
 async def restart_app_now(app_id: int, db: AsyncSession, actor: str):
@@ -60,7 +60,7 @@ async def start_app_now(app_id: int, db: AsyncSession, actor: str):
 async def _start(app, instances, db: AsyncSession) -> None:
     """Put these instances on their nodes' lists with the current spec, then let nginx follow: until one of the
     app's instances is live it shows the start or restart page (apps/nginx_sync.py), after that the app."""
-    env_vars = decrypt_env(app.env_vars or "")
+    env_vars = core_projects.app_env(app)
     source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)  # also updates app.source_revision
     node_map = await _load_node_map(db)
     for instance in instances:

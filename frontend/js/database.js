@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { badge, toast, confirm, fmtUptime, stripAnsi, cssVar } from './utils.js';
+import { badge, toast, confirm, fmtUptime, stripAnsi, cssVar, fillProjectSelect } from './utils.js';
 import { esc, setCrumbs } from './shell.js';
 import { engineIcon } from './engine-icons.js';
 import { memoryWarning } from './databases.js';
@@ -98,6 +98,7 @@ export async function initDatabasePage() {
   document.getElementById('btn-delete').onclick = deleteDatabase;
   document.getElementById('btn-rotate').onclick = openRotateDialog;
   document.getElementById('btn-move').onclick = openMoveDialog;
+  document.getElementById('btn-project-move').onclick = moveToProject;
   document.getElementById('btn-check-update').onclick = checkUpdate;
   document.getElementById('btn-update').onclick = updateEngine;
   document.getElementById('pub-enabled').addEventListener('change', togglePublic);
@@ -169,9 +170,38 @@ async function load() {
     return;
   }
   render();
+  fillProjects();
   clearTimeout(pollTimer);
   const busy = TRANSITIONAL.includes(database.status) || database.busy;
   pollTimer = setTimeout(load, busy ? 2500 : 10000);
+}
+
+let projectSelectFilled = false;
+
+async function fillProjects() {
+  if (projectSelectFilled || !database) return;
+  projectSelectFilled = true;
+  const projects = await fillProjectSelect(document.getElementById('db-project'), 'databases.manage', database.project_id);
+  document.getElementById('db-project-card').hidden = projects.length < 2;
+}
+
+async function moveToProject() {
+  const select = document.getElementById('db-project');
+  const target = parseInt(select.value, 10);
+  if (!target || target === database.project_id) return;
+  const name = select.options[select.selectedIndex].textContent;
+  if (!await confirm('Move database?', `<strong>${esc(database.name)}</strong> moves to <strong>${esc(name)}</strong>.`)) {
+    select.value = String(database.project_id);
+    return;
+  }
+  try {
+    await api.moveDatabaseToProject(DB_ID, target);
+    database.project_id = target;
+    toast(`Moved to ${name}`);
+  } catch (e) {
+    select.value = String(database.project_id);
+    toast(e.message, 'error');
+  }
 }
 
 async function getCredentials() {

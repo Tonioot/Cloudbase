@@ -887,13 +887,14 @@ function renderNotifications(root) {
 
   const load = async () => {
     try {
-      const [catalog, settings, channels, apps] = await Promise.all([
+      const [catalog, settings, channels, apps, projects] = await Promise.all([
         state.catalog || api.getNotificationCatalog(),
         api.getNotificationSettings(),
         api.listNotificationChannels(),
         api.listApps().catch(() => []),
+        api.listProjects().catch(() => []),
       ]);
-      Object.assign(state, { catalog, settings, channels, apps });
+      Object.assign(state, { catalog, settings, channels, apps, projects });
       state.dirty.clear();
       saveBtn.disabled = true;
       setStatus('');
@@ -997,7 +998,8 @@ function renderRules(state) {
 /** A channel as it is sent back on save: empty secrets keep the stored ones. */
 function channelPayload(ch, overrides = {}) {
   const { _secrets_set, ...config } = ch.config || {};
-  return { name: ch.name, type: ch.type, enabled: ch.enabled, events: ch.events, app_ids: ch.app_ids, config, ...overrides };
+  return { name: ch.name, type: ch.type, enabled: ch.enabled, events: ch.events, app_ids: ch.app_ids,
+           project_ids: ch.project_ids || [], config, ...overrides };
 }
 
 function renderChannelList(state, typeLabel, reload) {
@@ -1009,7 +1011,10 @@ function renderChannelList(state, typeLabel, reload) {
   const appName = id => state.apps.find(a => a.id === id)?.name || `app ${id}`;
   list.innerHTML = state.channels.map(ch => {
     const tone = !ch.enabled ? '' : ch.last_status === 'failed' ? 'bad' : ch.last_status === 'sent' ? 'ok' : '';
-    const scope = ch.app_ids.length ? `Only ${ch.app_ids.map(appName).map(esc).join(', ')}` : 'All apps and the platform';
+    const projectName = id => (state.projects || []).find(p => p.id === id)?.name || `project ${id}`;
+    const scope = ch.app_ids.length ? `Only ${ch.app_ids.map(appName).map(esc).join(', ')}`
+      : (ch.project_ids || []).length ? `Only project ${ch.project_ids.map(projectName).map(esc).join(', ')}`
+      : 'All apps and the platform';
     const last = !ch.enabled ? 'Turned off'
       : ch.last_status === 'failed' ? `Last message failed: ${esc(ch.last_error || '')}`
       : ch.last_sent_at ? `Last message ${timeAgo(ch.last_sent_at)}` : 'Nothing sent yet';
@@ -1172,6 +1177,17 @@ function openChannelDialog(state, ch, reload) {
         </div>
       </div>
     </details>
+    ${(state.projects || []).length > 1 ? `<details class="settings-advanced" ${edit && (ch.project_ids || []).length ? 'open' : ''}>
+      <summary>Only for certain projects</summary>
+      <div class="settings-advanced-body">
+        <div class="field-hint" style="margin:0 0 8px">For a team's own channel: it only gets what happens to the apps and databases of these projects.</div>
+        <div class="check-list nc-projects">
+          ${state.projects.map(p => `
+            <label class="check-row"><input type="checkbox" value="${p.id}" ${edit && (ch.project_ids || []).includes(p.id) ? 'checked' : ''} />
+              <span class="check-row-name">${esc(p.name)}</span></label>`).join('')}
+        </div>
+      </div>
+    </details>` : ''}
     <label class="toggle-row form-toggle" style="margin-top:12px">
       <span><span class="field-label">Send messages</span><span class="field-hint">Turn off to pause this channel without losing its settings.</span></span>
       <span class="toggle"><input type="checkbox" id="nc-enabled" ${!edit || ch.enabled ? 'checked' : ''} /><span class="toggle-slider"></span></span>
@@ -1194,6 +1210,7 @@ function openChannelDialog(state, ch, reload) {
     enabled: $('#nc-enabled').checked,
     events: edit ? ch.events : state.catalog.default_events,
     app_ids: [...dlg.el.querySelectorAll('.nc-apps input:checked')].map(i => parseInt(i.value, 10)),
+    project_ids: [...dlg.el.querySelectorAll('.nc-projects input:checked')].map(i => parseInt(i.value, 10)),
   });
 
   $('#nc-test').onclick = async () => {

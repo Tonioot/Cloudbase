@@ -16,6 +16,7 @@ from apps.nginx_sync import _write_app_nginx_config
 from apps.serializers import _app_to_dict
 from apps.validation import _network_access, _check_new_app_name, _validate_docker_runtime_settings, _check_domain_conflicts, _check_repo_url
 from routers.applications.schemas import DeployRequest
+from core import projects as core_projects
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
@@ -25,9 +26,10 @@ async def deploy_app(
     req: DeployRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    _user: dict = Depends(_auth.require_permission("apps.deploy")),
+    _user: dict = Depends(_auth.require_project_permission("apps.deploy")),
     actor: str = Depends(_auth.get_current_actor),
 ):
+    project_id = await core_projects.project_for_new(db, _user, req.project_id, "apps.deploy")
     existing = await db.execute(select(Application).where(Application.name == req.name))
     if existing.scalar_one_or_none():
         raise HTTPException(400, f"App '{req.name}' already exists")
@@ -72,6 +74,7 @@ async def deploy_app(
 
     app = Application(
         name=req.name,
+        project_id=project_id,
         repo_url=req.repo_url,
         github_token=_encrypt_github_token(_resolve_token(req.github_token, req.github_token_id)),
         github_token_id=req.github_token_id or None,

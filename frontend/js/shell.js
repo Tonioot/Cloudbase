@@ -36,6 +36,7 @@ export const ICONS = {
   logout:   svg('<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>', 15),
   plus:     svg('<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>', 15),
   arrow:    svg('<polyline points="9 6 15 12 9 18"/>', 14),
+  folder:   svg('<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>', 14),
   bell:     svg('<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>', 15),
 };
 
@@ -57,6 +58,7 @@ export const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&l
 function currentSection() {
   const p = location.pathname;
   if (p.startsWith('/database')) return 'databases';
+  if (p.startsWith('/project')) return 'projects';
   if (p.startsWith('/app')) return 'apps';
   if (p.startsWith('/node')) return 'nodes';
   if (p.startsWith('/network')) return 'network';
@@ -70,6 +72,7 @@ function currentSection() {
 const DEFAULT_CRUMBS = {
   overview: ['Overview'],
   apps: ['Apps'],
+  projects: ['Projects'],
   nodes: ['Nodes'],
   network: ['Network'],
   audit: ['Audit log'],
@@ -100,6 +103,9 @@ function railHTML(active) {
       ${nav('overview', '/', 'Overview')}
       ${nav('network', '/network', 'Network', 'data-perm="nodes.view"')}
       ${nav('audit', '/audit', 'Audit log', 'data-perm="audit.view"')}
+
+      <div class="sb-section"><span>Projects</span><span class="sb-section-end"><span class="sb-count" id="rail-projects-count"></span><a class="sb-add" href="/project?new=1" data-perm="projects.manage" title="New project" aria-label="New project">${ICONS.plus}</a></span></div>
+      <div class="sb-list" id="rail-projects-list"></div>
 
       <div class="sb-section"><span>Apps</span><span class="sb-count" id="rail-apps-count"></span></div>
       <div class="sb-list" id="rail-apps-list"><div class="flyout-empty">Loading…</div></div>
@@ -218,7 +224,7 @@ export function setCrumbs(items) {
 
 /* ─── Shared index of apps & nodes (rail flyouts + palette) ─────────────── */
 
-let index = { apps: [], nodes: [], databases: [], loaded: false };
+let index = { apps: [], nodes: [], databases: [], projects: [], loaded: false };
 
 /** Called by sidebar.js whenever apps/nodes/databases are (re)loaded. */
 // The lists are remembered for the next page in this tab, so the sidebar is filled at once
@@ -230,14 +236,25 @@ const ME_KEY = 'cb-me';   // who is signed in, as the last page learned it: the 
 /** The app page fetched this app again: its dot in the sidebar follows right away instead of at the next poll. */
 export function updateIndexApp(app) {
   if (!index.loaded || !app) return;
-  updateIndex(index.apps.map(a => a.id === app.id ? { ...a, status: app.status, activity: app.activity } : a), index.nodes, index.databases);
+  updateIndex(index.apps.map(a => a.id === app.id ? { ...a, status: app.status, activity: app.activity } : a), index.nodes, index.databases, false, index.projects);
 }
 
-export function updateIndex(apps, nodes, databases, fromCache = false) {
-  index = { apps: apps || [], nodes: nodes || [], databases: databases || [], loaded: true };
+/** Items grouped under the name of their project, in the order of the projects; plain when there is only one. */
+function byProject(items, render) {
+  const projects = index.projects || [];
+  if (projects.length < 2) return items.map(render).join('');
+  const known = new Set(projects.map(p => p.id));
+  return projects.map(p => {
+    const mine = items.filter(i => i.project_id === p.id);
+    return mine.length ? `<div class="sb-group">${esc(p.name)}</div>${mine.map(render).join('')}` : '';
+  }).join('') + items.filter(i => !known.has(i.project_id)).map(render).join('');
+}
+
+export function updateIndex(apps, nodes, databases, fromCache = false, projects = null) {
+  index = { apps: apps || [], nodes: nodes || [], databases: databases || [], projects: projects || index.projects || [], loaded: true };
   if (!fromCache) {
     try {
-      const text = JSON.stringify({ apps: index.apps, nodes: index.nodes, databases: index.databases });
+      const text = JSON.stringify({ apps: index.apps, nodes: index.nodes, databases: index.databases, projects: index.projects });
       if (text.length < 400000) sessionStorage.setItem(INDEX_KEY, text);
     } catch { /* storage unavailable or full: the sidebar just fills a moment later */ }
   }
@@ -245,16 +262,27 @@ export function updateIndex(apps, nodes, databases, fromCache = false) {
   const q = new URLSearchParams(location.search);
   const currentId = parseInt(q.get('id'), 10);
 
+  const projectsEl = document.getElementById('rail-projects-list');
+  if (projectsEl) {
+    document.getElementById('rail-projects-count').textContent = index.projects.length || '';
+    projectsEl.innerHTML = index.projects.map(p => `
+          <a class="menu-item${section === 'projects' && p.id === currentId ? ' active' : ''}" href="/project?id=${p.id}">
+            <span class="sb-project-mark">${ICONS.folder}</span>
+            <span class="menu-item-label">${esc(p.name)}</span>
+            <span class="menu-item-meta">${p.apps + p.databases || ''}</span>
+          </a>`).join('');
+  }
+
   const appsEl = document.getElementById('rail-apps-list');
   if (appsEl) {
     document.getElementById('rail-apps-count').textContent = index.apps.length || '';
     appsEl.innerHTML = index.apps.length
-      ? index.apps.map(a => `
+      ? byProject(index.apps, a => `
           <a class="menu-item${section === 'apps' && a.id === currentId ? ' active' : ''}" href="/app?id=${a.id}">
             <span class="dot" style="background:${statusColor(shownStatus(a))}"></span>
             <span class="menu-item-label">${esc(a.name)}</span>
             <span class="menu-item-meta">${esc(a.cron ? 'cron' : a.no_web ? 'worker' : a.app_type === 'static' ? 'static' : a.app_type || '')}</span>
-          </a>`).join('')
+          </a>`)
       : '<div class="flyout-empty">No apps yet</div>';
   }
 
@@ -262,12 +290,12 @@ export function updateIndex(apps, nodes, databases, fromCache = false) {
   if (dbsEl) {
     document.getElementById('rail-databases-count').textContent = index.databases.length || '';
     dbsEl.innerHTML = index.databases.length
-      ? index.databases.map(d => `
+      ? byProject(index.databases, d => `
           <a class="menu-item${section === 'databases' && d.id === currentId ? ' active' : ''}" href="/database?id=${d.id}">
             <span class="dot" style="background:${statusColor(d.status)}"></span>
             <span class="menu-item-label">${esc(d.name)}</span>
             <span class="menu-item-meta">${esc(d.engine)}</span>
-          </a>`).join('')
+          </a>`)
       : '<div class="flyout-empty">No databases yet</div>';
   }
 
@@ -309,6 +337,9 @@ function paletteCommands() {
   ];
   for (const a of index.apps) {
     cmds.push({ group: 'Apps', label: a.name, dot: statusColor(a.status), meta: a.status || '', run: go(`/app?id=${a.id}`), keywords: `${a.domain || ''} ${a.app_type || ''}` });
+  }
+  for (const p of index.projects || []) {
+    cmds.push({ group: 'Projects', label: p.name, icon: ICONS.folder, run: go(`/project?id=${p.id}`), keywords: `project ${p.description || ''}` });
   }
   for (const d of index.databases) {
     cmds.push({ group: 'Databases', label: d.name, dot: statusColor(d.status), meta: `${d.engine_label} ${d.version}`, run: go(`/database?id=${d.id}`), keywords: d.engine });
@@ -430,7 +461,7 @@ function mount() {
   rail.innerHTML = railHTML(section);
   try {
     const cached = JSON.parse(sessionStorage.getItem(INDEX_KEY) || 'null');
-    if (cached) updateIndex(cached.apps, cached.nodes, cached.databases, true);
+    if (cached) updateIndex(cached.apps, cached.nodes, cached.databases, true, cached.projects);
     // Menu items this user may not use stay hidden from the first frame, as they were on the last page
     const hidden = JSON.parse(sessionStorage.getItem(HIDDEN_PERMS_KEY) || '[]').filter(p => /^[a-z]+\.[a-z_]+$/.test(p));
     if (hidden.length) {

@@ -9,15 +9,16 @@ from core import auth as _auth
 from apps.runtime import _load_node_map
 from apps.serializers import _get_or_404, _instance_to_dict, _app_to_dict
 from routers.applications.deps import _request_can_manage_apps
+from core import projects as core_projects
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
 
 @router.get("")
-async def list_apps(request: Request, db: AsyncSession = Depends(get_db), _viewer: dict = Depends(_auth.require_permission("apps.view"))):
+async def list_apps(request: Request, db: AsyncSession = Depends(get_db), _viewer: dict = Depends(_auth.require_project_permission("apps.view"))):
     await ensure_local_node(db)
     result = await db.execute(select(Application))
-    apps = result.scalars().all()
+    apps = [a for a in result.scalars().all() if core_projects.can(_viewer, a.project_id, "apps.view")]
     node_map = await _load_node_map(db)
 
     # Batch-fetch all instance rows so we can derive statuses without N+1 Docker checks

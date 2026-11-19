@@ -16,6 +16,7 @@ from core.env_crypto import decrypt_env, encrypt_env
 from core.models import AppLink, Application, Database, DatabaseLink
 from containers import naming
 from dbs import engines as db_engines, link_ops, links as db_links
+from core import projects as core_projects
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
@@ -79,7 +80,8 @@ async def connection_values(app_id: int, db: AsyncSession = Depends(get_db),
 @router.get("/{app_id}/connections/options")
 async def connection_options(app_id: int, db: AsyncSession = Depends(get_db),
                              _user: dict = Depends(_auth.require_permission("apps.view"))):
-    """What this app can still be connected to, with the variable name each would get."""
+    """What this app can still be connected to, with the variable name each would get (of the projects the user
+    may see)."""
     await _get_or_404(app_id, db)
     taken_dbs = set((await db.execute(select(DatabaseLink.database_id).where(DatabaseLink.app_id == app_id))).scalars())
     taken_apps = set((await db.execute(select(AppLink.target_app_id).where(AppLink.app_id == app_id))).scalars())
@@ -87,9 +89,10 @@ async def connection_options(app_id: int, db: AsyncSession = Depends(get_db),
     apps = (await db.execute(select(Application).order_by(Application.name))).scalars().all()
     return {
         "databases": [{"id": d.id, "name": d.name, "engine": d.engine, "default_env_var": db_engines.get_engine(d.engine).env_var}
-                      for d in databases if d.id not in taken_dbs],
+                      for d in databases if d.id not in taken_dbs and core_projects.can(_user, d.project_id, "databases.view")],
         "apps": [{"id": a.id, "name": a.name, "default_env_var": app_links.default_env_var(a)}
-                 for a in apps if a.id != app_id and a.id not in taken_apps and not a.no_web and not a.cron_schedule],
+                 for a in apps if a.id != app_id and a.id not in taken_apps and not a.no_web and not a.cron_schedule
+                 and core_projects.can(_user, a.project_id, "apps.view")],
     }
 
 

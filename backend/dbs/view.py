@@ -34,6 +34,7 @@ def _as_dict(database: Database, node: Optional[Node], link_count: int = 0) -> d
     return {
         "id": database.id,
         "name": database.name,
+        "project_id": database.project_id,
         "engine": database.engine,
         "engine_label": engine.label if engine else database.engine,
         "version": database.version,

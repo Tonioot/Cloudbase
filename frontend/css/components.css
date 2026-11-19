@@ -160,6 +160,7 @@
 
 /* ─── Form inputs ───────────────────────────────────────────────────────── */
 .field { margin-bottom: 16px; }
+.field[hidden] { display: none; }
 
 .field-label {
   display: block;

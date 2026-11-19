@@ -275,6 +275,20 @@ export function fmtDate(iso) {
   return new Date(iso).toLocaleString();
 }
 
+/** Fill a <select> with the projects this user may create something in (`permission`), the given or the default
+ *  one chosen; the field around it stays hidden when there is only one. Returns the projects. */
+export async function fillProjectSelect(select, permission, chosenId = null) {
+  let projects = [];
+  try { projects = (await (await import('./api.js')).api.listProjects()).filter(p => p.can?.[permission]); } catch { /* no projects: the server picks */ }
+  if (!select) return projects;
+  select.innerHTML = projects.map(p => `<option value="${p.id}">${String(p.name).replace(/&/g, '&amp;').replace(/</g, '&lt;')}</option>`).join('');
+  const chosen = projects.find(p => p.id === chosenId) || projects.find(p => p.is_default) || projects[0];
+  if (chosen) select.value = String(chosen.id);
+  const field = select.closest('.field');
+  if (field) field.hidden = projects.length < 2;
+  return projects;
+}
+
 export function timeAgo(iso) {
   if (!iso) return 'never';
   // Ensure UTC parsing — append Z if no timezone info present

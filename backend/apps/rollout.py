@@ -25,9 +25,9 @@ from containers import build as containers_build, naming as containers_naming, p
 from core import activity
 from core.audit import log_audit
 from core.database import AsyncSessionLocal
-from core.env_crypto import decrypt_env
 from core.models import Application, Instance, Node
 from nodes import desired
+from core import projects as core_projects
 
 log = logging.getLogger("cloudbase.apps")
 
@@ -49,7 +49,7 @@ async def add_instance(app: Application, node: Node, db: AsyncSession, *, like: 
         setattr(instance, key, getattr(like, key))
     db.add(instance)
     await db.flush()
-    await _start_instance_runtime(app, instance, node, decrypt_env(app.env_vars or ""), db, source_revision)
+    await _start_instance_runtime(app, instance, node, core_projects.app_env(app), db, source_revision)
     await db.commit()
     return instance
 

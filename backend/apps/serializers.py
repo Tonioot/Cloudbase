@@ -70,6 +70,7 @@ def _app_to_dict(
     return {
         "id": app.id,
         "name": app.name,
+        "project_id": app.project_id,
         "repo_url": app.repo_url,
         "domain": app.domain,
         "extra_domains": json.loads(app.extra_domains or "[]"),

@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 class CreateDatabaseRequest(BaseModel):
     name: str
+    project_id: Optional[int] = None
     engine: str
     version: Optional[str] = None
     node_id: Optional[int] = None

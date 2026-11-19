@@ -9,7 +9,7 @@ import pytest
 from core import frontend_assets
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
-PAGES = ["/", "/app", "/node", "/database", "/network", "/audit", "/notifications", "/settings", "/guides", "/login", "/status"]
+PAGES = ["/", "/app", "/node", "/database", "/network", "/project", "/audit", "/notifications", "/settings", "/guides", "/login", "/status"]
 VERSION_IN_URL = re.compile(r"\?v=([0-9a-f]{10})")
 
 

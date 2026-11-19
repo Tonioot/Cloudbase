@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core import auth
 from core.database import get_db
 from core.models import AuditLog
+from core import projects as core_projects
 
 router = APIRouter(prefix="/api/audit-log", tags=["audit"])
 
@@ -20,6 +21,9 @@ async def get_audit_log(
     db: AsyncSession = Depends(get_db),
 ):
     query = select(AuditLog).order_by(desc(AuditLog.timestamp)).limit(limit)
+    visible_apps = core_projects.visible_apps_query(_user)
+    if visible_apps is not None:            # a user with project memberships sees what happened to their apps
+        query = query.where(AuditLog.app_id.in_(visible_apps))
     if app_id is not None:
         query = query.where(AuditLog.app_id == app_id)
     if action:

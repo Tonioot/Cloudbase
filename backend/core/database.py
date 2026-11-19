@@ -1,7 +1,7 @@
 import logging
 import os
 
-from sqlalchemy import delete, event, select
+from sqlalchemy import delete, event, select, update
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
@@ -58,6 +58,8 @@ ALL_PERMISSIONS = [
     # Apps — configuration & removal
     ("apps.configure",    "Edit application settings, nginx, certs, env vars and maintenance pages"),
     ("apps.delete",       "Delete applications"),
+    # Projects
+    ("projects.manage",   "Create, rename and delete projects, move apps and databases between them and change their shared settings"),
     # Nodes
     ("nodes.view",        "View nodes and their status"),
     ("nodes.add",         "Add new nodes and create node invites"),
@@ -121,7 +123,7 @@ def _sql_literal(value) -> str:
 async def init_db():
     """Create the tables that are missing, and make sure the permissions, the built-in roles and the root account exist."""
     # Importing the models registers their tables with Base.metadata (they import Base from here, so not at the top)
-    from core.models import Permission, Role, User, role_permissions
+    from core.models import Application, Database, Permission, Project, Role, User, role_permissions
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_add_new_columns)
@@ -163,6 +165,16 @@ async def init_db():
             if hashed:
                 session.add(User(username="admin", password_hash=hashed, role="Root", role_id=None))  # Root needs no role
                 await session.commit()
+
+        # Every app and database belongs to a project; the first one holds what existed before projects
+        default = (await session.execute(select(Project).where(Project.is_default == True))).scalar_one_or_none()  # noqa: E712
+        if default is None:
+            default = Project(name="Default", description="Everything from before projects", is_default=True)
+            session.add(default)
+            await session.flush()
+        for model in (Application, Database):
+            await session.execute(update(model).where(model.project_id.is_(None)).values(project_id=default.id))
+        await session.commit()
 
         # The root account never has a role: it always has full access
         root = (await session.execute(select(User).where(User.username == "admin"))).scalar_one_or_none()

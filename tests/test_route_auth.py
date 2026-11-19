@@ -14,7 +14,7 @@ OPEN = {
     "/api/auth/check", "/api/auth/login", "/api/auth/session", "/api/auth/logout", "/api/auth/change-password",
 }
 NODE_TOKEN_PREFIX = "/api/nodes/agent/"   # a node's agent, with its X-Node-Token (checked by the endpoint)
-CHECKS = ("require_permission", "require_auth", "require_superadmin", "_require_node_agent", "_source_archive_auth")
+CHECKS = ("require_permission", "require_project_permission", "require_auth", "require_superadmin", "_require_node_agent", "_source_archive_auth")
 
 
 def _flatten(routes):

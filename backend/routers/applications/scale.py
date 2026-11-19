@@ -6,7 +6,6 @@ from core.database import get_db
 from core import activity
 from core.models import Instance, Node
 from nodes.registry import ensure_local_node
-from core.env_crypto import decrypt_env
 from core.audit import log_audit
 from core import auth as _auth, config as _cfg
 from apps.runtime import _start_instance_runtime
@@ -15,6 +14,7 @@ from apps.state import locked
 from apps.validation import _assign_external_port
 from routers.applications.schemas import ScaleRequest
 from routers.applications.instances import _remove_instances
+from core import projects as core_projects
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
@@ -126,7 +126,7 @@ async def _add_one(app, app_id, req, target_node, db, actor):
     instance.docker_read_only_root = bool(app.docker_read_only_root if req.docker_read_only_root is None else req.docker_read_only_root)
     instance.docker_tmpfs_enabled = bool(app.docker_tmpfs_enabled if req.docker_tmpfs_enabled is None else req.docker_tmpfs_enabled)
     instance.docker_tmpfs_size_mb = req.docker_tmpfs_size_mb
-    await _start_instance_runtime(app, instance, target_node, decrypt_env(app.env_vars or ""), db)
+    await _start_instance_runtime(app, instance, target_node, core_projects.app_env(app), db)
 
     await log_audit(db, "app.scale_up", actor=actor, app_id=app_id, detail={"instance_id": instance.id, "node": target_node.name})
     await db.commit()

@@ -1,6 +1,6 @@
 import { api, wsLogs, wsInstanceLogs, wsStats, wsAppCloudbaseLogs, PermissionError } from './api.js';
 import { createLogViewer, fillComponentSelect } from './logviewer.js';
-import { auditTableHTML, cssVar, icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, stripAnsi, ansiToHtml, setBtn, parseDotEnv, pickTextFile, mergeEnvIntoRows, timeAgo } from './utils.js';
+import { auditTableHTML, cssVar, icon, typeIcon, badge, toast, confirm, spinner, fmtUptime, fmtSize, fmtDate, logClass, stripAnsi, ansiToHtml, setBtn, parseDotEnv, pickTextFile, mergeEnvIntoRows, timeAgo, fillProjectSelect } from './utils.js';
 import { pickGitHubToken } from './sidebar.js';
 import { openDomainWizard, leCertName } from './domain-wizard.js';
 import { setCrumbs, shownStatus, updateIndexApp } from './shell.js';
@@ -1828,6 +1828,32 @@ async function initCronSettings() {
   }
 }
 
+// Settings → General → Project: moving acts at once (not with Save)
+async function _initProjectMove() {
+  const select = document.getElementById('cfg-project');
+  const row = document.getElementById('cfg-project-row');
+  if (!select || !row) return;
+  const projects = await fillProjectSelect(select, 'apps.configure', app.project_id);
+  row.hidden = projects.length < 2;
+  document.getElementById('cfg-project-move').onclick = async () => {
+    const target = parseInt(select.value, 10);
+    if (!target || target === app.project_id) return;
+    const name = select.options[select.selectedIndex].textContent;
+    if (!await confirm('Move app?', `<strong>${escHtml(app.name)}</strong> moves to <strong>${escHtml(name)}</strong>. From its next start it gets the shared variables and connected apps of that project instead.`)) {
+      select.value = String(app.project_id);
+      return;
+    }
+    try {
+      await api.moveAppToProject(APP_ID, target);
+      app.project_id = target;
+      toast(`Moved to ${name}`);
+    } catch (e) {
+      select.value = String(app.project_id);
+      toast(e.message, 'error');
+    }
+  };
+}
+
 function initSettings() {
   initCronSettings();
   const isViewer = !_canManageApps();
@@ -1838,6 +1864,7 @@ function initSettings() {
   document.getElementById('cfg-repo').value       = app.repo_url;
   document.getElementById('si-type').textContent  = app.app_type || '—';
   document.getElementById('si-date').textContent  = fmtDate(app.created_at);
+  _initProjectMove();
 
   // Form fields
   document.getElementById('cfg-cmd').value          = app.start_command  || '';

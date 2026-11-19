@@ -17,7 +17,8 @@ from notify import dispatch as notify_dispatch
 from notify import channels as notify_channels
 from core.audit import log_audit
 from core.database import get_db
-from core.models import Application, Notification, NotificationChannel, NotificationDelivery, User
+from core.models import Application, Notification, NotificationChannel, NotificationDelivery, Project, User
+from core import projects as core_projects
 
 router = APIRouter(prefix="/api/notifications", tags=["notifications"])
 
@@ -65,31 +66,38 @@ async def list_notifications(
         q = q.where(Notification.severity.in_(["warning", "critical"]))
     if app_id:
         q = q.where(Notification.app_id == app_id)
+    q = _in_scope(q, user)
     rows = (await db.execute(q)).scalars().all()
     app_names = dict((await db.execute(select(Application.id, Application.name))).all())
     me = await _db_user(db, user["username"])
     return {
         "items": [_as_dict(n, app_names) for n in rows],
         "read_at": _iso(me.notifications_read_at) if me else None,
-        **(await _counts(db, me)),
+        **(await _counts(db, me, user)),
     }
 
 
-async def _counts(db: AsyncSession, me: Optional[User]) -> dict:
+def _in_scope(q, user: dict):
+    """A user with project memberships only sees notifications about the apps of their projects."""
+    visible_apps = core_projects.visible_apps_query(user)
+    return q if visible_apps is None else q.where(Notification.app_id.in_(visible_apps))
+
+
+async def _counts(db: AsyncSession, me: Optional[User], user: dict) -> dict:
     q = select(func.count(Notification.id)).where(Notification.in_inbox == True)  # noqa: E712
     if me and me.notifications_read_at:
         q = q.where(Notification.created_at > me.notifications_read_at)
-    unread = (await db.execute(q)).scalar() or 0
-    open_ = (await db.execute(
-        select(func.count(Notification.id)).where(Notification.state == "open", Notification.in_inbox == True)  # noqa: E712
-    )).scalar() or 0
+    unread = (await db.execute(_in_scope(q, user))).scalar() or 0
+    open_ = (await db.execute(_in_scope(
+        select(func.count(Notification.id)).where(Notification.state == "open", Notification.in_inbox == True),  # noqa: E712
+        user))).scalar() or 0
     return {"unread": unread, "open": open_}
 
 
 @router.get("/summary")
 async def summary(db: AsyncSession = Depends(get_db), user: dict = Depends(_view)):
     """Unread and open counts for the bell."""
-    return await _counts(db, await _db_user(db, user["username"]))
+    return await _counts(db, await _db_user(db, user["username"]), user)
 
 
 @router.post("/read")
@@ -168,6 +176,7 @@ class ChannelRequest(BaseModel):
     enabled: bool = True
     events: list[str] = []
     app_ids: list[int] = []
+    project_ids: list[int] = []
 
 
 class TestRequest(BaseModel):
@@ -180,6 +189,7 @@ def _channel_dict(ch: NotificationChannel) -> dict:
     return {
         "id": ch.id, "name": ch.name, "type": ch.type, "enabled": ch.enabled,
         "events": notify_config._list(ch.events), "app_ids": notify_config._list(ch.app_ids),
+        "project_ids": notify_config._list(ch.project_ids),
         "config": notify_config.public_config(ch.type, notify_config.load_config(ch)),
         "last_status": ch.last_status, "last_error": ch.last_error, "last_sent_at": _iso(ch.last_sent_at),
     }
@@ -204,6 +214,11 @@ async def _apply(ch: NotificationChannel, req: ChannelRequest, db: AsyncSession)
     ch.name, ch.type, ch.enabled = req.name.strip(), req.type, req.enabled
     ch.events = json.dumps(list(dict.fromkeys(req.events)))
     ch.app_ids = json.dumps(sorted(set(req.app_ids))) if req.app_ids else None
+    if req.project_ids:
+        found = set((await db.execute(select(Project.id).where(Project.id.in_(req.project_ids)))).scalars().all())
+        if len(found) != len(set(req.project_ids)):
+            raise HTTPException(400, "One of the selected projects doesn't exist")
+    ch.project_ids = json.dumps(sorted(set(req.project_ids))) if req.project_ids else None
     notify_config.store_config(ch, config)
 
 

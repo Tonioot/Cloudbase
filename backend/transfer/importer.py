@@ -38,6 +38,7 @@ from core.env_crypto import encrypt_env
 from core.models import Application, Instance, Node
 from cron import scheduler as _cron
 from nodes.registry import ensure_local_node
+from core import projects as core_projects
 
 log = logging.getLogger("cloudbase.transfer")
 
@@ -179,6 +180,7 @@ async def _import_one(db: AsyncSession, entry: dict, target_id: int, target_is_l
 
     app = Application(
         name=name,
+        project_id=await core_projects.default_project_id(db),
         repo_url=repo_url,
         github_token=_encrypt_github_token(entry.get("git_token") or None),
         domain=entry.get("domain") or None,

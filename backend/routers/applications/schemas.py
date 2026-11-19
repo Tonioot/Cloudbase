@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 
 class DeployRequest(BaseModel):
     name: str
+    project_id: Optional[int] = None         # default: the default project
     repo_url: str
     github_token: Optional[str] = None
     github_token_id: Optional[str] = None   # ID of a saved vault token

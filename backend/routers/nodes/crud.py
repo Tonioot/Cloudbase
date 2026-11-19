@@ -21,6 +21,7 @@ from routers.nodes.schemas import InviteRequest, NodeUpdateRequest
 from core.models import Application, Instance
 from core.models import Database
 from core import system_logs
+from core import projects as core_projects
 
 router = APIRouter(prefix="/api/nodes", tags=["nodes"])
 
@@ -232,7 +233,16 @@ async def _agent_ping(node_id: int) -> dict:
 @router.get("/{node_id}/workloads")
 async def get_node_workloads(node_id: int, db: AsyncSession = Depends(get_db), _user: dict = Depends(_auth.require_permission("nodes.view"))):
     """The instances and databases that run on this node, for its page."""
-    return await node_workloads.workloads(db, await get_node_or_404(node_id, db))
+    result = await node_workloads.workloads(db, await get_node_or_404(node_id, db))
+    if _user.get("projects") is None:
+        return result
+    # A user with project memberships sees what of their projects runs here
+    from_projects = dict((await db.execute(select(Application.id, Application.project_id))).all())
+    db_projects = dict((await db.execute(select(Database.id, Database.project_id))).all())
+    return {
+        "instances": [i for i in result["instances"] if core_projects.can(_user, from_projects.get(i["app_id"]), "apps.view")],
+        "databases": [d for d in result["databases"] if core_projects.can(_user, db_projects.get(d["id"]), "databases.view")],
+    }
 
 
 @router.get("/{node_id}/agent-logs")

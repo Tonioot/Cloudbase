@@ -315,6 +315,10 @@
                   <span class="s3-label"><label class="s3-title" for="cfg-deploy-branch">Branch</label><span class="s3-desc">What every pull and deploy fetches, by hand or automatic.</span></span>
                   <span class="s3-ctl"><select class="input" id="cfg-deploy-branch"><option value="">Loading branches…</option></select></span>
                 </div>
+                <div class="s3-row" id="cfg-project-row" data-nosnap hidden>
+                  <span class="s3-label"><label class="s3-title" for="cfg-project">Project</label><span class="s3-desc">Moving gives the app the shared variables and connected apps of the other project, from its next start.</span></span>
+                  <span class="s3-ctl s3-inline"><select class="input" id="cfg-project" data-perm="apps.configure"></select><button type="button" class="btn" id="cfg-project-move" data-perm="apps.configure">Move</button></span>
+                </div>
                 <div class="s3-row"><span class="s3-label"><span class="s3-title">Type</span></span><span class="s3-value" id="si-type">—</span></div>
                 <div class="s3-row"><span class="s3-label"><span class="s3-title">Created</span></span><span class="s3-value" id="si-date">—</span></div>
               </div>

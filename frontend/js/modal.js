@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { icon, spinner, toast, parseDotEnv, pickTextFile, mergeEnvIntoRows } from './utils.js';
+import { icon, spinner, toast, parseDotEnv, pickTextFile, mergeEnvIntoRows, fillProjectSelect } from './utils.js';
 import { pickGitHubToken } from './sidebar.js';
 import { scheduleEditorHTML, wireScheduleEditor } from './cron.js';
 
@@ -68,7 +68,7 @@ const STEPS = [
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
-export function openDeployModal(onSuccess) {
+export function openDeployModal(onSuccess, { projectId = null } = {}) {
   const backdrop = document.createElement('div');
   backdrop.className = 'modal-backdrop';
   backdrop.innerHTML = modalHTML();
@@ -79,6 +79,7 @@ export function openDeployModal(onSuccess) {
   let envCount = 0;
   let currentStep = 0;
   const schedule = wireScheduleEditor(modal, 'f-cron');
+  fillProjectSelect(modal.querySelector('#f-project'), 'apps.deploy', projectId);
   modal._cronSchedule = schedule;
   const appType = () => modal.querySelector('.app-type-btn.active')?.dataset.type;
 
@@ -314,6 +315,10 @@ function modalHTML() {
                 <label class="field-label">Application Name <span class="req">*</span></label>
                 <input class="input" id="f-name" placeholder="my-app" required autocomplete="off" />
               </div>
+              <div class="field deploy-field-span-2" hidden>
+                <label class="field-label" for="f-project">Project</label>
+                <select class="input" id="f-project"></select>
+              </div>
               <div class="field deploy-field-span-2">
                 <label class="field-label">Repository URL <span class="req">*</span></label>
                 <div class="input-icon-wrap">
@@ -467,6 +472,7 @@ async function handleDeploy(modal, form, onSuccess, close) {
 
   const payload = {
     name:            modal.querySelector('#f-name').value.trim(),
+    project_id:      parseInt(modal.querySelector('#f-project').value, 10) || null,
     repo_url:        modal.querySelector('#f-repo').value.trim(),
     ...(tokenId
       ? { github_token_id: tokenId }

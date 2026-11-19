@@ -752,6 +752,8 @@
 .s3-card > :first-child, .s3-card > :first-child > .s3-row:first-child { border-top: none; }
 label.s3-row { cursor: pointer; }
 .s3-row--stack { flex-direction: column; align-items: stretch; gap: 10px; }
+.s3-row[hidden] { display: none; }
+.db-card[hidden] { display: none; }
 .s3-row--sub { padding-left: 34px; min-height: 52px; }
 
 .s3-label { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }

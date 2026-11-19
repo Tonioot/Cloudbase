@@ -8,6 +8,7 @@ DELETE  /api/databases/{database_id}/links/{link_id}
 DELETE  /api/domains/certificate/{cert_name}
 DELETE  /api/nodes/{node_id}
 DELETE  /api/notifications/channels/{channel_id}
+DELETE  /api/projects/{project_id}
 DELETE  /api/roles/{role_id}
 DELETE  /api/system/github-tokens/{token_id}
 DELETE  /api/users/{user_id}
@@ -68,6 +69,10 @@ GET     /api/notifications/deliveries
 GET     /api/notifications/settings
 GET     /api/notifications/summary
 GET     /api/overview/history
+GET     /api/projects
+GET     /api/projects/{project_id}
+GET     /api/projects/{project_id}/env
+GET     /api/projects/{project_id}/members
 GET     /api/roles
 GET     /api/roles/permissions
 GET     /api/status
@@ -91,6 +96,7 @@ GET     /login
 GET     /network
 GET     /node
 GET     /notifications
+GET     /project
 GET     /settings
 GET     /status
 GET     /{full_path:path}
@@ -99,6 +105,7 @@ MOUNT /fonts
 MOUNT /js
 PATCH   /api/databases/{database_id}
 PATCH   /api/nodes/{node_id}
+PATCH   /api/projects/{project_id}
 POST    /api/apps
 POST    /api/apps/check-repo
 POST    /api/apps/cron/preview
@@ -154,6 +161,9 @@ POST    /api/notifications/channels
 POST    /api/notifications/channels/test
 POST    /api/notifications/deliveries/{delivery_id}/retry
 POST    /api/notifications/read
+POST    /api/projects
+POST    /api/projects/move/app/{app_id}
+POST    /api/projects/move/database/{database_id}
 POST    /api/roles
 POST    /api/system/backup-storage/key
 POST    /api/system/backup-storage/key/reveal
@@ -177,6 +187,8 @@ PUT     /api/databases/{database_id}/public
 PUT     /api/notifications/apps/{app_id}/mute
 PUT     /api/notifications/channels/{channel_id}
 PUT     /api/notifications/settings
+PUT     /api/projects/{project_id}/env
+PUT     /api/projects/{project_id}/members
 PUT     /api/roles/{role_id}
 PUT     /api/system/backup-storage
 PUT     /api/users/{user_id}

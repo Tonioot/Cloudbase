@@ -1,6 +1,8 @@
 import logging
+import re
 from typing import Optional
 from sqlalchemy import select
+from core import projects as core_projects
 from core.database import AsyncSessionLocal
 from core.models import Notification, NotificationDelivery, NotificationChannel, Application
 from notify.config import _list
@@ -13,15 +15,33 @@ log = logging.getLogger("cloudbase.notify")
 
 # ── Emitting ──────────────────────────────────────────────────────────────────
 
-async def _channels_for(db, event: str, app_id: Optional[int]) -> list[NotificationChannel]:
+_DATABASE_LINK = re.compile(r"^/database\?id=(\d+)")
+
+
+async def _project_of_event(db, app_id: Optional[int], link: Optional[str]) -> Optional[int]:
+    """The project an event is about: its app's, or its database's (known from the panel link)."""
+    if app_id is not None:
+        return await core_projects.project_of(db, app_id=app_id)
+    found = _DATABASE_LINK.match(link or "")
+    return await core_projects.project_of(db, database_id=int(found.group(1))) if found else None
+
+
+async def _channels_for(db, event: str, app_id: Optional[int], link: Optional[str] = None) -> list[NotificationChannel]:
     rows = (await db.execute(select(NotificationChannel).where(NotificationChannel.enabled == True))).scalars().all()  # noqa: E712
     wanted = []
+    project = ...                                  # looked up once, when a channel is limited to projects
     for ch in rows:
         if event not in _list(ch.events):
             continue
         scope = _list(ch.app_ids)
         if scope and app_id not in scope:
             continue  # a channel for certain apps only gets their events
+        projects_scope = _list(ch.project_ids)
+        if projects_scope:
+            if project is ...:
+                project = await _project_of_event(db, app_id, link)
+            if project not in projects_scope:
+                continue  # a channel for certain projects only gets events about their apps and databases
         wanted.append(ch)
     return wanted
 
@@ -58,7 +78,7 @@ async def emit(
                     return None
             muted = await _is_muted(db, app_id)
             in_inbox = event in (await settings())["inbox_events"]
-            targets = [] if muted else await _channels_for(db, event, app_id)
+            targets = [] if muted else await _channels_for(db, event, app_id, link)
             if not key and not in_inbox and not targets:
                 return None  # nobody wants it (problems are still recorded, to know when they clear)
             n = Notification(

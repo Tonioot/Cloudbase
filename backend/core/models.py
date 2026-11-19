@@ -46,11 +46,39 @@ class User(Base):
     created_at   = Column(DateTime, default=datetime.utcnow)
 
 
+class Project(Base):
+    """A group of apps and databases: shown together, with their own members and shared settings (core/projects.py).
+    Every app and database belongs to exactly one; the first one ("Default") holds everything from before projects."""
+    __tablename__ = "projects"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    name        = Column(String(60), unique=True, nullable=False)
+    description = Column(String(300), nullable=True)
+    env_vars    = Column(Text, nullable=True)                       # encrypted, like an app's: every app gets them
+    apps_connected = Column(Boolean, default=False, nullable=False)  # its apps reach each other without links
+    is_default  = Column(Boolean, default=False, nullable=False)
+    created_at  = Column(DateTime, default=datetime.utcnow)
+
+
+class ProjectMember(Base):
+    """A user's role within one project. A user with no memberships has their own role in every project; one with
+    memberships sees only those projects, each with the role given here."""
+    __tablename__ = "project_members"
+    __table_args__ = (UniqueConstraint("project_id", "user_id", name="uq_project_member"),)
+
+    id         = Column(Integer, primary_key=True, index=True)
+    project_id = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id    = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    role_id    = Column(Integer, ForeignKey("roles.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Application(Base):
     __tablename__ = "applications"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), unique=True, nullable=False)
+    project_id = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
     repo_url = Column(String(500), nullable=False)
     github_token    = Column(String(200), nullable=True)
     github_token_id = Column(String(100), nullable=True)  # vault token ID, if set via saved token
@@ -338,6 +366,7 @@ class Database(Base):
 
     id              = Column(Integer, primary_key=True, index=True)
     name            = Column(String(40), unique=True, nullable=False, index=True)
+    project_id      = Column(Integer, ForeignKey("projects.id"), nullable=True, index=True)
     engine          = Column(String(20), nullable=False)    # postgres | mysql | mariadb | redis | valkey | mongodb
     version         = Column(String(20), nullable=False)
     node_id         = Column(Integer, ForeignKey("nodes.id"), nullable=False, index=True)  # fixed, never moved automatically
@@ -442,6 +471,7 @@ class NotificationChannel(Base):
     enabled      = Column(Boolean, default=True, nullable=False)
     events       = Column(Text, nullable=True)           # JSON list of event keys this channel receives
     app_ids      = Column(Text, nullable=True)           # JSON list; empty = every app and all non-app events
+    project_ids  = Column(Text, nullable=True)           # JSON list; empty = every project
     last_status  = Column(String(10), nullable=True)     # sent | failed
     last_error   = Column(Text, nullable=True)
     last_sent_at = Column(DateTime, nullable=True)

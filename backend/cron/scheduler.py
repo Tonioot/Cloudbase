@@ -26,13 +26,13 @@ from containers import instances as containers_instances
 from notify import emit as notify_emit
 from containers import processes as pm
 from core.database import AsyncSessionLocal
-from core.env_crypto import decrypt_env
 from core.models import Application, CronRun, Node
 from core.audit import log_audit
 from apps import git as apps_git
 from apps import images as apps_images
 from apps import runtime as apps_runtime
 from nodes import commands as node_commands
+from core import projects as core_projects
 
 log = logging.getLogger("cloudbase.cron")
 
@@ -202,7 +202,7 @@ async def _run_local(app: Application, run_id: int, push) -> dict:
     options = apps_runtime._docker_runtime_options(app)
     return await asyncio.to_thread(
         containers_jobs.run_job_container, app.id, run_id, img, app.start_command or "",
-        decrypt_env(app.env_vars or ""), options, app.cron_timeout_seconds or 3600,
+        core_projects.app_env(app), options, app.cron_timeout_seconds or 3600,
         lambda line: pm._push_line(app.id, line),
     )
 
@@ -210,7 +210,7 @@ async def _run_local(app: Application, run_id: int, push) -> dict:
 async def _run_remote(app: Application, node: Node, run_id: int) -> dict:
     if not (node.enabled and node.status == "online"):
         raise RuntimeError(f"Node '{node.name}' is offline")
-    payload = apps_runtime._remote_instance_command_payload(app, decrypt_env(app.env_vars or ""), 0)
+    payload = apps_runtime._remote_instance_command_payload(app, core_projects.app_env(app), 0)
     payload.update({"run_id": run_id, "command": app.start_command or "",
                     "timeout_seconds": app.cron_timeout_seconds or 3600})
     done = await node_commands.ask(node.id, "cron_run", payload, app_id=app.id,

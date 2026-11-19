@@ -8,13 +8,13 @@ from core import activity
 from core.models import Instance, Node
 from containers import processes as pm
 from nodes import desired
-from core.env_crypto import decrypt_env
 from core.audit import log_audit
 from core import auth as _auth
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
 from apps.runtime import _start_instance_runtime, _load_node_map
 from apps.serializers import _instance_to_dict, _get_or_404
 from apps.state import locked
+from core import projects as core_projects
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
@@ -90,7 +90,7 @@ async def _restart_instance(app, instance, db, actor):
         raise HTTPException(400, f"Node '{instance_node.name}' is offline")
 
     # A new spec makes the node recreate the container: that is the restart
-    await _start_instance_runtime(app, instance, instance_node, decrypt_env(app.env_vars or ""), db)
+    await _start_instance_runtime(app, instance, instance_node, core_projects.app_env(app), db)
 
     await log_audit(db, "instance.restart", actor=actor, app_id=app.id,
                     detail={"name": app.name, "instance_id": instance.id})

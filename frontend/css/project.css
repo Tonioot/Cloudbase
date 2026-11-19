@@ -1,0 +1,24 @@
+/* A project's page: its apps and databases, and its settings. */
+
+.pj-table td { padding-top: 11px; padding-bottom: 11px; }
+.pj-name { display: flex; align-items: center; gap: 9px; font-weight: 500; }
+.pj-name a { color: var(--text); }
+.pj-name a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.pj-name .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.pj-mono { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
+
+.pj-new { max-width: 520px; }
+.pj-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
+
+.pj-env { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.pj-env-row, .pj-member, .pj-member-add { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 32px; gap: 8px; align-items: center; }
+.pj-env-actions { display: flex; gap: 8px; }
+
+.pj-members { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.pj-member { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px; }
+.pj-member-name { font-size: 13px; color: var(--text); }
+.pj-member-add { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; margin-bottom: 14px; }
+
+@media (max-width: 640px) {
+  .pj-env-row, .pj-member, .pj-member-add { grid-template-columns: 1fr; }
+}

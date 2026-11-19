@@ -23,6 +23,7 @@ from core import config as _cfg
 from core.database import AsyncSessionLocal
 from core.models import User, Permission, role_permissions
 from core import system_config as _syscfg
+from core import projects
 from core.models import Node
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -135,9 +136,11 @@ async def session_user(token: Optional[str]) -> Optional[dict]:
                     .join(role_permissions, Permission.id == role_permissions.c.permission_id)
                     .where(role_permissions.c.role_id == db_user.role_id)
                 )).scalars())
+            # None: every project with the user's own permissions; otherwise {project id: permissions there}
+            scope = None if db_user.username == "admin" else await projects.memberships(db, db_user.id)
     except Exception:
         return None
-    return {**user, "db_user": db_user, "permissions": permissions}
+    return {**user, "db_user": db_user, "permissions": permissions, "projects": scope}
 
 
 _UNSET = object()
@@ -225,7 +228,19 @@ async def require_auth(request: Request) -> dict:
 def _as_principal(user: dict) -> dict:
     db_user = user["db_user"]
     return {"username": user["username"], "sv": user["sv"], "role": db_user.role, "role_id": db_user.role_id,
-            "permissions": user["permissions"]}
+            "permissions": user["permissions"], "projects": user.get("projects")}
+
+
+async def _allowed(user: dict, permission: str, path_params: dict) -> Optional[int]:
+    """None when allowed; otherwise the HTTP status to refuse with. On an app or database, a user with project
+    memberships is judged by their role in its project, and one outside the project does not get to know it exists."""
+    if user.get("projects") is not None:
+        about_one, project_id = await projects.resource_project(path_params or {})
+        if about_one:
+            if project_id not in user["projects"]:
+                return status.HTTP_404_NOT_FOUND
+            return None if permission in user["projects"][project_id] else status.HTTP_403_FORBIDDEN
+    return None if has_permission(user, permission) else status.HTTP_403_FORBIDDEN
 
 
 async def require_superadmin(request: Request) -> dict:
@@ -245,7 +260,24 @@ def require_permission(permission: str):
         user = await request_user(request)
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-        if not has_permission(user, permission):
+        refused = await _allowed(user, permission, request.path_params)
+        if refused == status.HTTP_404_NOT_FOUND:
+            raise HTTPException(status_code=refused, detail="Not found")
+        if refused:
+            raise HTTPException(status_code=refused, detail=f"Permission '{permission}' required")
+        return _as_principal(user)
+    return _dep
+
+
+def require_project_permission(permission: str):
+    """For routes about apps or databases in general (a list, creating one): allowed with the permission in at least
+    one project. The route itself then filters (projects.can) or checks the project it creates in."""
+    async def _dep(request: Request) -> dict:
+        user = await request_user(request)
+        if not user:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+        scope = user.get("projects")
+        if not (has_permission(user, permission) if scope is None else any(permission in p for p in scope.values())):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Permission '{permission}' required")
         return _as_principal(user)
     return _dep
@@ -291,7 +323,7 @@ async def authorize_websocket(websocket, required_permission: str | None = None)
     if not user:
         await websocket.close(code=1008, reason="Not authenticated")
         return False
-    if required_permission is not None and not has_permission(user, required_permission):
+    if required_permission is not None and await _allowed(user, required_permission, websocket.path_params):
         await websocket.close(code=1008, reason="Permission denied")
         return False
     return True

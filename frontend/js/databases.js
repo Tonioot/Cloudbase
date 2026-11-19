@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { toast } from './utils.js';
+import { toast, fillProjectSelect } from './utils.js';
 import { esc, statusColor } from './shell.js';
 import { engineIcon } from './engine-icons.js';
 
@@ -89,7 +89,7 @@ export function renderDatabasesTable(wrap, databases) {
   if (window._applyPermVisibility) window._applyPermVisibility(wrap);
 }
 
-export async function openCreateDatabaseDialog() {
+export async function openCreateDatabaseDialog({ projectId = null } = {}) {
   let nodes, existing;
   try {
     [engines, nodes, existing] = await Promise.all([
@@ -123,6 +123,11 @@ export async function openCreateDatabaseDialog() {
               </label>`).join('')}
           </div>
         </fieldset>
+
+        <div class="field" style="margin:0" hidden>
+          <label class="field-label" for="db-project">Project</label>
+          <select id="db-project" class="input"></select>
+        </div>
 
         <div class="form-pair">
           <div class="field" style="margin:0">
@@ -172,6 +177,7 @@ export async function openCreateDatabaseDialog() {
   document.body.appendChild(backdrop);
 
   const $ = sel => backdrop.querySelector(sel);
+  fillProjectSelect($('#db-project'), 'databases.create', projectId);
   const selectedEngine = () => engines.find(e => e.key === backdrop.querySelector('input[name="db-engine"]:checked')?.value);
   const syncEngine = () => {
     const e = selectedEngine();
@@ -209,6 +215,7 @@ export async function openCreateDatabaseDialog() {
     try {
       const created = await api.createDatabase({
         name: $('#db-name').value.trim().toLowerCase(),
+        project_id: parseInt($('#db-project').value, 10) || null,
         engine: selectedEngine()?.key,
         version: $('#db-version').value,
         node_id: nodeVal ? parseInt(nodeVal, 10) : null,

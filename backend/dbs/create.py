@@ -12,10 +12,11 @@ from core.models import Database, Node
 from dbs.ops import _node_reachable, _spawn, _start_operation
 from dbs.state import claim
 from dbs.provision import NAME_RE, assign_node_port, _new_credentials, _next_database_id, _validate_limits
+from core import projects as core_projects
 
 
 async def create_database_now(db: AsyncSession, *, name_in, engine_in, version_in=None, node_id=None,
-                              cpu_limit=None, memory_limit_mb=None, actor: str = "system"):
+                              cpu_limit=None, memory_limit_mb=None, actor: str = "system", project_id=None):
     """Validate, insert and start provisioning. Returns (database, node); raises HTTPException."""
     name = (name_in or "").strip().lower()
     if not NAME_RE.match(name):
@@ -45,6 +46,7 @@ async def create_database_now(db: AsyncSession, *, name_in, engine_in, version_i
     database = Database(
         id=await _next_database_id(db),
         name=name,
+        project_id=project_id or await core_projects.default_project_id(db),
         engine=engine.key,
         version=version,
         node_id=node.id,

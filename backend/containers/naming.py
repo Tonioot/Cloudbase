@@ -35,6 +35,11 @@ def app_link_network_name(link_id: int) -> str:
     return f"cloudbase-link-{link_id}"
 
 
+def project_network_name(project_id: int) -> str:
+    """The apps of a project whose apps reach each other."""
+    return f"cloudbase-project-{project_id}"
+
+
 def app_alias(app_id: int) -> str:
     """The name under which an app is reached on the network of a link. From the id, so a rename changes nothing."""
     return f"app-{app_id}"

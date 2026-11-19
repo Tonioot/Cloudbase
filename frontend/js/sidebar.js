@@ -36,16 +36,18 @@ function wireLogout() {
 
 async function loadSidebarTree() {
   // Load nodes, apps and databases independently — a 403 on one must not break the others
-  const [nodesResult, appsResult, dbsResult] = await Promise.allSettled([
+  const [nodesResult, appsResult, dbsResult, projectsResult] = await Promise.allSettled([
     api.listNodes(),
     api.listApps(),
     api.listDatabases(),
+    api.listProjects(),
   ]);
   const nodes = nodesResult.status === 'fulfilled' ? nodesResult.value : [];
   const apps  = appsResult.status  === 'fulfilled' ? appsResult.value  : [];
   const dbs   = dbsResult.status   === 'fulfilled' ? dbsResult.value   : [];
-  // Feeds the rail's Apps / Databases / Nodes menus and the command palette
-  updateIndex(apps, nodes, dbs);
+  const projects = projectsResult.status === 'fulfilled' ? projectsResult.value : [];
+  // Feeds the rail's Projects / Apps / Databases / Nodes menus and the command palette
+  updateIndex(apps, nodes, dbs, false, projects);
 }
 
 function wireNodesButton() {
