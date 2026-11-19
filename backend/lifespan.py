@@ -23,6 +23,8 @@ from dbs import workers as dbs_workers
 from workers.autoscaler import _autoscaler
 from workers.failover import _failover
 from containers.cleanup import cleanup_forever
+from containers.output_log import output_log_forever
+from workers.log_settings import log_settings_forever
 from nodes import local as nodes_local
 from workers.demo import _dev_demo_logs
 from workers.health import _node_health_monitor
@@ -65,6 +67,8 @@ async def _start_panel_tasks() -> list[asyncio.Task]:
         asyncio.create_task(_autoscaler()),
         asyncio.create_task(_failover()),
         asyncio.create_task(cleanup_forever()),
+        asyncio.create_task(output_log_forever()),
+        asyncio.create_task(log_settings_forever()),
         asyncio.create_task(_overview_sampler()),
         asyncio.create_task(workers_autodeploy.auto_deploy_loop()),
         asyncio.create_task(dbs_workers.database_monitor()),

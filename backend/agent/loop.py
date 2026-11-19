@@ -9,6 +9,7 @@ import websockets
 from agent.dispatch import _active_streams, _execute_command, _execute_in_background
 from agent import alive, mesh as agent_mesh, report as agent_report
 from containers.cleanup import cleanup_forever
+from containers.output_log import output_log_forever
 from agent.log import _agent_log
 from agent.reconcile import Reconciler
 from agent.registration import _build_capabilities, _collect_node_metrics, _collect_system_info, _register
@@ -142,7 +143,7 @@ async def start_agent(main_url=None, invite_code=None, node_name=None, public_ho
     async with httpx.AsyncClient() as client:
         reconciler = Reconciler(client, state)
         background = [asyncio.create_task(agent_mesh.join_forever(client, state)), asyncio.create_task(reconciler.run()),
-                      asyncio.create_task(cleanup_forever())]
+                      asyncio.create_task(cleanup_forever()), asyncio.create_task(output_log_forever())]
         try:
             await _run_websocket_loop(client, state, reconciler)
         finally:

@@ -651,6 +651,7 @@ let _logInstancesTimer = null;
 let _logSourceKey = null;           // what the terminal currently shows (stream or empty state)
 
 const LOG_CLOUDBASE = 'cloudbase';
+const LOG_HISTORY = 'history';
 const LOG_LIVE_STATUSES = new Set(['running', 'starting', 'restarting', 'stopping', 'pending', 'deploying']);
 
 function _logOptionLabel(r) {
@@ -674,8 +675,9 @@ async function _refreshLogInstances() {
     opt.textContent = _logOptionLabel(r);
     select.appendChild(opt);
   });
+  select.insertAdjacentHTML('beforeend', `<option value="${LOG_HISTORY}">History · search older output</option>`);
   select.insertAdjacentHTML('beforeend', `<option value="${LOG_CLOUDBASE}">Cloudbase · deploys, scaling, nginx…</option>`);
-  select.value = _logInstances.has(current) || current === LOG_CLOUDBASE ? current : 'all';
+  select.value = _logInstances.has(current) || current === LOG_CLOUDBASE || current === LOG_HISTORY ? current : 'all';
 
   // Re-render when the selected instance went up or down (e.g. node came back)
   if (_logSourceKey !== _logSourceKeyFor(select.value)) _switchLogInstance();
@@ -683,6 +685,7 @@ async function _refreshLogInstances() {
 
 function _logSourceKeyFor(val) {
   if (val === LOG_CLOUDBASE) return LOG_CLOUDBASE;
+  if (val === LOG_HISTORY) return LOG_HISTORY;
   if (val === 'all' || val === 'primary') return 'all';
   const r = _logInstances.get(val);
   return r && !LOG_LIVE_STATUSES.has(r.status) ? `empty:${val}:${r.status}` : `live:${val}`;
@@ -695,6 +698,7 @@ function initLogs() {
     _logsInitDone = true;
     select?.addEventListener('change', () => _switchLogInstance());
     _wireCloudbaseLogFilters();
+    _wireHistoryFilters();
   }
 
   _logSourceKey = null;
@@ -731,6 +735,14 @@ function _switchLogInstance() {
 
   const cbFilters = document.getElementById('logs-cb-filters');
   if (cbFilters) cbFilters.hidden = val !== LOG_CLOUDBASE;
+  const historyFilters = document.getElementById('logs-history-filters');
+  if (historyFilters) historyFilters.hidden = val !== LOG_HISTORY;
+  if (val === LOG_HISTORY) {
+    terminal.closest('.logs-panel')?.classList.add('logs-idle');
+    if (hint) hint.textContent = 'Saved output of every instance';
+    _historyLoad(true);
+    return;
+  }
   if (val === LOG_CLOUDBASE) {
     terminal.closest('.logs-panel')?.classList.remove('logs-idle');
     if (hint) hint.textContent = 'Live · everything Cloudbase did for this app';
@@ -788,6 +800,91 @@ function _wireCloudbaseLogFilters() {
     clearTimeout(qTimer);
     qTimer = setTimeout(() => _cbLogViewer?.setFilter('q', qInput.value.trim()), 300);
   };
+}
+
+// "History" source: what the app's containers printed, kept on every server that ran them (also after a
+// deploy or restart removed the container). Searched on the server; newest at the bottom, older on request.
+let _hist = { seq: 0, before: null, shown: [], hasMore: false };
+
+function _wireHistoryFilters() {
+  const range = document.getElementById('log-h-range');
+  const errors = document.getElementById('log-h-errors');
+  const q = document.getElementById('log-h-q');
+  if (range) range.onclick = e => {
+    const btn = e.target.closest('.seg-btn');
+    if (!btn || btn.classList.contains('active')) return;
+    range.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('active', b === btn));
+    _historyLoad(true);
+  };
+  if (errors) errors.onclick = () => {
+    errors.setAttribute('aria-pressed', String(errors.getAttribute('aria-pressed') !== 'true'));
+    _historyLoad(true);
+  };
+  let qTimer;
+  if (q) q.oninput = () => { clearTimeout(qTimer); qTimer = setTimeout(() => _historyLoad(true), 350); };
+}
+
+function _historyTime(iso) {
+  const d = new Date(iso);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  return sameDay ? time : `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${time}`;
+}
+
+async function _historyLoad(reset) {
+  const terminal = document.getElementById('log-terminal');
+  if (!terminal) return;
+  const seq = ++_hist.seq;
+  if (reset) {
+    _hist = { seq, before: null, shown: [], hasMore: false };
+    terminal.innerHTML = '<div class="log-empty">Searching…</div>';
+  }
+  const params = {
+    hours: Number(document.querySelector('#log-h-range .seg-btn.active')?.dataset.hours || 24),
+    q: (document.getElementById('log-h-q')?.value || '').trim(),
+    errors: document.getElementById('log-h-errors')?.getAttribute('aria-pressed') === 'true',
+    beforeNs: reset ? null : _hist.before,
+    limit: 500,
+  };
+  let res;
+  try {
+    res = await api.getAppLogHistory(APP_ID, params);
+  } catch (e) {
+    if (seq === _hist.seq) terminal.innerHTML = `<div class="log-empty">${escHtml(e.message)}</div>`;
+    return;
+  }
+  if (seq !== _hist.seq) return;                         // a newer search was started meanwhile
+  _hist.before = res.next_before_ns;
+  _hist.hasMore = res.has_more;
+  _hist.shown = [...res.entries.slice().reverse(), ..._hist.shown];
+  _historyRender(terminal, res, !reset);
+}
+
+function _historyRender(terminal, res, keepPosition) {
+  const missing = (res.missing || []).map(m => `${escHtml(m.node)} (${escHtml(m.reason)})`).join(', ');
+  const notice = missing ? `<div class="log-notice">Not searched: ${missing}.</div>` : '';
+  if (!_hist.shown.length) {
+    terminal.innerHTML = `${notice}<div class="log-empty-state"><div class="log-empty-title">Nothing found</div>
+      <p>Output is kept for <strong>${res.retention_days} days</strong> on each server that ran the app, from the moment
+      this version of Cloudbase runs there. Try a longer time range or fewer words.</p></div>`;
+    return;
+  }
+  const before = terminal.scrollHeight - terminal.scrollTop;
+  const more = _hist.hasMore
+    ? '<div class="log-more"><button type="button" class="btn btn-sm" id="log-h-more">Load older</button></div>'
+    : `<div class="log-more log-more-end">Start of the saved output in this range · kept for ${res.retention_days} days</div>`;
+  terminal.innerHTML = notice + more + _hist.shown.map(e => `
+    <div class="log-line ${logClass(stripAnsi(e.text))}">
+      <span class="log-ts" title="${escHtml(e.ts)}">${_historyTime(e.ts)}</span>
+      <span class="log-src" title="${escHtml(`${e.node} · instance #${e.instance_id} · ${e.stream}`)}">${escHtml(e.node)} #${e.instance_id ?? '?'}</span>
+      <span class="log-text">${ansiToHtml(e.text)}</span>
+    </div>`).join('');
+  document.getElementById('log-h-more')?.addEventListener('click', e => {
+    e.target.disabled = true;
+    e.target.textContent = 'Loading…';
+    _historyLoad(false);
+  });
+  terminal.scrollTop = keepPosition ? terminal.scrollHeight - before : terminal.scrollHeight;
 }
 
 function _appendLogLine(line) {

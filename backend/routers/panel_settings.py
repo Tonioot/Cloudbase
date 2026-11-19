@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from core import auth, token_vault, config as _cfg, system_config as _syscfg
+from workers import log_settings
 from nginx import certificates as nginx_certificates
 from nginx import paths as nginx_paths
 from nginx import pages as nginx_pages
@@ -108,6 +109,7 @@ async def get_system_settings(_: dict = Depends(auth.require_permission("system.
             "db_public_max": _cfg.get_port("db_public_max"),
         },
         "wireguard": {"endpoint": _cfg.get_wireguard().get("endpoint") or ""},
+        "logs": _cfg.get_logs(),
         "limits": {
             "max_apps":                _cfg.get_limit("max_apps"),
             "max_instances":           _cfg.get_limit("max_instances"),
@@ -126,6 +128,8 @@ async def save_system_settings(
     sections = clean_system_settings(body)
     if sections:
         _cfg.save_config_sections(sections)
+        if "logs" in sections:
+            asyncio.create_task(log_settings.hand_out())      # this machine and every node, at once
     return {"ok": True}
 
 

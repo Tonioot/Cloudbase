@@ -15,6 +15,7 @@ from routers import applications, audit as audit_router, cron as cron_router, do
 from routers import stats as routers_stats
 from routers import webhooks as webhooks_router
 from routers import status as status_router
+from routers import log_history as log_history_router
 
 # Must run after the imports above: it replaces any root handlers an imported
 # module installed (node_agent used to, which sent everything to node-agent.log).
@@ -39,6 +40,7 @@ app.include_router(applications.router)
 app.include_router(nodes.router)
 app.include_router(files.router)
 app.include_router(logs.router)
+app.include_router(log_history_router.router)
 app.include_router(routers_stats.router)
 app.include_router(audit_router.router)
 app.include_router(roles_router.router)

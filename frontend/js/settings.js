@@ -205,6 +205,7 @@ const SYS_FIELDS = [
   ['limits', 'max_apps', 'sys-max-apps'], ['limits', 'max_instances', 'sys-max-inst'],
   ['limits', 'max_nodes', 'sys-max-nodes'],
   ['limits', 'max_restarts_per_window', 'sys-max-restarts'], ['limits', 'restart_window_seconds', 'sys-restart-window'],
+  ['logs', 'retention_days', 'sys-log-days'], ['logs', 'max_mb_per_app', 'sys-log-mb'],
 ];
 
 function numField(id, label, hint, attrs = '') {
@@ -251,6 +252,11 @@ function renderSystem(root) {
         ${numField('sys-max-inst', 'Max instances', 'Across all apps.', 'min="1"')}
       </div>
       <div class="form-pair">${numField('sys-max-nodes', 'Max nodes', '', 'min="1"')}</div>`)}
+    ${group('App logs', 'What the apps print is saved on every server that runs them, so it can be searched later under an app’s Logs → History, also after a deploy or restart.',
+      `<div class="form-pair">
+        ${numField('sys-log-days', 'Keep for (days)', 'Older days are removed every hour.', 'min="1" max="365"')}
+        ${numField('sys-log-mb', 'At most per app (MB)', 'On each server. The oldest days go first; today’s output always stays.', 'min="10"')}
+      </div>`)}
     ${group('Crash protection', 'When an instance keeps crashing, Cloudbase stops restarting it and marks it as failed.',
       `<div class="form-pair">
         ${numField('sys-max-restarts', 'Max restarts', 'Within one window.', 'min="1"')}
@@ -274,7 +280,7 @@ function renderSystem(root) {
 
   const save = document.getElementById('system-save');
   save.onclick = async () => {
-    const body = { auth: {}, ports: {}, limits: {}, wireguard: { endpoint: document.getElementById('sys-wg-endpoint').value.trim() } };
+    const body = { auth: {}, ports: {}, limits: {}, logs: {}, wireguard: { endpoint: document.getElementById('sys-wg-endpoint').value.trim() } };
     for (const [sec, key, id] of SYS_FIELDS) body[sec][key] = parseInt(document.getElementById(id).value, 10);
     save.disabled = true;
     setStatus('Saving…');

@@ -22,6 +22,7 @@ def clean_system_settings(body: dict) -> dict:
     ports    = body.get("ports",  {})
     limits   = body.get("limits", {})
     wireguard = body.get("wireguard", {})
+    logs     = body.get("logs",   {})
     sections = {}
     if auth_cfg:
         sections["auth"] = {
@@ -47,6 +48,12 @@ def clean_system_settings(body: dict) -> dict:
             "max_nodes":               _int(limits.get("max_nodes"),               1, 10000,  _cfg.get_limit("max_nodes")),
             "max_restarts_per_window": _int(limits.get("max_restarts_per_window"), 1, 1000,   _cfg.get_limit("max_restarts_per_window")),
             "restart_window_seconds":  _int(limits.get("restart_window_seconds"),  10, 86400, _cfg.get_limit("restart_window_seconds")),
+        }
+    if logs:
+        current = _cfg.get_logs()
+        sections["logs"] = {
+            "retention_days": _int(logs.get("retention_days"), 1, 365, current["retention_days"]),
+            "max_mb_per_app": _int(logs.get("max_mb_per_app"), 10, 100000, current["max_mb_per_app"]),
         }
     if wireguard:
         endpoint = str(wireguard.get("endpoint") or "").strip()

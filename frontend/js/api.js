@@ -275,6 +275,14 @@ export const api = {
     if (q) p.set('q', q);
     return request('GET', `/apps/${id}/cloudbase-logs?${p}`);
   },
+  getAppLogHistory: (id, { hours = 24, q = '', errors = false, instanceId = null, beforeNs = null, limit = 500 } = {}) => {
+    const p = new URLSearchParams({ hours, limit });
+    if (q) p.set('q', q);
+    if (errors) p.set('errors', 'true');
+    if (instanceId) p.set('instance_id', instanceId);
+    if (beforeNs) p.set('before_ns', beforeNs);
+    return request('GET', `/apps/${id}/logs/history?${p}`);
+  },
   getLogSources: () => request('GET', '/system/log-sources'),
   getSystemLogs: ({ source = 'server', limit = 500, component = '', level = '', q = '' } = {}) => {
     const p = new URLSearchParams({ source, limit });

@@ -2,7 +2,7 @@ import os
 import asyncio
 import subprocess
 from core import power, selfupdate
-from containers import naming as containers_naming, cleanup as containers_cleanup, jobs as containers_jobs
+from containers import naming as containers_naming, cleanup as containers_cleanup, jobs as containers_jobs, output_log
 from agent.log import AGENT_LOG_FILE, _agent_log
 from agent.source import ensure_image
 
@@ -27,6 +27,27 @@ async def cmd_self_update(_client, _state, _main_id, _payload):
 async def cmd_reboot(_client, _state, _main_id, _payload):
     """Restart this node's server (needs the root helper; see core/power.py)."""
     return await asyncio.to_thread(power.reboot)
+
+
+async def cmd_logs_search(_client, _state, _main_id, payload):
+    """Search the app output this node keeps (see containers/output_log.py)."""
+    lines = await asyncio.to_thread(
+        output_log.search, int(payload["app_id"]), since_ns=int(payload["since_ns"]),
+        until_ns=int(payload["until_ns"]) if payload.get("until_ns") else None, q=str(payload.get("q") or ""),
+        errors_only=bool(payload.get("errors_only")),
+        instance_id=int(payload["instance_id"]) if payload.get("instance_id") else None,
+        limit=int(payload.get("limit") or 500))
+    return {"lines": lines, "usage": output_log.usage(int(payload["app_id"]))}
+
+
+async def cmd_log_settings(_client, _state, _main_id, payload):
+    """The primary hands out how long app output is kept; this node keeps pruning with it on its own."""
+    return await asyncio.to_thread(output_log.set_settings, payload or {})
+
+
+async def cmd_logs_forget_app(_client, _state, _main_id, payload):
+    await asyncio.to_thread(output_log.forget_app, int(payload["app_id"]))
+    return {"ok": True}
 
 
 async def cmd_get_agent_logs(_client, _state, _main_id, payload):

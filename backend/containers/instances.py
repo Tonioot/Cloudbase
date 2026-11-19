@@ -2,6 +2,7 @@ import logging
 from containers.apps import _restart_policy_config
 from containers.client import _apply_linked_databases, _assert_image_local, _get_client, _host_port, start_container
 from containers.naming import instance_container_name
+from containers import output_log
 
 log = logging.getLogger("cloudbase.docker")
 
@@ -39,6 +40,7 @@ def run_instance_container(
             # Container survived a node outage and is still healthy — reuse it
             push_line_fn(app_id, f"[Instance] Container {instance_id} already running, reusing (recovered from outage).")
             return old.id
+        output_log.capture_quietly(old)          # what it printed before it stopped (a crash) stays searchable
         old.remove(force=True)
         push_line_fn(app_id, f"[Instance] Removed old container for instance {instance_id}.")
         # Wait for Docker to fully release the container name and port bindings
@@ -63,6 +65,8 @@ def run_instance_container(
         "security_opt": ["no-new-privileges:true"],
         "environment": env_vars,
         "restart_policy": _instance_restart_policy_config(docker_options),
+        # Docker keeps at most 30 MB per container; what matters is copied to the app's output log (output_log.py)
+        "log_config": {"type": "json-file", "config": {"max-size": "10m", "max-file": "3"}},
         "labels": {
             "cloudbase.app_id": str(app_id),
             "cloudbase.instance_id": str(instance_id),
@@ -128,6 +132,7 @@ def stop_instance_container(app_id: int, instance_id: int, push_line_fn=None) ->
     try:
         c = client.containers.get(cname)
         c.stop(timeout=10)
+        output_log.capture_quietly(c)            # its last lines, before Docker forgets them
         c.remove()
         if push_line_fn:
             push_line_fn(app_id, f"[Instance] Container {instance_id} stopped and removed.")
@@ -172,6 +177,7 @@ def remove_container_by_name(cname: str) -> bool:
     client = _get_client()
     try:
         c = client.containers.get(cname)
+        output_log.capture_quietly(c)
         c.remove(force=True)
         log.info("[docker] Removed orphan container %s", cname)
         return True

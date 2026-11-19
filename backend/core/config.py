@@ -46,6 +46,11 @@ _DEFAULTS = {
         "max_restarts_per_window": 5,
         "restart_window_seconds": 60,
     },
+    # App output kept on each machine for searching (containers/output_log.py)
+    "logs": {
+        "retention_days": 14,
+        "max_mb_per_app": 200,
+    },
     # Private network between the primary and its nodes (WireGuard, see mesh/)
     "wireguard": {
         "enabled": True,
@@ -92,6 +97,12 @@ def get_limit(key: str) -> int:
 def get_port(key: str) -> int:
     """Return a port/range value from the config, e.g. get_port('instance_min')."""
     return int(_config.get("ports", {}).get(key, _DEFAULTS["ports"].get(key, 0)))
+
+
+def get_logs() -> dict:
+    """How long app output is kept, with defaults filled in."""
+    merged = {**_DEFAULTS["logs"], **(_config.get("logs") or {})}
+    return {k: int(merged[k]) for k in _DEFAULTS["logs"]}
 
 
 def get_wireguard() -> dict:

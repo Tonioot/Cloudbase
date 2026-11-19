@@ -135,8 +135,7 @@
       <div class="tab-panel" id="panel-logs">
         <div class="logs-panel">
           <div class="logs-toolbar" id="logs-toolbar">
-            <label class="logs-toolbar-label" for="log-instance-select">Source</label>
-            <select id="log-instance-select" class="input">
+            <select id="log-instance-select" class="input" aria-label="Source">
               <option value="all">All instances</option>
             </select>
             <span class="logs-cb-filters" id="logs-cb-filters" hidden>
@@ -147,6 +146,17 @@
                 <option value="ERROR">Errors only</option>
               </select>
               <input id="log-cb-q" class="input" type="search" placeholder="Search…" spellcheck="false" />
+            </span>
+            <span class="logs-cb-filters" id="logs-history-filters" hidden>
+              <span class="seg" id="log-h-range" role="group" aria-label="Time range">
+                <button type="button" class="seg-btn" data-hours="1" title="Last hour">1h</button>
+                <button type="button" class="seg-btn active" data-hours="24" title="Last 24 hours">24h</button>
+                <button type="button" class="seg-btn" data-hours="168" title="Last 7 days">7d</button>
+                <button type="button" class="seg-btn" data-hours="720" title="Last 30 days">30d</button>
+                <button type="button" class="seg-btn" data-hours="8784" title="Everything that is kept">All</button>
+              </span>
+              <button type="button" class="chip-toggle" id="log-h-errors" aria-pressed="false">Errors only</button>
+              <input id="log-h-q" class="input" type="search" placeholder="Search output" spellcheck="false" />
             </span>
             <span class="logs-live"><span class="dot"></span><span id="log-instance-hint">Live</span></span>
           </div>

@@ -16,6 +16,7 @@ from apps.nginx_sync import _best_effort_remove_app_nginx, _best_effort_delete_a
 from apps.runtime import _get_app_node, _cleanup_app_dependencies, _load_node_map
 from apps.serializers import _get_or_404
 from apps.state import locked
+from workers import log_settings
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
@@ -40,6 +41,7 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dic
             await db.rollback()
             raise HTTPException(409, f"App '{app.name}' cannot be deleted because it is still referenced") from e
         desired.nudge(node.id)
+        log_settings.forget_app_later(app.id)
         if node.status == "online":
             return {"message": f"App '{app.name}' deleted"}
         return {"message": f"App '{app.name}' removed (node '{node.name}' was offline — it removes the containers when it is back)"}
@@ -76,4 +78,5 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dic
     except IntegrityError as e:
         await db.rollback()
         raise HTTPException(409, f"App '{app_name}' cannot be deleted because it is still referenced") from e
+    log_settings.forget_app_later(app_id_val)
     return {"message": f"App '{app_name}' deleted"}

@@ -29,6 +29,7 @@ GET     /api/apps/{app_id}/files
 GET     /api/apps/{app_id}/files/content
 GET     /api/apps/{app_id}/instances
 GET     /api/apps/{app_id}/instances/stats
+GET     /api/apps/{app_id}/logs/history
 GET     /api/apps/{app_id}/source-archive
 GET     /api/apps/{app_id}/stats/history
 GET     /api/apps/{app_id}/uptime
@@ -82,12 +83,12 @@ GET     /api/users
 GET     /app
 GET     /assets/cloudbase-mark.png
 GET     /audit
-GET     /network
 GET     /cloudbase.png
 GET     /database
 GET     /favicon.png
 GET     /guides
 GET     /login
+GET     /network
 GET     /node
 GET     /notifications
 GET     /settings
