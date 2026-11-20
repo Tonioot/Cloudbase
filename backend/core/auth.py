@@ -8,6 +8,8 @@ Authentication module for Cloudbase.
 - The built-in "admin" user is the Root account and always has full access.
 """
 
+import hashlib
+import json
 import os
 import secrets
 import time
@@ -16,12 +18,12 @@ from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import bcrypt as _bcrypt
-from fastapi import Cookie, HTTPException, Request, status
+from fastapi import HTTPException, Request, status
 import jwt
 from jwt import PyJWTError as JWTError
 from core import config as _cfg
 from core.database import AsyncSessionLocal
-from core.models import User, Permission, role_permissions
+from core.models import ApiToken, User, Permission, role_permissions
 from core import system_config as _syscfg
 from core import projects
 from core.models import Node
@@ -113,6 +115,26 @@ def decode_token(token: str) -> Optional[dict]:
     return {"username": username, "role": role, "sv": int(payload.get("sv", 0) or 0)}
 
 
+async def _role_permissions(db, role_id: Optional[int]) -> set[str]:
+    if role_id is None:
+        return set()
+    from sqlalchemy import select
+    return set((await db.execute(
+        select(Permission.name)
+        .join(role_permissions, Permission.id == role_permissions.c.permission_id)
+        .where(role_permissions.c.role_id == role_id)
+    )).scalars())
+
+
+async def _load_user(db, db_user: User, user: dict) -> dict:
+    """What the endpoints need to know about a signed-in user: their permissions and the projects they are limited to."""
+    # The root account has every permission; None: every project with the user's own permissions, otherwise
+    # {project id: permissions there}
+    permissions = None if db_user.username == "admin" else await _role_permissions(db, db_user.role_id)
+    scope = None if db_user.username == "admin" else await projects.memberships(db, db_user)
+    return {**user, "db_user": db_user, "permissions": permissions, "projects": scope}
+
+
 async def session_user(token: Optional[str]) -> Optional[dict]:
     """The signed-in user, looked up in one go: {username, role, sv, db_user, permissions}, where permissions is None
     for the root account (everything) and a set otherwise. None when the token is invalid, the user is gone or the
@@ -126,21 +148,55 @@ async def session_user(token: Optional[str]) -> Optional[dict]:
             db_user = (await db.execute(select(User).where(User.username == user["username"]))).scalar_one_or_none()
             if db_user is None or int(db_user.session_version or 0) != user["sv"]:
                 return None
-            if db_user.username == "admin":
-                permissions = None                                  # the root account has every permission
-            elif db_user.role_id is None:
-                permissions = set()
-            else:
-                permissions = set((await db.execute(
-                    select(Permission.name)
-                    .join(role_permissions, Permission.id == role_permissions.c.permission_id)
-                    .where(role_permissions.c.role_id == db_user.role_id)
-                )).scalars())
-            # None: every project with the user's own permissions; otherwise {project id: permissions there}
-            scope = None if db_user.username == "admin" else await projects.memberships(db, db_user.id)
+            return await _load_user(db, db_user, user)
     except Exception:
         return None
-    return {**user, "db_user": db_user, "permissions": permissions, "projects": scope}
+
+
+# ── API tokens ────────────────────────────────────────────────────────────────
+TOKEN_PREFIX = "cbt_"
+_LAST_USED_EVERY = timedelta(minutes=5)     # last_used_at is a hint, not a log: one write per few minutes is enough
+
+
+def new_api_token() -> tuple[str, str, str]:
+    """(the token, its hash, its prefix). The token is shown once; only the hash is stored."""
+    token = TOKEN_PREFIX + secrets.token_urlsafe(48)
+    return token, hash_api_token(token), token[:len(TOKEN_PREFIX) + 4]
+
+
+def hash_api_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def bearer_token(headers) -> Optional[str]:
+    """The API token in an Authorization: Bearer header, if there is one."""
+    value = headers.get("authorization") or ""
+    scheme, _, token = value.partition(" ")
+    token = token.strip()
+    return token if scheme.lower() == "bearer" and token.startswith(TOKEN_PREFIX) else None
+
+
+async def api_token_user(token: str) -> Optional[dict]:
+    """Like session_user, for an API token: its own permissions, in every project or only the ones it was made for. None when
+    the token is unknown or expired. It acts as "token:<name>", a name no user can have, so it never is the root account."""
+    from sqlalchemy import select
+    try:
+        async with AsyncSessionLocal() as db:
+            row = (await db.execute(select(ApiToken).where(ApiToken.token_hash == hash_api_token(token)))).scalar_one_or_none()
+            now = datetime.utcnow()
+            if row is None or (row.expires_at and row.expires_at <= now):
+                return None
+            if row.last_used_at is None or now - row.last_used_at > _LAST_USED_EVERY:
+                row.last_used_at = now
+                await db.commit()
+            permissions = set(json.loads(row.permissions or "[]"))
+            ids = json.loads(row.project_ids) if row.project_ids else []
+            username = f"token:{row.name}"
+            return {"username": username, "role": "API token", "sv": 0, "via_token": True,
+                    "db_user": User(username=username, role="API token", role_id=None, session_version=0),
+                    "permissions": permissions, "projects": {int(i): permissions for i in ids} if ids else None}
+    except Exception:
+        return None
 
 
 _UNSET = object()
@@ -150,7 +206,8 @@ async def request_user(request) -> Optional[dict]:
     """session_user for this request, looked up once: the middleware does it, the endpoint's checks reuse it."""
     cached = getattr(request.state, "user", _UNSET)
     if cached is _UNSET:
-        cached = await session_user(request.cookies.get(_COOKIE_NAME))
+        token = bearer_token(request.headers)
+        cached = await api_token_user(token) if token else await session_user(request.cookies.get(_COOKIE_NAME))
         request.state.user = cached
     return cached
 
@@ -283,11 +340,9 @@ def require_project_permission(permission: str):
     return _dep
 
 
-def get_current_actor(cloudbase_token: Optional[str] = Cookie(default=None)) -> str:
-    """Return the username of the current session, or 'system' for agent/unauthenticated calls."""
-    if not cloudbase_token:
-        return "system"
-    user = decode_token(cloudbase_token)
+async def get_current_actor(request: Request) -> str:
+    """The username of whoever makes this request (a session or an API token), or 'system' for agent calls."""
+    user = await request_user(request)
     return user["username"] if user else "system"
 
 

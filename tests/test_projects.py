@@ -36,7 +36,10 @@ def world(admin):
             await db.commit()
             return shop_app.id, other_app.id, member.id, roles["Administrator"].id
     shop_app, other_app, member_id, admin_role = run(setup())
-    r = admin.put(f"/api/projects/{shop}/members", json={"members": [{"user_id": member_id, "role_id": admin_role}]})
+    members = {"members": [{"user_id": member_id, "role_id": admin_role}]}
+    # Adding someone who sees every project would change nothing for them: that has to be asked for
+    assert admin.put(f"/api/projects/{shop}/members", json=members).status_code == 409
+    r = admin.put(f"/api/projects/{shop}/members", json={**members, "limit_users": True})
     assert r.status_code == 200, r.text
 
     import main
@@ -54,6 +57,38 @@ def test_a_member_sees_only_the_apps_of_their_projects(world, admin):
     assert member.get(f"/api/projects/{world['default']}").status_code == 404
     # everyone without memberships still sees everything
     assert {"shop-api", "intern-tool"} <= {a["name"] for a in admin.get("/api/apps").json()}
+
+
+def test_being_a_member_counts_only_for_users_limited_to_their_projects(world, admin):
+    from sqlalchemy import select
+    from core.database import AsyncSessionLocal
+    from core.models import User
+    member = world["member"]
+    user_id = next(u["id"] for u in admin.get("/api/users").json() if u["username"] == "shop-dev")
+    assert next(u for u in admin.get("/api/users").json() if u["id"] == user_id)["project_access"] == "selected"
+    # Back to every project: the membership stays but does nothing
+    assert admin.put(f"/api/users/{user_id}", json={"project_access": "all"}).status_code == 200
+    assert {"shop-api", "intern-tool"} <= {a["name"] for a in member.get("/api/apps").json()}
+    assert admin.put(f"/api/users/{user_id}", json={"project_access": "selected"}).status_code == 200
+    assert {a["name"] for a in member.get("/api/apps").json()} == {"shop-api"}
+    assert admin.put(f"/api/users/{user_id}", json={"project_access": "some"}).status_code == 400
+
+    async def access():
+        async with AsyncSessionLocal() as db:
+            return (await db.execute(select(User.project_access).where(User.id == user_id))).scalar_one()
+    assert run(access()) == "selected"
+
+
+def test_a_limited_user_without_projects_sees_none(world, admin):
+    r = admin.post("/api/users", json={"username": "no-projects", "password": "a-member-password",
+                                       "role_id": next(r["id"] for r in admin.get("/api/roles").json() if r["name"] == "Administrator"),
+                                       "project_access": "selected"})
+    assert r.status_code == 200, r.text
+    import main
+    c = TestClient(main.app, base_url="http://localhost")
+    assert c.post("/api/auth/login", json={"username": "no-projects", "password": "a-member-password"}).status_code == 200
+    assert c.get("/api/apps").status_code == 403                 # a limited user with no project has nothing
+    assert c.get(f"/api/apps/{world['shop_app']}").status_code in (403, 404)
 
 
 def test_a_member_has_the_role_of_their_project_there(world):

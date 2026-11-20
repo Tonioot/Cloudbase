@@ -214,8 +214,8 @@ async function renderMembers(p) {
       <button class="btn btn-sm btn-ghost pj-member-remove" type="button" aria-label="Remove">×</button>
     </div>`;
   holder.innerHTML = group('Members',
-    'Someone added here sees only the projects they are a member of, each with the role given there. Users who are a member of no project see every project with their own role.', `
-    <div class="pj-members" id="pj-members">${members.map(row).join('') || '<div class="field-hint" id="pj-members-empty">No members: everyone sees this project with their own role.</div>'}</div>
+    'Members have the role given here in this project. It counts for users who are limited to their own projects (set under Users &amp; roles); users with access to all projects keep their own role everywhere.', `
+    <div class="pj-members" id="pj-members">${members.map(row).join('') || '<div class="field-hint" id="pj-members-empty">No members: only users with access to all projects see this project.</div>'}</div>
     <div class="pj-member-add">
       <select class="input" id="pj-add-user"><option value="">Add a user…</option>${others.map(u => `<option value="${u.id}">${esc(u.username)}</option>`).join('')}</select>
       <select class="input" id="pj-add-role">${roleOptions(roles[0]?.id)}</select>
@@ -236,7 +236,17 @@ async function renderMembers(p) {
   document.getElementById('pj-members-save').onclick = async () => {
     const payload = [...list.querySelectorAll('.pj-member')].map(el => ({
       user_id: parseInt(el.dataset.user, 10), role_id: parseInt(el.querySelector('select').value, 10) }));
-    try { await api.setProjectMembers(p.id, payload); toast('Members saved'); }
-    catch (e) { toast(e.message, 'error'); }
+    // Someone who sees every project would not notice a membership: limiting them to their projects is a choice
+    const unlimited = payload.map(m => others.find(u => u.id === m.user_id)).filter(u => u && u.project_access !== 'selected');
+    if (unlimited.length) {
+      const names = unlimited.map(u => u.username).join(', ');
+      if (!await confirm('Limit these users to their own projects?',
+        `${names} can now see every project. A membership only counts for users who are limited to the projects they are a member of, so they will see only the projects they are a member of from now on.`)) return;
+    }
+    try {
+      await api.setProjectMembers(p.id, payload, unlimited.length > 0);
+      unlimited.forEach(u => { u.project_access = 'selected'; });
+      toast('Members saved');
+    } catch (e) { toast(e.message, 'error'); }
   };
 }

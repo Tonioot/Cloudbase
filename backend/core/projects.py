@@ -1,8 +1,9 @@
 """Projects: which ones a user may see, with which permissions, and what a project gives its apps.
 
-Access. The root account and a user without project memberships work as before: their own role, in every project.
-A user with memberships sees only those projects, each with the permissions of the role given there; their own role
-still decides everything outside projects (nodes, settings, users). auth.require_permission applies this to every
+Access. The root account and a user whose project_access is "all" have their own role in every project. A user
+whose project_access is "selected" sees only the projects they are a member of, each with the permissions of the
+role given there (none at all without memberships); their own role still decides everything outside projects (nodes,
+settings, users). Being a member changes nothing by itself: it is the user's project_access that says which counts. auth.require_permission applies this to every
 route with an {app_id} or {database_id}; lists filter with visible_projects().
 
 Shared settings. A project's environment variables are given to every app in it (an app's own variable of the same
@@ -26,12 +27,13 @@ _connected: dict[int, bool] = {}
 
 # ── Access ────────────────────────────────────────────────────────────────────
 
-async def memberships(db: AsyncSession, user_id: int) -> Optional[dict[int, set[str]]]:
-    """{project id: permissions there} for a user with memberships; None for a user without (every project)."""
-    rows = (await db.execute(select(ProjectMember.project_id, ProjectMember.role_id)
-                             .where(ProjectMember.user_id == user_id))).all()
-    if not rows:
+async def memberships(db: AsyncSession, user) -> Optional[dict[int, set[str]]]:
+    """{project id: permissions there} for a user limited to the projects they are a member of; None for a user
+    with access to every project."""
+    if (user.project_access or "all") == "all":
         return None
+    rows = (await db.execute(select(ProjectMember.project_id, ProjectMember.role_id)
+                             .where(ProjectMember.user_id == user.id))).all()
     perms_of_role: dict[int, set[str]] = {}
     for role_id in {r for _p, r in rows}:
         perms_of_role[role_id] = set((await db.execute(

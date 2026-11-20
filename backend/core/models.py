@@ -39,11 +39,32 @@ class User(Base):
     password_hash = Column(String, nullable=False)
     role         = Column(String(10), nullable=False, default="viewer")  # name of the role, also in the session token
     role_id      = Column(Integer, ForeignKey("roles.id", ondelete="SET NULL"), nullable=True, index=True)
+    # "all": the user's own role in every project; "selected": only the projects they are a member of, each with the
+    # role given there (the members of a project are set on the project). Memberships do nothing for "all".
+    project_access = Column(String(10), nullable=False, default="all")
     # Bumped on logout and password change: sessions issued before stop working
     session_version = Column(Integer, nullable=False, default=0)
     # Notifications created after this moment count as unread for this user
     notifications_read_at = Column(DateTime, nullable=True)
     created_at   = Column(DateTime, default=datetime.utcnow)
+
+
+class ApiToken(Base):
+    """A key for another program (a script, a backend built on Cloudbase) to call the API, without a browser session.
+    It has its own list of permissions (a JSON list of names, fixed when it is made: changing a role never changes
+    a token) and optionally only some projects (project_ids, a JSON list: it has the permissions there and nowhere
+    else). It belongs to no user. Only a hash of it is kept."""
+    __tablename__ = "api_tokens"
+
+    id           = Column(Integer, primary_key=True, index=True)
+    name         = Column(String(60), nullable=False)
+    permissions  = Column(Text, nullable=False, default="[]")                    # JSON list of permission names
+    project_ids  = Column(Text, nullable=True)                                   # JSON list; empty: every project
+    token_hash   = Column(String(64), unique=True, nullable=False, index=True)   # sha256 of the token
+    prefix       = Column(String(12), nullable=False)                           # its first characters, to recognise it
+    created_at   = Column(DateTime, default=datetime.utcnow)
+    expires_at   = Column(DateTime, nullable=True)
+    last_used_at = Column(DateTime, nullable=True)
 
 
 class Project(Base):
@@ -61,8 +82,7 @@ class Project(Base):
 
 
 class ProjectMember(Base):
-    """A user's role within one project. A user with no memberships has their own role in every project; one with
-    memberships sees only those projects, each with the role given here."""
+    """A user's role within one project. It counts for a user whose project_access is "selected"."""
     __tablename__ = "project_members"
     __table_args__ = (UniqueConstraint("project_id", "user_id", name="uq_project_member"),)
 

@@ -389,7 +389,7 @@ def test_a_role_that_was_given_secrets_export_can_take_secrets_with_its_own_pass
 
 def test_nobody_can_create_a_role_with_secrets_export_except_root(admin):
     ids = {p["name"]: p["id"] for p in admin.get("/api/roles/permissions").json()}
-    with _as_user(admin, ["apps.view", "roles.manage"]) as user:
+    with _as_user(admin, ["apps.view", "apps.configure"]) as user:
         r = user.post("/api/roles", json={"name": "tx-sneaky", "permission_ids": [ids["secrets.export"]]})
         assert r.status_code in (401, 403)
 

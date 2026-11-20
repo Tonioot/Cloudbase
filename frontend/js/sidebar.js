@@ -242,8 +242,8 @@ async function initRoleBasedUI() {
     document.body.dataset.role = data.role;
     document.body.dataset.permissions = JSON.stringify(data.permissions || []);
     const perms = new Set(data.permissions || []);
-    // Root, or anyone with users.manage / roles.manage, gets Users & roles (shell.js shows it)
-    const canManageUsers = isRoot || perms.has('users.manage') || perms.has('roles.manage');
+    // Only the root account manages users and roles (the API refuses everyone else), so only it gets that page
+    const canManageUsers = isRoot;
     window.dispatchEvent(new CustomEvent('cloudbase-role-ready', { detail: { role: data.role, username: data.username, permissions: data.permissions || [], canManageUsers } }));
 
     // The answer is in: drop the rules remembered from the previous page and keep the new ones for the next
@@ -257,7 +257,6 @@ async function initRoleBasedUI() {
         'nodes.view','nodes.add','nodes.configure','nodes.delete',
         'databases.view','databases.create','databases.manage','databases.credentials','databases.backup','databases.delete',
         'system.manage',
-        'users.manage','roles.manage',
         'audit.view','tokens.manage','notifications.view','notifications.manage','projects.manage',
       ];
       ALL_KNOWN_PERMS.forEach(p => { if (!perms.has(p)) window._hiddenPerms.add(p); });

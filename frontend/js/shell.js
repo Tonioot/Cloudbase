@@ -156,6 +156,7 @@ function railHTML(active) {
       ${setting('btn-notification-settings', 'notifications', 'bell', 'Notifications', 'data-perm="notifications.manage"')}
       ${setting('btn-system-logs', 'logs', 'logs', 'System logs', 'data-perm="system.manage"')}
       ${setting('btn-github-tokens', 'tokens', 'key', 'Git tokens', 'data-perm="tokens.manage"')}
+      ${setting('btn-api-tokens', 'api', 'key', 'API tokens', 'style="display:none"')}
       ${setting('btn-export-import', 'transfer', 'transfer', 'Export / Import', 'data-perm="apps.configure"')}
       </div>
     </nav>
@@ -403,6 +404,7 @@ function paletteCommands() {
     ['btn-backup-storage', 'Backup storage', ICONS.database, 's3 r2 backblaze offsite off-site bucket'],
     ['btn-notification-settings', 'Notification channels', ICONS.bell, 'alerts slack teams pagerduty email webhook discord telegram ntfy'],
     ['btn-github-tokens', 'Git tokens', ICONS.key, 'private repository github gitlab gitea bitbucket access token'],
+    ['btn-api-tokens', 'API tokens', ICONS.key, 'api key bearer automation integration'],
     ['btn-export-import', 'Export / Import', ICONS.transfer, 'backup restore apps databases settings'],
     ['btn-change-password', 'Account & password', ICONS.lock, 'change password'],
     ['btn-logout', 'Sign out', ICONS.logout, 'logout'],
@@ -501,6 +503,8 @@ function showMe(me) {
   if (me.role) { set('rail-user-role', me.role); set('sb-user-role', me.role); }
   const users = document.getElementById('btn-manage-users');
   if (users) users.style.display = me.users ? '' : 'none';
+  const apiTokens = document.getElementById('btn-api-tokens');
+  if (apiTokens) apiTokens.style.display = me.root ? '' : 'none';
 }
 
 function mount() {
@@ -588,7 +592,7 @@ function mount() {
   syncThemeButton();
 
   window.addEventListener('cloudbase-role-ready', e => {
-    const me = { username: e.detail?.username || 'admin', role: e.detail?.role || '', users: !!e.detail?.canManageUsers };
+    const me = { username: e.detail?.username || 'admin', role: e.detail?.role || '', users: !!e.detail?.canManageUsers, root: e.detail?.role === 'Root' };
     showMe(me);
     try { sessionStorage.setItem(ME_KEY, JSON.stringify(me)); } catch { /* ignore */ }
   });

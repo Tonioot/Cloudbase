@@ -16,6 +16,7 @@ class CreateUserRequest(BaseModel):
     username: str
     password: str
     role_id: int
+    project_access: str = "all"        # "all" or "selected" (only the projects they are a member of)
 
 
 @router.get("/api/users")
@@ -31,6 +32,7 @@ async def list_users(_user: dict = Depends(auth.require_superadmin), db: AsyncSe
                 "username": u.username,
                 "role": "Root",
                 "role_id": None,
+                "project_access": "all",
                 "is_root": True,
                 "created_at": u.created_at.isoformat() if u.created_at else None,
             })
@@ -46,6 +48,7 @@ async def list_users(_user: dict = Depends(auth.require_superadmin), db: AsyncSe
             "username": u.username,
             "role": role_name,
             "role_id": u.role_id,
+            "project_access": u.project_access or "all",
             "is_root": False,
             "created_at": u.created_at.isoformat() if u.created_at else None,
         })
@@ -70,18 +73,27 @@ async def create_user(req: CreateUserRequest, admin_user: dict = Depends(auth.re
         password_hash=auth.hash_password(req.password),
         role=role_obj.name,
         role_id=role_obj.id,
+        project_access=_check_access(req.project_access),
     )
     db.add(new_user)
     await log_audit(db, "user.create", actor=admin_user["username"], detail={"username": req.username, "role": role_obj.name})
     await db.commit()
     await db.refresh(new_user)
-    return {"id": new_user.id, "username": new_user.username, "role": role_obj.name, "role_id": new_user.role_id}
+    return {"id": new_user.id, "username": new_user.username, "role": role_obj.name, "role_id": new_user.role_id,
+            "project_access": new_user.project_access}
 
 
 class UpdateUserRequest(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
     role_id: Optional[int] = None
+    project_access: Optional[str] = None
+
+
+def _check_access(value: str) -> str:
+    if value not in ("all", "selected"):
+        raise HTTPException(status_code=400, detail='project_access must be "all" or "selected"')
+    return value
 
 
 @router.put("/api/users/{user_id}")
@@ -114,6 +126,10 @@ async def update_user(user_id: int, req: UpdateUserRequest, current_user: dict =
         user.role = role_obj.name
         detail["role"] = role_obj.name
         detail["role_id"] = role_obj.id
+    if req.project_access is not None:
+        if user.username == "admin":
+            raise HTTPException(status_code=400, detail="The superadmin account always has every project")
+        user.project_access = detail["project_access"] = _check_access(req.project_access)
     if req.password is not None:
         if len(req.password) < 8:
             raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
@@ -130,7 +146,8 @@ async def update_user(user_id: int, req: UpdateUserRequest, current_user: dict =
         role_obj = role_res.scalar_one_or_none()
         if role_obj:
             role_name = role_obj.name
-    return {"id": user.id, "username": user.username, "role": role_name, "role_id": user.role_id}
+    return {"id": user.id, "username": user.username, "role": role_name, "role_id": user.role_id,
+            "project_access": user.project_access or "all"}
 
 
 @router.delete("/api/users/{user_id}")

@@ -42,6 +42,8 @@ class Member(BaseModel):
 
 class MembersRequest(BaseModel):
     members: list[Member]
+    # Users who now see every project are limited to their projects when added here; that has to be asked for
+    limit_users: bool = False
 
 
 class MoveRequest(BaseModel):
@@ -241,6 +243,12 @@ async def set_members(project_id: int, req: MembersRequest, db: AsyncSession = D
             raise HTTPException(400, "The admin account always has every project")
         if role_id not in roles:
             raise HTTPException(404, f"Role {role_id} not found")
+    unlimited = sorted(u.username for u in users.values() if (u.project_access or "all") == "all")
+    if unlimited and not req.limit_users:
+        raise HTTPException(409, "These users can see every project, so a membership changes nothing for them until they "
+                                 f"are limited to their own projects: {', '.join(unlimited)}")
+    for u in users.values():
+        u.project_access = "selected"
     current = {m.user_id: m for m in (await db.execute(
         select(ProjectMember).where(ProjectMember.project_id == project_id))).scalars()}
     for user_id, member in current.items():

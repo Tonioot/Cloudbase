@@ -11,7 +11,7 @@ from core import applog, system_logs
 from core import config as _cfg
 from core.access import _AuthMiddleware
 from lifespan import lifespan
-from routers import applications, audit as audit_router, cron as cron_router, domains as domains_router, files, frontend, logs, nodes, notifications as notifications_router, overview, panel_logs, panel_settings, roles as roles_router, session, transfer, users, databases as databases_router, database_backups as database_backups_router
+from routers import api_tokens as api_tokens_router, applications, audit as audit_router, cron as cron_router, domains as domains_router, files, frontend, logs, nodes, notifications as notifications_router, overview, panel_logs, panel_settings, roles as roles_router, session, transfer, users, databases as databases_router, database_backups as database_backups_router
 from routers import stats as routers_stats
 from routers import webhooks as webhooks_router
 from routers import status as status_router
@@ -46,6 +46,7 @@ app.include_router(projects_router.router)
 app.include_router(routers_stats.router)
 app.include_router(audit_router.router)
 app.include_router(roles_router.router)
+app.include_router(api_tokens_router.router)
 app.include_router(domains_router.router)
 app.include_router(databases_router.router)
 app.include_router(database_backups_router.router)

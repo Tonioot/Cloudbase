@@ -1,4 +1,4 @@
-// Settings pages: /settings?s=domain|system|users|backups|notifications|tokens|transfer|logs|account
+// Settings pages: /settings?s=domain|system|users|backups|notifications|tokens|api|transfer|logs|account
 //
 // Each section is a full page (title, description, grouped forms) instead of
 // the modals these used to be. The sidebar links here and marks the active one.
@@ -18,6 +18,7 @@ export const SETTINGS_SECTIONS = {
   backups:  { title: 'Backup storage',   sub: 'Keep a copy of every database backup outside this server, in S3-compatible storage.' },
   notifications: { title: 'Notifications', sub: 'Where Cloudbase reports problems and deploys — Slack, Teams, PagerDuty, e-mail, webhooks and more — and which events go where.' },
   tokens:   { title: 'Git tokens',       sub: 'Saved access tokens for private repositories on GitHub, GitLab, Bitbucket, Gitea and other Git hosts (HTTPS). Pick one when you create or edit an app.' },
+  api:      { title: 'API tokens',      sub: 'Keys for another program (a script, a backend built on Cloudbase) to call this panel’s API. Each has a role and, if you like, only some projects.' },
   transfer: { title: 'Export / Import',  sub: 'Move apps, databases and settings to another Cloudbase, or keep a full backup of this one.' },
   logs:     { title: 'System logs',      sub: 'Everything Cloudbase itself logs — deploys, autoscaler, nginx, nodes, databases — in one place, live.' },
   account:  { title: 'Account',          sub: 'Your own sign-in details.' },
@@ -31,6 +32,7 @@ const RENDER = {
   backups: renderBackupStorage,
   notifications: renderNotifications,
   tokens: renderTokens,
+  api: renderApiTokens,
   transfer: renderTransfer,
   account: renderAccount,
 };
@@ -591,8 +593,9 @@ function currentPerms() {
   try { return new Set(JSON.parse(document.body.dataset.permissions || '[]')); } catch { return new Set(); }
 }
 const isRoot = () => document.body.dataset.role === 'Root';
-const canUsers = () => isRoot() || currentPerms().has('users.manage');
-const canRoles = () => isRoot() || currentPerms().has('roles.manage');
+// The API lets only the root account manage users and roles, whatever permissions a role has
+const canUsers = () => isRoot();
+const canRoles = () => isRoot();
 
 function renderUsers(root) {
   if (!canUsers() && !canRoles()) {
@@ -627,12 +630,13 @@ async function loadUsers() {
     document.getElementById('users-count').textContent = `${users.length} user${users.length === 1 ? '' : 's'}`;
     list.innerHTML = `
       <table class="table settings-table">
-        <thead><tr><th>User</th><th>Role</th><th>Created</th><th></th></tr></thead>
+        <thead><tr><th>User</th><th>Role</th><th>Projects</th><th>Created</th><th></th></tr></thead>
         <tbody>${users.map(u => {
           const root = !!u.is_root || u.username === 'admin';
           return `<tr data-id="${u.id}">
             <td><span class="user-cell"><span class="rail-avatar">${esc(u.username.slice(0, 2).toUpperCase())}</span>${esc(u.username)}</span></td>
             <td>${root ? '<span class="pill">Root</span>' : esc(u.role || '—')}</td>
+            <td class="cell-muted">${root || u.project_access !== 'selected' ? 'All projects' : 'Only their own'}</td>
             <td class="cell-muted">${u.created_at ? new Date(u.created_at).toLocaleDateString() : '—'}</td>
             <td class="row-actions">${root ? '' : `
               ${canRoles() ? '<button class="btn btn-sm btn-ghost" data-act="edit">Edit</button>' : ''}
@@ -738,6 +742,14 @@ async function openUserDialog(user = null) {
       <select class="input" id="u-role">
         ${roles.map(r => `<option value="${r.id}" ${edit && r.id === user.role_id ? 'selected' : ''}>${esc(r.name)}</option>`).join('')}
       </select>
+    </div>
+    <div class="field">
+      <label class="field-label" for="u-access">Projects</label>
+      <select class="input" id="u-access">
+        <option value="all" ${!edit || user.project_access !== 'selected' ? 'selected' : ''}>All projects, with their role</option>
+        <option value="selected" ${edit && user.project_access === 'selected' ? 'selected' : ''}>Only the projects they are a member of</option>
+      </select>
+      <div class="field-hint">Members are added on the project itself, each with a role for that project.</div>
     </div>`, { saveLabel: edit ? 'Save' : 'Create user' });
 
   const $ = id => dlg.el.querySelector(id);
@@ -751,13 +763,13 @@ async function openUserDialog(user = null) {
     dlg.saveBtn.disabled = true;
     try {
       if (edit) {
-        const payload = { role_id: roleId };
+        const payload = { role_id: roleId, project_access: $('#u-access').value };
         if (username !== user.username) payload.username = username;
         if (pwd) payload.password = pwd;
         await api.updateUser(user.id, payload);
         toast(`User "${username}" updated`);
       } else {
-        await api.createUser({ username, password: pwd, role_id: roleId });
+        await api.createUser({ username, password: pwd, role_id: roleId, project_access: $('#u-access').value });
         toast(`User "${username}" created`);
       }
       dlg.close();
@@ -769,7 +781,7 @@ async function openUserDialog(user = null) {
   };
 }
 
-const PERM_GROUP_LABELS = { apps: 'Apps', nodes: 'Nodes', system: 'System', users: 'Users', roles: 'Roles', audit: 'Audit log', tokens: 'Git tokens', secrets: 'Secrets' };
+const PERM_GROUP_LABELS = { apps: 'Apps', projects: 'Projects', nodes: 'Nodes', databases: 'Databases', notifications: 'Notifications', system: 'System', audit: 'Audit log', tokens: 'Git tokens', secrets: 'Secrets' };
 
 async function openRoleDialog(role = null, perms = null) {
   if (!perms) { try { perms = await api.listPermissions(); } catch (e) { toast(e.message, 'error'); return; } }
@@ -894,6 +906,140 @@ async function loadTokens() {
   } catch (e) {
     list.innerHTML = notice(esc(e.message));
   }
+}
+
+/* ─── API tokens ─────────────────────────────────────────────────────── */
+
+function renderApiTokens(root) {
+  if (!isRoot()) {
+    root.innerHTML = notice('Only the admin account can manage API tokens.');
+    return;
+  }
+  root.innerHTML = group('API tokens',
+    'Send a token as <code>Authorization: Bearer cbt_…</code>. It can do what you tick, in the projects it was made for, and can never manage users, roles or tokens.',
+    `<div class="settings-list-head">
+       <span id="api-tokens-count" class="settings-count"></span>
+       <button class="btn btn-sm" id="api-token-new">New token</button>
+     </div>
+     <div id="api-tokens-list"></div>`);
+  document.getElementById('api-token-new').onclick = openApiTokenDialog;
+  loadApiTokens();
+}
+
+async function loadApiTokens() {
+  const list = document.getElementById('api-tokens-list');
+  list.innerHTML = '<div class="settings-note">Loading…</div>';
+  try {
+    const [tokens, projects] = await Promise.all([api.listApiTokens(), api.listProjects()]);
+    const projectName = id => projects.find(p => p.id === id)?.name || `#${id}`;
+    document.getElementById('api-tokens-count').textContent = `${tokens.length} token${tokens.length === 1 ? '' : 's'}`;
+    if (!tokens.length) {
+      list.innerHTML = '<div class="settings-note">No API tokens yet.</div>';
+      return;
+    }
+    list.innerHTML = `
+      <table class="table settings-table">
+        <thead><tr><th>Name</th><th>Permissions</th><th>Projects</th><th>Last used</th><th>Expires</th><th></th></tr></thead>
+        <tbody>${tokens.map(t => `
+          <tr data-id="${t.id}">
+            <td>${esc(t.name)}<div class="cell-mono cell-muted">${esc(t.prefix)}…</div></td>
+            <td class="cell-muted" title="${esc(t.permissions.join(', '))}">${t.permissions.length} permission${t.permissions.length === 1 ? '' : 's'}</td>
+            <td class="cell-muted">${t.project_ids.length ? esc(t.project_ids.map(projectName).join(', ')) : 'All projects'}</td>
+            <td class="cell-muted">${t.last_used_at ? esc(timeAgo(t.last_used_at)) : 'Never'}</td>
+            <td class="cell-muted">${t.expires_at ? new Date(t.expires_at).toLocaleDateString() : 'Never'}</td>
+            <td class="row-actions"><button class="btn btn-sm btn-ghost btn-danger-text" data-act="delete">Delete</button></td>
+          </tr>`).join('')}</tbody>
+      </table>`;
+    list.querySelectorAll('[data-act="delete"]').forEach(btn => {
+      btn.onclick = async () => {
+        const t = tokens.find(x => String(x.id) === btn.closest('tr').dataset.id);
+        if (!await confirm(`Delete token "${t.name}"?`, 'Whatever uses it stops working straight away.')) return;
+        try { await api.deleteApiToken(t.id); toast('Token deleted'); loadApiTokens(); }
+        catch (e) { toast(e.message, 'error'); }
+      };
+    });
+  } catch (e) {
+    list.innerHTML = notice(esc(e.message));
+  }
+}
+
+async function openApiTokenDialog() {
+  let perms, projects;
+  try { [perms, projects] = await Promise.all([api.listPermissions(), api.listProjects()]); }
+  catch (e) { toast(e.message, 'error'); return; }
+  const groups = {};
+  for (const p of perms) (groups[p.name.split('.')[0]] ||= []).push(p);
+  const dlg = openDialog('New API token', `
+    <div class="field">
+      <label class="field-label" for="at-name">Name</label>
+      <input class="input" id="at-name" placeholder="nubora-backend" autocomplete="off" />
+      <div class="field-hint">What it is used for. It shows up as <code>token:name</code> in the audit log.</div>
+    </div>
+    <div class="field">
+      <label class="field-label">Permissions
+        <span class="hint"><a href="#" id="at-readonly">read only</a> · <a href="#" id="at-full">full access</a> · <a href="#" id="at-none">none</a></span></label>
+      <div class="perm-groups">${Object.entries(groups).map(([g, list]) => `
+        <fieldset class="perm-group"><legend>${esc(PERM_GROUP_LABELS[g] || g)}</legend>
+          ${list.map(p => `<label class="perm-check">
+            <input type="checkbox" class="at-perm" value="${esc(p.name)}" />
+            <span><span class="perm-name">${esc(p.name)}</span>${p.description ? `<span class="perm-desc">${esc(p.description)}</span>` : ''}</span>
+          </label>`).join('')}
+        </fieldset>`).join('')}</div>
+    </div>
+    <div class="field">
+      <label class="field-label">Projects <span class="hint">none ticked: every project</span></label>
+      ${projects.map(p => `<label class="check-row"><input type="checkbox" class="at-project" value="${p.id}" /> ${esc(p.name)}</label>`).join('')}
+    </div>
+    <div class="field">
+      <label class="field-label" for="at-days">Expires after <span class="hint">days, empty: never</span></label>
+      <input class="input" id="at-days" type="number" min="1" placeholder="never" />
+    </div>`, { saveLabel: 'Create token', wide: true });
+
+  const $ = sel => dlg.el.querySelector(sel);
+  setTimeout(() => $('#at-name').focus(), 30);
+  const tick = test => dlg.el.querySelectorAll('.at-perm').forEach(c => { c.checked = test(c.value); });
+  const preset = (id, test) => $(id).addEventListener('click', e => { e.preventDefault(); tick(test); });
+  preset('#at-readonly', name => name.endsWith('.view'));
+  preset('#at-full', name => name !== 'secrets.export');          // never part of "everything": grant it on purpose
+  preset('#at-none', () => false);
+  dlg.saveBtn.onclick = async () => {
+    const name = $('#at-name').value.trim();
+    if (!name) return dlg.error('Give the token a name.');
+    const permissions = [...dlg.el.querySelectorAll('.at-perm:checked')].map(c => c.value);
+    if (!permissions.length) return dlg.error('Tick at least one permission.');
+    const days = parseInt($('#at-days').value, 10);
+    dlg.saveBtn.disabled = true;
+    try {
+      const made = await api.createApiToken({
+        name,
+        permissions,
+        project_ids: [...dlg.el.querySelectorAll('.at-project:checked')].map(c => parseInt(c.value, 10)),
+        expires_in_days: Number.isFinite(days) ? days : null,
+      });
+      dlg.close();
+      showNewToken(made);
+      loadApiTokens();
+    } catch (e) {
+      dlg.error(e.message);
+      dlg.saveBtn.disabled = false;
+    }
+  };
+}
+
+/** The token is shown here and never again: only a hash of it is kept. */
+function showNewToken(made) {
+  const dlg = openDialog(`Token “${esc(made.name)}”`, `
+    <div class="field">
+      <label class="field-label" for="at-secret">Copy it now — it is not shown again</label>
+      <input class="input input-mono" id="at-secret" value="${esc(made.token)}" readonly />
+    </div>
+    <div class="field"><button class="btn btn-sm" id="at-copy">Copy to clipboard</button></div>`, { readOnly: true });
+  const input = dlg.el.querySelector('#at-secret');
+  input.select();
+  dlg.el.querySelector('#at-copy').onclick = async () => {
+    try { await navigator.clipboard.writeText(made.token); toast('Copied'); }
+    catch { input.select(); toast('Press Ctrl+C to copy', 'error'); }
+  };
 }
 
 /* ─── Notifications ─────────────────────────────────────────────────────── */

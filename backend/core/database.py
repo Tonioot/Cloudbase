@@ -78,8 +78,6 @@ ALL_PERMISSIONS = [
     ("notifications.manage", "Manage notification channels and which events they receive"),
     # System & users
     ("system.manage",     "Manage Cloudbase server settings, server logs and nginx"),
-    ("users.manage",      "Create, edit and delete users"),
-    ("roles.manage",      "Create, edit and delete roles"),
     ("tokens.manage",     "Manage Git tokens (access tokens for private repositories)"),
     ("secrets.export",    "Download environment variables and Git tokens in clear text (app export). Not part of the Administrator role: grant it on purpose"),
 ]
@@ -120,13 +118,29 @@ def _sql_literal(value) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def _users_lack_project_access(conn) -> bool:
+    from sqlalchemy import inspect
+    existing = inspect(conn)
+    return existing.has_table("users") and "project_access" not in {c["name"] for c in existing.get_columns("users")}
+
+
+def _create_and_upgrade_tables(conn) -> None:
+    """Make the missing tables and columns. Where a new column cannot just take a default, the rows already there
+    get what their old behaviour was."""
+    had_no_project_access = _users_lack_project_access(conn)
+    Base.metadata.create_all(conn)
+    _add_new_columns(conn)
+    if had_no_project_access:
+        # Until now being a member of a project limited a user to their projects: keep exactly that, once
+        conn.exec_driver_sql("UPDATE users SET project_access = 'selected' WHERE id IN (SELECT user_id FROM project_members)")
+
+
 async def init_db():
     """Create the tables that are missing, and make sure the permissions, the built-in roles and the root account exist."""
     # Importing the models registers their tables with Base.metadata (they import Base from here, so not at the top)
     from core.models import Application, Database, Permission, Project, Role, User, role_permissions
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        await conn.run_sync(_add_new_columns)
+        await conn.run_sync(_create_and_upgrade_tables)
 
     async with AsyncSessionLocal() as session:
         perm_map: dict[str, int] = {}
@@ -139,6 +153,10 @@ async def init_db():
             else:
                 perm.description = pdesc  # keep descriptions up-to-date
             perm_map[pname] = perm.id
+        known = set(perm_map)
+        for stale in (await session.execute(select(Permission).where(Permission.name.notin_(known)))).scalars().all():
+            await session.execute(delete(role_permissions).where(role_permissions.c.permission_id == stale.id))
+            await session.delete(stale)           # a permission nothing checks any more (users.manage, roles.manage)
 
         # Built-in roles are reset to their canonical permission set on every startup so they cannot drift
         admin_perms = [p for p, _ in ALL_PERMISSIONS if p not in OPT_IN_PERMISSIONS]

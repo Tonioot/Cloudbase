@@ -1108,8 +1108,6 @@ tail -n 100 ~/.cloudbase/logs/node-agent.log # what the agent did</pre>
   <tr><td><code>nodes.delete</code></td><td>Remove nodes</td></tr>
   <tr><td><code>audit.view</code></td><td>Read the audit log</td></tr>
   <tr><td><code>system.manage</code></td><td>Domain &amp; SSL, system settings, server logs and nginx</td></tr>
-  <tr><td><code>users.manage</code></td><td>Create, edit and delete users</td></tr>
-  <tr><td><code>roles.manage</code></td><td>Create, edit and delete roles</td></tr>
   <tr><td><code>tokens.manage</code></td><td>Manage saved Git tokens</td></tr>
   <tr><td><code>secrets.export</code></td><td>Take environment variables and Git tokens out in an export. Not part of the Administrator role; only the root account can grant it</td></tr>
 </table>
