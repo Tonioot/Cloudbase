@@ -10,6 +10,7 @@ from core.database import get_db
 from core import auth, token_vault, config as _cfg, system_config as _syscfg
 from workers import log_settings
 from nginx import certificates as nginx_certificates
+from nginx import own_certificate
 from nginx import paths as nginx_paths
 from nginx import pages as nginx_pages
 from nginx import files as nginx_files
@@ -33,7 +34,9 @@ async def get_cloudbase_nginx(db: AsyncSession = Depends(get_db), _: dict = Depe
         with open(config_path) as f:
             content = f.read()
     settings = await _syscfg.get_base_settings(db)
+    base_cert = await asyncio.to_thread(own_certificate.inspect_saved, settings["base_ssl_cert_path"])
     return {
+        "base_cert": base_cert,         # expiry and names of an uploaded wildcard certificate (None: automatic or set up by hand)
         "exists": exists,
         "content": content,
         "path": config_path,
@@ -76,19 +79,33 @@ async def set_panel_domain(req: PanelDomainRequest, _: dict = Depends(auth.requi
 
 class BaseDomainRequest(BaseModel):
     base_domain: Optional[str] = None
+    # A wildcard certificate of your own (PEM text). Without it HTTPS is automatic: one certificate per app.
+    ssl_cert_pem: Optional[str] = None
+    ssl_key_pem: Optional[str] = None
 
 
 @router.post("/api/system/base-domain")
 async def set_base_domain(req: BaseDomainRequest, db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_permission("system.manage"))):
-    """Set (or clear) the base domain for app subdomains. HTTPS is automatic:
-    every app gets its own certificate, so no wildcard certificate is kept."""
+    """Set (or clear) the base domain for app subdomains. Without a certificate HTTPS is automatic: every app gets
+    its own. With ssl_cert_pem and ssl_key_pem the user's own wildcard certificate (*.<base domain>) serves every app."""
     import re as _re2
     base_domain = str(req.base_domain or "").strip().strip(".").lower()
     if base_domain and not _re2.match(r'^[a-z0-9.-]+$', base_domain):
         raise HTTPException(400, "Invalid base domain")
-    await _syscfg.set_base_settings(db, base_domain=base_domain, base_ssl_cert="", base_ssl_key="")
+    cert_path = key_path = ""
+    info = None
+    if (req.ssl_cert_pem or "").strip() or (req.ssl_key_pem or "").strip():
+        if not base_domain:
+            raise HTTPException(400, "Enter the base domain the certificate is for")
+        try:
+            cert_path, key_path, info = await asyncio.to_thread(
+                own_certificate.save, req.ssl_cert_pem or "", req.ssl_key_pem or "", base_domain)
+        except own_certificate.CertificateProblem as e:
+            raise HTTPException(400, str(e))
+    await _syscfg.set_base_settings(db, base_domain=base_domain, base_ssl_cert=cert_path, base_ssl_key=key_path)
+    await asyncio.to_thread(own_certificate.forget_except, cert_path or None)
     asyncio.create_task(_refresh_all_app_nginx())
-    return {"ok": True, "base_domain": base_domain}
+    return {"ok": True, "base_domain": base_domain, "own_certificate": info}
 
 
 # ── System settings (ports, limits from config.yaml) ─────────────────────────

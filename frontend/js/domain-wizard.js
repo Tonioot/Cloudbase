@@ -264,19 +264,61 @@ export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panel
   function renderHttps() {
     const s = state.server || {};
     if (isBase) {
+      // Automatic (one free certificate per app) or a wildcard certificate of your own
+      if (!s.https_available) state.ownCert = true;
+      const own = !!state.ownCert;
       $('#dw-body').innerHTML = `
-        <div class="dw-https ${s.https_available ? '' : 'dw-https--off'}">
-          <span class="dw-https-icon">${ICON.lock}</span>
-          <div>
-            <div class="dw-https-title">${s.https_available ? 'HTTPS is automatic' : 'Automatic HTTPS isn’t available on this server yet'}</div>
-            <div class="dw-hint">${s.https_available
-              ? 'Each app gets its own free certificate for its subdomain, usually within a minute after it starts, and it renews itself. Nothing else to do.'
-              : esc(s.https_reason || '')}</div>
-          </div>
-        </div>`;
+        <div class="choice-list dw-role">
+          <label class="choice">
+            <input type="radio" name="dw-cert" value="auto" ${own ? '' : 'checked'} ${s.https_available ? '' : 'disabled'} />
+            <span class="choice-dot"></span>
+            <span class="choice-text"><span>Automatic</span><small>${s.https_available
+              ? 'Each app gets its own free certificate for its subdomain, usually within a minute after it starts, and it renews itself.'
+              : esc(s.https_reason || 'Not available on this server yet.')}</small></span>
+          </label>
+          <label class="choice">
+            <input type="radio" name="dw-cert" value="own" ${own ? 'checked' : ''} />
+            <span class="choice-dot"></span>
+            <span class="choice-text"><span>My own wildcard certificate</span><small>Upload a certificate for <code>*.${esc(state.domain)}</code>. You renew it yourself.</small></span>
+          </label>
+        </div>
+        <div class="dw-own" id="dw-own" ${own ? '' : 'hidden'}>
+          ${[['cert', 'Certificate', 'full chain, PEM', '-----BEGIN CERTIFICATE-----', '.pem,.crt,.cer,text/plain', 'pemCert'],
+             ['key', 'Private key', 'PEM, no password', '-----BEGIN PRIVATE KEY-----', '.pem,.key,text/plain', 'pemKey']].map(([k, label, note, ph, accept, prop]) => `
+          <div class="dw-field">
+            <div class="dw-field-head">
+              <label class="dw-label" for="dw-own-${k}">${label} <span class="dw-optional">${note}</span></label>
+              <button type="button" class="btn btn-sm btn-ghost" id="dw-own-${k}-pick">Choose file</button>
+              <input type="file" id="dw-own-${k}-file" accept="${accept}" hidden />
+            </div>
+            <textarea class="input dw-pem" id="dw-own-${k}" rows="3" spellcheck="false" placeholder="${ph}">${esc(state[prop] || '')}</textarea>
+          </div>`).join('')}
+          <div class="dw-hint">Must cover <code>*.${esc(state.domain)}</code> and not be expired. Kept on this server only.</div>
+        </div>
+        <div class="dw-status" id="dw-https-status" hidden></div>`;
       footer(`<button class="btn" id="dw-back">Back</button><span class="dw-foot-gap"></span><button class="btn btn-primary" id="dw-nohttps">Turn on app subdomains</button>`);
       $('#dw-back').onclick = () => { state.step = 1; render(); };
-      $('#dw-nohttps').onclick = () => finish(null);
+      backdrop.querySelectorAll('input[name="dw-cert"]').forEach(r => {
+        r.onchange = () => { state.ownCert = r.value === 'own'; $('#dw-own').hidden = !state.ownCert; };
+      });
+      for (const [kind, prop] of [['cert', 'pemCert'], ['key', 'pemKey']]) {
+        const area = $(`#dw-own-${kind}`), file = $(`#dw-own-${kind}-file`);
+        area.addEventListener('input', () => { state[prop] = area.value; });
+        $(`#dw-own-${kind}-pick`).onclick = () => file.click();
+        file.onchange = async () => {
+          const f = file.files[0];
+          if (!f) return;
+          if (f.size > 64 * 1024) return toast('That file is too large to be a certificate or key', 'error');
+          area.value = state[prop] = await f.text();
+        };
+      }
+      $('#dw-nohttps').onclick = async () => {
+        if (!state.ownCert) return finish(null);
+        const cert = (state.pemCert || '').trim(), key = (state.pemKey || '').trim();
+        const status = $('#dw-https-status');
+        if (!cert || !key) { status.hidden = false; status.className = 'dw-status dw-status--warn'; status.innerHTML = '<span class="dw-status-icon"><span class="dw-pulse"></span></span><span class="dw-status-text"><strong>Add the certificate and the private key</strong></span>'; return; }
+        await finish({ pem: { cert, key } });
+      };
       return;
     }
     const names = certNames();
@@ -348,9 +390,10 @@ export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panel
     if (!isApp) {
       try {
         let updated;
-        if (isBase) updated = await api.setBaseDomain(state.domain);
+        if (isBase) updated = await api.setBaseDomain(state.domain, cert?.pem);
         else updated = await api.setPanelDomain({ domain: state.domain, ssl_cert_path: cert?.cert || null, ssl_key_path: cert?.key || null });
-        state.https = isBase ? !!state.server?.https_available : !!cert;
+        state.https = isBase ? !!(cert?.pem || state.server?.https_available) : !!cert;
+        state.ownDone = !!cert?.pem;
         state.step = 3;
         render();
         onDone?.(updated);
@@ -395,7 +438,7 @@ export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panel
       <div class="dw-done">
         <span class="dw-done-icon">${ICON.check}</span>
         <div class="dw-done-title">App subdomains are on</div>
-        <div class="dw-hint">Every app is now reachable at <code>&lt;app-name&gt;.${esc(state.domain)}</code>${state.https ? ', with HTTPS set up automatically per app' : ''}.</div>
+        <div class="dw-hint">Every app is now reachable at <code>&lt;app-name&gt;.${esc(state.domain)}</code>${state.https ? (state.ownDone ? ', with HTTPS from your wildcard certificate' : ', with HTTPS set up automatically per app') : ''}.</div>
       </div>` : `
       <div class="dw-done">
         <span class="dw-done-icon">${ICON.check}</span>

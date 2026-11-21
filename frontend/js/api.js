@@ -307,7 +307,8 @@ export const api = {
   },
   getNginxConfig: () => request('GET',  '/system/nginx-config'),
   setPanelDomain:    (data) => request('POST', '/system/panel-domain', data),
-  setBaseDomain:     (baseDomain) => request('POST', '/system/base-domain', { base_domain: baseDomain }),
+  // own = { cert, key } (PEM text) for a wildcard certificate of your own; without it HTTPS is automatic per app
+  setBaseDomain:     (baseDomain, own) => request('POST', '/system/base-domain', { base_domain: baseDomain, ssl_cert_pem: own?.cert || null, ssl_key_pem: own?.key || null }),
   getSystemSettings:  ()        => request('GET',  '/system/settings'),
   saveSystemSettings: (data)    => request('POST', '/system/settings', data),
   listGitHubTokens:  ()         => request('GET',    '/system/github-tokens'),

@@ -146,6 +146,7 @@ function renderDomain(root) {
     live.cert = data.exists ? pick(/ssl_certificate\s+([^\s;]+)/) : null;
     live.base = data.base_domain || null;
     live.baseCert = data.base_ssl_cert_path || null;
+    live.baseCertInfo = data.base_cert || null;      // set when the wildcard certificate was uploaded here
     renderPanel();
     renderBase();
   }).catch(e => {
@@ -203,6 +204,15 @@ function renderDomain(root) {
         title: 'Off',
         text: 'Apps are only reachable on the domains you connect to them.',
         actions: btn('base-setup', 'Set up app subdomains', true),
+      });
+    } else if (live.baseCert && live.baseCertInfo) {
+      const days = live.baseCertInfo.days_left;
+      const soon = days < 14;
+      card('base-card', {
+        tone: soon ? 'warn' : 'ok',
+        title: `*.${esc(live.base)}`,
+        text: `Your own wildcard certificate serves every app. ${days < 0 ? 'It has expired.' : `It expires on ${esc(live.baseCertInfo.expires_at.slice(0, 10))} (${days} day${days === 1 ? '' : 's'} left).`} Cloudbase doesn’t renew it: upload the new one before then (Change).`,
+        actions: btn('base-setup', 'Change certificate', soon) + btn('base-auto', 'Switch to automatic') + btn('base-off', 'Turn off'),
       });
     } else if (live.baseCert) {
       card('base-card', {

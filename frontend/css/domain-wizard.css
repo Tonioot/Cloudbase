@@ -53,6 +53,13 @@
 .dw-role-label { margin-top: 10px; }
 .dw-role .choice-text small { font-family: var(--font-sans); font-size: 12px; }
 
+/* Own wildcard certificate (base domain, HTTPS step) */
+.dw-own { display: flex; flex-direction: column; gap: 12px; }
+.dw-own[hidden] { display: none; }
+.dw-field { display: flex; flex-direction: column; gap: 6px; }
+.dw-field-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; }
+.dw-pem { height: auto; min-height: 0; padding: 8px 10px; font-family: var(--font-mono); font-size: 11.5px; line-height: 1.45; resize: none; white-space: pre; overflow: auto; }
+
 /* DNS records */
 .dw-records { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .dw-rec { display: grid; grid-template-columns: 70px minmax(0, 1fr) minmax(0, 1.4fr); align-items: center; gap: 10px; padding: 11px 14px; border-top: 1px solid var(--line); font-size: 13px; }
