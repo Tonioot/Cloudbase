@@ -650,21 +650,30 @@ docker exec -it cloudbase-db-8 sh -c 'mongosh -u "$MONGO_INITDB_ROOT_USERNAME" -
   group: 'Databases',
   title: 'Public access & TLS',
   summary: 'Reach a database from your own computer with pgAdmin, TablePlus or a script, encrypted and limited to your IP.',
-  keywords: 'database public access port 31000 allowlist ip tls ssl certificate verify pgadmin tableplus dbeaver firewall cloudflare',
+  keywords: 'database public access port 31000 allowlist ip tls ssl certificate verify pgadmin tableplus dbeaver firewall cloudflare hostname domain letsencrypt wildcard',
   lead: 'Public access opens one port on the primary that forwards to the database, wherever it runs. It is off by default, encrypted with TLS, limited to the IP addresses you allow, and the password is always required.',
   body: `
 <h2>Turning it on</h2>
 <ol>
   <li>Open the database, tab <strong>Access</strong>, and switch <strong>Public access</strong> on. With an empty list, only your current IP is allowed.</li>
-  <li>Make the port reachable: it is <code>31000 + &lt;database id&gt;</code> (shown on the tab). Open it in the firewall of the primary, in your cloud provider's security group, and forward it on your router if the server is at home.</li>
+  <li>Make the port reachable: each database keeps its own port from the range <code>31000–31999</code> (shown on the tab). Open it in the firewall of the primary, in your cloud provider's security group, and forward it on your router if the server is at home.</li>
   <li>Click <strong>Copy</strong> next to <strong>URL</strong> and paste it into your client.</li>
 </ol>
-<p>The address is always the server's IP, not your panel domain: a domain behind the Cloudflare proxy only carries web traffic, so database connections to it time out.</p>
+<p>The address is the server's IP by default, or a name under a <a href="#hostnames">database domain</a> if you set one up. It is never your panel domain: a domain behind the Cloudflare proxy only carries web traffic, so database connections to it time out.</p>
 <pre># Open one database port to your own IP only (ufw)
 sudo ufw allow from 203.0.113.7 to any port 31005 proto tcp
 
 # Or the whole range at once
 sudo ufw allow from 203.0.113.7 to any port 31000:31999 proto tcp</pre>
+
+<h2 id="hostnames">Reaching it by name</h2>
+<p>Instead of the IP address, a database can be reached at <code>&lt;database-name&gt;.db.example.com</code>, still on its own port. This is only the name: every database keeps its own port, because PostgreSQL and MySQL speak before they set up TLS, so one shared port cannot tell which database a client wants.</p>
+<ol>
+  <li>Under <a href="/settings?s=domain">Settings → Domain &amp; SSL</a>, click <strong>Set up database hostnames</strong> and enter a domain such as <code>db.example.com</code>. See <a href="/guides?g=domains">Domains &amp; HTTPS</a> for the record and the certificate.</li>
+  <li>The copied URL and the address on the Access tab then use the name.</li>
+  <li>One database can have a name of its own: on its Access tab click <strong>Set own hostname</strong>. The same wizard follows: the hostname, the DNS record, and a free certificate. <strong>Use the default</strong> goes back to <code>&lt;database-name&gt;.&lt;database domain&gt;</code>.</li>
+</ol>
+<p>The record has to be <strong>DNS only</strong> (grey cloud in Cloudflare): the proxy only carries web traffic. Port 80 also has to reach the primary, for the free certificates.</p>
 
 <h2>Allowed IP addresses</h2>
 <p>Connections from other addresses are closed before they reach the database. Add single addresses (<code>203.0.113.7</code>) or ranges (<code>198.51.100.0/24</code>). <strong>Add my IP</strong> uses the address your browser reaches the panel from. If your database client goes through a VPN or uses IPv4 where your browser uses IPv6, add that address as well. With an empty list anyone can try to log in; the page asks before you allow that.</p>
@@ -681,7 +690,12 @@ sudo ufw allow from 203.0.113.7 to any port 31000:31999 proto tcp</pre>
 </table>
 <p>Behind the primary, traffic to a database on the same server stays inside it; traffic to a database on another node goes over the node's connection to the primary, which is encrypted when the panel runs on https.</p>
 
-<h3>Verifying the server</h3>
+<h3>Certificates</h3>
+<p>A database reached by a name always has a real certificate that clients already trust, never one from Cloudbase's own CA. Either a free <strong>Let's Encrypt</strong> certificate per database (automatic, renews itself), or a wildcard certificate of your own that you uploaded for the database domain. While a certificate is being requested the Access tab says so and the port stays closed; it opens as soon as the certificate is there. A database with a hostname of its own always gets its own Let's Encrypt certificate, as a wildcard for the database domain does not cover it.</p>
+<p>Only a database reached on the bare <strong>IP address</strong> uses Cloudbase's own CA, because no public certificate can exist for it. That is what the next section is about. For databases with a trusted certificate, <strong>Verify the server certificate</strong> needs no CA file: PostgreSQL then uses <code>sslrootcert=system</code>, which needs a client of version 16 or newer.</p>
+<p>MySQL and MariaDB encrypt with their own certificate inside the database, whatever the name.</p>
+
+<h3>Verifying the server on the IP address</h3>
 <p>By default clients encrypt without checking the certificate, so a machine between you and the server could pose as it. Switch on <strong>Verify the server certificate</strong> on the Access tab: the copied URL then checks the server against Cloudbase's own CA. Download <code>cloudbase-database-ca.crt</code> from the same tab and keep it next to your client.</p>
 <pre>psql "postgresql://…:31005/shop_db?sslmode=verify-full&amp;sslrootcert=cloudbase-database-ca.crt"
 mongosh "mongodb://…:31008/shop_db?authSource=admin&amp;tls=true&amp;tlsCAFile=cloudbase-database-ca.crt"
@@ -694,7 +708,7 @@ redis-cli -h 203.0.113.10 -p 31007 --tls --cacert cloudbase-database-ca.crt</pre
 <h2>GUI clients</h2>
 <table>
   <tr><th>Client</th><th>Settings</th></tr>
-  <tr><td>pgAdmin, DBeaver, TablePlus (PostgreSQL)</td><td>Host = server IP, port = 31000+id, SSL mode <em>require</em> (or <em>verify-full</em> with the CA file)</td></tr>
+  <tr><td>pgAdmin, DBeaver, TablePlus (PostgreSQL)</td><td>Host = the name or server IP, port as shown on the Access tab, SSL mode <em>require</em> (or <em>verify-full</em> with the CA file)</td></tr>
   <tr><td>MySQL Workbench, TablePlus (MySQL)</td><td>Use SSL: <em>Require</em></td></tr>
   <tr><td>MongoDB Compass</td><td>Paste the copied URL</td></tr>
   <tr><td>RedisInsight</td><td>Use TLS on; for verification add the CA as the CA certificate</td></tr>
@@ -866,7 +880,8 @@ mysqldump --single-transaction --routines --triggers -h host -u user -p dbname |
   <tr><th>Symptom</th><th>Cause and fix</th></tr>
   <tr><td>App can't resolve <code>cloudbase-db-…</code></td><td>The app was not restarted after linking, or runs outside Cloudbase.</td></tr>
   <tr><td>App on another node times out</td><td>A firewall on that node blocks the proxy ports: <code>sudo ufw allow in on cloudbase0 proto tcp to any port 30000:30999</code>.</td></tr>
-  <tr><td>Public access times out</td><td>The port is closed in the firewall, security group or router, or you used a domain behind the Cloudflare proxy instead of the server IP.</td></tr>
+  <tr><td>Public access times out</td><td>The port is closed in the firewall, security group or router, or the name goes through the Cloudflare proxy (it has to be DNS only) instead of straight to the server.</td></tr>
+  <tr><td>Public access: “Waiting for a free certificate”</td><td>The hostname does not point at the primary yet, or port 80 does not reach it, so Let's Encrypt cannot check it. A failed request is retried after an hour. Still waiting after a few minutes with DNS right? Run <code>cloudbase nginx permissions</code> once, so the certificate helper is up to date.</td></tr>
   <tr><td>Public access: connection closed immediately</td><td>Your IP is not in the allowlist. Check the address your client really uses (VPN, IPv6).</td></tr>
   <tr><td>"Authentication failed"</td><td>An old URL or password (copy it again), or for MongoDB a URL without <code>authSource=admin</code>.</td></tr>
   <tr><td>"This database requires TLS" / error 3159</td><td>The client connects without TLS. Use the copied URL or enable SSL/TLS in the client.</td></tr>
@@ -891,8 +906,8 @@ mysqldump --single-transaction --routines --triggers -h host -u user -p dbname |
   slug: 'domains',
   group: 'Networking',
   title: 'Domains & HTTPS',
-  summary: 'Connect domains, free automatic HTTPS, the panel domain, app subdomains and Cloudflare.',
-  keywords: 'domain dns ssl tls https certificate wildcard nginx subdomain redirect letsencrypt connect wizard certbot cloudflare renew expiry',
+  summary: 'Connect domains, free automatic HTTPS, the panel domain, app subdomains, database hostnames and Cloudflare.',
+  keywords: 'domain dns ssl tls https certificate wildcard nginx subdomain redirect letsencrypt connect wizard certbot cloudflare renew expiry database hostname',
   lead: 'Every domain points at the primary, where nginx routes it to the right app and serves HTTPS. Certificates come free from Let’s Encrypt, are requested in one click and renew by themselves.',
   body: `
 <h2>Connect a domain to an app</h2>
@@ -910,6 +925,7 @@ mysqldump --single-transaction --routines --triggers -h host -u user -p dbname |
   <tr><th>Record</th><th>For</th></tr>
   <tr><td><code>panel.example.com  A  203.0.113.10</code></td><td>The panel</td></tr>
   <tr><td><code>*.apps.example.com  A  203.0.113.10</code></td><td>Automatic app subdomains</td></tr>
+  <tr><td><code>*.db.example.com  A  203.0.113.10</code></td><td>Database hostnames (DNS only)</td></tr>
   <tr><td><code>shop.example.com  A  203.0.113.10</code></td><td>One app’s own domain</td></tr>
 </table>
 <p>The wizard asks your domain’s own nameservers directly, so a new record shows up the moment it’s saved — your computer or router may still show the old answer for a while. A brand-new record usually works within minutes; a changed record can take as long as its old TTL (often an hour).</p>
@@ -948,6 +964,16 @@ systemctl list-timers | grep certbot</pre>
 <p>Click <strong>Set up app subdomains</strong> under <a href="/settings?s=domain">Settings → Domain &amp; SSL</a> and enter a base domain such as <code>apps.example.com</code>. The wizard shows the one record to add — a wildcard <code>*.apps</code> A record pointing at the primary — and checks it with a test name under it. Every app is then reachable at <code>&lt;app-name&gt;.apps.example.com</code>, and new apps work without new records.</p>
 <p>HTTPS is automatic: each app gets its own free certificate for its subdomain, usually within a minute after it starts. Let’s Encrypt can only issue a wildcard certificate through DNS verification, which would need access to your DNS provider — one certificate per app avoids that. A wildcard certificate set up earlier keeps working until you click <strong>Switch to automatic</strong>.</p>
 <p>A failed automatic request is retried after an hour. The app’s <strong>Settings → Domains</strong> shows the state of its subdomain.</p>
+
+<h2>Database hostnames</h2>
+<p>Click <strong>Set up database hostnames</strong> under <a href="/settings?s=domain">Settings → Domain &amp; SSL</a> and enter a domain such as <code>db.example.com</code>. It is separate from the app subdomains, so it can use another domain or another record. The wizard shows the wildcard record <code>*.db</code>, checks it, and lets you pick the certificate. A public database is then reached at <code>&lt;database-name&gt;.db.example.com</code>, on its own port. See <a href="/guides?g=database-public-access">Public access &amp; TLS</a>.</p>
+<p>The record has to be <strong>DNS only</strong> (grey cloud): Cloudflare’s proxy carries web traffic only, not database connections. The check says so when the name goes through the proxy. The wizard checks the DNS side only, with no request through port 80.</p>
+<p>The certificate is never one from Cloudbase’s own CA. You choose:</p>
+<ul>
+  <li><strong>Automatic</strong> — each database gets its own free Let’s Encrypt certificate for its hostname, requested in the background once public access is on, and renewed by itself. Port 80 has to reach the primary. Until the certificate is there the database’s port stays closed.</li>
+  <li><strong>My own wildcard certificate</strong> — upload one for <code>*.db.example.com</code>. The card shows when it expires; you renew it yourself, like the wildcard for app subdomains.</li>
+</ul>
+<p>One database can also get <strong>a hostname of its own</strong> (its Access tab, <strong>Set own hostname</strong>): the same wizard, with its own free certificate. Only a database reached on the bare IP address keeps Cloudbase’s own CA. The database domain travels with the exported settings, not its certificate.</p>
 
 <h2>Cloudflare</h2>
 <p>The proxy (orange cloud) can stay on, as long as <strong>Always Use HTTPS</strong> is off: Let’s Encrypt checks over plain HTTP, and that setting would redirect it. If the DNS check in the wizard stays red, set the record to <em>DNS only</em> (grey) for a moment. Once HTTPS works, use SSL mode <strong>Full (strict)</strong>.</p>
