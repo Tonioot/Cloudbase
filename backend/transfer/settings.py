@@ -60,6 +60,7 @@ async def settings_entry(db: AsyncSession) -> dict:
         "git_tokens": [{"label": t["label"], "token": decrypt_text(t["token"])} for t in token_vault.load()],
         "backup_storage": storage or None,
         "base_domain": _syscfg.get_base_domain_cached(),
+        "db_domain": _syscfg.get_db_domain_cached(),
         "system": {
             "auth": {"token_expire_seconds": _cfg.get_auth("token_expire_seconds")},
             "ports": {k: _cfg.get_port(k) for k in ("instance_min", "instance_max")},
@@ -169,6 +170,14 @@ async def import_settings(db: AsyncSession, entry: dict) -> dict:
             await _syscfg.set_base_settings(db, base_domain=domain, base_ssl_cert="", base_ssl_key="")
             added.append(f"Base domain {domain}")
 
+    db_domain = _text(entry.get("db_domain"), 253)
+    if db_domain:
+        if _syscfg.get_db_domain_cached():
+            skipped.append("Database domain (this server has its own)")
+        else:
+            await _syscfg.set_db_domain(db, db_domain)
+            added.append(f"Database domain {db_domain}")
+
     if isinstance(entry.get("system"), dict):
         sections = clean_system_settings(entry["system"])
         if sections:
@@ -205,6 +214,11 @@ async def preview_settings(db: AsyncSession, entry: dict) -> list[dict]:
     if domain:
         mine = bool(_syscfg.get_base_domain_cached())
         out.append({"what": "Base domain", "name": domain, "action": "skip" if mine else "add",
+                    "reason": "this server has its own" if mine else ""})
+    db_domain = _text(entry.get("db_domain"), 253)
+    if db_domain:
+        mine = bool(_syscfg.get_db_domain_cached())
+        out.append({"what": "Database domain", "name": db_domain, "action": "skip" if mine else "add",
                     "reason": "this server has its own" if mine else ""})
     if isinstance(entry.get("system"), dict):
         out.append({"what": "System settings", "name": "", "action": "replace", "reason": ""})
