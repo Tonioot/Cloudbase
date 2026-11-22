@@ -1,8 +1,9 @@
 import { api } from './api.js';
-import { badge, toast, confirm, prompt, fmtUptime, stripAnsi, cssVar, fillProjectSelect } from './utils.js';
+import { badge, toast, confirm, fmtUptime, stripAnsi, cssVar, fillProjectSelect } from './utils.js';
 import { esc, setCrumbs } from './shell.js';
 import { engineIcon } from './engine-icons.js';
 import { memoryWarning } from './databases.js';
+import { openDbHostnameWizard } from './domain-wizard.js';
 
 const DB_ID = parseInt(new URLSearchParams(location.search).get('id'), 10);
 const TRANSITIONAL = ['creating', 'starting', 'stopping'];
@@ -398,10 +399,11 @@ function renderAccess() {
   noteEl.innerHTML = `<p>${note.text}</p>${dnsNote}<p>Make TCP port <code>${d.public_port}</code> reachable on the primary: open it in its firewall or your cloud provider's security group, and forward it on your router if the server is behind one.</p>`;
 }
 
-async function setHostname() {
-  const value = await prompt('Hostname for this database', 'For example db.example.com. It has to point at the primary (DNS only).', database.public_hostname || '');
-  if (value === null) return;
-  await savePublic(database.public_enabled, database.public_allowlist || [], value ? `Hostname set to ${value}` : 'Hostname reset', database.public_tls, value);
+function setHostname() {
+  openDbHostnameWizard(database, {
+    domain: database.public_hostname || '',
+    onDone: updated => { database = { ...database, ...updated }; credentials = null; revealed = false; render(); },
+  });
 }
 
 async function savePublic(enabled, allowlist, message, tls = database.public_tls, hostname = undefined) {
