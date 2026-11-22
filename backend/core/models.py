@@ -407,6 +407,7 @@ class Database(Base):
     public_enabled   = Column(Boolean, default=False, nullable=False)
     public_allowlist = Column(Text, nullable=True)  # JSON list of IPs / CIDRs; empty = everyone
     public_tls       = Column(Boolean, default=True, nullable=False)  # require TLS on the public port
+    public_hostname  = Column(String(255), nullable=True)  # own hostname for this database; empty = <name>.<database domain>, else the IP
     # Automatic backups: "off" | "hourly" | "daily" (at backup_hour, server time).
     backup_schedule  = Column(String(10), default="daily", nullable=False)
     backup_hour      = Column(Integer, default=3, nullable=False)

@@ -3,8 +3,10 @@ from fastapi import Request
 from dbs import engines as db_engines, proxy as db_proxy
 from dbs import docker as dbs_docker
 from core.models import Node, Database
+from core import system_config as _syscfg
 from dbs.ops import _allowlist, _node_reachable
-from dbs.public import _public_host
+from dbs import public_certs
+from dbs.public import _public_host, public_host_for
 from dbs.state import _busy, _operation, _remote_progress, _update_info
 
 def _client_ip(request: Request) -> str:
@@ -60,7 +62,12 @@ def _as_dict(database: Database, node: Optional[Node], link_count: int = 0) -> d
         "public_enabled": bool(database.public_enabled),
         "public_allowlist": _allowlist(database),
         "public_port": database.public_port,
-        "public_host": _public_host(),
+        "public_host": public_host_for(database),
+        "public_ip": _public_host(),
+        "public_hostname": database.public_hostname or "",
+        "db_domain": _syscfg.get_db_domain_cached(),
+        "public_trusted": public_certs.is_trusted(database.id),
+        "public_cert_state": public_certs.STATE.get(database.id),
         "public_listening": db_proxy.public_listening(database.id),
         "public_tls": bool(database.public_tls),
         "link_count": link_count,

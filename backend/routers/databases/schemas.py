@@ -28,6 +28,7 @@ class PublicAccessRequest(BaseModel):
     enabled: bool
     allowlist: list[str] = Field(default_factory=list, max_length=100)
     tls: Optional[bool] = None  # None = keep the current setting
+    hostname: Optional[str] = Field(default=None, max_length=253)  # None = keep; "" = back to the database domain / IP
 
 
 class LinkRequest(BaseModel):

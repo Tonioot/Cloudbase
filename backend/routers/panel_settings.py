@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import re
 from core.system_settings import clean_system_settings
 from typing import Optional
 from fastapi import Depends, Body, HTTPException, APIRouter
@@ -16,6 +17,7 @@ from nginx import pages as nginx_pages
 from nginx import files as nginx_files
 from nginx import config as nginx_config
 from core.runtime import PORT
+from dbs.public import sync_public_access
 from nginx.panel import _load_panel_https_domain, _refresh_all_app_nginx
 
 log = logging.getLogger("cloudbase.main")
@@ -43,6 +45,8 @@ async def get_cloudbase_nginx(db: AsyncSession = Depends(get_db), _: dict = Depe
         "base_domain": settings["base_domain"],
         "base_ssl_cert_path": settings["base_ssl_cert_path"],
         "base_ssl_key_path": settings["base_ssl_key_path"],
+        "db_domain": settings["db_domain"],
+        "db_cert": await asyncio.to_thread(own_certificate.inspect_saved, settings["db_ssl_cert_path"]),
     }
 
 
@@ -106,6 +110,37 @@ async def set_base_domain(req: BaseDomainRequest, db: AsyncSession = Depends(get
     await asyncio.to_thread(own_certificate.forget_except, cert_path or None)
     asyncio.create_task(_refresh_all_app_nginx())
     return {"ok": True, "base_domain": base_domain, "own_certificate": info}
+
+
+class DbDomainRequest(BaseModel):
+    db_domain: Optional[str] = None
+    # A wildcard certificate of your own (PEM text) for *.<db domain>, so clients trust the connection without the
+    # Cloudbase CA. Without it the databases use the certificate of Cloudbase's own CA.
+    ssl_cert_pem: Optional[str] = None
+    ssl_key_pem: Optional[str] = None
+
+
+@router.post("/api/system/db-domain")
+async def set_db_domain(req: DbDomainRequest, db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_permission("system.manage"))):
+    """Set (or clear) the domain public databases are reached under: <database name>.<db domain>. The wildcard record
+    has to point at the primary and stay DNS only. Without it a database is reached on the primary's IP."""
+    domain = str(req.db_domain or "").strip().strip(".").lower()
+    if domain and not re.match(r'^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$', domain):
+        raise HTTPException(400, "Invalid domain")
+    cert_path = key_path = ""
+    info = None
+    if (req.ssl_cert_pem or "").strip() or (req.ssl_key_pem or "").strip():
+        if not domain:
+            raise HTTPException(400, "Enter the domain the certificate is for")
+        try:
+            cert_path, key_path, info = await asyncio.to_thread(
+                own_certificate.save, req.ssl_cert_pem or "", req.ssl_key_pem or "", domain, "db")
+        except own_certificate.CertificateProblem as e:
+            raise HTTPException(400, str(e))
+    await _syscfg.set_db_domain(db, domain, cert_path, key_path)
+    await asyncio.to_thread(own_certificate.forget_except, cert_path or None, "db")
+    await sync_public_access()
+    return {"ok": True, "db_domain": domain, "own_certificate": info}
 
 
 # ── System settings (ports, limits from config.yaml) ─────────────────────────

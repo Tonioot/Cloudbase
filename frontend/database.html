@@ -116,6 +116,13 @@
 
         <div id="pub-on">
           <div class="db-kv" id="pub-rows"></div>
+          <div class="toggle-row form-toggle db-tls-row">
+            <span><span class="field-label">Hostname</span><span class="field-hint" id="pub-host-hint"></span></span>
+            <span>
+              <button class="btn btn-sm" type="button" id="pub-host-set" data-perm="databases.manage">Set own hostname</button>
+              <button class="btn btn-sm" type="button" id="pub-host-reset" data-perm="databases.manage">Use the default</button>
+            </span>
+          </div>
           <label class="toggle-row form-toggle db-tls-row">
             <span><span class="field-label">Require TLS</span><span class="field-hint" id="pub-tls-hint"></span></span>
             <span class="toggle"><input type="checkbox" id="pub-tls" data-perm="databases.manage" aria-label="Require TLS" /><span class="toggle-slider"></span></span>

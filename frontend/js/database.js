@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { badge, toast, confirm, fmtUptime, stripAnsi, cssVar, fillProjectSelect } from './utils.js';
+import { badge, toast, confirm, prompt, fmtUptime, stripAnsi, cssVar, fillProjectSelect } from './utils.js';
 import { esc, setCrumbs } from './shell.js';
 import { engineIcon } from './engine-icons.js';
 import { memoryWarning } from './databases.js';
@@ -50,6 +50,9 @@ let verifyTls = (() => { try { return localStorage.getItem('cb-db-verify-tls') =
 const canVerify = d => !['mysql', 'mariadb'].includes(d.engine);
 
 function verifyHint(d) {
+  if (d.public_trusted) return d.engine === 'postgres'
+    ? 'The certificate is trusted by your system, so no CA file is needed. <code>sslrootcert=system</code> needs a PostgreSQL 16+ client; older ones need the system root file instead.'
+    : 'The certificate is trusted by your system, so no CA file is needed.';
   const ca = '<a href="/api/databases/tls-ca.crt" download>cloudbase-database-ca.crt</a>';
   if (d.engine === 'redis' || d.engine === 'valkey') return `Download ${ca} and give it to your client, e.g. <code>redis-cli --tls --cacert cloudbase-database-ca.crt</code>.`;
   return `The copied URL checks the server with ${ca}. Save that file next to where you run your client.`;
@@ -57,7 +60,8 @@ function verifyHint(d) {
 
 // How well a public connection is protected, per engine.
 function encryptionNote(d) {
-  const ca = '<a href="/api/databases/tls-ca.crt" download>Download the Cloudbase CA</a> to also verify the server certificate.';
+  const ca = d.public_trusted ? 'The certificate is one clients already trust.'
+    : '<a href="/api/databases/tls-ca.crt" download>Download the Cloudbase CA</a> to also verify the server certificate.';
   if (d.engine === 'mariadb' && parseFloat(d.version) < 11.4) {
     return { warn: true, text: `MariaDB ${esc(d.version)} has no TLS out of the box, so connections stay unencrypted. Use MariaDB 11.4 or newer for encryption, or connect over an SSH tunnel.` };
   }
@@ -105,6 +109,9 @@ export async function initDatabasePage() {
   document.getElementById('allow-form').addEventListener('submit', e => { e.preventDefault(); addAllowEntry(); });
   document.getElementById('allow-my-ip').onclick = () => addAllowEntry(myIp);
   document.getElementById('pub-tls').addEventListener('change', toggleTls);
+  document.getElementById('pub-host-set').addEventListener('click', setHostname);
+  document.getElementById('pub-host-reset').addEventListener('click', () =>
+    savePublic(database.public_enabled, database.public_allowlist || [], 'Hostname reset', database.public_tls, ''));
   document.getElementById('btn-backup-now').onclick = backupNow;
   document.getElementById('backup-upload').addEventListener('change', uploadDump);
   document.getElementById('sch-hour').innerHTML = Array.from({ length: 24 }, (_, h) => `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`).join('');
@@ -327,7 +334,9 @@ function renderAccess() {
   document.getElementById('pub-rows').innerHTML = [
     d.public_listening
       ? kvRow('Address', endpoint, { copy: 'public_endpoint' })
-      : `<div class="db-kv-row"><span class="db-kv-label">Address</span><span class="db-kv-warn">Port ${d.public_port} could not be opened on the primary. Check the server log.</span></div>`,
+      : d.public_cert_state === 'waiting'
+        ? `<div class="db-kv-row"><span class="db-kv-label">Address</span><span class="db-kv-warn">Waiting for a free certificate for ${esc(d.public_host)}. The port opens as soon as it is there: the name has to point at the primary and port 80 has to reach it. If this takes more than a few minutes, run <code>cloudbase nginx permissions</code> once and check the server log.</span></div>`
+        : `<div class="db-kv-row"><span class="db-kv-label">Address</span><span class="db-kv-warn">Port ${d.public_port} could not be opened on the primary. Check the server log.</span></div>`,
     kvRow('URL', verifyTls && credentials?.public_url_verified ? credentials.public_url_verified : credentials?.public_url,
       { copy: verifyTls && canVerify(d) ? 'public_url_verified' : 'public_url', secret: true }),
   ].join('') + (d.public_tls && canVerify(d) ? `
@@ -376,12 +385,30 @@ function renderAccess() {
   const note = encryptionNote(d);
   const noteEl = document.getElementById('pub-note');
   noteEl.className = `db-note${note.warn ? ' db-note--warn' : ''}`;
-  noteEl.innerHTML = `<p>${note.text}</p><p>Make TCP port <code>${d.public_port}</code> reachable on the primary: open it in its firewall or your cloud provider's security group, and forward it on your router if the server is behind one.</p>`;
+  const own = !!d.public_hostname;
+  const named = d.public_host && d.public_host !== d.public_ip;
+  document.getElementById('pub-host-hint').textContent = own
+    ? `Its own hostname. Without one it is ${d.db_domain ? `${d.name}.${d.db_domain}` : 'reached on the primary’s IP'}.`
+    : d.db_domain ? `Default: <name>.${d.db_domain} (set under Settings → Domain & SSL).` : 'Not set: reached on the primary’s IP. Set a database domain under Settings → Domain & SSL, or give this one a hostname.';
+  document.getElementById('pub-host-set').textContent = own ? 'Change hostname' : 'Set own hostname';
+  document.getElementById('pub-host-reset').style.display = own ? '' : 'none';
+  const dnsNote = named && d.public_ip
+    ? `<p><code>${esc(d.public_host)}</code> has to point at <code>${esc(d.public_ip)}</code> as a DNS-only record (a web proxy such as Cloudflare’s doesn’t carry database traffic).</p>`
+    : '';
+  noteEl.innerHTML = `<p>${note.text}</p>${dnsNote}<p>Make TCP port <code>${d.public_port}</code> reachable on the primary: open it in its firewall or your cloud provider's security group, and forward it on your router if the server is behind one.</p>`;
 }
 
-async function savePublic(enabled, allowlist, message, tls = database.public_tls) {
+async function setHostname() {
+  const value = await prompt('Hostname for this database', 'For example db.example.com. It has to point at the primary (DNS only).', database.public_hostname || '');
+  if (value === null) return;
+  await savePublic(database.public_enabled, database.public_allowlist || [], value ? `Hostname set to ${value}` : 'Hostname reset', database.public_tls, value);
+}
+
+async function savePublic(enabled, allowlist, message, tls = database.public_tls, hostname = undefined) {
   try {
-    database = { ...database, ...(await api.setDatabasePublic(DB_ID, { enabled, allowlist, tls })) };
+    const body = { enabled, allowlist, tls };
+    if (hostname !== undefined) body.hostname = hostname;
+    database = { ...database, ...(await api.setDatabasePublic(DB_ID, body)) };
     credentials = null;
     revealed = false;
     render();

@@ -150,6 +150,7 @@ POST    /api/databases/{database_id}/stop
 POST    /api/databases/{database_id}/update
 POST    /api/domains/certificate
 POST    /api/domains/check
+POST    /api/domains/check-dns
 POST    /api/nodes/agent/commands/{command_id}/result
 POST    /api/nodes/agent/databases/{database_id}/backups/{backup_id}/upload
 POST    /api/nodes/agent/observed
@@ -174,6 +175,7 @@ POST    /api/system/backup-storage/key
 POST    /api/system/backup-storage/key/reveal
 POST    /api/system/backup-storage/test
 POST    /api/system/base-domain
+POST    /api/system/db-domain
 POST    /api/system/github-tokens
 POST    /api/system/panel-domain
 POST    /api/system/settings

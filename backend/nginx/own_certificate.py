@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 CERTS_DIR = os.path.expanduser("~/.cloudbase/certs")
 _MAX_PEM = 64 * 1024
-_DIR_RE = re.compile(r"^base-[0-9a-f]{12}$")
+_DIR_RE = re.compile(r"^(base|db)-[0-9a-f]{12}$")
 
 
 class CertificateProblem(ValueError):
@@ -65,7 +65,7 @@ def _expires(cert) -> datetime:
         return cert.not_valid_after.replace(tzinfo=timezone.utc)
 
 
-def check(cert_pem: str, key_pem: str, base_domain: str) -> dict:
+def check(cert_pem: str, key_pem: str, base_domain: str, what: str = "an app is <name>.{domain}") -> dict:
     """The details of the certificate, or a CertificateProblem."""
     from cryptography.hazmat.primitives import serialization
     certs, key = _load(cert_pem, key_pem)
@@ -80,7 +80,7 @@ def check(cert_pem: str, key_pem: str, base_domain: str) -> dict:
     wanted = f"*.{base_domain.strip().lower()}"
     if wanted not in names:
         shown = ", ".join(names[:6]) or "no names"
-        raise CertificateProblem(f"The certificate has to cover {wanted} (an app is <name>.{base_domain}). It covers: {shown}")
+        raise CertificateProblem(f"The certificate has to cover {wanted} ({what.format(domain=base_domain)}). It covers: {shown}")
     return {
         "names": names,
         "expires_at": expires.isoformat(),
@@ -89,10 +89,12 @@ def check(cert_pem: str, key_pem: str, base_domain: str) -> dict:
     }
 
 
-def save(cert_pem: str, key_pem: str, base_domain: str) -> tuple[str, str, dict]:
-    """Check and keep the certificate. Returns (cert path, key path, details)."""
-    info = check(cert_pem, key_pem, base_domain)
-    folder = os.path.join(CERTS_DIR, f"base-{info['fingerprint']}")
+def save(cert_pem: str, key_pem: str, base_domain: str, kind: str = "base") -> tuple[str, str, dict]:
+    """Check and keep the certificate ("base": for the app subdomains, "db": for database hostnames, each with its
+    own folders). Returns (cert path, key path, details)."""
+    info = check(cert_pem, key_pem, base_domain,
+                 "a database is <name>.{domain}" if kind == "db" else "an app is <name>.{domain}")
+    folder = os.path.join(CERTS_DIR, f"{kind}-{info['fingerprint']}")
     os.makedirs(folder, mode=0o700, exist_ok=True)
     cert_path, key_path = os.path.join(folder, "fullchain.pem"), os.path.join(folder, "privkey.pem")
     for path, text, mode in ((cert_path, cert_pem, 0o644), (key_path, key_pem, 0o600)):
@@ -119,8 +121,9 @@ def inspect_saved(cert_path: str) -> dict | None:
         return None
 
 
-def forget_except(keep_cert_path: str | None) -> None:
-    """Remove stored certificates other than the one in use (after a replacement or when switching to automatic)."""
+def forget_except(keep_cert_path: str | None, kind: str = "base") -> None:
+    """Remove the stored certificates of this kind other than the one in use (after a replacement or when switching
+    to automatic)."""
     keep = os.path.dirname(keep_cert_path) if keep_cert_path else None
     try:
         entries = os.listdir(CERTS_DIR)
@@ -128,5 +131,5 @@ def forget_except(keep_cert_path: str | None) -> None:
         return
     for entry in entries:
         path = os.path.join(CERTS_DIR, entry)
-        if _DIR_RE.match(entry) and path != keep:
+        if _DIR_RE.match(entry) and entry.startswith(f"{kind}-") and path != keep:
             shutil.rmtree(path, ignore_errors=True)

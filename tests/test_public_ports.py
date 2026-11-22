@@ -32,3 +32,20 @@ def test_a_full_range_gives_nothing(monkeypatch):
     monkeypatch.setattr(_cfg, "get_port", lambda k: {"db_public_min": 31000, "db_public_max": 31001}[k])
     assert pick_public_port(_db(5), {31000, 31001}) is None
 
+
+
+def test_public_host_prefers_own_hostname_then_database_domain_then_ip(monkeypatch):
+    from types import SimpleNamespace
+    from dbs import public
+    monkeypatch.setattr(public, "_public_ip", "203.0.113.5")
+    domain = {"v": "db.example.com"}
+    monkeypatch.setattr(public._syscfg, "get_db_domain_cached", lambda: domain["v"])
+    plain = SimpleNamespace(name="shop-db", public_hostname=None)
+    own = SimpleNamespace(name="shop-db", public_hostname="data.other.org")
+    assert public.public_host_for(plain) == "shop-db.db.example.com"
+    assert public.public_host_for(own) == "data.other.org"
+    assert public._certificate_hosts() == ["203.0.113.5", "localhost"]
+    domain["v"] = ""
+    assert public.public_host_for(plain) == "203.0.113.5"
+    assert public.public_host_for(own) == "data.other.org"
+    assert public._certificate_hosts() == ["203.0.113.5", "localhost"]

@@ -3,12 +3,14 @@
 //   openDomainWizard(app, { onDone(updatedApp), domain? })       a domain for an app
 //   openPanelDomainWizard({ domain?, cert?, onDone })            the panel's own domain
 //   openBaseDomainWizard({ domain?, onDone })                    base domain for app subdomains
+//   openDbDomainWizard({ domain?, onDone })                      domain for database hostnames
 
 import { api } from './api.js';
 import { toast } from './utils.js';
 
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const STEPS = ['Domain', 'DNS', 'HTTPS'];
+const DB_STEPS = ['Domain', 'DNS', 'Certificate'];
 
 // Name of the app's Let's Encrypt certificate (from /etc/letsencrypt/live/<name>/…), if it has one
 export function leCertName(app) {
@@ -43,12 +45,17 @@ export function openBaseDomainWizard({ domain = '', onDone } = {}) {
   return openDomainWizard({ name: 'app subdomains' }, { kind: 'base', domain, onDone });
 }
 
+export function openDbDomainWizard({ domain = '', onDone } = {}) {
+  return openDomainWizard({ name: 'database hostnames' }, { kind: 'db', domain, onDone });
+}
+
 export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panelCert = null } = {}) {
   // With a domain given (e.g. "Set up HTTPS" for an existing one) start at the DNS check
-  const isApp = kind === 'app', isPanel = kind === 'panel', isBase = kind === 'base';
+  const isApp = kind === 'app', isPanel = kind === 'panel', isBase = kind === 'base', isDb = kind === 'db';
+  const isWild = isBase || isDb;      // a wildcard record, checked through a made-up name under the domain
   // The base domain is checked through a made-up name under it, which only
   // resolves when the wildcard record is in place
-  const probeName = d => isBase ? `cloudbase-check-${Math.random().toString(36).slice(2, 8)}.${d}` : d;
+  const probeName = d => isWild ? `cloudbase-check-${Math.random().toString(36).slice(2, 8)}.${d}` : d;
   const state = {
     step: domain ? 1 : 0,
     domain,
@@ -67,7 +74,7 @@ export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panel
     <div class="dw" role="dialog" aria-modal="true" aria-labelledby="dw-title">
       <header class="dw-head">
         <div>
-          <div class="dw-title" id="dw-title">${isBase ? 'Set up app subdomains' : isPanel ? 'Panel domain' : 'Connect a domain'}</div>
+          <div class="dw-title" id="dw-title">${isDb ? 'Set up database hostnames' : isBase ? 'Set up app subdomains' : isPanel ? 'Panel domain' : 'Connect a domain'}</div>
           <div class="dw-steps" id="dw-steps"></div>
         </div>
         <button type="button" class="btn btn-icon btn-ghost" data-close aria-label="Close">
@@ -97,7 +104,7 @@ export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panel
   };
 
   function renderSteps() {
-    $('#dw-steps').innerHTML = STEPS.map((label, i) => {
+    $('#dw-steps').innerHTML = (isDb ? DB_STEPS : STEPS).map((label, i) => {
       const cls = i < state.step ? 'done' : i === state.step ? 'active' : '';
       return `<span class="dw-step ${cls}"><span class="dw-step-n">${i < state.step ? ICON.check : i + 1}</span>${label}</span>`;
     }).join('<span class="dw-step-sep"></span>');
@@ -116,12 +123,16 @@ export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panel
 
   /* ── 1. Domain ───────────────────────────────────────────────────────── */
   function renderDomain() {
-    const question = isBase
+    const question = isDb
+      ? 'Under which domain should databases get their own address?'
+      : isBase
       ? 'Under which domain should apps get their own address?'
       : isPanel ? 'Which domain should open the <strong>Cloudbase panel</strong>?'
       : `Which domain should open <strong>${esc(app.name)}</strong>?`;
-    const placeholder = isBase ? 'apps.example.com' : isPanel ? 'panel.example.com' : 'app.example.com';
-    const hint = isBase
+    const placeholder = isDb ? 'db.example.com' : isBase ? 'apps.example.com' : isPanel ? 'panel.example.com' : 'app.example.com';
+    const hint = isDb
+      ? 'Every public database becomes reachable at <code>&lt;database-name&gt;.db.example.com</code>, on its own port. Use a name you don’t use for anything else.'
+      : isBase
       ? 'Every app becomes reachable at <code>&lt;app-name&gt;.apps.example.com</code>. Use a name you don’t use for anything else.'
       : 'You need to own this domain. A subdomain like <code>app.example.com</code> works too.';
     $('#dw-body').innerHTML = `
@@ -179,16 +190,25 @@ export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panel
     return '<div class="dw-ports">Ports <code>80</code> and <code>443</code> must reach this server. Open them in its firewall (and in your hosting provider’s firewall, if it has one).</div>';
   }
 
+  // Database connections use the ports of the public database range, not 80 and 443
+  function dbPortsNote() {
+    const sv = state.server || {};
+    const where = sv.behind_nat && sv.local_ip
+      ? `Forward them on your router to <span class="dw-copyable" data-copy="${esc(sv.local_ip)}"><code>${esc(sv.local_ip)}</code>${ICON.copy}</span>.`
+      : 'Open them in the server’s firewall (and in your hosting provider’s firewall, if it has one).';
+    return `<div class="dw-ports">Each database keeps its own port, shown on its Access tab (by default <code>31000–31999</code>), and port <code>80</code> has to reach this server for the free certificates. ${where}</div>`;
+  }
+
   function renderDns() {
     const { name, zone } = splitDomain(state.domain);
     const ip = state.server?.ip;
-    const rows = isBase
+    const rows = isWild
       ? [{ type: 'A', name: name === '@' ? '*' : `*.${name}`, value: ip }]
       : [{ type: 'A', name, value: ip }];
     if (state.www && splitDomain(state.domain).apex) rows.push({ type: 'A', name: 'www', value: ip });
 
     $('#dw-body').innerHTML = `
-      <p class="dw-lead">Add this record at the company where you bought <strong>${esc(zone)}</strong> (the DNS settings of your domain).${isBase ? ' The <code>*</code> makes every name under it point here, so new apps work without new records.' : ''}</p>
+      <p class="dw-lead">Add this record at the company where you bought <strong>${esc(zone)}</strong> (the DNS settings of your domain).${isDb ? ' The <code>*</code> makes every name under it point here, so new databases work without new records.' : isBase ? ' The <code>*</code> makes every name under it point here, so new apps work without new records.' : ''}</p>
       <div class="dw-records">
         <div class="dw-rec dw-rec-head"><span>Type</span><span>Name</span><span>Value</span></div>
         ${rows.map(r => `
@@ -198,8 +218,8 @@ export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panel
             <span class="dw-copyable" data-copy="${esc(r.value || '')}"><span class="dw-mono">${esc(r.value || 'IP unknown')}</span>${ICON.copy}</span>
           </div>`).join('')}
       </div>
-      ${portsNote()}
-      <div class="dw-hint">Leave <em>TTL</em> on its default. Using Cloudflare? The proxy (orange cloud) can stay on as long as <em>Always Use HTTPS</em> is off. If the check below stays red, set the record to <em>DNS only</em> (grey) for a moment.</div>
+      ${isDb ? dbPortsNote() : portsNote()}
+      <div class="dw-hint">Leave <em>TTL</em> on its default. ${isDb ? 'The record has to be <em>DNS only</em> (grey cloud): Cloudflare’s proxy only carries web traffic, not database connections.' : 'Using Cloudflare? The proxy (orange cloud) can stay on as long as <em>Always Use HTTPS</em> is off. If the check below stays red, set the record to <em>DNS only</em> (grey) for a moment.'}</div>
       <div class="dw-status" id="dw-status"></div>`;
 
     backdrop.querySelectorAll('.dw-copyable').forEach(el => {
@@ -212,7 +232,7 @@ export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panel
     $('#dw-next').onclick = () => { state.step = 2; render(); };
 
     runCheck();
-    state.pollTimer = setInterval(() => { if (!state.check?.reachable && !state.check?.nginx_ready) runCheck(); }, 8000);
+    state.pollTimer = setInterval(() => { if (!state.check?.reachable && !state.check?.nginx_ready && !(isDb && state.check?.dns_ok)) runCheck(); }, 8000);
   }
 
   async function runCheck() {
@@ -220,7 +240,9 @@ export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panel
     state.checking = true;
     paintStatus();
     try {
-      state.check = await api.checkDomain(state.probe || (state.probe = probeName(state.domain)));
+      const name = state.probe || (state.probe = probeName(state.domain));
+      // Databases carry no web traffic: only the DNS side is checked, not a request through port 80
+      state.check = isDb ? await api.checkDns(name) : await api.checkDomain(name);
     } catch (e) {
       state.check = { dns_ok: false, reachable: false, detail: e.message };
     } finally {
@@ -232,14 +254,14 @@ export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panel
   function paintStatus() {
     const el = $('#dw-status');
     if (!el) return;
-    const c = state.check;
+    const c = isDb && state.check ? { ...state.check, reachable: state.check.dns_ok } : state.check;
     let tone = 'wait', title = 'Waiting for the DNS record…', detail = 'Checking every few seconds. Changes usually show up within minutes.';
     if (c?.reachable) {
-      tone = 'ok'; title = `${isBase ? `*.${state.domain}` : state.domain} reaches this server`; detail = '';
+      tone = 'ok'; title = `${isWild ? `*.${state.domain}` : state.domain} reaches this server`; detail = '';
     } else if (c?.cloudflare_proxy) {
       tone = 'warn'; title = 'Cloudflare proxy is on'; detail = c.detail;
     } else if (c?.dns_ok && c?.nginx_ready) {
-      tone = 'ok'; title = `${isBase ? `*.${state.domain}` : state.domain} points here and nginx is ready`; detail = c.detail;
+      tone = 'ok'; title = `${isWild ? `*.${state.domain}` : state.domain} points here and nginx is ready`; detail = c.detail;
     } else if (c?.dns_ok) {
       tone = 'warn'; title = 'DNS is set, but the test didn’t pass'; detail = c.detail;
     } else if (c?.ips?.length) {
@@ -263,17 +285,18 @@ export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panel
   /* ── 3. HTTPS ────────────────────────────────────────────────────────── */
   function renderHttps() {
     const s = state.server || {};
-    if (isBase) {
-      // Automatic (one free certificate per app) or a wildcard certificate of your own
-      if (!s.https_available) state.ownCert = true;
+    if (isWild) {
+      // Automatic (one free certificate per app, or per database) or a wildcard certificate of your own
+      const auto = s.https_available;
+      if (!auto) state.ownCert = true;
       const own = !!state.ownCert;
       $('#dw-body').innerHTML = `
         <div class="choice-list dw-role">
           <label class="choice">
-            <input type="radio" name="dw-cert" value="auto" ${own ? '' : 'checked'} ${s.https_available ? '' : 'disabled'} />
+            <input type="radio" name="dw-cert" value="auto" ${own ? '' : 'checked'} ${auto ? '' : 'disabled'} />
             <span class="choice-dot"></span>
             <span class="choice-text"><span>Automatic</span><small>${s.https_available
-              ? 'Each app gets its own free certificate for its subdomain, usually within a minute after it starts, and it renews itself.'
+              ? (isDb ? 'Each database gets its own free Let’s Encrypt certificate for its hostname, usually within a minute after public access is turned on, and it renews itself. Port 80 has to reach this server.' : 'Each app gets its own free certificate for its subdomain, usually within a minute after it starts, and it renews itself.')
               : esc(s.https_reason || 'Not available on this server yet.')}</small></span>
           </label>
           <label class="choice">
@@ -296,7 +319,7 @@ export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panel
           <div class="dw-hint">Must cover <code>*.${esc(state.domain)}</code> and not be expired. Kept on this server only.</div>
         </div>
         <div class="dw-status" id="dw-https-status" hidden></div>`;
-      footer(`<button class="btn" id="dw-back">Back</button><span class="dw-foot-gap"></span><button class="btn btn-primary" id="dw-nohttps">Turn on app subdomains</button>`);
+      footer(`<button class="btn" id="dw-back">Back</button><span class="dw-foot-gap"></span><button class="btn btn-primary" id="dw-nohttps">${isDb ? 'Turn on database hostnames' : 'Turn on app subdomains'}</button>`);
       $('#dw-back').onclick = () => { state.step = 1; render(); };
       backdrop.querySelectorAll('input[name="dw-cert"]').forEach(r => {
         r.onchange = () => { state.ownCert = r.value === 'own'; $('#dw-own').hidden = !state.ownCert; };
@@ -390,9 +413,10 @@ export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panel
     if (!isApp) {
       try {
         let updated;
-        if (isBase) updated = await api.setBaseDomain(state.domain, cert?.pem);
+        if (isDb) updated = await api.setDbDomain(state.domain, cert?.pem);
+        else if (isBase) updated = await api.setBaseDomain(state.domain, cert?.pem);
         else updated = await api.setPanelDomain({ domain: state.domain, ssl_cert_path: cert?.cert || null, ssl_key_path: cert?.key || null });
-        state.https = isBase ? !!(cert?.pem || state.server?.https_available) : !!cert;
+        state.https = isDb ? !!cert?.pem : isBase ? !!(cert?.pem || state.server?.https_available) : !!cert;
         state.ownDone = !!cert?.pem;
         state.step = 3;
         render();
@@ -434,7 +458,12 @@ export function openDomainWizard(app, { onDone, domain = '', kind = 'app', panel
   function renderDone() {
     $('#dw-steps').innerHTML = '';
     const url = `${state.https ? 'https' : 'http'}://${state.domain}`;
-    $('#dw-body').innerHTML = isBase ? `
+    $('#dw-body').innerHTML = isDb ? `
+      <div class="dw-done">
+        <span class="dw-done-icon">${ICON.check}</span>
+        <div class="dw-done-title">Database hostnames are on</div>
+        <div class="dw-hint">Public databases are now reachable at <code>&lt;database-name&gt;.${esc(state.domain)}</code> on their own port${state.ownDone ? ', with your wildcard certificate' : ', each with its own free certificate'}.</div>
+      </div>` : isBase ? `
       <div class="dw-done">
         <span class="dw-done-icon">${ICON.check}</span>
         <div class="dw-done-title">App subdomains are on</div>

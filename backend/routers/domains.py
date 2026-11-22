@@ -275,6 +275,26 @@ async def check_domain(req: CheckRequest, _user: dict = Depends(_auth.require_pe
     return result
 
 
+@router.post("/check-dns")
+async def check_dns(req: CheckRequest, _user: dict = Depends(_auth.require_permission("system.manage"))):
+    """Only the DNS side of check_domain: does the name point at this server, and is it behind a web proxy? For names
+    that carry no web traffic (public databases), where the port 80 round trip makes no sense."""
+    domain = _clean_domain(req.domain)
+    server_ip = await _server_ip()
+    ips = await asyncio.to_thread(_resolve, domain)
+    proxied = bool(ips) and all(_is_cloudflare(ip) for ip in ips)
+    ok = bool(ips) and not proxied and (server_ip in ips if server_ip else True)
+    if not ips:
+        detail = "No DNS record found yet. Most providers publish it within a few minutes."
+    elif proxied:
+        detail = "This name goes through Cloudflare’s proxy (orange cloud), which only carries web traffic. Set the record to DNS only (grey)."
+    elif server_ip and server_ip not in ips:
+        detail = f"{domain} points to {', '.join(ips)}, not to this server ({server_ip})."
+    else:
+        detail = ""
+    return {"domain": domain, "server_ip": server_ip, "ips": ips, "dns_ok": ok, "cloudflare_proxy": proxied, "detail": detail}
+
+
 class CertificateRequest(BaseModel):
     domains: list[str]
     email: Optional[str] = None

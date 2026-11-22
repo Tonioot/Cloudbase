@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 from dbs.create import create_database_now
 from datetime import timedelta, datetime, timezone
 from typing import Optional
@@ -16,7 +17,8 @@ from core.database import get_db
 from core.models import DatabaseStatsHistory, DatabaseLink, Database, Node
 from dbs.ops import _get_or_404, _links_for, _node_for, _node_reachable, _run_on_node, _spawn, _start_operation
 from dbs.provision import _data_dir, _validate_limits
-from dbs.public import _public_host, assign_public_port, sync_public_access
+from dbs import public_certs
+from dbs.public import assign_public_port, public_host_for, sync_public_access
 from dbs.state import _busy, _operation, claim, release
 from dbs.view import _as_dict, _client_ip
 from routers.databases.schemas import CreateDatabaseRequest, PublicAccessRequest, UpdateDatabaseRequest
@@ -27,6 +29,8 @@ router = APIRouter(prefix="/api/databases", tags=["databases"])
 
 
 log = logging.getLogger("cloudbase.databases")
+
+_HOSTNAME_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -210,12 +214,15 @@ async def get_credentials(
     if database.engine in ("mysql", "mariadb"):
         result["root_password"] = creds["root_password"]
     public_port = database.public_port
-    if database.public_enabled and public_port and _public_host():
+    if database.public_enabled and public_port and public_host_for(database):
         engine = db_engines.get_engine(database.engine)
-        url = engine.url(creds, _public_host(), public_port)
+        url = engine.url(creds, public_host_for(database), public_port)
         result["public_url"] = engine.tls_url(url) if database.public_tls and engine.tls_url else url
         if database.public_tls and engine.tls_verify_url:
-            result["public_url_verified"] = engine.tls_verify_url(url)
+            verified = engine.tls_verify_url(url)
+            if public_certs.is_trusted(database.id):       # a certificate clients already trust: no Cloudbase CA file needed
+                verified = verified.replace("sslrootcert=cloudbase-database-ca.crt", "sslrootcert=system")                                    .replace("&tlsCAFile=cloudbase-database-ca.crt", "")
+            result["public_url_verified"] = verified
     return result
 
 
@@ -239,9 +246,14 @@ async def set_public_access(
     database.public_allowlist = json.dumps(entries)
     if req.tls is not None:
         database.public_tls = req.tls
+    if req.hostname is not None:
+        hostname = req.hostname.strip().strip(".").lower()
+        if hostname and not _HOSTNAME_RE.match(hostname):
+            raise HTTPException(400, f"“{req.hostname}” is not a valid hostname")
+        database.public_hostname = hostname or None
     await log_audit(db, "database.public_access", actor=actor, detail={
         "database_id": database.id, "name": database.name, "enabled": req.enabled, "allowlist": entries,
-        "tls": bool(database.public_tls),
+        "tls": bool(database.public_tls), "hostname": database.public_hostname,
     })
     await db.commit()
     await sync_public_access()

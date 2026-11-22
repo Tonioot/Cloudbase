@@ -8,6 +8,9 @@
 #       Remove a certificate that is no longer used.
 #   cloudbase-issue-cert info <cert-name>
 #       Print "expires=<date>" and "names=<a,b,...>" for the certificate.
+#   cloudbase-issue-cert export-cert <cert-name> | export-key <cert-name>
+#       Print the certificate chain / the private key, so Cloudbase can serve a database's TLS port with it
+#       (/etc/letsencrypt/live is only readable by root).
 #   cloudbase-issue-cert exists <cert-name>
 #       Exit 0 when the certificate and key are present. /etc/letsencrypt/live
 #       is only readable by root, so Cloudbase can't check this itself.
@@ -35,6 +38,14 @@ case "$action" in
     echo "expires=$(openssl x509 -in "$cert" -noout -enddate | cut -d= -f2)"
     echo "names=$(openssl x509 -in "$cert" -noout -ext subjectAltName 2>/dev/null | grep -o 'DNS:[^,]*' | sed 's/DNS://' | paste -sd, -)"
     exit 0
+    ;;
+  export-cert)
+    [[ -f "/etc/letsencrypt/live/$cert_name/fullchain.pem" ]] || exit 1
+    exec cat "/etc/letsencrypt/live/$cert_name/fullchain.pem"
+    ;;
+  export-key)
+    [[ -f "/etc/letsencrypt/live/$cert_name/privkey.pem" ]] || exit 1
+    exec cat "/etc/letsencrypt/live/$cert_name/privkey.pem"
     ;;
   exists)
     [[ -f "/etc/letsencrypt/live/$cert_name/fullchain.pem" && -f "/etc/letsencrypt/live/$cert_name/privkey.pem" ]]

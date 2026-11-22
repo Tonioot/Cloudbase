@@ -7,7 +7,7 @@ import { api, wsSystemLogs } from './api.js';
 import { createLogViewer, fillComponentSelect } from './logviewer.js';
 import { setCrumbs } from './shell.js';
 import { toast, confirm, timeAgo, spinner } from './utils.js';
-import { openPanelDomainWizard, openBaseDomainWizard } from './domain-wizard.js';
+import { openPanelDomainWizard, openBaseDomainWizard, openDbDomainWizard } from './domain-wizard.js';
 
 const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
@@ -136,9 +136,12 @@ function renderDomain(root) {
     ${group('App subdomains',
       'Give every app an automatic address like <code>myapp.apps.example.com</code>, before or instead of its own domain.',
       `<div class="https-card" id="base-card"><span class="settings-note">Loading…</span></div>`)}
+    ${group('Database hostnames',
+      'Reach public databases at <code>dbname.db.example.com:port</code> instead of the server’s IP address. Each database can also get a hostname of its own under its Access tab.',
+      `<div class="https-card" id="dbdomain-card"><span class="settings-note">Loading…</span></div>`)}
   `;
 
-  const live = { domain: null, cert: null, base: null, baseCert: null };
+  const live = { domain: null, cert: null, base: null, baseCert: null, dbDomain: null };
 
   const load = () => api.getNginxConfig().then(data => {
     const pick = re => ((data.content || '').match(re)?.[1] || '').replace(/^["']|["']$/g, '') || null;
@@ -147,8 +150,11 @@ function renderDomain(root) {
     live.base = data.base_domain || null;
     live.baseCert = data.base_ssl_cert_path || null;
     live.baseCertInfo = data.base_cert || null;      // set when the wildcard certificate was uploaded here
+    live.dbDomain = data.db_domain || null;
+    live.dbCert = data.db_cert || null;       // expiry of the wildcard certificate uploaded for it
     renderPanel();
     renderBase();
+    renderDbDomain();
   }).catch(e => {
     document.getElementById('panel-card').innerHTML = `<span class="settings-note">${esc(e.message)}</span>`;
   });
@@ -238,6 +244,36 @@ function renderDomain(root) {
     document.getElementById('base-off')?.addEventListener('click', async () => {
       if (!await confirm('Turn off app subdomains?', `Apps stop answering on &lt;app-name&gt;.${esc(live.base)}. Domains you connected to apps keep working.`)) return;
       try { await api.setBaseDomain(null); toast('App subdomains turned off'); load(); }
+      catch (e) { toast(e.message, 'error'); }
+    });
+  }
+
+  /* ── Database domain ───────────────────────────────────────────────── */
+  function renderDbDomain() {
+    const btn = (id, label, primary = false) => `<button type="button" class="btn btn-sm ${primary ? 'btn-primary' : ''}" id="${id}">${label}</button>`;
+    if (!live.dbDomain) {
+      card('dbdomain-card', {
+        title: 'Off',
+        text: 'Public databases are reached on the primary’s IP address.',
+        actions: btn('dbdomain-setup', 'Set up database hostnames', true),
+      });
+    } else {
+      const days = live.dbCert?.days_left;
+      const soon = live.dbCert && days < 14;
+      card('dbdomain-card', {
+        tone: soon ? 'warn' : 'ok',
+        title: `*.${esc(live.dbDomain)}`,
+        text: 'Public databases are reached at <code>&lt;database-name&gt;.' + esc(live.dbDomain) + '</code> on their own port. The record has to be DNS only: a web proxy such as Cloudflare’s doesn’t carry database traffic. '
+          + (live.dbCert
+            ? `Your own wildcard certificate secures them, so clients trust the connection. ${days < 0 ? 'It has expired.' : `It expires on ${esc(live.dbCert.expires_at.slice(0, 10))} (${days} day${days === 1 ? '' : 's'} left).`} Cloudbase doesn’t renew it: upload the new one before then (Change).`
+            : 'Every database gets its own free certificate for its hostname, requested automatically and renewed by itself.'),
+        actions: btn('dbdomain-setup', soon ? 'Change certificate' : 'Change', soon) + btn('dbdomain-off', 'Turn off'),
+      });
+    }
+    document.getElementById('dbdomain-setup')?.addEventListener('click', () => openDbDomainWizard({ domain: live.dbDomain || '', onDone: load }));
+    document.getElementById('dbdomain-off')?.addEventListener('click', async () => {
+      if (!await confirm('Turn off database hostnames?', 'Public databases go back to the primary’s IP address, except those with a hostname of their own. Clients that use the old name must be changed.')) return;
+      try { await api.setDbDomain(null); toast('Database hostnames turned off'); load(); }
       catch (e) { toast(e.message, 'error'); }
     });
   }

@@ -157,6 +157,16 @@ def server_context(hosts: tuple[str, ...], alpn: Optional[str] = None) -> ssl.SS
         return ctx
 
 
+def context_from_files(cert_path: str, key_path: str, alpn: Optional[str] = None) -> ssl.SSLContext:
+    """TLS context with a certificate of the user's own (the wildcard certificate for the database domain)."""
+    ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    ctx.load_cert_chain(cert_path, key_path)
+    if alpn:
+        ctx.set_alpn_protocols([alpn])
+    return ctx
+
+
 def ca_pem() -> bytes:
     with _lock:
         _ensure_ca()

@@ -160,6 +160,7 @@ def _allowed(database_id: int, peer_ip: str) -> bool:
 #   "mysql"    MySQL/MariaDB do TLS themselves; refuse clients that don't ask for it
 _public_mode: dict[int, tuple] = {}
 _public_ports: dict[int, int] = {}
+_public_hosts: dict[int, tuple] = {}   # the names the listener's certificate was made for
 
 PG_SSL_REQUEST = 80877103
 PG_GSSENC_REQUEST = 80877104
@@ -288,6 +289,11 @@ def _mysql_greeting_has_ssl(greeting: bytes) -> bool:
         return False
 
 
+def _tls_identity(spec: dict) -> tuple:
+    """What a listener's certificate was made from: when it changes, the listener opens again."""
+    return tuple(spec.get("hosts") or ()), tuple(spec["cert"]) if spec.get("cert") else None
+
+
 async def reconcile_public(specs: list[dict]) -> None:
     """Run exactly the public listeners in `specs`
     ({database_id, port, allowlist, engine, tls, hosts})."""
@@ -296,8 +302,10 @@ async def reconcile_public(specs: list[dict]) -> None:
         for db_id in list(_public):
             spec = wanted.get(db_id)
             if (spec is None or _public_mode.get(db_id, (None,))[0] != public_mode(spec.get("engine", ""), spec.get("tls", False))
-                    or _public_ports.get(db_id) != spec.get("port")):
+                    or _public_ports.get(db_id) != spec.get("port")
+                    or _public_hosts.get(db_id) != _tls_identity(spec)):
                 _public.pop(db_id).close()
+                _public_hosts.pop(db_id, None)
                 _public_allow.pop(db_id, None)
                 _public_mode.pop(db_id, None)
                 _public_ports.pop(db_id, None)
@@ -314,7 +322,8 @@ async def reconcile_public(specs: list[dict]) -> None:
             try:
                 ctx = None
                 if mode in ("tls", "postgres"):
-                    ctx = await asyncio.to_thread(db_tls.server_context, tuple(spec.get("hosts") or ()))
+                    cert = spec.get("cert")
+                    ctx = await asyncio.to_thread(db_tls.context_from_files, cert[0], cert[1]) if cert else                         await asyncio.to_thread(db_tls.server_context, tuple(spec.get("hosts") or ()))
                 port = spec["port"]
                 server = await asyncio.start_server(
                     lambda r, w, i=db_id: _serve_public(i, r, w), host=None, port=port,
@@ -324,6 +333,7 @@ async def reconcile_public(specs: list[dict]) -> None:
                 _public[db_id] = server
                 _public_mode[db_id] = (mode, ctx)
                 _public_ports[db_id] = port
+                _public_hosts[db_id] = _tls_identity(spec)
                 log.info("[db-public] database %s: public on port %s (%s)", db_id, port, mode)
             except Exception as e:
                 log.warning("[db-public] database %s: cannot open public port: %s", db_id, e)

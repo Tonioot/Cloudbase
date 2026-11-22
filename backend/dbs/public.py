@@ -5,7 +5,9 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core import config as _cfg
+from core import system_config as _syscfg
 from dbs import proxy as db_proxy
+from dbs import public_certs
 from dbs import lifecycle as dbs_lifecycle
 from dbs.links import node_address
 from core.database import AsyncSessionLocal
@@ -21,6 +23,22 @@ _public_ip: Optional[str] = None
 
 def _public_host() -> str:
     return _public_ip or ""
+
+
+def public_host_for(database: Database) -> str:
+    """The address a database is reached at from outside: its own hostname when it has one, else
+    <name>.<database domain> when that is set in Domain & SSL, else the primary's IP. The names have to point at the
+    primary itself (DNS only), as a web proxy such as Cloudflare does not carry database traffic."""
+    if database.public_hostname:
+        return database.public_hostname
+    domain = _syscfg.get_db_domain_cached()
+    return f"{database.name}.{domain}" if domain else _public_host()
+
+
+def _certificate_hosts() -> list[str]:
+    """The names of Cloudbase's own certificate: only used for a database on the bare IP address. A database reached
+    by a name gets a real certificate (see dbs/public_certs.py)."""
+    return sorted(n for n in {_public_ip, "localhost"} if n)
 
 
 def pick_public_port(database: Database, taken: set[int]) -> int | None:
@@ -62,12 +80,18 @@ async def sync_public_access() -> None:
         local = (await db.execute(select(Node).where(Node.is_local == True))).scalar_one_or_none()
     global _public_ip
     _public_ip = local.public_host if local else None
-    hosts = [h for h in (_public_ip, "localhost") if h]
-    await db_proxy.reconcile_public([
-        {"database_id": d.id, "port": d.public_port, "allowlist": _allowlist(d), "engine": d.engine,
-         "tls": bool(d.public_tls), "hosts": hosts}
-        for d in public
-    ])
+    hosts = _certificate_hosts()
+    specs = []
+    for d in public:
+        state, cert = await public_certs.resolve(d, public_host_for(d), sync_public_access)
+        public_certs.STATE[d.id] = state
+        if state == "waiting":
+            continue                    # no certificate yet: the port stays closed rather than using another one
+        specs.append({"database_id": d.id, "port": d.public_port, "allowlist": _allowlist(d), "engine": d.engine,
+                      "tls": bool(d.public_tls), "hosts": hosts, "cert": cert})
+    for database_id in set(public_certs.STATE) - {d.id for d in public}:
+        public_certs.STATE.pop(database_id, None)
+    await db_proxy.reconcile_public(specs)
 
 
 async def open_db_stream(database_id: int) -> db_proxy.Stream:
