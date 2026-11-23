@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, Date, Text, Boolean, ForeignKey, Float, Index, Table, UniqueConstraint
+from sqlalchemy import BigInteger, Column, Integer, String, DateTime, Date, Text, Boolean, ForeignKey, Float, Index, Table, UniqueConstraint
 from sqlalchemy.orm import validates
 from core.database import Base
 
@@ -319,6 +319,21 @@ class UptimeDay(Base):
     total_ms  = Column(Integer, nullable=False, default=0)   # response time of the checks that worked, added up
 
 
+class AppTraffic(Base):
+    """What an app sent to the public internet on one day (UTC): apps/traffic.py. No foreign key: what an app used
+    stays after it is deleted (it is what gets billed)."""
+    __tablename__ = "app_traffic"
+    __table_args__ = (UniqueConstraint("app_id", "day", name="uq_app_traffic_app_day"),)
+
+    id             = Column(Integer, primary_key=True, index=True)
+    app_id         = Column(Integer, nullable=False, index=True)
+    day            = Column(Date, nullable=False, index=True)
+    # Sent by its containers to public addresses: requests it makes itself (APIs, webhooks, mail) and answers to them
+    internet_bytes = Column(BigInteger, nullable=False, default=0)
+    # Sent by nginx to its visitors: the answers to the requests that came in through its domains
+    visitor_bytes  = Column(BigInteger, nullable=False, default=0)
+
+
 class OverviewHistory(Base):
     """Cluster-wide samples for the dashboard (every 30s, kept 7 days)."""
     __tablename__ = "overview_history"
@@ -398,6 +413,9 @@ class Database(Base):
     credentials     = Column(Text, nullable=False)          # encrypted JSON: user, password, db_name
     cpu_limit       = Column(Float, nullable=True)
     memory_limit_mb = Column(Integer, nullable=True)
+    # A file system of exactly this size holds the data (scripts/cloudbase-quota): full is full. Set when the database
+    # is created, can only grow. None = no limit (a plain Docker volume).
+    disk_limit_mb   = Column(Integer, nullable=True)
     # Set after the first successful start. From then on a missing data volume is an
     # error and never a reason to initialise a fresh, empty database.
     initialized_at  = Column(DateTime, nullable=True)

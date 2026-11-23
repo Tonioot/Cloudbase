@@ -586,6 +586,13 @@ step_wireguard() {
   fi
 }
 
+step_quota() {
+  # Disk limits of databases and counting what apps send to the internet (see scripts/cloudbase-quota)
+  if ! bash "$INSTALL_DIR/scripts/setup-quota.sh" "$RUN_USER"; then
+    add_warning "Disk limits and traffic counting could not be set up, so databases with a disk limit won't start. Fix the error above, then run: cloudbase quota"
+  fi
+}
+
 step_update_helper() {
   # Lets the panel or node finish an update that changes system files, without `cloudbase update` (see core/selfupdate.py)
   if ! bash "$INSTALL_DIR/scripts/setup-update.sh" "$RUN_USER"; then
@@ -792,6 +799,7 @@ else
   add_step "Registering with the primary" step_register
 fi
 add_step "Setting up the node network" step_wireguard
+add_step "Setting up disk limits and traffic counting" step_quota
 add_step "Setting up updates from the panel" step_update_helper
 add_step "Setting up restart and power readings" step_power
 add_step "Starting Cloudbase" step_service

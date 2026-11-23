@@ -48,6 +48,7 @@ def _as_dict(database: Database, node: Optional[Node], link_count: int = 0) -> d
         "last_error": database.last_error,
         "cpu_limit": database.cpu_limit,
         "memory_limit_mb": database.memory_limit_mb,
+        "disk_limit_mb": database.disk_limit_mb,
         "host": dbs_docker.container_name(database.id),
         "port": engine.port if engine else None,
         "default_env_var": engine.env_var if engine else "DATABASE_URL",

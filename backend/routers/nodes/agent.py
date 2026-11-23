@@ -12,6 +12,7 @@ from core.models import Node, NodeInvite
 from core.audit import log_audit
 from mesh import hub
 from core import config as _cfg, system_config as _syscfg
+from apps import traffic as app_traffic
 from nodes import desired, metrics as node_metrics, observed, reports as node_reports, snapshot
 from nodes.liveness import HEARTBEAT_SECONDS, mark_online, node_gone, note_interval
 from nodes import commands as node_commands
@@ -268,12 +269,19 @@ async def agent_ws(websocket: WebSocket):
                     elif msg_type == "database_progress":
                         db_state._remote_progress[node_id] = {str(k): str(v) for k, v in (incoming.get("progress") or {}).items()}
                     elif msg_type == "database_report":
-                        node_reports.store_databases(node_id, incoming.get("databases") or {})
+                        # only what runs there: a node that was taken over cannot speak for another node's databases
+                        reported = incoming.get("databases") or {}
+                        mine = await node_reports.databases_on(node_id, reported)
+                        node_reports.store_databases(node_id, {k: v for k, v in reported.items() if str(k) in mine})
+                    elif msg_type == "traffic_report":
+                        counts = node_reports.traffic_counts(incoming.get("apps"))
+                        mine = await node_reports.apps_on(node_id, counts)
+                        await app_traffic.add("internet", {a: n for a, n in counts.items() if a in mine})
                     elif msg_type == "stream_data":
                         stream_id = incoming.get("stream_id")
                         data = incoming.get("data")
                         if stream_id and data is not None:
-                            push_node_stream_data(stream_id, data)
+                            push_node_stream_data(stream_id, data, node_id)
                     elif msg_type == "pong":
                         ping_id = incoming.get("ping_id", "")
                         fut = _pending_pings.get(ping_id)

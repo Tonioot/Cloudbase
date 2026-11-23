@@ -66,7 +66,10 @@ async def _move(app_id: int, offline_ids: list[int], like_id: int) -> None:
         nodes = list((await s.execute(select(Node).where(Node.enabled == True, Node.status == "online"))).scalars())  # noqa: E712
         if not any(n.id == local.id for n in nodes):
             nodes.append(local)
-        node = pick_nodes(nodes, 1)[0]
+        picked = pick_nodes(nodes, 1)
+        if not picked:
+            raise RuntimeError("no other node is online to take over")
+        node = picked[0]
         instance = await rollout.add_instance(app, node, s, like=like)
         name = node.name
     _say(app_id, f"The node of this app is offline — starting instance {instance.id} on '{name}'…")

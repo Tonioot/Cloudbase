@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from containers import processes as pm
 from core.database import AsyncSessionLocal
-from core.models import Instance
+from core.models import Application, Database, Instance
 
 MAX_AGE_SECONDS = 30            # instance stats older than this are not used (a node sends them every 10 s)
 DATABASE_MAX_AGE_SECONDS = 90   # database states: a node sends them every 30 s
@@ -60,3 +60,39 @@ def database_stats(database_id: int) -> dict | None:
     """The database's usage as its node last sent it, while recent."""
     when, stats = _database_stats.get(database_id, (float("-inf"), None))
     return stats if time.monotonic() - when <= DATABASE_STATS_MAX_AGE_SECONDS else None
+
+
+def traffic_counts(apps) -> dict[int, int]:
+    """{app id: bytes} from a node's traffic report; anything that is not a sensible count is left out."""
+    out: dict[int, int] = {}
+    for key, value in (apps or {}).items() if isinstance(apps, dict) else ():
+        try:
+            app_id, n = int(key), int(value)
+        except (TypeError, ValueError):
+            continue
+        if app_id > 0 and 0 < n < 10 ** 15:
+            out[app_id] = n
+    return out
+
+
+async def databases_on(node_id: int, reported) -> set[str]:
+    """The ids (as text) among `reported` of the databases that are placed on this node."""
+    ids = [int(k) for k in (reported or {}) if str(k).isdigit()]
+    if not ids:
+        return set()
+    async with AsyncSessionLocal() as db:
+        return {str(i) for i in (await db.execute(
+            select(Database.id).where(Database.node_id == node_id, Database.id.in_(ids)))).scalars()}
+
+
+async def apps_on(node_id: int, counts: dict[int, int]) -> set[int]:
+    """The apps among `counts` that run on this node: an instance there, or a cron job placed there."""
+    if not counts:
+        return set()
+    ids = list(counts)
+    async with AsyncSessionLocal() as db:
+        found = set((await db.execute(select(Instance.app_id).where(
+            Instance.node_id == node_id, Instance.app_id.in_(ids)))).scalars())
+        found |= set((await db.execute(select(Application.id).where(
+            Application.node_id == node_id, Application.id.in_(ids)))).scalars())
+    return found

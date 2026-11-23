@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.models import Application, Instance
 from nginx import paths as nginx_paths
 from containers import apps as containers_apps, naming
+from core import tenant
 
 async def _assign_external_port(requested: Optional[int], node_id: int, db: AsyncSession) -> int:
     """Return requested port if free, else the next free port of the instance range, for an instance on this node."""
@@ -77,11 +78,15 @@ def _validate_docker_runtime_settings(
 
 # names the panel itself uses (its own nginx site and automatic subdomain)
 def _network_access(value: str | None, default: str = "open") -> str:
-    """What an app may connect to (containers/naming.NETWORK_ACCESS); an unknown word is an error, not a guess."""
+    """What an app may connect to (containers/naming.NETWORK_ACCESS); an unknown word is an error, not a guess. In
+    tenant mode never the local network."""
     if value is None or value == "":
-        return default
+        return tenant.network_access(default)
     if value not in naming.NETWORK_ACCESS:
         raise HTTPException(400, f"network_access must be one of: {', '.join(naming.NETWORK_ACCESS)}")
+    if value == "open" and tenant.enabled():
+        raise HTTPException(400, "Tenant mode: an app reaches the internet or nothing, not the local network "
+                                 "(network_access must be internet or none)")
     return value
 
 

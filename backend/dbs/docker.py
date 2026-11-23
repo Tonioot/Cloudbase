@@ -2,7 +2,7 @@ import logging
 import threading
 from typing import Optional
 from dbs import engines as db_engines
-from containers import client as containers_client, naming
+from containers import client as containers_client, hardening, naming
 from core import config as _cfg
 from agent import state as agent_state
 
@@ -218,6 +218,9 @@ def _run_container(client, spec: dict):
         run_kwargs["nano_cpus"] = int(float(spec["cpu_limit"]) * 1_000_000_000)
     if mem_mb:
         run_kwargs["mem_limit"] = int(mem_mb) * 1024 * 1024
+    # A database runs what its users send it (PostgreSQL's owner can start programs with COPY ... PROGRAM), so in
+    # tenant mode it is shut in like an app
+    hardening.apply(run_kwargs, spec.get("hardening"))
 
     import docker  # type: ignore
     try:

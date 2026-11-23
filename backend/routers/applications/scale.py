@@ -15,6 +15,7 @@ from apps.validation import _assign_external_port
 from routers.applications.schemas import ScaleRequest
 from routers.applications.instances import _remove_instances
 from core import projects as core_projects
+from core import tenant
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
@@ -57,10 +58,16 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
             raise HTTPException(400, "Target node not found or not enabled")
         if not pinned.is_local and pinned.status != "online":
             raise HTTPException(400, f"Node '{pinned.name}' is not online")
+        if not tenant.may_run_on(pinned):
+            raise HTTPException(400, tenant.REFUSED_ON_PRIMARY)
         candidates = [pinned]
     else:
         nodes = (await db.execute(select(Node).where(Node.enabled == True))).scalars().all()
-        candidates = [n for n in nodes if n.is_local or n.status == "online"] or [local_node]
+        candidates = [n for n in nodes if (n.is_local or n.status == "online") and tenant.may_run_on(n)]
+        if not candidates and not tenant.enabled():
+            candidates = [local_node]
+        if not candidates:
+            raise HTTPException(409, tenant.REFUSED_ON_PRIMARY)
     counts = {}
     for r in current:
         counts[r.node_id] = counts.get(r.node_id, 0) + 1

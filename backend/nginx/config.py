@@ -1,5 +1,6 @@
 from core import system_config as _scfg
-from nginx.paths import MAINTENANCE_DIR, _ACME_LOCATION, _normalize_domain, _sanitize_ssl_path, subdomain_slug
+import os
+from nginx.paths import MAINTENANCE_DIR, TRAFFIC_LOG_DIR, _ACME_LOCATION, _normalize_domain, _sanitize_ssl_path, subdomain_slug, traffic_log_path
 from nginx import certbot as nginx_certbot
 
 # â"€â"€ Nginx config generation â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
@@ -96,13 +97,15 @@ def generate_config(
     if mode == "starting":
       return _static_page_config(domain, maint_root, "starting.html", ssl_cert, ssl_key, extra_domains, redirect_domains, strict_hostnames=strict_hostnames)
 
+    traffic = _traffic_log(app_id) if app_id and not is_cloudbase else ("", "")
+
     # list[str] of "host:port" backends (instance-based model)
     if isinstance(port, list):
         if not port:
             # No running instances — serve 503 maintenance page
           return _static_page_config(domain, maint_root, "downtime.html", ssl_cert, ssl_key, extra_domains, redirect_domains, strict_hostnames=strict_hostnames)
         if len(port) == 1:
-          return _proxy_config(domain, f"http://{port[0]}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames)
+          return _proxy_config(domain, f"http://{port[0]}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames, traffic=traffic)
         upstream_name = f"cloudbase_app_{app_id}" if app_id else "cloudbase_" + _re.sub(r"[^a-z0-9_]", "_", app_name.lower())
         upstream_block = f"upstream {upstream_name} {{\n"
         for backend in port:
@@ -110,10 +113,23 @@ def generate_config(
             # connect timeout (below) and then no request at all, instead of one in N waiting a minute
             upstream_block += f"    server {backend} max_fails=1 fail_timeout=5s;\n"
         upstream_block += "}\n\n"
-        return _proxy_config(domain, f"http://{upstream_name}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, upstream_block=upstream_block, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames)
+        return _proxy_config(domain, f"http://{upstream_name}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, upstream_block=upstream_block, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames, traffic=traffic)
 
     # One port: the panel itself
     return _proxy_config(domain, f"http://127.0.0.1:{port}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames, panel=True)
+
+
+def _traffic_log(app_id: int) -> tuple[str, str]:
+    """(at the top of the file, in the proxying location): log what nginx sends to each visitor of the app, as one
+    number per request. A format of its own per app, so each file can define its own (the files are included in
+    alphabetical order, so a shared one could come after its first use). nginx's own access log keeps its lines."""
+    if not os.path.isdir(TRAFFIC_LOG_DIR):
+        return "", ""
+    name = f"cloudbase_traffic_{int(app_id)}"
+    return (f"log_format {name} '$bytes_sent';\n\n",
+            f"""
+        access_log {traffic_log_path(app_id)} {name} buffer=16k flush=10s;
+        access_log /var/log/nginx/access.log;""")
 
 
 def _build_strict_host_guard(all_domains: list[str]) -> str:
@@ -133,7 +149,8 @@ def _build_strict_host_guard(all_domains: list[str]) -> str:
   }}"""
 
 
-def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None, upstream_block: str = "", fallback_filename: str = "downtime.html", strict_hostnames: bool = False, panel: bool = False) -> str:
+def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None, upstream_block: str = "", fallback_filename: str = "downtime.html", strict_hostnames: bool = False, panel: bool = False, traffic: tuple[str, str] = ("", "")) -> str:
+    upstream_block = traffic[0] + upstream_block
     # The panel receives uploads from nodes (database backups, app sources) that are far larger than the 1 MB nginx
     # accepts by default, which answered 413. No limit here; the panel streams the body to disk itself.
     body_limit = """
@@ -178,7 +195,7 @@ def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;{body_limit}
+        proxy_cache_bypass $http_upgrade;{body_limit}{traffic[1]}
         # A backend that does not even accept the connection (a node that is gone) fails fast: the default wait is
         # 60 s. With several instances the request goes to the next one (only after errors and timeouts of the
         # connection, never after the app answered), within a few seconds at most.

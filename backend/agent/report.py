@@ -1,7 +1,7 @@
 """What a node tells the primary on its own, without being asked: the stats of its instances and the state (and
 stats) of its databases, and what a database is doing before its container exists (an image pull takes minutes). Sent over the agent's websocket; the primary only stores it (nodes/reports.py).
 
-Instances every TICK_SECONDS; databases every DB_EVERY-th tick, with their usage every DB_STATS_EVERY-th of those
+Instances every TICK_SECONDS; databases (and what the apps sent to the internet) every DB_EVERY-th tick, with their usage every DB_STATS_EVERY-th of those
 and the size of their data now and then (du is slow).
 """
 import asyncio
@@ -9,6 +9,7 @@ import time
 from typing import Awaitable, Callable
 
 from containers import instances as containers_instances, stats_logs as containers_stats_logs
+from containers import traffic as containers_traffic
 from dbs import docker as dbs_docker, lifecycle as dbs_lifecycle
 from agent.log import _agent_log
 
@@ -43,12 +44,44 @@ async def report_databases(db_round: int, send: Callable[[dict], Awaitable[None]
         _agent_log(f"[report] databases: {type(e).__name__}: {e}")
 
 
+_traffic: dict[int, int] = {}      # counted, not sent yet
+_traffic_warned = False
+
+
+async def report_traffic(send: Callable[[dict], Awaitable[None]]) -> None:
+    """What the apps here sent to the public internet since the last report (containers/traffic.py). Kept until it
+    went out: the firewall counted it once and will not count it again."""
+    global _traffic_warned
+    try:
+        counts = await asyncio.to_thread(containers_traffic.collect)
+    except Exception as e:
+        if not _traffic_warned:
+            _agent_log(f"[report] internet traffic is not counted: {type(e).__name__}: {e}")
+            _traffic_warned = True
+        return
+    for app_id, n in counts.items():
+        _traffic[app_id] = _traffic.get(app_id, 0) + n
+    if not _traffic:
+        return
+    try:
+        await send({"type": "traffic_report", "apps": {str(k): v for k, v in _traffic.items()}})
+        _traffic.clear()
+    except Exception as e:
+        _agent_log(f"[report] internet traffic: {type(e).__name__}: {e}")
+
+
+async def report_slow(db_round: int, send: Callable[[dict], Awaitable[None]]) -> None:
+    """Every DB_EVERY-th tick: the databases, and the apps' internet traffic."""
+    await report_databases(db_round, send)
+    await report_traffic(send)
+
+
 async def report_once(tick: int, send: Callable[[dict], Awaitable[None]]) -> None:
     """One round: the instances, and the databases when it is their turn."""
     await report_instances(send)
     db_round, offset = divmod(tick, DB_EVERY)
     if offset == 0:
-        await report_databases(db_round, send)
+        await report_slow(db_round, send)
 
 
 async def report_forever(send: Callable[[dict], Awaitable[None]]) -> None:
@@ -60,7 +93,7 @@ async def report_forever(send: Callable[[dict], Awaitable[None]]) -> None:
         while True:
             db_round, offset = divmod(tick, DB_EVERY)
             if offset == 0 and (databases is None or databases.done()):
-                databases = asyncio.create_task(report_databases(db_round, send))
+                databases = asyncio.create_task(report_slow(db_round, send))
             await report_instances(send)
             tick += 1
             next_at = max(next_at + TICK_SECONDS, loop.time())

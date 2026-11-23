@@ -28,6 +28,7 @@ def _entry(database: Database, links: list[tuple[str, str]]) -> dict:
         "version": database.version,
         "cpu_limit": database.cpu_limit,
         "memory_limit_mb": database.memory_limit_mb,
+        "disk_limit_mb": database.disk_limit_mb,
         "backup_schedule": database.backup_schedule,
         "backup_hour": database.backup_hour,
         "backup_retention": database.backup_retention,

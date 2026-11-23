@@ -356,3 +356,10 @@ def remove_nginx_config(app_name: str) -> bool:
         else:
             subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True)
     return removed
+
+
+@_serialized
+def reopen_logs() -> None:
+    """nginx opens its log files again, after one was moved aside (nginx/traffic_logs.py): a reload."""
+    r = subprocess.run(["sudo", "systemctl", "reload", "nginx"], capture_output=True, text=True)
+    log.log(logging.WARNING if r.returncode else logging.DEBUG, "[nginx-cfg] reload for new logs rc=%d stderr=%r", r.returncode, r.stderr)

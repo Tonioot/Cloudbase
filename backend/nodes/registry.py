@@ -4,11 +4,11 @@ import time
 import urllib.request
 from typing import Optional
 from fastapi import HTTPException
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 import psutil
 from core import hardware, selfupdate
-from core.models import Node
+from core.models import Database, Instance, Node
 from nodes import metrics as node_metrics
 from nodes.commands import _utcnow
 from nodes.state import _node_ws_connections
@@ -113,6 +113,18 @@ async def ensure_local_node(db: AsyncSession) -> Node:
     await db.commit()
     await db.refresh(local)
     return local
+
+
+async def least_busy_node(db: AsyncSession) -> Node:
+    """The online node (never the primary) with the fewest instances and databases: where something new goes in
+    tenant mode when the caller does not say. 409 when there is none."""
+    nodes = (await db.execute(select(Node).where(Node.enabled == True, Node.is_local == False,   # noqa: E712
+                                                 Node.status == "online"))).scalars().all()
+    if not nodes:
+        raise HTTPException(409, "Tenant mode: nothing runs on the primary, and no other node is online")
+    instances = dict((await db.execute(select(Instance.node_id, func.count()).group_by(Instance.node_id))).all())
+    databases = dict((await db.execute(select(Database.node_id, func.count()).group_by(Database.node_id))).all())
+    return min(nodes, key=lambda n: (instances.get(n.id, 0) + databases.get(n.id, 0), n.id))
 
 
 async def get_node_or_404(node_id: int, db: AsyncSession) -> Node:

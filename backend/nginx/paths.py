@@ -10,6 +10,15 @@ MAINTENANCE_DIR = "/var/www/cloudbase/maintenance"
 ACME_WEBROOT = "/var/www/cloudbase/acme"
 
 
+# One file per app, one number per request: what nginx sent to the visitor (nginx/traffic_logs.py). Made by
+# scripts/setup-nginx-permissions.sh; without it the configs leave the logging out.
+TRAFFIC_LOG_DIR = "/var/log/cloudbase-traffic"
+
+
+def traffic_log_path(app_id: int) -> str:
+    return f"{TRAFFIC_LOG_DIR}/app-{int(app_id)}.log"
+
+
 # Served on every port-80 server so Let's Encrypt can verify a domain
 # (HTTP-01), also while the rest of that server redirects to HTTPS.
 _ACME_LOCATION = f"""

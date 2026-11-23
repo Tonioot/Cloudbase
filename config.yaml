@@ -43,3 +43,18 @@ limits:
   # Restart-loop protection: max restarts per window per app
   max_restarts_per_window: 5
   restart_window_seconds: 60
+
+tenant:
+  # On when the apps and databases belong to people you don't know (a hosting service built on Cloudbase).
+  # Then: apps can't reach the local network, every container gets CPU/memory/process limits and no risky
+  # capabilities, builds can't reach the server or the local network, mail (port 25) out is blocked, nothing
+  # runs on the primary, and the nodes only forward the app and database ports to each other.
+  enabled: false
+  default_cpu_limit: 1.0
+  default_memory_limit_mb: 512
+  pids_limit: 512
+  # A sandbox runtime for every container, e.g. "runsc" (gVisor: scripts/setup-gvisor.sh on every node)
+  runtime: ""
+  build_timeout_seconds: 1800
+  # Disk per container for what it writes outside volumes; needs Docker's overlay2 on xfs mounted with pquota
+  container_disk_mb: 0

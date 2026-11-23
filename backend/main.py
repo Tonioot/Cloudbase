@@ -17,6 +17,7 @@ from routers import webhooks as webhooks_router
 from routers import status as status_router
 from routers import log_history as log_history_router
 from routers import projects as projects_router
+from routers import traffic as traffic_router
 
 # Must run after the imports above: it replaces any root handlers an imported
 # module installed (node_agent used to, which sent everything to node-agent.log).
@@ -55,6 +56,7 @@ app.include_router(database_backups_router.storage_router)
 app.include_router(notifications_router.router)
 app.include_router(webhooks_router.router)
 app.include_router(status_router.router)
+app.include_router(traffic_router.router)
 
 # Last: its catch-all route would otherwise shadow everything registered after it.
 frontend.register(app)

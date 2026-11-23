@@ -2,7 +2,7 @@ import logging
 import re
 from typing import Optional
 from dbs import engines as db_engines
-from containers import naming, stats_logs as containers_stats_logs
+from containers import naming, quota, stats_logs as containers_stats_logs
 from dbs.docker import STOP_TIMEOUT_SECONDS, VolumeConflictError, VolumeMissingError, _client, _container_state, _get_container, _progress, _run_container, publish_address, published_binding, published_port, _volume_exists, container_name, volume_name
 
 log = logging.getLogger("cloudbase.databases")
@@ -16,6 +16,7 @@ def ensure_running(spec: dict) -> dict:
     """
     client = _client()
     db_id = int(spec["database_id"])
+    disk_ready = _ensure_disk(spec)
 
     container = _get_container(client, db_id)
     if container is not None and _publishes_elsewhere(container, db_id, spec.get("node_port")):
@@ -33,17 +34,21 @@ def ensure_running(spec: dict) -> dict:
 
     token = spec.get("volume_token") or ""
     if not _volume_exists(client, db_id):
-        if spec.get("initialized"):
+        # With a disk limit the data lives on the database's own disk, not in the volume: a lost volume is only a
+        # lost pointer to it, and is made again.
+        if spec.get("initialized") and not disk_ready:
             raise VolumeMissingError(
                 f"Data volume {volume_name(db_id)} is missing on this node. "
                 "Cloudbase does not create an empty database in its place; restore from a backup instead."
             )
-        client.volumes.create(
-            volume_name(db_id),
-            labels={"cloudbase.database_id": str(db_id), "cloudbase.engine": spec["engine"],
-                    "cloudbase.volume_token": token},
-        )
-        log.info("[db] Created volume %s", volume_name(db_id))
+        labels = {"cloudbase.database_id": str(db_id), "cloudbase.engine": spec["engine"],
+                  "cloudbase.volume_token": token}
+        if disk_ready:
+            client.volumes.create(volume_name(db_id), driver="local", labels={**labels, "cloudbase.disk": "true"},
+                                  driver_opts={"type": "none", "o": "bind", "device": quota.data_path(db_id)})
+        else:
+            client.volumes.create(volume_name(db_id), labels=labels)
+        log.info("[db] Created volume %s%s", volume_name(db_id), " on its own disk" if disk_ready else "")
     elif not spec.get("initialized"):
         # A new database must start empty. A volume left by another (deleted) database
         # would bring its data and its old credentials along.
@@ -60,6 +65,34 @@ def ensure_running(spec: dict) -> dict:
         _progress.pop(db_id, None)
     log.info("[db] Started %s (%s %s)", container_name(db_id), spec["engine"], spec["version"])
     return {"container_id": container.id, "state": _container_state(container)}
+
+
+def _ensure_disk(spec: dict) -> bool:
+    """A database with a disk limit: its disk is there, mounted and at least as big as the limit. True when it has
+    one. A new database gets a new disk; one that ran before and lost its disk does not (that would be an empty
+    database in place of the real one)."""
+    limit = spec.get("disk_limit_mb")
+    if not limit:
+        return False
+    db_id = int(spec["database_id"])
+    if quota.has_disk(db_id):
+        if not quota.is_mounted(db_id):            # after a reboot without the boot unit, or by hand
+            quota.mount_disk(db_id)
+        if int(limit) > quota.image_size_mb(db_id):
+            quota.grow_disk(db_id, int(limit))
+            log.info("[db] Grew the disk of %s to %s MB", container_name(db_id), limit)
+        return True
+    if spec.get("initialized"):
+        raise VolumeMissingError(
+            f"The disk of this database ({quota.image_path(db_id)}) is missing on this node. "
+            "Cloudbase does not create an empty database in its place; restore from a backup instead.")
+    _progress[db_id] = f"Making its disk of {limit} MB"
+    try:
+        quota.create_disk(db_id, int(limit))
+    finally:
+        _progress.pop(db_id, None)
+    log.info("[db] Made a disk of %s MB for %s", limit, container_name(db_id))
+    return True
 
 
 def _publishes_elsewhere(container, database_id: int, port: Optional[int] = None) -> bool:
@@ -133,6 +166,9 @@ def remove(database_id: int, keep_volume: bool = True) -> dict:
             volume_removed = True
         except docker.errors.NotFound:
             pass
+        if quota.has_disk(database_id):         # the volume only pointed at it: the data is on the disk
+            quota.remove_disk(database_id)
+            volume_removed = True
     log.info("[db] Removed %s (volume %s)", container_name(database_id), "removed" if volume_removed else "kept")
     return {"ok": True, "volume_removed": volume_removed}
 
@@ -194,6 +230,9 @@ def container_address(database_id: int) -> tuple[str, int]:
 
 def stats(database_id: int, data_dir: Optional[str] = None) -> dict:
     data = containers_stats_logs.get_container_stats_by_name(container_name(database_id))
+    usage = quota.disk_usage(database_id) if data else None
+    if usage:                                   # its own disk: how big, and how full (cheap, unlike du)
+        data.update(usage)
     if data and data_dir:
         try:
             client = _client()

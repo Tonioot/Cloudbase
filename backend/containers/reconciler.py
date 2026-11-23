@@ -19,7 +19,7 @@ import asyncio
 import logging
 import time
 
-from containers import egress, processes as pm, instances as containers_instances
+from containers import egress, processes as pm, instances as containers_instances, quota
 
 _logger = logging.getLogger("cloudbase.agent")      # the node-agent log, also where the primary's reconciler writes
 
@@ -70,6 +70,7 @@ class Reconciler:
         self.pull_now = asyncio.Event()
         self.reconcile_now = asyncio.Event()
         self.report_now = asyncio.Event()
+        self.tenant: bool | None = None           # the tenant firewall as it was set here (None: not yet)
 
     # ── how this machine talks to the primary: the subclass says ──────────────
     async def _fetch_list(self) -> dict:
@@ -113,9 +114,24 @@ class Reconciler:
             await asyncio.to_thread(egress.apply, self.entries)
         except Exception as exc:
             _log(f"[reconcile] could not set the network rules ({exc}); run: cloudbase update")
+        await self._apply_tenant(bool(data.get("tenant")))
         _log(f"[reconcile] list received: {sum(e['desired'] == 'running' for e in self.entries.values())} to run, "
                    f"{sum(e['desired'] != 'running' for e in self.entries.values())} stopped")
         self.reconcile_now.set()
+
+    async def _apply_tenant(self, on: bool) -> None:
+        """Tenant mode's firewall (scripts/cloudbase-quota): with the first list, and whenever it changes. Off also
+        clears what an earlier run left on. Without the helper, off is nothing to worry about; on is."""
+        if on == self.tenant:
+            return
+        try:
+            await asyncio.to_thread(quota.tenant_firewall, on)
+            _log(f"[reconcile] tenant firewall {'on' if on else 'off'}")
+        except Exception as exc:
+            if on:
+                _log(f"[reconcile] could not turn on the tenant firewall ({exc}); run: cloudbase quota")
+                return                                # tried again with the next list
+        self.tenant = on
 
     # ── what we see ─────────────────────────────────────────────────────────
     def _set(self, instance_id: int, state: str, **fields) -> None:

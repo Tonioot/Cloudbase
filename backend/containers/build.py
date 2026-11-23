@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import subprocess
+import threading
 from collections import deque
 from dbs import lifecycle as dbs_lifecycle, proxy as db_proxy
 from containers.buildkit import _BUILD_SECRET_ID, buildkit_available
@@ -198,7 +199,7 @@ def _write_secret_file(build_env: dict) -> str:
 
 def _build_with_cli(
     app_id: int, app_dir: str, img: str, push_line_fn,
-    buildargs=None, labels=None, secret_env=None, host_network=False,
+    buildargs=None, labels=None, secret_env=None, host_network=False, timeout_seconds=None,
 ) -> None:
     """Build through `docker build` so BuildKit does the work; stream its plain log.
 
@@ -234,13 +235,29 @@ def _build_with_cli(
             text=True, encoding="utf-8", errors="replace", bufsize=1,
             env=env,
         )
+        timed_out = threading.Event()
+
+        def _stop():
+            timed_out.set()
+            proc.kill()
+        timer = threading.Timer(timeout_seconds, _stop) if timeout_seconds else None
+        if timer:
+            timer.daemon = True
+            timer.start()
         tail: deque = deque(maxlen=60)
-        for raw in proc.stdout:
-            line = raw.rstrip()
-            if line:
-                tail.append(line)
-                push_line_fn(app_id, f"[Docker build] {line}")
-        if proc.wait() != 0:
+        try:
+            for raw in proc.stdout:
+                line = raw.rstrip()
+                if line:
+                    tail.append(line)
+                    push_line_fn(app_id, f"[Docker build] {line}")
+            proc.wait()
+        finally:
+            if timer:
+                timer.cancel()
+        if timed_out.is_set():
+            raise RuntimeError(f"docker build took longer than {timeout_seconds} s and was stopped")
+        if proc.returncode != 0:
             lines = list(tail)
             # BuildKit ends with the output of the failed step, then a "Dockerfile:N" excerpt
             # and a generic ERROR line. The excerpt says nothing; the step's output is the cause.
@@ -258,13 +275,18 @@ def _build_with_cli(
 
 def _run_build(
     app_id: int, app_dir: str, img: str, push_line_fn,
-    buildargs=None, labels=None, secret_env=None, host_network=False,
+    buildargs=None, labels=None, secret_env=None, host_network=False, hardening=None,
 ) -> None:
+    timeout = int((hardening or {}).get("build_timeout_seconds") or 0) or None
     if buildkit_available():
         try:
-            return _build_with_cli(app_id, app_dir, img, push_line_fn, buildargs, labels, secret_env, host_network)
+            return _build_with_cli(app_id, app_dir, img, push_line_fn, buildargs, labels, secret_env, host_network,
+                                   timeout_seconds=timeout)
         except FileNotFoundError:
             pass  # docker CLI vanished: fall back to the classic builder below
+    if hardening:
+        # The classic builder cannot be stopped after a while; a stranger's build only runs where that works
+        raise RuntimeError("Tenant mode needs BuildKit (docker buildx) on this machine to build images")
     client = _get_client()
     # Use the low-level API here: it streams build output incrementally and
     # avoids the docker-py 7.x high-level decode issues around dict chunks.
@@ -292,8 +314,11 @@ def build_image(
     build_env: dict | None = None,
     source_revision: str | None = None,
     linked_databases: list | None = None,
+    hardening: dict | None = None,
 ) -> str:
     """Build Docker image, streaming build output via push_line_fn. Returns image tag.
+
+    hardening (tenant mode, core/tenant.py): the build never runs on the host network, and is stopped after a while.
 
     linked_databases (docker_options["linked_databases"]) put the URLs of the linked databases in the build env,
     like they are in the running container. They are not part of the build key: the address can change per build.
@@ -314,6 +339,11 @@ def build_image(
     build_env = {k: str(v) for k, v in (build_env or {}).items() if _ARG_NAME_RE.match(str(k))}
     try:
         link_env, host_network = linked_build_env(linked_databases)
+        if hardening and host_network:
+            # On the host network a build reaches everything this machine does: the panel, every database, the
+            # local network. A stranger's build gets the variables, but the database is only there at runtime.
+            host_network = False
+            push_line_fn(app_id, "[Docker] Tenant mode: the build can't reach the linked database (it can at runtime).")
         key_env = build_env                                  # what the key is made from: the settings, not addresses
         build_env = {**build_env, **{k: v for k, v in link_env.items() if _ARG_NAME_RE.match(k)}}   # a link wins, as at runtime
         if link_env:
@@ -355,6 +385,7 @@ def build_image(
             labels=labels or None,
             secret_env=build_env if use_secret else None,
             host_network=host_network and use_secret,
+            hardening=hardening,
         )
     except RuntimeError:
         raise

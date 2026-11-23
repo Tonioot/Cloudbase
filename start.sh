@@ -89,6 +89,9 @@ Recovery:
   restore <file> [--yes]       Restore a backup made with 'cloudbase backup'
   nginx permissions [user]     Let Cloudbase manage nginx and HTTPS certificates
   wireguard [user]             Set up (or repair) the node network between the primary and its nodes
+  quota [user]                 Set up (or repair) database disk limits and the counting of apps' internet traffic
+  gvisor                       Install the gVisor sandbox runtime (tenant mode, config.yaml tenant.runtime: runsc)
+  tenant-check [host:port]     Check on this server that tenant mode shuts apps in (see config.yaml, tenant)
 
 Nodes:
   connect                      Make this server a node of a primary
@@ -375,6 +378,13 @@ wireguard_setup() {
     info "Setting up the node network (WireGuard) for user '$target_user'"
     bash "$INSTALL_DIR/scripts/setup-wireguard.sh" "${args[@]}"
     success "Node network ready"
+}
+
+quota_setup() {
+    local target_user="${1:-$(service_run_user)}"
+    info "Setting up disk limits and traffic counting for user '$target_user'"
+    bash "$INSTALL_DIR/scripts/setup-quota.sh" "$target_user"
+    success "Disk limits and traffic counting ready"
 }
 
 handle_nginx_command() {
@@ -980,6 +990,15 @@ case "$COMMAND" in
         ;;
     wireguard|wg)
         wireguard_setup "$@"
+        ;;
+    quota)
+        quota_setup "$@"
+        ;;
+    gvisor)
+        bash "$INSTALL_DIR/scripts/setup-gvisor.sh"
+        ;;
+    tenant-check)
+        bash "$INSTALL_DIR/scripts/tenant-check.sh" "$@"
         ;;
     cert|certs)
         handle_cert_command "$@"

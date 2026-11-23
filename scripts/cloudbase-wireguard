@@ -25,6 +25,8 @@ Commands (all print JSON or a public key on stdout; errors go to stderr with exi
   isolate                                  keep app containers from starting connections to this machine itself
   egress                                   JSON {"allow": [{"ip", "port"}]} on stdin: the private destinations apps that may
                                            not reach the local network can still connect to
+  forward                                  hub only: JSON {"ports": [[low, high], ...]} on stdin, the TCP ports the hub
+                                           forwards between nodes ({"ports": null}: everything)
 """
 import ipaddress
 import json
@@ -235,15 +237,57 @@ def apply(state: dict, previous: dict | None = None) -> None:
     run(["wg-quick", "up", conf])
 
 
-def forward_between_nodes() -> None:
+NODES_CHAIN = "CLOUDBASE-NODES"
+FORWARD_STORE = "forward.json"
+
+
+def check_ranges(items) -> list[tuple[int, int]] | None:
+    """None: forward everything between nodes. Else the TCP port ranges that may be forwarded."""
+    if items is None:
+        return None
+    if not isinstance(items, list) or len(items) > 20:
+        raise HelperError("expected at most 20 port ranges")
+    ranges = []
+    for item in items:
+        if not isinstance(item, list) or len(item) != 2:
+            raise HelperError("a port range is [low, high]")
+        low, high = check_port(item[0]), check_port(item[1])
+        if low > high:
+            raise HelperError("a port range is [low, high]")
+        ranges.append((low, high))
+    return sorted(set(ranges))
+
+
+def load_forward() -> list[tuple[int, int]] | None:
+    try:
+        with open(_path(FORWARD_STORE)) as f:
+            return check_ranges(json.load(f).get("ports"))
+    except (FileNotFoundError, ValueError, AttributeError):
+        return None
+
+
+def forward_between_nodes(ranges: list[tuple[int, int]] | None = None) -> None:
     """Hub only: let nodes reach each other through the hub (an app on one node, its database on another).
-    Only traffic that comes in on the node network and goes out on it again; nothing else is forwarded."""
+    Only traffic that comes in on the node network and goes out on it again, and with port ranges (tenant mode) only
+    to those ports: a node that was taken over cannot reach SSH or anything else on the others."""
     run(["sysctl", "-q", "-w", "net.ipv4.ip_forward=1"])
-    rule = ["FORWARD", "-i", IFACE, "-o", IFACE, "-j", "ACCEPT"]
+    if ranges is None:
+        rules = [["-j", "ACCEPT"]]
+    else:
+        rules = [["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"]]
+        rules += [["-p", "tcp", "--dport", f"{low}:{high}", "-j", "ACCEPT"] for low, high in ranges]
+        rules += [["-j", "DROP"]]
+    _fill_chain(NODES_CHAIN, rules)
+    rule = ["FORWARD", "-i", IFACE, "-o", IFACE, "-j", NODES_CHAIN]
     try:
         run(["iptables", "-C", *rule])
     except HelperError:
         run(["iptables", "-I", *rule])          # first, before Docker's chains drop it
+    old = ["FORWARD", "-i", IFACE, "-o", IFACE, "-j", "ACCEPT"]       # what earlier versions added
+    try:
+        run(["iptables", "-D", *old])
+    except HelperError:
+        pass
 
 
 APPS_CHAIN = "CLOUDBASE-APPS"
@@ -375,6 +419,19 @@ def cmd_egress(_args, stdin_text: str | None = None) -> str:
     return json.dumps({"allowed": len(allowed)})
 
 
+def cmd_forward(_args, stdin_text: str | None = None) -> str:
+    if load_state().get("role") != "hub":
+        raise HelperError("this machine is not the hub")
+    text = sys.stdin.read(MAX_STDIN + 1) if stdin_text is None else stdin_text
+    try:
+        ranges = check_ranges(json.loads(text).get("ports"))
+    except (ValueError, AttributeError):
+        raise HelperError("input is not JSON")
+    _write(_path(FORWARD_STORE), json.dumps({"ports": [list(r) for r in ranges] if ranges is not None else None}))
+    forward_between_nodes(ranges)
+    return json.dumps({"ports": ranges})
+
+
 def cmd_keygen(_args) -> str:
     return keygen()
 
@@ -387,7 +444,7 @@ def cmd_hub(args) -> str:
     previous = load_state()
     peers = previous.get("peers", []) if previous.get("role") == "hub" else []
     apply({"role": "hub", "address": address, "listen_port": port, "peers": peers}, previous)
-    forward_between_nodes()
+    forward_between_nodes(load_forward())
     return json.dumps({"public_key": public_key()})
 
 
@@ -461,7 +518,7 @@ def cmd_boot(_args) -> str:
     else:
         run(["wg-quick", "up", _path(f"{IFACE}.conf")])
         if state.get("role") == "hub":
-            forward_between_nodes()
+            forward_between_nodes(load_forward())
         up = True
     isolate_apps()                                  # the rules do not survive a reboot
     apply_egress(load_egress())
@@ -475,7 +532,8 @@ def cmd_down(_args) -> str:
 
 
 COMMANDS = {"keygen": cmd_keygen, "hub": cmd_hub, "node": cmd_node, "peers": cmd_peers,
-            "status": cmd_status, "boot": cmd_boot, "down": cmd_down, "isolate": cmd_isolate, "egress": cmd_egress}
+            "status": cmd_status, "boot": cmd_boot, "down": cmd_down, "isolate": cmd_isolate, "egress": cmd_egress,
+            "forward": cmd_forward}
 
 
 def main(argv: list[str]) -> int:

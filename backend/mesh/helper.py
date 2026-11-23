@@ -60,5 +60,10 @@ def set_egress(allowed: list[dict]) -> None:
     _run(["egress"], stdin=json.dumps({"allow": allowed}))
 
 
+def set_forward(ports: list[list[int]] | None) -> None:
+    """Hub only: the TCP port ranges forwarded between nodes; None forwards everything."""
+    _run(["forward"], stdin=json.dumps({"ports": ports}))
+
+
 def status() -> dict:
     return json.loads(_run(["status"]))

@@ -374,7 +374,7 @@ SESSION_SECRET=change-me</pre>
   group: 'Apps',
   title: 'Logs & metrics',
   summary: 'Live logs per instance, build output, resource charts and history.',
-  keywords: 'logs metrics cpu memory network disk monitoring history activity audit',
+  keywords: 'logs metrics cpu memory network disk monitoring history activity audit traffic bandwidth egress billing',
   lead: 'Every app has live logs and resource charts, kept even while you’re not looking.',
   body: `
 <h2>Logs</h2>
@@ -387,6 +387,14 @@ SESSION_SECRET=change-me</pre>
 
 <h2>Metrics</h2>
 <p>The <strong>Metrics</strong> tab shows CPU, memory, network and disk I/O for the app (all instances together) and per instance. Numbers come from Docker’s container statistics, also for remote nodes.</p>
+
+<h2>Internet traffic</h2>
+<p>Cloudbase adds up, per app per day (UTC), what the app sends to the public internet, in two parts:</p>
+<ul>
+  <li><strong>Visitors</strong> — what nginx sends back to the people who visit the app’s domains: every answer, headers included.</li>
+  <li><strong>Internet</strong> — what the app’s containers send to public addresses themselves: calls to other APIs, webhooks, mail, and the answers to them. Cron jobs count for their app. Every node counts its own containers.</li>
+</ul>
+<p>Traffic that stays inside is not counted: to nginx, to a database, to another app or node, or to the local network. The numbers are kept after an app is deleted. Read them through the API: <code>GET /api/apps/&lt;id&gt;/traffic</code> (per day; <code>?start=</code> and <code>?end=</code> as <code>YYYY-MM-DD</code>, or <code>?days=</code>) and <code>GET /api/traffic</code> (per app over a period). Counting needs the helper that <code>cloudbase quota</code> installs (a fresh install and <code>cloudbase update</code> do that).</p>
 
 <h2>History</h2>
 <p>Cloudbase samples the overview and every node in the background every 30 seconds and keeps seven days of history. Charts on the overview and node pages are filled from that history, so they show data as soon as you open them. On a node page you can switch between the last hour, 24 hours and 7 days.</p>
@@ -556,6 +564,16 @@ X-Cloudbase-Signature: sha256=&lt;HMAC-SHA256 of the body with your signing secr
   <tr><td>Node offline</td><td>Its node is unreachable. The database comes back with the node.</td></tr>
 </table>
 <p>Every 30 seconds Cloudbase compares this with Docker. A database that should run but is stopped or missing is started again, on its existing volume. If the volume of a database that ran before is missing, Cloudbase stops with an error instead of creating an empty database in its place.</p>
+
+<h2>Disk limit</h2>
+<p>A database can get a fixed amount of disk when it is created (<code>disk_limit_mb</code> in <code>POST /api/databases</code>). Its data then lives on a disk of its own of exactly that size, reserved on the node: when it is full, the database refuses writes with “no space left on device”, whatever the engine, and nothing else on the server fills up. The space is a little less than the limit (the file system needs some).</p>
+<ul>
+  <li><strong>Growing</strong>: <code>PATCH /api/databases/&lt;id&gt;</code> with a bigger <code>disk_limit_mb</code>. It grows while the database runs, without a restart. A disk never shrinks.</li>
+  <li><strong>Only at creation</strong>: a database made without a limit cannot get one later. Make a new one with a limit and restore a backup into it.</li>
+  <li><strong>Smallest</strong>: PostgreSQL 256 MB, Redis and Valkey 128 MB, MariaDB 512 MB, MySQL and MongoDB 1024 MB.</li>
+  <li><strong>On the node</strong>: the disk is <code>/var/lib/cloudbase-disks/db-&lt;id&gt;.img</code>, mounted at boot before Docker starts. Moving the database makes a disk of the same size on the new node. The database’s stats show how big and how full it is (<code>disk_size_mb</code>, <code>disk_used_mb</code>).</li>
+</ul>
+<p>It needs the helper that <code>cloudbase quota</code> installs on every node that runs such a database (a fresh install and <code>cloudbase update</code> do that).</p>
 
 <h2>Resources</h2>
 <p>The memory limit also sets the engine's caches: PostgreSQL <code>shared_buffers</code> (25%), the InnoDB buffer pool (50%), Redis <code>maxmemory</code> (80%) and the MongoDB WiredTiger cache. Without a limit the engine uses its own defaults and may use all memory of the node. The dialog and the Settings tab warn when the databases on a node would together be allowed more than 60% of its memory.</p>
@@ -1257,6 +1275,45 @@ cloudbase restore ~/cloudbase-backup.tar.gz</pre>
 `,
 },
 
+{
+  slug: 'tenant-mode',
+  group: 'Administration',
+  title: 'Tenant mode',
+  summary: 'Running apps and databases of people you don’t know: what Cloudbase shuts off, and how to check it.',
+  keywords: 'tenant multi-tenant hosting untrusted isolation sandbox gvisor runsc security escape firewall smtp capabilities',
+  lead: 'Turn this on when the apps belong to people you don’t know, for example a hosting service built on Cloudbase. Then an app can’t reach other apps, the local network or the servers themselves, and a node that was taken over can’t take the rest with it.',
+  body: `
+<h2>Turning it on</h2>
+<p>In <code>~/.cloudbase/config.yaml</code> on the primary, then restart Cloudbase. The nodes take it from the primary.</p>
+<pre>tenant:
+  enabled: true
+  default_cpu_limit: 1.0          # for apps and databases without a limit of their own
+  default_memory_limit_mb: 512
+  pids_limit: 512                 # processes per container
+  runtime: runsc                  # gVisor; "" for Docker's own
+  build_timeout_seconds: 1800
+  container_disk_mb: 0            # needs overlay2 on xfs with pquota</pre>
+
+<h2>What changes</h2>
+<table>
+  <tr><th>What</th><th>With tenant mode</th></tr>
+  <tr><td>Network access</td><td>An app reaches the internet or nothing. <em>Open</em> (the local network) is refused, and apps that had it get <em>internet</em>. The cloud metadata address, the node network and the servers themselves stay closed.</td></tr>
+  <tr><td>Containers</td><td>Every app, cron job and database gets a CPU, memory and process limit, and only the capabilities ordinary software needs (no raw sockets, no device files, no chroot). With <code>runtime: runsc</code> each one runs in gVisor, so a kernel bug is no way out.</td></tr>
+  <tr><td>Builds</td><td>Never on the host network (a linked database is not reachable while building, only at runtime), never on the primary, stopped after <code>build_timeout_seconds</code>. A build can’t reach the server or any private address.</td></tr>
+  <tr><td>The primary</td><td>Runs no app, cron job or database: it holds the panel, its database and every secret. New ones go to the least busy node; without an online node nothing is created.</td></tr>
+  <tr><td>Between nodes</td><td>The primary only forwards the instance and database ports. A node that was taken over can’t reach SSH or anything else on the others.</td></tr>
+  <tr><td>Mail</td><td>Port 25 out is blocked (spam would ruin your IP addresses). Apps send mail through a provider on 465 or 587.</td></tr>
+  <tr><td>Node tokens</td><td>A node only sees and reports its own instances, databases and traffic.</td></tr>
+</table>
+
+<h2>The sandbox (gVisor)</h2>
+<p>Run <code>cloudbase gvisor</code> on every node, then set <code>runtime: runsc</code>. It works on x86_64 and 64-bit ARM (a Raspberry Pi with a 64-bit OS). Docker restarts once to load it. A container that should run in the sandbox never starts on a node without it: it fails with a message that says so.</p>
+
+<h2>Checking it</h2>
+<p>Run <code>cloudbase tenant-check</code> on each node once tenant mode is on. It starts throwaway containers the way a stranger’s app is started and tries to get out: this machine’s SSH and panel, the metadata address, the local network, the primary over the node network, mail on port 25, another app, a fork bomb, raw sockets, and a build that reaches for private addresses. Every line should say PASS.</p>
+`,
+},
+
 /* ─── Reference ────────────────────────────────────────────────────────── */
 
 {
@@ -1290,6 +1347,9 @@ cloudbase restore ~/cloudbase-backup.tar.gz</pre>
   <tr><td><code>cloudbase backup [file]</code></td><td>Write the database, keys and settings to a <code>.tar.gz</code></td></tr>
   <tr><td><code>cloudbase restore &lt;file&gt;</code></td><td>Restore from such a file. Option: <code>--yes</code> to skip the question</td></tr>
   <tr><td><code>cloudbase nginx permissions</code></td><td>Let Cloudbase manage nginx and request HTTPS certificates</td></tr>
+  <tr><td><code>cloudbase gvisor</code></td><td>Install the gVisor sandbox for <a href="/guides?g=tenant-mode">tenant mode</a></td></tr>
+  <tr><td><code>cloudbase tenant-check</code></td><td>Check on this server that tenant mode shuts apps in</td></tr>
+  <tr><td><code>cloudbase quota</code></td><td>Set up (or repair) database disk limits and the counting of apps’ internet traffic</td></tr>
 </table>
 
 <h2>Nodes</h2>

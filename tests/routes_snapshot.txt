@@ -34,6 +34,7 @@ GET     /api/apps/{app_id}/instances/stats
 GET     /api/apps/{app_id}/logs/history
 GET     /api/apps/{app_id}/source-archive
 GET     /api/apps/{app_id}/stats/history
+GET     /api/apps/{app_id}/traffic
 GET     /api/apps/{app_id}/uptime
 GET     /api/apps/{app_id}/uptime/checks
 GET     /api/apps/{app_id}/webhook
@@ -84,6 +85,7 @@ GET     /api/system/logs
 GET     /api/system/nginx-config
 GET     /api/system/settings
 GET     /api/tokens
+GET     /api/traffic
 GET     /api/transfer/export/{job_id}
 GET     /api/transfer/export/{job_id}/download
 GET     /api/users

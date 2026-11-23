@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core import config as _cfg
 from dbs import engines as db_engines, links as db_links
 from core.models import SystemConfig, Database
+from core import tenant
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,30}[a-z0-9]$")
 
@@ -20,17 +21,25 @@ MIN_MEMORY_MB = {"redis": 32, "valkey": 32, "postgres": 128}
 DEFAULT_MIN_MEMORY_MB = 256
 
 
+# What an empty database of each engine needs on its disk, with room to start (MySQL's redo log alone is 100 MB).
+MIN_DISK_MB = {"postgres": 256, "redis": 128, "valkey": 128, "mariadb": 512, "mysql": 1024, "mongodb": 1024}
+MAX_DISK_MB = 16 * 1024 * 1024         # the helper's limit (16 TB)
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _spec(database: Database) -> dict:
+    cpu_limit, memory_limit_mb = tenant.limits(database.cpu_limit, database.memory_limit_mb)
     return {
         "database_id": database.id,
         "name": database.name,
         "engine": database.engine,
         "version": database.version,
         "credentials": db_links.decrypt_credentials(database),
-        "cpu_limit": database.cpu_limit,
-        "memory_limit_mb": database.memory_limit_mb,
+        "cpu_limit": cpu_limit,
+        "memory_limit_mb": memory_limit_mb,
+        "disk_limit_mb": database.disk_limit_mb,
+        "hardening": tenant.hardening(),
         "node_port": database.node_port,
         "initialized": database.initialized_at is not None,
         "volume_token": _volume_token(database),
@@ -86,6 +95,19 @@ def _new_credentials(name: str, engine: str) -> dict:
         "root_password": secrets.token_urlsafe(24),
         "db_name": ident,
     }
+
+
+def validate_disk_limit(engine: str, disk_limit_mb: Optional[int], current_mb: Optional[int] = None) -> None:
+    """A disk limit must leave the engine room to start, and can only grow."""
+    if disk_limit_mb is None:
+        return
+    minimum = MIN_DISK_MB.get(engine, 512)
+    if disk_limit_mb < minimum:
+        raise HTTPException(400, f"{db_engines.get_engine(engine).label} needs a disk of at least {minimum} MB")
+    if disk_limit_mb > MAX_DISK_MB:
+        raise HTTPException(400, f"A disk can be at most {MAX_DISK_MB} MB")
+    if current_mb is not None and disk_limit_mb < current_mb:
+        raise HTTPException(400, f"The disk can only grow: it is {current_mb} MB now")
 
 
 def _validate_limits(engine: str, cpu_limit: Optional[float], memory_limit_mb: Optional[int]) -> None:

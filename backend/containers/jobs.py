@@ -1,7 +1,7 @@
 import json
 import logging
 import threading
-from containers import egress
+from containers import egress, hardening
 from containers.client import _apply_linked_databases, _assert_image_local, _get_client, start_container
 from containers.dockerfiles import _cmd_to_json
 from containers.naming import job_container_name
@@ -68,6 +68,7 @@ def run_job_container(
         if docker_options.get("tmpfs_size_mb"):
             tmpfs_opts.append(f"size={int(docker_options['tmpfs_size_mb'])}m")
         run_kwargs["tmpfs"] = {"/tmp": ",".join(tmpfs_opts)}
+    hardening.apply(run_kwargs, docker_options.get("hardening"))
     extra_networks = _apply_linked_databases(client, run_kwargs, docker_options)
     _assert_image_local(client, img)
 

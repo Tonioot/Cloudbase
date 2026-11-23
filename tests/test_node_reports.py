@@ -156,15 +156,20 @@ def test_what_a_node_sends_is_kept_for_its_own_instances_only(admin, world):
 def test_a_database_report_is_kept_and_its_usage_survives_reports_without_it(admin, world):
     from nodes import reports
     node_id, token = world.node("rp-dbs")
+    other_node, _ = world.node("rp-dbs-other")
+    mine, theirs = str(world.database("rp-dbs-mine", node_id)), str(world.database("rp-dbs-theirs", other_node))
     ws, sock = _connect(admin, token)
     try:
-        sock.send_json({"type": "database_report", "databases": {"5": {"state": "running", "volume": True,
-                                                                          "stats": {"cpu_percent": 3.0, "disk_mb": 40.0}}}})
-        sock.send_json({"type": "database_report", "databases": {"5": {"state": "running", "volume": True}}})
-        assert _wait_for(lambda: (reports.databases(node_id) or (0, {}))[1].get("5", {}).get("state") == "running")
+        sock.send_json({"type": "database_report", "databases": {
+            mine: {"state": "running", "volume": True, "stats": {"cpu_percent": 3.0, "disk_mb": 40.0}},
+            theirs: {"state": "stopped", "volume": False, "stats": {"cpu_percent": 99.0}}}})
+        sock.send_json({"type": "database_report", "databases": {mine: {"state": "running", "volume": True}}})
+        assert _wait_for(lambda: (reports.databases(node_id) or (0, {}))[1].get(mine, {}).get("state") == "running")
     finally:
         ws.__exit__(None, None, None)
-    assert reports.database_stats(5) == {"disk_mb": 40.0, "cpu_percent": 3.0}
+    assert reports.database_stats(int(mine)) == {"disk_mb": 40.0, "cpu_percent": 3.0}
+    # a node speaks for its own databases only: one that was taken over cannot fake another node's
+    assert theirs not in reports.databases(node_id)[1] and reports.database_stats(int(theirs)) is None
 
 
 def test_the_database_monitor_reads_the_report_and_ignores_one_from_before_an_operation(world, monkeypatch):
@@ -243,3 +248,34 @@ def test_a_node_finds_its_databases_by_name_and_measures_the_running_ones(monkey
     assert set(out) == {"3", "4", "9"}                                   # by container, by data volume, and nothing else
     assert out["3"]["stats"] == {"cpu_percent": 1.0} and "stats" not in out["4"] and "stats" not in out["9"]
     assert asked == [(3, lifecycle.db_engines.get_engine("postgres").data_dir("16"))]
+
+
+def test_a_node_only_reports_traffic_of_apps_that_run_on_it(admin, world):
+    from sqlalchemy import delete, select
+    from core.database import AsyncSessionLocal
+    from core.models import AppTraffic, Instance
+    node_id, token = world.node("rp-traffic")
+    other_node, _ = world.node("rp-traffic-other")
+    mine, theirs = world.instance("rp-traffic-mine", node_id), world.instance("rp-traffic-theirs", other_node)
+
+    async def app_of(instance_id):
+        async with AsyncSessionLocal() as db:
+            return (await db.execute(select(Instance.app_id).where(Instance.id == instance_id))).scalar_one()
+    my_app, their_app = _run(app_of(mine)), _run(app_of(theirs))
+
+    async def used(app_id):
+        async with AsyncSessionLocal() as db:
+            return sum((await db.execute(select(AppTraffic.internet_bytes).where(AppTraffic.app_id == app_id))).scalars())
+    ws, sock = _connect(admin, token)
+    try:
+        sock.send_json({"type": "traffic_report", "apps": {str(my_app): 1000, str(their_app): 5000}})
+        assert _wait_for(lambda: _run(used(my_app)) == 1000)
+    finally:
+        ws.__exit__(None, None, None)
+    assert _run(used(their_app)) == 0               # a node cannot bill another node's apps
+
+    async def cleanup():
+        async with AsyncSessionLocal() as db:
+            await db.execute(delete(AppTraffic).where(AppTraffic.app_id.in_([my_app, their_app])))
+            await db.commit()
+    _run(cleanup())

@@ -4,6 +4,7 @@ import json
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core import tenant
 from core.env_crypto import decrypt_text
 from core.models import Instance
 from nodes.desired import list_hash
@@ -22,4 +23,6 @@ async def snapshot(db: AsyncSession, node_id: int) -> dict:
             wanted = "stopped"                     # its app is gone; there is nothing to run
         entries.append({"instance_id": instance.id, "app_id": instance.app_id, "desired": wanted,
                         "spec_hash": instance.spec_hash if spec else None, "spec": spec})
-    return {"hash": list_hash(entries), "instances": entries}
+    # Tenant mode is part of the list (and its hash): the node sets its firewall from it (containers/reconciler.py)
+    on = tenant.enabled()
+    return {"hash": list_hash(entries) + ("-t" if on else ""), "instances": entries, "tenant": on}

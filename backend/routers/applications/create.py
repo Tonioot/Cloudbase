@@ -6,7 +6,7 @@ from core.database import get_db
 from core.models import Application, Node
 from containers import dockerfiles as containers_dockerfiles
 from cron import scheduler as _cron
-from nodes.registry import ensure_local_node
+from nodes.registry import ensure_local_node, least_busy_node
 from core.env_crypto import encrypt_env
 from core.audit import log_audit
 from core import activity, config as _cfg, auth as _auth
@@ -17,6 +17,7 @@ from apps.serializers import _app_to_dict
 from apps.validation import _network_access, _check_new_app_name, _validate_docker_runtime_settings, _check_domain_conflicts, _check_repo_url
 from routers.applications.schemas import DeployRequest
 from core import projects as core_projects
+from core import tenant
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
@@ -54,6 +55,10 @@ async def deploy_app(
         target_node = node_result.scalar_one_or_none()
         if not target_node:
             raise HTTPException(400, "Selected node is not available")
+    elif tenant.enabled():
+        target_node = await least_busy_node(db)
+    if not tenant.may_run_on(target_node):
+        raise HTTPException(400, tenant.REFUSED_ON_PRIMARY)
 
     is_static = (req.app_type or "").strip().lower() == "static"
     is_cron = bool((req.cron_schedule or "").strip())

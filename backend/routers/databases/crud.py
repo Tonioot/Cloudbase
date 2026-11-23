@@ -16,7 +16,7 @@ from core.audit import log_audit
 from core.database import get_db
 from core.models import DatabaseStatsHistory, DatabaseLink, Database, Node
 from dbs.ops import _get_or_404, _links_for, _node_for, _node_reachable, _run_on_node, _spawn, _start_operation
-from dbs.provision import _data_dir, _validate_limits
+from dbs.provision import _data_dir, _validate_limits, validate_disk_limit
 from dbs import public_certs
 from dbs.public import assign_public_port, public_host_for, sync_public_access
 from dbs.state import _busy, _operation, claim, release
@@ -81,7 +81,8 @@ async def create_database(
     project_id = await core_projects.project_for_new(db, _user, req.project_id, "databases.create")
     database, node = await create_database_now(
         db, name_in=req.name, engine_in=req.engine, version_in=req.version, node_id=req.node_id,
-        cpu_limit=req.cpu_limit, memory_limit_mb=req.memory_limit_mb, actor=actor, project_id=project_id)
+        cpu_limit=req.cpu_limit, memory_limit_mb=req.memory_limit_mb, disk_limit_mb=req.disk_limit_mb,
+        actor=actor, project_id=project_id)
     return _as_dict(database, node)
 
 
@@ -113,7 +114,12 @@ async def update_database(
     cpu = None if req.clear_cpu_limit else (req.cpu_limit if req.cpu_limit is not None else database.cpu_limit)
     mem = None if req.clear_memory_limit else (req.memory_limit_mb if req.memory_limit_mb is not None else database.memory_limit_mb)
     _validate_limits(database.engine, cpu, mem)
-    if cpu == database.cpu_limit and mem == database.memory_limit_mb:
+    disk = req.disk_limit_mb if req.disk_limit_mb is not None else database.disk_limit_mb
+    if disk is not None and database.disk_limit_mb is None:
+        raise HTTPException(400, "A disk limit can only be given when the database is created")
+    validate_disk_limit(database.engine, disk, current_mb=database.disk_limit_mb)
+    limits_changed = cpu != database.cpu_limit or mem != database.memory_limit_mb
+    if not limits_changed and disk == database.disk_limit_mb:
         return {"ok": True, "changed": False}
 
     node = await _node_for(database, db)
@@ -122,15 +128,20 @@ async def update_database(
 
     database.cpu_limit = cpu
     database.memory_limit_mb = mem
+    database.disk_limit_mb = disk
     await log_audit(db, "database.update", actor=actor, detail={
         "database_id": database.id, "name": database.name, "cpu_limit": cpu, "memory_limit_mb": mem,
+        "disk_limit_mb": disk,
     })
     if database.desired_state == "running":
         claim(database.id)                  # no await since the check above: nothing else got in between
-        database.status = "starting"
+        # New limits (and the tuning derived from them) need a new container; the volume stays. A bigger disk alone
+        # does not: it grows while the database runs (a stopped one grows when it starts).
+        operation = "recreate" if limits_changed else "ensure"
+        if limits_changed:
+            database.status = "starting"
         await db.commit()
-        # New limits (and the tuning derived from them) need a new container; the volume stays.
-        _spawn(database.id, lambda: _start_operation(database.id, "recreate"))
+        _spawn(database.id, lambda: _start_operation(database.id, operation))
     else:
         await db.commit()
     return {"ok": True, "changed": True}

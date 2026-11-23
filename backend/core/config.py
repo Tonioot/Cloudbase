@@ -58,6 +58,16 @@ _DEFAULTS = {
         "port": 51820,
         "subnet": "10.77.0.0/16",
     },
+    # Running apps of people you don't know (core/tenant.py). Off: everything as before.
+    "tenant": {
+        "enabled": False,
+        "default_cpu_limit": 1.0,        # for an app or database that has no limit of its own
+        "default_memory_limit_mb": 512,
+        "pids_limit": 512,               # processes per container: a fork bomb stops there
+        "runtime": "",                   # e.g. "runsc" (gVisor, scripts/setup-gvisor.sh); "" = Docker's own
+        "build_timeout_seconds": 1800,
+        "container_disk_mb": 0,          # writable layer per container; needs overlay2 on xfs with pquota. 0 = off
+    },
 }
 
 
@@ -108,6 +118,11 @@ def get_logs() -> dict:
 def get_wireguard() -> dict:
     """The WireGuard settings, with defaults filled in."""
     return {**_DEFAULTS["wireguard"], **(_config.get("wireguard") or {})}
+
+
+def get_tenant() -> dict:
+    """The tenant settings, with defaults filled in."""
+    return {**_DEFAULTS["tenant"], **(_config.get("tenant") or {})}
 
 
 def get_server_port() -> int:

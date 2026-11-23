@@ -33,6 +33,7 @@ from apps import images as apps_images
 from apps import runtime as apps_runtime
 from nodes import commands as node_commands
 from core import projects as core_projects
+from core import tenant
 
 log = logging.getLogger("cloudbase.cron")
 
@@ -138,6 +139,8 @@ async def update_settings(app_id: int, actor: str, *, schedule: Optional[str] = 
             node = await db.get(Node, node_id)
             if node is None or not node.enabled:
                 raise HTTPException(400, "Selected node is not available")
+            if not tenant.may_run_on(node):
+                raise HTTPException(400, tenant.REFUSED_ON_PRIMARY)
             app.node_id = None if node.is_local else node.id
         elif clear_node:
             app.node_id = None
@@ -241,6 +244,8 @@ async def _execute(run_id: int) -> None:
     try:
         if node is not None and not node.is_local:
             result = await _run_remote(app, node, run_id)
+        elif tenant.enabled():
+            raise RuntimeError(tenant.REFUSED_ON_PRIMARY)
         else:
             result = await _run_local(app, run_id, push)
     except HTTPException as e:

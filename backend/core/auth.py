@@ -26,7 +26,6 @@ from core.database import AsyncSessionLocal
 from core.models import ApiToken, User, Permission, role_permissions
 from core import system_config as _syscfg
 from core import projects
-from core.models import Node
 
 # ── Config ────────────────────────────────────────────────────────────────────
 CREDENTIALS_FILE = os.path.expanduser("~/.cloudbase/credentials")
@@ -348,28 +347,12 @@ async def get_current_actor(request: Request) -> str:
 
 async def authorize_websocket(websocket, required_permission: str | None = None) -> bool:
     """
-    Validate a WebSocket connection. Accepts either:
-    - Browser session: cloudbase_token cookie (user JWT) with optional permission check.
-    - Node agent: X-Node-Token header (stored in Node.auth_token) — bypasses permission checks.
+    Validate a WebSocket connection of the panel: a session cookie (user JWT), with an optional permission check.
+    A node token gets nothing here: agents use their own websocket (/api/nodes/ws/agent), and a node token passed
+    every check of these (every app's logs and stats, the server logs), which a node that was taken over must not.
 
     Returns True if allowed, False if rejected (connection closed with 1008).
     """
-    # Remote node agent token
-    node_token = websocket.headers.get("x-node-token", "")
-    if node_token:
-        from sqlalchemy import select
-        try:
-            async with AsyncSessionLocal() as db:
-                result = await db.execute(
-                    select(Node).where(Node.auth_token == node_token, Node.enabled == True)
-                )
-                if result.scalar_one_or_none() is not None:
-                    return True
-        except Exception:
-            pass
-        await websocket.close(code=1008, reason="Invalid node token")
-        return False
-
     # Browser session cookie — only from the panel's own pages
     if not origin_allowed(websocket.headers.get("origin"), websocket.headers):
         await websocket.close(code=1008, reason="Cross-origin WebSocket refused")

@@ -33,6 +33,7 @@ from core.audit import log_audit
 from core.database import AsyncSessionLocal
 from core.models import Application, Instance, Node, StatsHistory
 from nodes.registry import ensure_local_node
+from core import tenant
 
 alog = logging.getLogger("cloudbase.autoscaler")
 ACTOR = "autoscaler"
@@ -158,9 +159,13 @@ def _node_load(n: Node) -> float:
 
 
 def pick_nodes(nodes: list[Node], how_many: int) -> list[Node]:
-    """Spread new instances over the online nodes: the fewest new ones first, then the least loaded, then local."""
+    """Spread new instances over the online nodes: the fewest new ones first, then the least loaded, then local.
+    In tenant mode the primary is never picked (fewer than asked, or none, when there is no other node)."""
+    nodes = [n for n in nodes if tenant.may_run_on(n)]
     added = {n.id: 0 for n in nodes}
     picked = []
+    if not nodes:
+        return picked
     for _ in range(how_many):
         node = min(nodes, key=lambda n: (added[n.id], _node_load(n), not n.is_local))
         added[node.id] += 1

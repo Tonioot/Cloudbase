@@ -2,7 +2,7 @@ import logging
 from containers.apps import _restart_policy_config
 from containers.client import _apply_linked_databases, _assert_image_local, _get_client, _host_port, start_container
 from containers.naming import instance_container_name
-from containers import output_log
+from containers import hardening, output_log
 
 log = logging.getLogger("cloudbase.docker")
 
@@ -95,6 +95,7 @@ def run_instance_container(
             tmpfs_opts.append(f"size={int(tmpfs_size_mb)}m")
         run_kwargs["tmpfs"] = {"/tmp": ",".join(tmpfs_opts)}
 
+    hardening.apply(run_kwargs, docker_options.get("hardening"))
     extra_networks = _apply_linked_databases(client, run_kwargs, docker_options)
     _assert_image_local(client, img)
     # Retry on transient Docker errors: port still releasing or container name

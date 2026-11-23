@@ -69,6 +69,12 @@ EOF
 "$SUDO_BIN" chown -R "$TARGET_USER" /var/www/cloudbase/acme
 "$SUDO_BIN" "$CHMOD_BIN" 755 /var/www/cloudbase/acme /var/www/cloudbase/acme/.well-known /var/www/cloudbase/acme/.well-known/acme-challenge
 
+# What nginx sends to the visitors of each app, one number per request (see nginx/traffic_logs.py). nginx (root)
+# writes the files; Cloudbase reads them and moves them aside when they get big.
+"$SUDO_BIN" "$MKDIR_BIN" -p /var/log/cloudbase-traffic
+"$SUDO_BIN" chown "$TARGET_USER" /var/log/cloudbase-traffic
+"$SUDO_BIN" "$CHMOD_BIN" 755 /var/log/cloudbase-traffic
+
 # certbot renews certificates through its own timer; make sure it runs
 # (enabled by default on Debian/Ubuntu, not on every distribution)
 for timer in certbot.timer certbot-renew.timer snap.certbot.renew.timer; do

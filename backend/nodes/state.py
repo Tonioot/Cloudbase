@@ -26,9 +26,14 @@ _node_event_subscribers: dict[int, list[asyncio.Queue]] = {}
 _pending_pings: dict[str, asyncio.Future] = {}
 
 
-def subscribe_node_stream(stream_id: str) -> asyncio.Queue:
+_node_stream_owner: dict[str, int] = {}   # stream id -> the node whose agent fills it
+
+
+def subscribe_node_stream(stream_id: str, node_id: int | None = None) -> asyncio.Queue:
     q: asyncio.Queue = asyncio.Queue(maxsize=2000)
     _node_stream_queues.setdefault(stream_id, []).append(q)
+    if node_id is not None:
+        _node_stream_owner[stream_id] = node_id
     return q
 
 
@@ -40,9 +45,15 @@ def unsubscribe_node_stream(stream_id: str, q: asyncio.Queue) -> None:
         pass
     if not lst:
         _node_stream_queues.pop(stream_id, None)
+        _node_stream_owner.pop(stream_id, None)
 
 
-def push_node_stream_data(stream_id: str, data: str) -> None:
+def push_node_stream_data(stream_id: str, data: str, node_id: int | None = None) -> None:
+    """Data for a stream, from the agent of `node_id`: only the node the stream was opened on may fill it."""
+    owner = _node_stream_owner.get(stream_id)
+    if owner is not None and node_id is not None and owner != node_id:
+        log.warning("stream_data for stream_id=%s from node %s, but it belongs to node %s: dropped", stream_id, node_id, owner)
+        return
     listeners = _node_stream_queues.get(stream_id, [])
     if not listeners:
         log.debug("stream_data received for stream_id=%s but no listeners", stream_id)

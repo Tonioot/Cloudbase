@@ -93,7 +93,8 @@ async def _import_one(db, tar, entry, app_ids, target_node_id, perms, actor, war
         archive.open_data(tar, str(entry["data"].get("file") or ""))     # fail before anything is created
     database, node = await create_database_now(
         db, name_in=entry.get("name"), engine_in=entry.get("engine"), version_in=entry.get("version"),
-        node_id=target_node_id, cpu_limit=entry.get("cpu_limit"), memory_limit_mb=entry.get("memory_limit_mb"), actor=actor)
+        node_id=target_node_id, cpu_limit=entry.get("cpu_limit"), memory_limit_mb=entry.get("memory_limit_mb"),
+        disk_limit_mb=entry.get("disk_limit_mb"), actor=actor)
     database_id, name, engine_key, version = database.id, database.name, database.engine, database.version   # plain values: a rollback expires the objects
     engine = db_engines.get_engine(engine_key)
 

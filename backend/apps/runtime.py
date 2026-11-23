@@ -12,6 +12,7 @@ from apps import app_links
 from apps.git import _decrypt_github_token, _refresh_app_source_revision
 from apps.images import _image_port
 from apps.nginx_sync import _has_public_nginx_domain
+from core import tenant
 
 async def _cleanup_app_dependencies(db: AsyncSession, app_id: int) -> None:
     """Remove or detach rows that can still reference an app in older DB schemas."""
@@ -28,20 +29,22 @@ async def _cleanup_app_dependencies(db: AsyncSession, app_id: int) -> None:
 
 
 def _docker_runtime_options(app: Application) -> dict:
+    cpu_limit, memory_limit_mb = tenant.limits(app.docker_cpu_limit, app.docker_memory_limit_mb)
     return {
-        "cpu_limit": app.docker_cpu_limit,
-        "memory_limit_mb": app.docker_memory_limit_mb,
+        "cpu_limit": cpu_limit,                  # an instance's own limit wins (its spec has it on top)
+        "memory_limit_mb": memory_limit_mb,
         "read_only_root": bool(app.docker_read_only_root),
         "tmpfs_enabled": bool(app.docker_tmpfs_enabled),
         "tmpfs_size_mb": app.docker_tmpfs_size_mb,
         "restart_policy": app.restart_policy or "no",
-        "network_access": app.network_access or "open",
+        "network_access": tenant.network_access(app.network_access or "open"),
         # Reached through nginx on localhost: then the host port must not be open to the
         # internet as well. Without a domain the host port is the only way in, so it stays
         # public. (On another node the agent binds it to its node-network address instead.)
-        "bind_host": "127.0.0.1" if _has_public_nginx_domain(app) else None,
+        "bind_host": "127.0.0.1" if _has_public_nginx_domain(app) or tenant.enabled() else None,
         # Workers have no web server: nothing to reach, so no port on the host
         "publish_port": not app.no_web,
+        "hardening": tenant.hardening(),         # tenant mode: what every container of it gets (containers/hardening.py)
         **db_links.runtime_options(app.id),
     }
 
@@ -127,6 +130,10 @@ async def _start_instance_runtime(
     if not instance_node.is_local and (instance_node.status != "online" or not instance_node.enabled):
         instance.status = "error"
         instance.last_error = f"Node '{instance_node.name}' is offline"
+        return
+    if not tenant.may_run_on(instance_node):     # the last word, whatever path placed it there
+        instance.status = "error"
+        instance.last_error = tenant.REFUSED_ON_PRIMARY
         return
     if source_revision is None:
         source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)

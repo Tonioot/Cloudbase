@@ -96,7 +96,7 @@ async def stream_logs(app_id: int, websocket: WebSocket):
                     await asyncio.sleep(2)
             stream_id = secrets.token_hex(8)
             log.info("logs stream_logs via WS: app_id=%d node_id=%d stream_id=%s", app_id_val, node_id, stream_id)
-            q = subscribe_node_stream(stream_id)
+            q = subscribe_node_stream(stream_id, node_id)
             frames = 0
             # Also show Cloudbase's own messages for this app (deploys, builds,
             # start/stop) — those are produced here on the primary, not on the node.

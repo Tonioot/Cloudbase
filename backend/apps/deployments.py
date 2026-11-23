@@ -7,6 +7,7 @@ from typing import Callable, Optional
 from fastapi import HTTPException
 from notify import emit as notify_emit
 from containers import processes as pm, naming as containers_naming, build as containers_build
+from core import tenant
 from core.database import AsyncSessionLocal
 from core import activity
 from core.models import Application, Deployment
@@ -152,13 +153,18 @@ async def run_deploy(
 async def _rebuild(app: Application, db, source_revision, push, *, restart: bool, actor: str) -> dict:
     """Build the image; with `restart`, restart the app's running instances."""
 
-    push("[Docker] Checking the image…")
-    await asyncio.to_thread(
-        containers_build.build_image_unless_current,
-        app.id, app.working_dir, lambda _aid, line: push(line),
-        app.app_type or "unknown", app.start_command or "", apps_images._image_port(app),
-        **apps_images._image_build_kwargs(app),
-    )
+    if tenant.enabled():
+        # The code of a stranger is never built on the primary: each node builds it, in its own sandbox, when its
+        # instances (or a run of the cron job) get the new revision
+        push("[Docker] Tenant mode: the nodes build the image themselves.")
+    else:
+        push("[Docker] Checking the image…")
+        await asyncio.to_thread(
+            containers_build.build_image_unless_current,
+            app.id, app.working_dir, lambda _aid, line: push(line),
+            app.app_type or "unknown", app.start_command or "", apps_images._image_port(app),
+            **apps_images._image_build_kwargs(app),
+        )
     app.docker_image = containers_naming.image_name(app.id)
     if source_revision:
         app.image_revision = source_revision

@@ -11,11 +11,14 @@ class CreateDatabaseRequest(BaseModel):
     node_id: Optional[int] = None
     cpu_limit: Optional[float] = None
     memory_limit_mb: Optional[int] = None
+    # The size of the database's own disk, in MB: writes fail once it is full. Only at creation; it can grow later.
+    disk_limit_mb: Optional[int] = None
 
 
 class UpdateDatabaseRequest(BaseModel):
     cpu_limit: Optional[float] = None
     memory_limit_mb: Optional[int] = None
+    disk_limit_mb: Optional[int] = None      # only bigger, and only for a database that was created with a limit
     clear_cpu_limit: bool = False
     clear_memory_limit: bool = False
 

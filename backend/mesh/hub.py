@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core import config as _cfg
+from core import config as _cfg, tenant
 from core.database import AsyncSessionLocal
 from core.models import Node
 from mesh import addressing, helper, publicip
@@ -58,8 +58,25 @@ async def ensure_hub() -> bool:
                 _hub["up"], _hub["error"] = False, str(exc)
                 log.warning("[mesh] hub could not start: %s", exc)
                 return False
+            await _set_forward()
     await sync_peers()
     return _hub["up"]
+
+
+def forward_ports() -> list[list[int]] | None:
+    """What the hub forwards between nodes: everything, or in tenant mode only the ports instances and databases
+    publish on the node network (an app on one node, its database or a linked app on another)."""
+    if not tenant.enabled():
+        return None
+    return [[_cfg.get_port("instance_min"), _cfg.get_port("instance_max")],
+            [_cfg.get_port("db_proxy_min"), _cfg.get_port("db_proxy_max")]]
+
+
+async def _set_forward() -> None:
+    try:
+        await asyncio.to_thread(helper.set_forward, forward_ports())
+    except helper.HelperError as exc:      # an older helper: forwarding stays as it was
+        log.warning("[mesh] could not limit what the hub forwards between nodes: %s (run: cloudbase update)", exc)
 
 
 async def sync_peers() -> None:

@@ -14,6 +14,7 @@ from core.env_crypto import encrypt_text
 from core.models import Database, Node
 from dbs import engines as db_engines
 from dbs.move import move_database
+from core import tenant
 from routers.databases.schemas import MoveDatabaseRequest
 from dbs.ops import _begin, _get_or_404, _links_for, _node_for, _node_reachable, _run_on_node, _set_status, _spawn, _start_operation
 from dbs.provision import _spec
@@ -194,6 +195,8 @@ async def move_database_to_node(
             raise HTTPException(400, "The database already runs on that node")
         if not _node_reachable(target):
             raise HTTPException(409, f"Node '{target.name}' is offline or disabled")
+        if not tenant.may_run_on(target):
+            raise HTTPException(400, tenant.REFUSED_ON_PRIMARY)
         if database.status not in ("running", "unhealthy"):
             raise HTTPException(409, "The database must be running to move it")
         engine = db_engines.get_engine(database.engine)

@@ -11,12 +11,15 @@ from core.env_crypto import encrypt_text
 from core.models import Database, Node
 from dbs.ops import _node_reachable, _spawn, _start_operation
 from dbs.state import claim
-from dbs.provision import NAME_RE, assign_node_port, _new_credentials, _next_database_id, _validate_limits
+from dbs.provision import NAME_RE, assign_node_port, _new_credentials, _next_database_id, _validate_limits, validate_disk_limit
 from core import projects as core_projects
+from core import tenant
+from nodes.registry import least_busy_node
 
 
 async def create_database_now(db: AsyncSession, *, name_in, engine_in, version_in=None, node_id=None,
-                              cpu_limit=None, memory_limit_mb=None, actor: str = "system", project_id=None):
+                              cpu_limit=None, memory_limit_mb=None, disk_limit_mb=None, actor: str = "system",
+                              project_id=None):
     """Validate, insert and start provisioning. Returns (database, node); raises HTTPException."""
     name = (name_in or "").strip().lower()
     if not NAME_RE.match(name):
@@ -31,15 +34,20 @@ async def create_database_now(db: AsyncSession, *, name_in, engine_in, version_i
     if version not in engine.versions:
         raise HTTPException(400, f"{engine.label} {version} is not offered. Choose one of: {', '.join(engine.versions)}")
     _validate_limits(engine.key, cpu_limit, memory_limit_mb)
+    validate_disk_limit(engine.key, disk_limit_mb)
 
     if node_id is not None:
         node = await db.get(Node, node_id)
         if node is None:
             raise HTTPException(404, "Node not found")
+    elif tenant.enabled():
+        node = await least_busy_node(db)
     else:
         node = (await db.execute(select(Node).where(Node.is_local == True))).scalar_one_or_none()
         if node is None:
             raise HTTPException(409, "No primary node registered yet")
+    if not tenant.may_run_on(node):
+        raise HTTPException(400, tenant.REFUSED_ON_PRIMARY)
     if not _node_reachable(node):
         raise HTTPException(409, f"Node '{node.name}' is offline or disabled")
 
@@ -55,6 +63,7 @@ async def create_database_now(db: AsyncSession, *, name_in, engine_in, version_i
         credentials=encrypt_text(json.dumps(_new_credentials(name, engine.key))),
         cpu_limit=cpu_limit,
         memory_limit_mb=memory_limit_mb,
+        disk_limit_mb=disk_limit_mb,
     )
     db.add(database)
     try:
@@ -67,6 +76,7 @@ async def create_database_now(db: AsyncSession, *, name_in, engine_in, version_i
         raise HTTPException(409, "All ports of the database node-network range are in use. Widen it in config.yaml (db_proxy_min / db_proxy_max).")
     await log_audit(db, "database.create", actor=actor, detail={
         "database_id": database.id, "name": name, "engine": engine.key, "version": version, "node": node.name,
+        "disk_limit_mb": disk_limit_mb,
     })
     await db.commit()
 

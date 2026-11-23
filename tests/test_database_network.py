@@ -176,7 +176,36 @@ def test_the_hub_forwards_between_nodes_once(tmp_path, monkeypatch):
     wg.forward_between_nodes()
     wg.forward_between_nodes()
     assert ["sysctl", "-q", "-w", "net.ipv4.ip_forward=1"] in calls
-    assert [c for c in calls if c[:2] == ["iptables", "-I"]] == [["iptables", "-I", "FORWARD", "-i", "cbwg0", "-o", "cbwg0", "-j", "ACCEPT"]]
+    assert [c for c in calls if c[:2] == ["iptables", "-I"]] == [["iptables", "-I", "FORWARD", "-i", "cbwg0", "-o", "cbwg0", "-j", wg.NODES_CHAIN]]
+    assert ["iptables", "-A", wg.NODES_CHAIN, "-j", "ACCEPT"] in calls          # without port ranges: everything
+
+
+def test_in_tenant_mode_the_hub_only_forwards_the_app_and_database_ports(monkeypatch):
+    script = Path(__file__).resolve().parent.parent / "scripts" / "cloudbase-wireguard"
+    loader = importlib.machinery.SourceFileLoader("cloudbase_wireguard_fwd", str(script))
+    wg = importlib.util.module_from_spec(importlib.util.spec_from_loader("cloudbase_wireguard_fwd", loader))
+    loader.exec_module(wg)
+    calls = []
+    monkeypatch.setattr(wg, "run", lambda args, stdin=None: calls.append(args) or "")
+    wg.forward_between_nodes(wg.check_ranges([[10000, 19999], [30000, 30999]]))
+    rules = [c[3:] for c in calls if c[:3] == ["iptables", "-A", wg.NODES_CHAIN]]
+    assert rules == [["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
+                     ["-p", "tcp", "--dport", "10000:19999", "-j", "ACCEPT"],
+                     ["-p", "tcp", "--dport", "30000:30999", "-j", "ACCEPT"],
+                     ["-j", "DROP"]]                                           # SSH and the rest of a node: no
+    for bad in ([[22, 10]], [[0, 80]], "1-2", [[1024]]):
+        with pytest.raises(wg.HelperError):
+            wg.check_ranges(bad)
+
+
+def test_the_primary_asks_for_port_ranges_only_in_tenant_mode(monkeypatch):
+    from core import config
+    from mesh import hub
+    monkeypatch.setattr(config, "get_tenant", lambda: {"enabled": False})
+    assert hub.forward_ports() is None
+    monkeypatch.setattr(config, "get_tenant", lambda: {"enabled": True})
+    assert hub.forward_ports() == [[config.get_port("instance_min"), config.get_port("instance_max")],
+                                   [config.get_port("db_proxy_min"), config.get_port("db_proxy_max")]]
 
 
 def test_a_node_reports_what_its_databases_are_doing(monkeypatch):
