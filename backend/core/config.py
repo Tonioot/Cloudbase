@@ -65,6 +65,7 @@ _DEFAULTS = {
         "default_memory_limit_mb": 512,
         "pids_limit": 512,               # processes per container: a fork bomb stops there
         "runtime": "",                   # e.g. "runsc" (gVisor, scripts/setup-gvisor.sh); "" = Docker's own
+        "sandbox_databases": False,      # the runtime for databases too (slower; their users can't run programs anyway)
         "build_timeout_seconds": 1800,
         "container_disk_mb": 0,          # writable layer per container; needs overlay2 on xfs with pquota. 0 = off
     },

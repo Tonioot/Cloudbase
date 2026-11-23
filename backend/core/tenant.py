@@ -29,15 +29,20 @@ def settings() -> dict:
     return _cfg.get_tenant()
 
 
-def hardening() -> Optional[dict]:
-    """What a container must get, for the spec; None with tenant mode off."""
+def hardening(database: bool = False) -> Optional[dict]:
+    """What a container must get, for the spec; None with tenant mode off. A database gets the sandbox only when
+    asked for (sandbox_databases): its users can't run programs (engines.PG_ROLES_SCRIPT), and it is the part that
+    the sandbox slows down most."""
     if not enabled():
         return None
     s = settings()
+    runtime = str(s.get("runtime") or "")
+    if database and not s.get("sandbox_databases"):
+        runtime = ""
     return {
         "cap_add": list(CAPABILITIES),
         "pids_limit": int(s.get("pids_limit") or 512),
-        "runtime": str(s.get("runtime") or ""),
+        "runtime": runtime,
         "disk_mb": int(s.get("container_disk_mb") or 0),
         "build_timeout_seconds": int(s.get("build_timeout_seconds") or 1800),
         "isolated_build": True,

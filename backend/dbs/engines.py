@@ -51,16 +51,64 @@ class Engine:
         return f"{self.image}:{version}"
 
 
+# ── PostgreSQL: the app gets an owner, not a superuser ────────────────────────
+# The image makes POSTGRES_USER a superuser, and a superuser can run programs on the server (COPY ... PROGRAM). So
+# the superuser is Cloudbase's own (cloudbase_admin, with the database's root_password), and the user apps get owns
+# its database and nothing more: tables, migrations, trusted extensions (pgcrypto, pg_trgm, citext, ...) and CREATEDB
+# (test databases), but no programs, no server files, no CREATEROLE (up to PostgreSQL 15 that leads back to running
+# programs). A script next to the server sets this up at every start, so a database from before (whose app user is
+# the superuser) is switched over too: it makes the admin with the old superuser first. The health check waits for
+# it: a database whose roles could not be set never shows as running.
+PG_ADMIN = "cloudbase_admin"
+PG_ROLES_DONE = "/tmp/cloudbase-roles-ok"
+SETUP_VERSION = {"postgres": "roles-1"}      # a container made before (label cloudbase.setup) is replaced once
+
+PG_ROLES_SQL = r"""SELECT format('CREATE ROLE %I LOGIN', :'app') WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app') \gexec
+ALTER ROLE :"app" NOSUPERUSER NOCREATEROLE NOREPLICATION NOBYPASSRLS CREATEDB LOGIN PASSWORD :'pw';
+ALTER DATABASE :"db" OWNER TO :"app";
+ALTER SCHEMA public OWNER TO :"app";
+"""
+
+PG_ROLES_SCRIPT = r"""unlink /tmp/cloudbase-roles-ok 2>/dev/null
+(
+  i=0
+  while [ ! -f /tmp/cloudbase-roles-ok ] && [ $i -lt 1800 ]; do
+    sleep 2; i=$((i+2))
+    pg_isready -q || continue
+    if ! psql -qtA -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "select 1" >/dev/null 2>&1; then
+      echo "CREATE ROLE :\"admin\" SUPERUSER LOGIN PASSWORD :'pw';" | psql -q -v ON_ERROR_STOP=1 \
+        -v admin="$POSTGRES_USER" -v pw="$POSTGRES_PASSWORD" -U "$CB_APP_USER" -d "$POSTGRES_DB" >/dev/null 2>&1 || continue
+    fi
+    printf '%s\n' "$CB_ROLES_SQL" | psql -q -v ON_ERROR_STOP=1 -v app="$CB_APP_USER" -v db="$POSTGRES_DB" \
+      -v pw="$CB_APP_PASSWORD" -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1 && touch /tmp/cloudbase-roles-ok
+  done
+) &
+exec docker-entrypoint.sh "$@"
+"""
+
+
+def _postgres_env(c: dict) -> dict:
+    return {
+        "POSTGRES_USER": PG_ADMIN,
+        "POSTGRES_PASSWORD": c["root_password"],
+        "POSTGRES_DB": c["db_name"],
+        "CB_APP_USER": c["user"],
+        "CB_APP_PASSWORD": c["password"],
+        "CB_ROLES_SQL": PG_ROLES_SQL,
+    }
+
+
 # ── Tuning helpers ────────────────────────────────────────────────────────────
 
-def _postgres_command(_creds: dict, mem_mb: Optional[int]) -> Optional[list[str]]:
-    if not mem_mb:
-        return None
-    return [
-        "postgres",
-        "-c", f"shared_buffers={max(mem_mb // 4, 32)}MB",
-        "-c", f"effective_cache_size={max(mem_mb * 3 // 4, 64)}MB",
-    ]
+def _postgres_command(_creds: dict, mem_mb: Optional[int]) -> list[str]:
+    server = ["postgres"]
+    if mem_mb:
+        server += [
+            "-c", f"shared_buffers={max(mem_mb // 4, 32)}MB",
+            "-c", f"effective_cache_size={max(mem_mb * 3 // 4, 64)}MB",
+        ]
+    # sh -c runs the roles script beside the image's own entrypoint, which then starts the server as usual
+    return ["sh", "-c", PG_ROLES_SCRIPT, "sh", *server]
 
 
 def _innodb_command(_creds: dict, mem_mb: Optional[int]) -> Optional[list[str]]:
@@ -99,11 +147,18 @@ def _postgres_data_dir(version: str) -> str:
 
 # ── Backup commands ───────────────────────────────────────────────────────────
 
+# What a restore creates belongs to the app user (the database's owner), not to the admin that runs it: otherwise the
+# app's migrations could no longer change its own tables. (A container from before has no CB_APP_USER: its
+# POSTGRES_USER is the app user then.)
+_PG_APP = '"${CB_APP_USER:-$POSTGRES_USER}"'
+
+
 def _pg_restore(ctx: dict) -> str:
     if ctx["pg_custom"]:
         return (f'pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists '
-                f'--no-owner --no-privileges {ctx["path"]}')
-    return f'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f {ctx["path"]}'
+                f'--no-owner --no-privileges --role={_PG_APP} {ctx["path"]}')
+    return (f'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" '
+            f'-c "SET ROLE {_PG_APP}" -f {ctx["path"]}')
 
 
 _MONGO_AUTH = '--username "$MONGO_INITDB_ROOT_USERNAME" --password "$MONGO_INITDB_ROOT_PASSWORD" --authenticationDatabase admin'
@@ -142,13 +197,10 @@ ENGINES: dict[str, Engine] = {
         versions=("18", "17", "16", "15"),
         port=5432,
         env_var="DATABASE_URL",
-        container_env=lambda c: {
-            "POSTGRES_USER": c["user"],
-            "POSTGRES_PASSWORD": c["password"],
-            "POSTGRES_DB": c["db_name"],
-        },
+        container_env=_postgres_env,
         command=_postgres_command,
-        healthcheck='pg_isready -q -U "$POSTGRES_USER" -d "$POSTGRES_DB"',
+        # running = accepting connections and the roles are set (see PG_ROLES_SCRIPT)
+        healthcheck=f'pg_isready -q -U "$POSTGRES_USER" -d "$POSTGRES_DB" && test -f {PG_ROLES_DONE}',
         data_dir=_postgres_data_dir,
         url=lambda c, host, port: f"postgresql://{c['user']}:{c['password']}@{host}:{port}/{c['db_name']}",
         backup={"ext": "dump", "gzip": False,
@@ -273,7 +325,13 @@ ENGINES: dict[str, Engine] = {
 RESERVED_NAMES = {
     "root", "admin", "mysql", "mariadb", "postgres", "template0", "template1",
     "sys", "information-schema", "performance-schema", "local", "config", "test", "default",
+    "cloudbase-admin",          # its user would be PG_ADMIN
 }
+
+
+def setup_version(engine: str) -> str:
+    """What a database's container is set up for (label cloudbase.setup); another one is replaced once."""
+    return SETUP_VERSION.get(engine, "")
 
 
 def get_engine(key: str) -> Engine:

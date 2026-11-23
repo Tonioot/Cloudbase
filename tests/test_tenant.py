@@ -293,11 +293,12 @@ def wizard(monkeypatch):
 
 
 def test_the_wizard_asks_and_writes_what_was_chosen(wizard):
-    # gVisor yes, 0.5 CPU, 256 MB, 300 processes, 10 minutes, no disk limit, then confirm
-    rc, written = wizard(["on"], ["y", "0.5", "256", "300", "10", "", ""])
+    # gVisor yes, not for databases, 0.5 CPU, 256 MB, 300 processes, 10 minutes, no disk limit, then confirm
+    rc, written = wizard(["on"], ["y", "", "0.5", "256", "300", "10", "", ""])
     assert rc == 0
     assert written == {"enabled": True, "default_cpu_limit": 0.5, "default_memory_limit_mb": 256, "pids_limit": 300,
-                       "runtime": "runsc", "build_timeout_seconds": 600, "container_disk_mb": 0}
+                       "runtime": "runsc", "sandbox_databases": False, "build_timeout_seconds": 600,
+                       "container_disk_mb": 0}
 
 
 def test_the_wizard_asks_again_for_a_wrong_number_and_can_be_cancelled(wizard):

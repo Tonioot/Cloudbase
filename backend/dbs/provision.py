@@ -39,7 +39,7 @@ def _spec(database: Database) -> dict:
         "cpu_limit": cpu_limit,
         "memory_limit_mb": memory_limit_mb,
         "disk_limit_mb": database.disk_limit_mb,
-        "hardening": tenant.hardening(),
+        "hardening": tenant.hardening(database=True),
         "node_port": database.node_port,
         "initialized": database.initialized_at is not None,
         "volume_token": _volume_token(database),

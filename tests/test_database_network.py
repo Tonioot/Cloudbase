@@ -35,6 +35,7 @@ class _Container:
         ports = {"5432/tcp": [{"HostIp": binding[0], "HostPort": str(binding[1])}]} if binding else {}
         self.attrs = {"HostConfig": {"PortBindings": ports}, "State": {"Status": state}}
         self.id, self.removed, self.started = "c1", False, False
+        self.labels = {"cloudbase.engine": "postgres", "cloudbase.setup": "roles-1"}     # made with the current setup
 
     def remove(self, force=False, v=False):
         self.removed = True
@@ -45,7 +46,7 @@ class _Container:
 
 def _spec(db_id=7):
     return {"database_id": db_id, "engine": "postgres", "version": "16", "initialized": True, "volume_token": "t",
-            "credentials": {"user": "u", "password": "p", "db_name": "d"}}
+            "credentials": {"user": "u", "password": "p", "root_password": "r", "db_name": "d"}}
 
 
 @pytest.fixture

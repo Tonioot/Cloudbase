@@ -74,7 +74,8 @@ def ask_number(question: str, default, kind=int, low=None, high=None):
 
 def describe(settings: dict) -> list[str]:
     return [
-        f"Sandbox:                 {'gVisor (runsc)' if settings.get('runtime') == 'runsc' else (settings.get('runtime') or 'none (Docker’s own runtime)')}",
+        f"Sandbox:                 {'gVisor (runsc)' if settings.get('runtime') == 'runsc' else (settings.get('runtime') or 'none (Docker’s own runtime)')}"
+        + (", also for databases" if settings.get("runtime") and settings.get("sandbox_databases") else ""),
         f"Default CPU limit:       {settings['default_cpu_limit']} core(s) for apps and databases without their own",
         f"Default memory limit:    {settings['default_memory_limit_mb']} MB",
         f"Processes per container: {settings['pids_limit']}",
@@ -117,6 +118,11 @@ def ask_settings(current: dict) -> dict:
     print("  out of a container. It costs some speed on file and network heavy apps. It must be installed on")
     print("  every node (cloudbase gvisor); a container that should be sandboxed never starts without it.")
     s["runtime"] = "runsc" if ask_yes("  Use gVisor?", default=current.get("runtime") == "runsc" or not current.get("enabled")) else ""
+    s["sandbox_databases"] = False
+    if s["runtime"]:
+        print(f"  {DIM}Databases are slowed down most by it, and their users can't run programs on the server (a")
+        print(f"  PostgreSQL user is the owner of its database, not a superuser). Off is the usual choice.{RESET}")
+        s["sandbox_databases"] = ask_yes("  gVisor for databases too?", default=bool(current.get("sandbox_databases")))
 
     print(f"\n{BOLD}2. Limits for apps and databases that don't set their own{RESET}")
     s["default_cpu_limit"] = ask_number("  CPU cores", float(current["default_cpu_limit"]), float, 0.1, 64)
@@ -131,7 +137,7 @@ def ask_settings(current: dict) -> dict:
 
 
 def write(settings: dict) -> None:
-    keys = ("enabled", "default_cpu_limit", "default_memory_limit_mb", "pids_limit", "runtime",
+    keys = ("enabled", "default_cpu_limit", "default_memory_limit_mb", "pids_limit", "runtime", "sandbox_databases",
             "build_timeout_seconds", "container_disk_mb")
     _cfg.save_config_sections({"tenant": {k: settings[k] for k in keys}})
 

@@ -206,6 +206,7 @@ def _run_container(client, spec: dict):
             "cloudbase.database_name": spec.get("name") or "",
             "cloudbase.engine": engine.key,
             "cloudbase.version": version,
+            "cloudbase.setup": db_engines.setup_version(engine.key),
         },
     }
     address = publish_address()

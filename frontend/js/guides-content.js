@@ -848,6 +848,7 @@ mysqldump --single-transaction --routines --triggers -h host -u user -p dbname |
   <li>Public access is off by default and, when on, requires TLS and is limited to the IP addresses you allow.</li>
   <li>Backups are readable only by Cloudbase on the server, can be copied off-site, and can be encrypted before upload.</li>
   <li>A missing data volume is never silently replaced by an empty database, and ids are never reused.</li>
+  <li>PostgreSQL: the user apps get owns its database but is no superuser. It can make tables, run migrations, turn on trusted extensions (pgcrypto, pg_trgm, citext, hstore, uuid-ossp, …) and make test databases, but it can’t run programs on the server (<code>COPY … PROGRAM</code>), read server files or make roles. The superuser is Cloudbase’s own, <code>cloudbase_admin</code>, used for backups and updates; the credentials show it to you (not in <a href="/guides?g=tenant-mode">tenant mode</a>). A database from before is switched over by itself once (its container is replaced, the data stays), and a restore belongs to the app’s user.</li>
 </ul>
 
 <h2>What is encrypted where</h2>
@@ -1292,6 +1293,7 @@ cloudbase restore ~/cloudbase-backup.tar.gz</pre>
   default_memory_limit_mb: 512
   pids_limit: 512                 # processes per container
   runtime: runsc                  # gVisor; "" for Docker's own
+  sandbox_databases: false        # gVisor for databases too
   build_timeout_seconds: 1800
   container_disk_mb: 0            # needs overlay2 on xfs with pquota</pre>
 
@@ -1299,7 +1301,8 @@ cloudbase restore ~/cloudbase-backup.tar.gz</pre>
 <table>
   <tr><th>What</th><th>With tenant mode</th></tr>
   <tr><td>Network access</td><td>An app reaches the internet or nothing. <em>Open</em> (the local network) is refused, and apps that had it get <em>internet</em>. The cloud metadata address, the node network and the servers themselves stay closed.</td></tr>
-  <tr><td>Containers</td><td>Every app, cron job and database gets a CPU, memory and process limit, and only the capabilities ordinary software needs (no raw sockets, no device files, no chroot). With <code>runtime: runsc</code> each one runs in gVisor, so a kernel bug is no way out.</td></tr>
+  <tr><td>Containers</td><td>Every app, cron job and database gets a CPU, memory and process limit, and only the capabilities ordinary software needs (no raw sockets, no device files, no chroot). With <code>runtime: runsc</code> every app and cron job runs in gVisor, so a kernel bug is no way out. Databases only with <code>sandbox_databases: true</code>: gVisor slows them down most, and their users can’t run programs on the server anyway (a PostgreSQL user owns its database but is no superuser).</td></tr>
+  <tr><td>Database passwords</td><td>The credentials show the app’s user only, never the engine’s superuser (MySQL root, Cloudbase’s PostgreSQL admin).</td></tr>
   <tr><td>Builds</td><td>Never on the host network (a linked database is not reachable while building, only at runtime), never on the primary, stopped after <code>build_timeout_seconds</code>. A build can’t reach the server or any private address.</td></tr>
   <tr><td>The primary</td><td>Runs no app, cron job or database: it holds the panel, its database and every secret. New ones go to the least busy node; without an online node nothing is created.</td></tr>
   <tr><td>Between nodes</td><td>The primary only forwards the instance and database ports. A node that was taken over can’t reach SSH or anything else on the others.</td></tr>

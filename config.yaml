@@ -55,6 +55,8 @@ tenant:
   pids_limit: 512
   # A sandbox runtime for every container, e.g. "runsc" (gVisor: scripts/setup-gvisor.sh on every node)
   runtime: ""
+  # The sandbox for databases too: slower, and their users can't run programs on the server anyway
+  sandbox_databases: false
   build_timeout_seconds: 1800
   # Disk per container for what it writes outside volumes; needs Docker's overlay2 on xfs mounted with pquota
   container_disk_mb: 0

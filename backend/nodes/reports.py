@@ -46,7 +46,8 @@ def store_databases(node_id: int, databases: dict) -> None:
         if info.get("stats"):
             previous = (_database_stats.get(int(db_id)) or (0, {}))[1]
             _database_stats[int(db_id)] = (now, {"disk_mb": previous.get("disk_mb"), **info["stats"]})   # the size is measured less often
-    _databases[node_id] = (now, {k: {"state": v.get("state"), "volume": v.get("volume"), **({"published": v["published"]} if "published" in v else {})}
+    _databases[node_id] = (now, {k: {"state": v.get("state"), "volume": v.get("volume"),
+                                     **{f: v[f] for f in ("published", "outdated") if f in v}}
                                      for k, v in (databases or {}).items()})
 
 

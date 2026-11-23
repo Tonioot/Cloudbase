@@ -97,8 +97,9 @@ async def _monitor_tick() -> None:
                 _spawn(db_id, lambda db_id=db_id: _start_operation(db_id, "ensure"))
                 continue
 
-            if state == "running" and info.get("published") is False:
+            if state in ("running", "starting", "unhealthy") and (info.get("published") is False or info.get("outdated")):
                 # Made while the node network was down (or on another address): it has no port for the other nodes.
+                # Or made with an older setup of its engine (a PostgreSQL whose app user is the superuser).
                 now = time.monotonic()
                 if d.id not in _last_heal or now - _last_heal[d.id] >= HEAL_BACKOFF_SECONDS:
                     try:
@@ -106,7 +107,8 @@ async def _monitor_tick() -> None:
                     except HTTPException:
                         continue
                     _last_heal[d.id] = now
-                    log.info("[db-monitor] database %s (%s) does not publish its port on the node network, replacing the container", d.name, d.id)
+                    log.info("[db-monitor] database %s (%s) %s, replacing the container", d.name, d.id,
+                             "was made with an older setup" if info.get("outdated") else "does not publish its port on the node network")
                     db_id = d.id
                     _spawn(db_id, lambda db_id=db_id: _start_operation(db_id, "ensure"))
                     continue

@@ -159,7 +159,8 @@ def count_objects(spec: dict) -> int:
 
 # Engines whose password also lives in the container's command or environment in
 # a way that matters (startup, backups); their container is recreated afterwards.
-ROTATE_RECREATES = {"mongodb", "redis", "valkey"}
+# (PostgreSQL: the roles script sets the app user's password from the environment at every start.)
+ROTATE_RECREATES = {"mongodb", "redis", "valkey", "postgres"}
 
 
 def _rotate_command(engine: str, user: str, new_password: str) -> Optional[str]:

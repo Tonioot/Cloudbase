@@ -24,6 +24,7 @@ from dbs.view import _as_dict, _client_ip
 from routers.databases.schemas import CreateDatabaseRequest, PublicAccessRequest, UpdateDatabaseRequest
 from dbs.backups import run_backup
 from core import projects as core_projects
+from core import tenant
 
 router = APIRouter(prefix="/api/databases", tags=["databases"])
 
@@ -222,8 +223,12 @@ async def get_credentials(
         "port": db_engines.get_engine(database.engine).port,
         "url": db_links.connection_url(database, creds),
     }
-    if database.engine in ("mysql", "mariadb"):
+    # The superuser of the engine: yours on your own server, never the customer's in tenant mode (with it the
+    # customer could run programs on the node again: core/tenant.py)
+    if database.engine in ("mysql", "mariadb", "postgres") and not tenant.enabled():
         result["root_password"] = creds["root_password"]
+        if database.engine == "postgres":
+            result["root_user"] = db_engines.PG_ADMIN
     public_port = database.public_port
     if database.public_enabled and public_port and public_host_for(database):
         engine = db_engines.get_engine(database.engine)

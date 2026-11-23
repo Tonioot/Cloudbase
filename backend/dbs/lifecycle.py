@@ -27,6 +27,14 @@ def ensure_running(spec: dict) -> dict:
         log.info("[db] %s is set to a network that no longer exists; replacing it (the data stays)", container_name(db_id))
         container.remove(force=True, v=True)
         container = None
+    elif container is not None and _outdated(container):
+        log.info("[db] %s was made with an older setup; replacing it (the data stays)", container_name(db_id))
+        try:
+            container.stop(timeout=STOP_TIMEOUT_SECONDS)
+        except Exception:
+            pass
+        container.remove(force=True, v=True)
+        container = None
     if container is not None:
         if _container_state(container) == "stopped":
             container.start()
@@ -107,6 +115,13 @@ def _publishes_elsewhere(container, database_id: int, port: Optional[int] = None
     return binding != (address, published_port(database_id, port))
 
 
+def _outdated(container) -> bool:
+    """Made before its engine's current setup, e.g. a PostgreSQL whose app user is still the superuser
+    (engines.PG_ROLES_SCRIPT): replaced once, the data stays."""
+    labels = container.labels or {}
+    return labels.get("cloudbase.setup", "") != db_engines.setup_version(labels.get("cloudbase.engine", ""))
+
+
 def _on_removed_network(container) -> bool:
     """Made by a version that had one shared network. The database was moved to its own network, but the container
     is still set to start on the shared one, which has been removed since: starting or restarting it fails
@@ -141,7 +156,8 @@ def stop(database_id: int) -> dict:
 def restart(spec: dict) -> dict:
     client = _client()
     container = _get_container(client, int(spec["database_id"]))
-    if container is None or _publishes_elsewhere(container, int(spec["database_id"]), spec.get("node_port")) or _on_removed_network(container):
+    if (container is None or _publishes_elsewhere(container, int(spec["database_id"]), spec.get("node_port"))
+            or _on_removed_network(container) or _outdated(container)):
         return ensure_running(spec)       # replaces a container that publishes on the wrong address or cannot start
     container.restart(timeout=STOP_TIMEOUT_SECONDS)
     return {"container_id": container.id, "state": _container_state(container)}
@@ -182,7 +198,9 @@ def states(database_ids: list[int]) -> dict[str, dict]:
         state = _container_state(container) if container is not None else "missing"
         out[str(db_id)] = {"state": state, "volume": _volume_exists(client, int(db_id)),
                            # False: it publishes its port somewhere else than where this node's address is now
-                           "published": container is None or not _publishes_elsewhere(container, int(db_id))}
+                           "published": container is None or not _publishes_elsewhere(container, int(db_id)),
+                           # True: made with an older setup of its engine (replaced by the next ensure)
+                           "outdated": container is not None and _outdated(container)}
     return out
 
 
