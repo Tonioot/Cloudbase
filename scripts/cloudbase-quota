@@ -289,50 +289,58 @@ def _filter(*args: str) -> str:
     return run(["iptables", "-w", "5", *args], timeout=30)
 
 
-def _chain(name: str, rules: list[list[str]]) -> None:
-    try:
-        _filter("-N", name)
-    except HelperError:
-        pass                                                # it exists
-    _filter("-F", name)
-    for rule in rules:
-        _filter("-A", name, *rule)
-
-
-def _jump_first(parent: str, *match: str, chain: str) -> None:
-    try:
-        _filter("-C", parent, *match, "-j", chain)
-    except HelperError:
-        _filter("-I", parent, *match, "-j", chain)
-
-
 def tenant_rules() -> tuple[list[list[str]], list[list[str]]]:
-    """(forwarded, to this machine) for tenant mode."""
-    forward = [["-i", bridge, "-p", "tcp", "--dport", "25", "-j", "REJECT", "--reject-with", "tcp-reset"]
-               for bridge in MAIL_FROM]
+    """(forwarded, to this machine) for tenant mode. In the mangle table, like the traffic counters: there Docker
+    has no rules of its own that accept a packet first, and it does not matter whether Docker uses iptables-legacy
+    or nftables (the filter table's DOCKER-USER, used before, is then another table than this helper's). DROP ends a
+    packet in any table; RETURN lets it go on to the filter table as before."""
+    forward = [["-i", bridge, "-p", "tcp", "--dport", "25", "-j", "DROP"] for bridge in MAIL_FROM]
     forward += [["-i", BUILD_BRIDGE, "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "RETURN"],
                 ["-i", BUILD_BRIDGE, "-p", "udp", "--dport", "53", "-j", "RETURN"],
                 ["-i", BUILD_BRIDGE, "-p", "tcp", "--dport", "53", "-j", "RETURN"]]
     forward += [["-i", BUILD_BRIDGE, "-d", network, "-j", "DROP"] for network in PRIVATE]
-    to_machine = [["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
-                  ["-p", "udp", "--dport", "53", "-j", "ACCEPT"],
-                  ["-p", "tcp", "--dport", "53", "-j", "ACCEPT"],
+    to_machine = [["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "RETURN"],
+                  ["-p", "udp", "--dport", "53", "-j", "RETURN"],
+                  ["-p", "tcp", "--dport", "53", "-j", "RETURN"],
                   ["-j", "DROP"]]
     return forward, to_machine
 
 
-def apply_tenant(on: bool) -> dict:
-    """Off empties the chains (their jumps stay and do nothing). DOCKER-USER: Docker evaluates it before its own
-    rules, also after it restarts; it makes the chain itself, so it exists here once Docker ran."""
-    forward, to_machine = tenant_rules() if on else ([], [])
-    _chain(TENANT_CHAIN, forward)
-    _chain(BUILD_INPUT_CHAIN, to_machine)
+def _mangle_chain(name: str, rules: list[list[str]]) -> None:
     try:
-        _filter("-N", "DOCKER-USER")
+        _iptables("-N", name)
     except HelperError:
-        pass
-    _jump_first("DOCKER-USER", chain=TENANT_CHAIN)
-    _jump_first("INPUT", "-i", BUILD_BRIDGE, chain=BUILD_INPUT_CHAIN)
+        pass                                                # it exists
+    _iptables("-F", name)
+    for rule in rules:
+        _iptables("-A", name, *rule)
+
+
+def _mangle_jump_first(parent: str, *match: str, chain: str) -> None:
+    try:
+        _iptables("-C", parent, *match, "-j", chain)
+    except HelperError:
+        _iptables("-I", parent, *match, "-j", chain)
+
+
+def _forget_filter_rules() -> None:
+    """What an earlier version put in the filter table (DOCKER-USER), so nothing is left of it."""
+    for args in (("-D", "DOCKER-USER", "-j", TENANT_CHAIN), ("-D", "INPUT", "-i", BUILD_BRIDGE, "-j", BUILD_INPUT_CHAIN),
+                 ("-F", TENANT_CHAIN), ("-X", TENANT_CHAIN), ("-F", BUILD_INPUT_CHAIN), ("-X", BUILD_INPUT_CHAIN)):
+        try:
+            _filter(*args)
+        except HelperError:
+            pass
+
+
+def apply_tenant(on: bool) -> dict:
+    """Off empties the chains (their jumps stay and do nothing)."""
+    forward, to_machine = tenant_rules() if on else ([], [])
+    _forget_filter_rules()
+    _mangle_chain(TENANT_CHAIN, forward)
+    _mangle_chain(BUILD_INPUT_CHAIN, to_machine)
+    _mangle_jump_first("FORWARD", chain=TENANT_CHAIN)
+    _mangle_jump_first("INPUT", "-i", BUILD_BRIDGE, chain=BUILD_INPUT_CHAIN)
     if on:
         with open(TENANT_FLAG, "w") as f:
             f.write("on\n")

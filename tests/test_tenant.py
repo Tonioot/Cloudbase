@@ -199,9 +199,10 @@ def helper(tmp_path, monkeypatch):
     module = importlib.util.module_from_spec(importlib.util.spec_from_loader("cloudbase_quota_tenant", loader))
     loader.exec_module(module)
     monkeypatch.setattr(module, "TENANT_FLAG", str(tmp_path / "tenant"))
-    calls = []
-    monkeypatch.setattr(module, "_filter", lambda *args: calls.append(list(args)) or "")
-    module.calls = calls
+    calls, filter_calls = [], []
+    monkeypatch.setattr(module, "_iptables", lambda *args: calls.append(list(args)) or "")       # the mangle table
+    monkeypatch.setattr(module, "_filter", lambda *args: filter_calls.append(list(args)) or "")
+    module.calls, module.filter_calls = calls, filter_calls
     return module
 
 
@@ -209,14 +210,17 @@ def test_the_firewall_blocks_mail_and_keeps_builds_off_private_addresses(helper)
     helper.apply_tenant(True)
     rules = [c[2:] for c in helper.calls if c[:2] == ["-A", helper.TENANT_CHAIN]]
     for bridge in ("cbapps0", "cbappl0", "cbappx0", "docker0"):
-        assert ["-i", bridge, "-p", "tcp", "--dport", "25", "-j", "REJECT", "--reject-with", "tcp-reset"] in rules
+        assert ["-i", bridge, "-p", "tcp", "--dport", "25", "-j", "DROP"] in rules
     for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"):
         assert ["-i", "docker0", "-d", network, "-j", "DROP"] in rules
     dns = rules.index(["-i", "docker0", "-p", "udp", "--dport", "53", "-j", "RETURN"])
     assert dns < rules.index(["-i", "docker0", "-d", "192.168.0.0/16", "-j", "DROP"])   # the resolver may be on the LAN
     to_machine = [c[2:] for c in helper.calls if c[:2] == ["-A", helper.BUILD_INPUT_CHAIN]]
     assert to_machine[-1] == ["-j", "DROP"]
-    assert ["-C", "DOCKER-USER", "-j", helper.TENANT_CHAIN] in helper.calls
+    # straight from FORWARD in mangle: not behind Docker's own rules, whichever iptables Docker uses
+    assert ["-C", "FORWARD", "-j", helper.TENANT_CHAIN] in helper.calls
+    assert ["-C", "INPUT", "-i", "docker0", "-j", helper.BUILD_INPUT_CHAIN] in helper.calls
+    assert ["-D", "DOCKER-USER", "-j", helper.TENANT_CHAIN] in helper.filter_calls     # the old place is cleared
     assert Path(helper.TENANT_FLAG).exists()                       # put back at boot
 
 

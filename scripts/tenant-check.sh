@@ -38,6 +38,12 @@ reaches() { app "nc -z -w 3 $1 $2"; }
 
 expect_closed() { if reaches "$1" "$2"; then fail "$3 ($1:$2 is reachable)"; else pass "$3"; fi; }
 
+if [[ ! -f /var/lib/cloudbase-tenant ]]; then
+  echo -e "\033[33mTenant mode is not on here\033[0m (no /var/lib/cloudbase-tenant): turn it on in config.yaml on the primary,"
+  echo "restart Cloudbase and wait until this machine has its list. Until then mail and builds are not shut in."
+  echo
+  FAILED=1
+fi
 docker network inspect "$NET" >/dev/null 2>&1 || { echo "No $NET network here yet: start an app on this machine first." >&2; exit 1; }
 docker pull -q "$IMAGE" >/dev/null
 
@@ -72,15 +78,30 @@ if app 'chroot / true'; then fail "can chroot (SYS_CHROOT)"; else pass "cannot c
 [[ ${#RUNTIME[@]} -gt 0 ]] && pass "gVisor (runsc) sandbox is used" || echo "  note: gVisor is not installed here (scripts/setup-gvisor.sh)"
 
 echo "A build"
-BUILD_DIR="$(mktemp -d)"
-cat >"$BUILD_DIR/Dockerfile" <<EOF
-FROM $IMAGE
-RUN ! nc -z -w 3 ${LAN_GW:-192.168.1.1} 80
-RUN ! nc -z -w 3 169.254.169.254 80
-RUN ! nc -z -w 3 $HUB_IP 7823
-EOF
-if docker build -q -t "${PREFIX}-build" "$BUILD_DIR" >/dev/null 2>&1; then pass "a build cannot reach the local network, the metadata address or the primary"; else fail "a build can reach a private address"; fi
-rm -rf "$BUILD_DIR"
+build_reaches() {   # build_reaches <host> <port>: 0 reachable, 1 not, 2 the build failed for another reason
+  local dir out
+  dir="$(mktemp -d)"
+  printf 'FROM %s\nRUN if nc -z -w 3 %s %s; then echo CB-REACHABLE; exit 1; fi\n' "$IMAGE" "$1" "$2" >"$dir/Dockerfile"
+  out="$(docker build --no-cache --progress=plain -t "${PREFIX}-build" "$dir" 2>&1)"
+  local rc=$?
+  rm -rf "$dir"
+  [[ $rc -eq 0 ]] && return 1
+  grep -q "CB-REACHABLE" <<<"$out" && return 0
+  echo "$out" | tail -5 | sed 's/^/      /'
+  return 2
+}
+check_build() {
+  build_reaches "$1" "$2"
+  case $? in
+    0) fail "a build can reach $3 ($1:$2)" ;;
+    1) pass "a build cannot reach $3" ;;
+    *) fail "the build for $3 failed for another reason (see above)" ;;
+  esac
+}
+[[ -n "$LAN_GW" ]] && check_build "$LAN_GW" 80 "the local network"
+check_build 169.254.169.254 80 "the cloud metadata address"
+check_build "$HUB_IP" 7823 "the primary over the node network"
+[[ -n "$BRIDGE_IP" ]] && check_build "$(ip -4 addr show docker0 2>/dev/null | awk '/inet /{split($2,a,"/"); print a[1]; exit}')" 22 "SSH on this machine"
 
 echo
 if [[ $FAILED -eq 0 ]]; then echo "Every check passed."; else echo "Some checks failed: see above."; fi
