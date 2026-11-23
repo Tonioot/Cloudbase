@@ -175,9 +175,15 @@ def bearer_token(headers) -> Optional[str]:
     return token if scheme.lower() == "bearer" and token.startswith(TOKEN_PREFIX) else None
 
 
+class AuthUnavailable(Exception):
+    """The credentials could not be checked (the database did not answer in time): not the same as wrong credentials."""
+
+
 async def api_token_user(token: str) -> Optional[dict]:
     """Like session_user, for an API token: its own permissions, in every project or only the ones it was made for. None when
-    the token is unknown or expired. It acts as "token:<name>", a name no user can have, so it never is the root account."""
+    the token is unknown or expired. It acts as "token:<name>", a name no user can have, so it never is the root account.
+    Raises AuthUnavailable when the lookup itself fails: a busy database must not look like a deleted token (a client
+    would give up on a 401, while it tries a 503 again)."""
     from sqlalchemy import select
     try:
         async with AsyncSessionLocal() as db:
@@ -185,17 +191,20 @@ async def api_token_user(token: str) -> Optional[dict]:
             now = datetime.utcnow()
             if row is None or (row.expires_at and row.expires_at <= now):
                 return None
-            if row.last_used_at is None or now - row.last_used_at > _LAST_USED_EVERY:
-                row.last_used_at = now
-                await db.commit()
             permissions = set(json.loads(row.permissions or "[]"))
             ids = json.loads(row.project_ids) if row.project_ids else []
             username = f"token:{row.name}"
+            if row.last_used_at is None or now - row.last_used_at > _LAST_USED_EVERY:
+                try:                                # only a hint: a locked database never fails the request for it
+                    row.last_used_at = now
+                    await db.commit()
+                except Exception:
+                    await db.rollback()
             return {"username": username, "role": "API token", "sv": 0, "via_token": True,
                     "db_user": User(username=username, role="API token", role_id=None, session_version=0),
                     "permissions": permissions, "projects": {int(i): permissions for i in ids} if ids else None}
-    except Exception:
-        return None
+    except Exception as exc:
+        raise AuthUnavailable(str(exc)) from exc
 
 
 _UNSET = object()

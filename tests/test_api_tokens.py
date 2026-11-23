@@ -103,3 +103,15 @@ def test_the_audit_log_names_the_token(admin):
     made = _make(admin, EVERYTHING)
     _bare_client().post("/api/projects", json={"name": "audited-by-token"}, headers=_bearer(made))
     assert "token:ci" in str(admin.get("/api/audit-log").json())
+
+
+def test_a_token_lookup_that_fails_is_a_503_not_a_401(client, monkeypatch):
+    """A busy (locked) database while checking a token used to answer 401 'Not authenticated': a client then believes its
+    token was deleted. It is a 503, which a client tries again."""
+    from core import auth
+
+    async def broken(token):
+        raise auth.AuthUnavailable("database is locked")
+    monkeypatch.setattr(auth, "api_token_user", broken)
+    res = client.get("/api/apps", headers={"Authorization": "Bearer cbt_whatever"})
+    assert res.status_code == 503

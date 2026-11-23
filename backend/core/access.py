@@ -89,7 +89,12 @@ class _AuthMiddleware(BaseHTTPMiddleware):
         if path.startswith("/api/") and path not in _PUBLIC:
             # Signed in? Looked up once and kept for the endpoint, whose own dependency decides the permission
             # (auth.require_permission; tests/test_security.py checks that every endpoint has one).
-            if await auth.request_user(request):
+            try:
+                signed_in = await auth.request_user(request)
+            except auth.AuthUnavailable:
+                return JSONResponse({"detail": "Cloudbase is busy and could not check the credentials; try again"},
+                                    status_code=503, headers={"Retry-After": "5"})
+            if signed_in:
                 return await call_next(request)
 
             # Node agents (X-Node-Token) only reach the app endpoint they call;
