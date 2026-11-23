@@ -7,7 +7,7 @@
 # With gVisor a container talks to a kernel that runs in user space instead of to this machine's kernel, so a bug in
 # the kernel is no longer a way out of the container. It costs some speed (system calls, file access).
 #
-# Docker is restarted at the end to pick up the runtime; containers with a restart policy come back by themselves.
+# Docker is reloaded at the end to pick up the runtime (restarted only when a reload does not work).
 set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then
@@ -30,18 +30,27 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 cd "$TMP"
 
+# gVisor ships as one archive: runsc, containerd-shim-runsc-v1 and the gvisor-bin/ directory that must sit next to
+# runsc (runsc install no longer downloads what is missing). zstd when it is here, else bzip2.
+if command -v zstd >/dev/null 2>&1 && tar --help 2>/dev/null | grep -q -- '--zstd'; then
+  ARCHIVE="gvisor.tar.zstd"; UNPACK=(--zstd -xf)
+else
+  ARCHIVE="gvisor.tar.bz2"; UNPACK=(-xjf)
+fi
+
 echo "Downloading gVisor for ${ARCH}"
-for file in runsc runsc.sha512 containerd-shim-runsc-v1 containerd-shim-runsc-v1.sha512; do
-  curl -fsSLO "${URL}/${file}"
-done
-sha512sum -c runsc.sha512 -c containerd-shim-runsc-v1.sha512
-install -o root -g root -m 755 runsc containerd-shim-runsc-v1 /usr/local/bin/
+curl -fsSLO "${URL}/${ARCHIVE}"
+curl -fsSLO "${URL}/${ARCHIVE}.sha512"
+sha512sum -c "${ARCHIVE}.sha512"
+tar "${UNPACK[@]}" "${ARCHIVE}" -C /usr/local/bin
+chown -R root:root /usr/local/bin/runsc /usr/local/bin/containerd-shim-runsc-v1
+[[ -d /usr/local/bin/gvisor-bin ]] && chown -R root:root /usr/local/bin/gvisor-bin
 
 # Adds {"runtimes": {"runsc": ...}} to /etc/docker/daemon.json, keeping what is there
 /usr/local/bin/runsc install
 
-echo "Restarting Docker to load the runtime"
-systemctl restart docker
+echo "Reloading Docker to load the runtime"
+systemctl reload docker || systemctl restart docker
 
 if docker info --format '{{json .Runtimes}}' | grep -q '"runsc"'; then
   echo "gVisor is ready. Set in config.yaml on the primary:  tenant: { enabled: true, runtime: runsc }"
