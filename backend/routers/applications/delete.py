@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import shutil
 from fastapi import APIRouter, HTTPException, Depends
@@ -18,7 +19,19 @@ from apps.serializers import _get_or_404
 from apps.state import locked
 from workers import log_settings
 
+log = logging.getLogger("cloudbase.apps")
+
 router = APIRouter(prefix="/api/apps", tags=["applications"])
+
+
+def _remove_source_dir(app_id: int) -> None:
+    """Best effort: a folder that cannot be removed now is cleaned by the next clone into it."""
+    app_dir = pm.get_app_dir(app_id)
+    try:
+        if os.path.exists(app_dir):
+            shutil.rmtree(app_dir)
+    except OSError as exc:
+        log.warning("[delete] could not remove the source of app %s: %s", app_id, exc)
 
 
 @router.delete("/{app_id}")
@@ -40,6 +53,9 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dic
         except IntegrityError as e:
             await db.rollback()
             raise HTTPException(409, f"App '{app.name}' cannot be deleted because it is still referenced") from e
+        # The source of an app on a node is cloned on the primary too: it goes with the app, or the next app that gets
+        # the same id finds it in the way ("not an empty directory")
+        await asyncio.to_thread(_remove_source_dir, app_id)
         desired.nudge(node.id)
         log_settings.forget_app_later(app.id)
         if node.status == "online":
