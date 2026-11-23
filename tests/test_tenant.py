@@ -266,3 +266,71 @@ def test_the_scripts_are_there_and_reachable_from_the_cli():
     assert "sha512sum -c" in gvisor and "runsc install" in gvisor
     config = (ROOT / "config.yaml").read_text(encoding="utf-8")
     assert "tenant:" in config and "enabled: false" in config
+
+
+# ── cloudbase tenant (backend/tenant_setup.py) ────────────────────────────────
+@pytest.fixture
+def wizard(monkeypatch):
+    import tenant_setup
+    from core import config
+    written = {}
+    monkeypatch.setattr(config, "get_tenant", lambda: dict(config._DEFAULTS["tenant"]))
+    monkeypatch.setattr(config, "save_config_sections", lambda sections: written.update(sections))
+    monkeypatch.setattr(tenant_setup, "is_node", lambda: False)
+    empty = {"apps": [], "cron": [], "databases": [], "nodes": [("node-1", "online")]}
+
+    async def world():
+        return dict(empty)
+    monkeypatch.setattr(tenant_setup, "on_the_primary", world)
+    monkeypatch.setattr(tenant_setup.sys.stdin, "isatty", lambda: True, raising=False)
+
+    def run(argv, answers=()):
+        replies = iter(answers)
+        monkeypatch.setattr("builtins.input", lambda prompt="": next(replies))
+        return tenant_setup.main(argv), written.get("tenant")
+    run.world = empty
+    return run
+
+
+def test_the_wizard_asks_and_writes_what_was_chosen(wizard):
+    # gVisor yes, 0.5 CPU, 256 MB, 300 processes, 10 minutes, no disk limit, then confirm
+    rc, written = wizard(["on"], ["y", "0.5", "256", "300", "10", "", ""])
+    assert rc == 0
+    assert written == {"enabled": True, "default_cpu_limit": 0.5, "default_memory_limit_mb": 256, "pids_limit": 300,
+                       "runtime": "runsc", "build_timeout_seconds": 600, "container_disk_mb": 0}
+
+
+def test_the_wizard_asks_again_for_a_wrong_number_and_can_be_cancelled(wizard):
+    rc, written = wizard(["on"], ["n", "lots", "1", "", "", "", "", "n"])
+    assert rc == 3 and written is None
+
+
+def test_yes_takes_the_defaults_without_asking(wizard):
+    rc, written = wizard(["on", "--yes"])
+    assert rc == 0 and written["enabled"] is True and written["runtime"] == ""
+
+
+def test_with_something_on_the_primary_it_asks_first(wizard):
+    wizard.world["apps"] = ["shop"]
+    rc, written = wizard(["on"], ["n"])
+    assert rc == 3 and written is None
+
+
+def test_turning_off_and_status(wizard, monkeypatch):
+    from core import config
+    assert wizard(["off"])[0] == 3                                 # already off
+    monkeypatch.setattr(config, "get_tenant", lambda: {**config._DEFAULTS["tenant"], "enabled": True})
+    rc, written = wizard(["off"], ["y"])
+    assert rc == 0 and written["enabled"] is False
+    assert wizard(["status"])[0] == 3
+
+
+def test_a_node_sends_you_to_the_primary(wizard, monkeypatch):
+    import tenant_setup
+    monkeypatch.setattr(tenant_setup, "is_node", lambda: True)
+    assert wizard(["on"])[0] == 1
+
+
+def test_cloudbase_tenant_runs_the_wizard_and_restarts():
+    start = (ROOT / "start.sh").read_text(encoding="utf-8")
+    assert "tenant_setup.py" in start and "cmd_tenant" in start and "systemctl restart" in start

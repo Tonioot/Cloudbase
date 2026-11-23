@@ -90,6 +90,7 @@ Recovery:
   nginx permissions [user]     Let Cloudbase manage nginx and HTTPS certificates
   wireguard [user]             Set up (or repair) the node network between the primary and its nodes
   quota [user]                 Set up (or repair) database disk limits and the counting of apps' internet traffic
+  tenant [on|off|status]       Turn tenant mode on (asks what you want) or off, or show it (primary only)
   gvisor                       Install the gVisor sandbox runtime (tenant mode, config.yaml tenant.runtime: runsc)
   tenant-check [host:port]     Check on this server that tenant mode shuts apps in (see config.yaml, tenant)
 
@@ -385,6 +386,22 @@ quota_setup() {
     info "Setting up disk limits and traffic counting for user '$target_user'"
     bash "$INSTALL_DIR/scripts/setup-quota.sh" "$target_user"
     success "Disk limits and traffic counting ready"
+}
+
+cmd_tenant() {
+    # Asks what you want and writes the tenant: section of config.yaml (backend/tenant_setup.py)
+    cd "$BACKEND_DIR"
+    local rc=0
+    "$VENV_PATH/bin/python3" tenant_setup.py "$@" || rc=$?
+    [[ $rc -eq 3 ]] && return 0          # nothing changed (or only shown)
+    [[ $rc -ne 0 ]] && exit "$rc"
+    if service_installed && command -v systemctl >/dev/null 2>&1; then
+        info "Restarting Cloudbase so the new settings apply"
+        sudo systemctl restart "$SERVICE_NAME"
+        success "Cloudbase restarted; the nodes pick up tenant mode with their next list"
+    else
+        warn "Restart Cloudbase so the new settings apply"
+    fi
 }
 
 handle_nginx_command() {
@@ -996,6 +1013,9 @@ case "$COMMAND" in
         ;;
     gvisor)
         bash "$INSTALL_DIR/scripts/setup-gvisor.sh"
+        ;;
+    tenant)
+        cmd_tenant "$@"
         ;;
     tenant-check)
         bash "$INSTALL_DIR/scripts/tenant-check.sh" "$@"

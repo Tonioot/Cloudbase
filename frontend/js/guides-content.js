@@ -1284,7 +1284,8 @@ cloudbase restore ~/cloudbase-backup.tar.gz</pre>
   lead: 'Turn this on when the apps belong to people you don’t know, for example a hosting service built on Cloudbase. Then an app can’t reach other apps, the local network or the servers themselves, and a node that was taken over can’t take the rest with it.',
   body: `
 <h2>Turning it on</h2>
-<p>In <code>~/.cloudbase/config.yaml</code> on the primary, then restart Cloudbase. The nodes take it from the primary.</p>
+<p>On the primary run <code>cloudbase tenant</code>. It shows what runs on the primary and which nodes are online, asks whether you want the gVisor sandbox and which limits apply to apps and databases that set none, then writes it and restarts Cloudbase. The nodes take it from the primary. <code>cloudbase tenant status</code> shows the settings, <code>cloudbase tenant off</code> turns it off, and <code>--yes</code> takes the current values without asking.</p>
+<p>It writes this section of <code>~/.cloudbase/config.yaml</code>, which you can also edit by hand:</p>
 <pre>tenant:
   enabled: true
   default_cpu_limit: 1.0          # for apps and databases without a limit of their own
@@ -1347,6 +1348,7 @@ cloudbase restore ~/cloudbase-backup.tar.gz</pre>
   <tr><td><code>cloudbase backup [file]</code></td><td>Write the database, keys and settings to a <code>.tar.gz</code></td></tr>
   <tr><td><code>cloudbase restore &lt;file&gt;</code></td><td>Restore from such a file. Option: <code>--yes</code> to skip the question</td></tr>
   <tr><td><code>cloudbase nginx permissions</code></td><td>Let Cloudbase manage nginx and request HTTPS certificates</td></tr>
+  <tr><td><code>cloudbase tenant</code></td><td>Turn <a href="/guides?g=tenant-mode">tenant mode</a> on (it asks what you want), <code>off</code>, or show its <code>status</code></td></tr>
   <tr><td><code>cloudbase gvisor</code></td><td>Install the gVisor sandbox for <a href="/guides?g=tenant-mode">tenant mode</a></td></tr>
   <tr><td><code>cloudbase tenant-check</code></td><td>Check on this server that tenant mode shuts apps in</td></tr>
   <tr><td><code>cloudbase quota</code></td><td>Set up (or repair) database disk limits and the counting of apps’ internet traffic</td></tr>
