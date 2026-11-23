@@ -1312,6 +1312,7 @@ cloudbase restore ~/cloudbase-backup.tar.gz</pre>
 
 <h2>The sandbox (gVisor)</h2>
 <p>Run <code>cloudbase gvisor</code> on every node, then set <code>runtime: runsc</code>. It works on x86_64 and 64-bit ARM (a Raspberry Pi with a 64-bit OS). Docker restarts once to load it. A container that should run in the sandbox never starts on a node without it: it fails with a message that says so.</p>
+<p>gVisor can’t reach the name server Docker puts in a container (127.0.0.11). So Cloudbase gives a sandboxed app this server’s real name servers and puts the addresses of the databases and apps it is linked to in its <code>/etc/hosts</code>; its URLs stay the same. An app started before this (it can’t look anything up, e.g. <code>EAI_AGAIN</code>) needs one restart.</p>
 
 <h2>Checking it</h2>
 <p>Run <code>cloudbase tenant-check</code> on each node once tenant mode is on. It starts throwaway containers the way a stranger’s app is started and tries to get out: this machine’s SSH and panel, the metadata address, the local network, the primary over the node network, mail on port 25, another app, a fork bomb, raw sockets, and a build that reaches for private addresses. Every line should say PASS.</p>

@@ -1,7 +1,7 @@
 import json
 import logging
 import threading
-from containers import egress, hardening
+from containers import egress, hardening, sandbox_dns
 from containers.client import _apply_linked_databases, _assert_image_local, _get_client, start_container
 from containers.dockerfiles import _cmd_to_json
 from containers.naming import job_container_name
@@ -70,6 +70,7 @@ def run_job_container(
         run_kwargs["tmpfs"] = {"/tmp": ",".join(tmpfs_opts)}
     hardening.apply(run_kwargs, docker_options.get("hardening"))
     extra_networks = _apply_linked_databases(client, run_kwargs, docker_options)
+    sandbox_dns.apply(client, run_kwargs, docker_options)      # gVisor can't reach Docker's own name server
     _assert_image_local(client, img)
 
     try:     # the destinations this job needs on other nodes are open while it runs (an old helper only logs)

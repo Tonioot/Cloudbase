@@ -19,8 +19,15 @@ PREFIX="cb-tenant-check-$$"
 CAPS=(--cap-drop ALL --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER --cap-add SETUID --cap-add SETGID
       --cap-add NET_BIND_SERVICE --cap-add KILL)
 RUNTIME=()
+RESOLV=()
 if docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"runsc"'; then
   RUNTIME=(--runtime runsc)
+  # Cloudbase gives a sandboxed app its own resolv.conf (gVisor can't reach Docker's name server): use the same one
+  CB_USER="$(systemctl show -p User --value cloudbase 2>/dev/null || true)"
+  CB_HOME="$(getent passwd "${CB_USER:-$(id -un)}" | cut -d: -f6)"
+  if [[ -f "$CB_HOME/.cloudbase/sandbox-resolv.conf" ]]; then
+    RESOLV=(-v "$CB_HOME/.cloudbase/sandbox-resolv.conf:/etc/resolv.conf:ro")
+  fi
 fi
 FAILED=0
 
@@ -30,7 +37,7 @@ cleanup() { docker rm -f $(docker ps -aq --filter "name=${PREFIX}") >/dev/null 2
 trap cleanup EXIT
 
 app() {   # app <command>: run it in a container shut in like a tenant's app
-  docker run --rm --name "${PREFIX}-$RANDOM" --network "$NET" "${CAPS[@]}" "${RUNTIME[@]}" \
+  docker run --rm --name "${PREFIX}-$RANDOM" --network "$NET" "${CAPS[@]}" "${RUNTIME[@]}" "${RESOLV[@]}" \
     --pids-limit 512 --memory 256m --cpus 0.5 --security-opt no-new-privileges:true \
     "$IMAGE" sh -c "$1" >/dev/null 2>&1
 }
@@ -62,6 +69,9 @@ expect_closed "$HUB_IP" 7823 "cannot reach the primary over the node network"
 expect_closed "$HUB_IP" 22   "cannot reach SSH on the primary over the node network"
 expect_closed smtp.gmail.com 25 "cannot send mail directly (port 25)"
 if reaches "${OPEN_TARGET%:*}" "${OPEN_TARGET#*:}"; then pass "can reach the internet ($OPEN_TARGET)"; else fail "cannot reach the internet ($OPEN_TARGET)"; fi
+if app 'nslookup discord.com'; then pass "can look up public names (discord.com)"
+elif [[ ${#RUNTIME[@]} -gt 0 && ${#RESOLV[@]} -eq 0 ]]; then fail "cannot look up public names: no sandbox resolv.conf yet (start an app here once after cloudbase update)"
+else fail "cannot look up public names (discord.com)"; fi
 
 echo "Other apps"
 docker run -d --name "${PREFIX}-victim" --network "$NET" "${CAPS[@]}" "${RUNTIME[@]}" "$IMAGE" sh -c "nc -lk -p 8080 -e cat" >/dev/null
