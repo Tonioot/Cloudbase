@@ -107,3 +107,30 @@ def test_a_deploy_while_another_runs_is_refused(admin, deploy_env):
     with state.app_lock(app_id, "deploying"):
         assert admin.post(f"/api/apps/{app_id}/deploy-rolling").status_code == 409
     assert history(app_id) == []
+
+
+def test_an_app_that_was_never_cloned_is_cloned_by_its_first_deploy(deploy_env, monkeypatch):
+    """An app placed on a node (tenant mode) used to be stored without its source: every deploy then answered
+    'No working directory'. The deploy clones it on the primary first."""
+    from sqlalchemy import update
+    from apps import deployments
+    from core.database import AsyncSessionLocal
+    from core.models import Application
+    calls, make_app, history = deploy_env
+    app_id = make_app("dp-never-cloned")
+
+    async def forget():
+        async with AsyncSessionLocal() as db:
+            await db.execute(update(Application).where(Application.id == app_id).values(working_dir=None))
+            await db.commit()
+    _run(forget())
+    cloned = []
+
+    async def fake_clone(app):
+        cloned.append(app.id)
+        app.working_dir = tempfile.gettempdir()
+    monkeypatch.setattr(deployments.apps_git, "_deploy_app", fake_clone)
+    monkeypatch.setattr(deployments.apps_git, "_has_source", lambda app: bool(app.working_dir))
+    _run(deployments.run_deploy(app_id, strategy="rebuild", actor="t"))
+    assert cloned == [app_id] and calls["build"] == 1
+    assert [d.status for d in history(app_id)] == ["success"]

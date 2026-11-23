@@ -116,23 +116,19 @@ async def deploy_app(
     await db.commit()
     await db.refresh(app)
 
-    if not target_node.is_local and not is_cron:
-        # Nginx runs on the primary and reaches remote instances over the
-        # node network, so a custom domain is routed here too. The config itself is
-        # written once instances start (that path requires this flag).
-        if app.domain and not app.no_web:
-            app.nginx_enabled = True
-        await db.commit()
-        await db.refresh(app)
-        return _app_to_dict(app, [])
-
+    # The source always lives on the primary, also for an app whose instances will run on a node: builds and the
+    # hand-over to a node start from it. Without it a deploy is refused ("No working directory").
+    remote = not target_node.is_local and not is_cron
     try:
         with activity.track(app.id, "deploying", "Cloning the repository"):
             await _deploy_app(app)
 
         if app.domain and not app.no_web:
             app.nginx_enabled = True
-            await _write_app_nginx_config(app, db)
+            if not remote:
+                # Nginx runs on the primary and reaches remote instances over the node network, so a custom
+                # domain is routed here too; for a remote app the config is written once instances start.
+                await _write_app_nginx_config(app, db)
 
         await log_audit(db, "app.deploy", actor=actor, app_id=app.id, detail={"name": app.name})
         await db.commit()

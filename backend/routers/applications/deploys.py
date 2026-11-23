@@ -16,6 +16,7 @@ from apps.validation import _check_git_ref
 from routers.applications.schemas import GitDeployRequest
 from routers.applications.sse import _DEPLOY_STREAM_DONE, _SSE_HEADERS, _SSE_PING, _queue_get_or_heartbeat, _sse_line
 from apps import deployments as apps_deployments
+from apps.git import ensure_source
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
@@ -76,6 +77,9 @@ async def deploy_stream(
     if strategy not in ("rebuild", "rolling", "blue_green"):
         raise HTTPException(400, "strategy must be one of: rebuild, rolling, blue_green")
     app = await _get_or_404(app_id, db)
+    if not app.working_dir or not os.path.exists(app.working_dir):
+        await ensure_source(app_id)                    # never cloned here (or lost): clone it now instead of refusing
+        await db.refresh(app)
     if not app.working_dir or not os.path.exists(app.working_dir):
         raise HTTPException(400, "No working directory — deploy the app first")
     if busy_with(app_id):

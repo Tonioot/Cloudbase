@@ -72,6 +72,7 @@ async def run_deploy(
     gh: Optional[tuple] = None   # (repo_url, token, sha) once the commit is known: its status on GitHub
     try:
         with apps_state.app_lock(app_id, "deploying"):
+            await apps_git.ensure_source(app_id)       # an app whose source is not on this server is cloned first
             async with AsyncSessionLocal() as db:
                 app = await db.get(Application, app_id)
                 if not app:
