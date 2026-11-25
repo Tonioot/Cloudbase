@@ -42,6 +42,14 @@ Role
   --main-url <url>        The primary's panel URL (node)
   --invite-code <code>    Invite code from "Add node" in the panel (node)
   --node-name <name>      Name shown in the panel (node, default: hostname)
+  --gvisor                Install the gVisor sandbox (a node of a primary in tenant mode)
+
+Set up in one go (primary; for a platform that runs servers for others)
+  --tenant                Tenant mode on: apps of people you don't know, in the gVisor sandbox
+  --panel-domain <name>   The panel at this domain, with its own certificate (its DNS must point here)
+  --base-domain <name>    App subdomains: <app>.<name>, HTTPS per app
+  --db-domain <name>      Database hostnames: <database>.<name>
+  --api-token <cbt_…>     Make an API token with this value, for the platform that calls this panel
 
 Maintenance
   --update                Update an installed server to the latest version
@@ -64,6 +72,12 @@ ROLE=""
 MAIN_URL=""
 INVITE_CODE=""
 NODE_NAME=""
+GVISOR=false
+TENANT=false
+PANEL_DOMAIN=""
+BASE_DOMAIN=""
+DB_DOMAIN=""
+API_TOKEN=""
 INSTALL_DIR=""
 BRANCH="main"
 RUN_USER=""
@@ -78,6 +92,12 @@ while [[ $# -gt 0 ]]; do
     --main-url)     MAIN_URL="${2:-}"; shift ;;
     --invite-code)  INVITE_CODE="${2:-}"; shift ;;
     --node-name)    NODE_NAME="${2:-}"; shift ;;
+    --gvisor)       GVISOR=true ;;
+    --tenant)       TENANT=true ;;
+    --panel-domain) PANEL_DOMAIN="${2:-}"; shift ;;
+    --base-domain)  BASE_DOMAIN="${2:-}"; shift ;;
+    --db-domain)    DB_DOMAIN="${2:-}"; shift ;;
+    --api-token)    API_TOKEN="${2:-}"; shift ;;
     --update)       ACTION="update" ;;
     --uninstall)    ACTION="uninstall" ;;
     --keep-data)    KEEP_DATA=true ;;
@@ -95,6 +115,20 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+# The set-up-in-one-go options: checked before anything is installed
+DOMAIN_RE='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$'
+for d in "$PANEL_DOMAIN" "$BASE_DOMAIN" "$DB_DOMAIN"; do
+  [[ -z "$d" || "$d" =~ $DOMAIN_RE ]] || die "Not a domain name: $d"
+done
+[[ -z "$API_TOKEN" || ( "$API_TOKEN" == cbt_* && ${#API_TOKEN} -ge 40 ) ]] || die "--api-token must start with cbt_ and be at least 40 characters"
+if [[ "$ROLE" == "node" ]] && { $TENANT || [[ -n "$PANEL_DOMAIN$BASE_DOMAIN$DB_DOMAIN$API_TOKEN" ]]; }; then
+  die "--tenant, the domains and --api-token are for a primary; a node gets them from its primary"
+fi
+$TENANT && GVISOR=true          # tenant mode runs apps in the gVisor sandbox
+if [[ -z "$ROLE" ]] && { $TENANT || [[ -n "$PANEL_DOMAIN$BASE_DOMAIN$DB_DOMAIN$API_TOKEN" ]]; }; then
+  ROLE="primary"                 # setting up in one go is for a primary: nothing to ask
+fi
 
 # Interactive questions read from the terminal, so they also work with curl | bash.
 can_ask() { ! $ASSUME_YES && { : </dev/tty; } 2>/dev/null; }
@@ -717,6 +751,26 @@ step_register() {
   printf '%s' "$INVITE_CODE" | as_user tee "$invite_file" > /dev/null
 }
 
+step_gvisor() {
+  bash "$INSTALL_DIR/scripts/setup-gvisor.sh"
+}
+
+step_platform() {
+  # Tenant mode before Cloudbase first starts; the rest is done by the panel once it runs (backend/workers/bootstrap.py)
+  if $TENANT; then
+    cd "$INSTALL_DIR/backend"
+    as_user venv/bin/python -c "from core import config; config.save_config_sections({'tenant': {'enabled': True, 'runtime': 'runsc'}})"
+  fi
+  [[ -n "$PANEL_DOMAIN$BASE_DOMAIN$DB_DOMAIN$API_TOKEN" ]] || return 0
+  local file="$DATA_DIR/bootstrap.json"
+  as_user mkdir -p "$DATA_DIR"
+  as_user env PANEL_DOMAIN="$PANEL_DOMAIN" BASE_DOMAIN="$BASE_DOMAIN" DB_DOMAIN="$DB_DOMAIN" API_TOKEN="$API_TOKEN" FILE="$file"     python3 -c 'import json, os
+d = {k: os.environ[v] for k, v in (("panel_domain", "PANEL_DOMAIN"), ("base_domain", "BASE_DOMAIN"), ("db_domain", "DB_DOMAIN"), ("api_token", "API_TOKEN")) if os.environ[v]}
+fd = os.open(os.environ["FILE"], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as f:
+    json.dump(d, f)'
+}
+
 step_service() {
   printf '#!/usr/bin/env bash\nexec /bin/bash "%s/start.sh" "$@"\n' "$INSTALL_DIR" > "/usr/local/bin/$CLI_NAME"
   chmod 755 "/usr/local/bin/$CLI_NAME"
@@ -810,6 +864,10 @@ if [[ "$ROLE" == "primary" ]]; then
 else
   add_step "Registering with the primary" step_register
 fi
+if [[ "$ROLE" == "primary" ]] && { $TENANT || [[ -n "$PANEL_DOMAIN$BASE_DOMAIN$DB_DOMAIN$API_TOKEN" ]]; }; then
+  add_step "Setting up tenant mode, domains and the API token" step_platform
+fi
+$GVISOR && add_step "Installing the gVisor sandbox" step_gvisor
 add_step "Setting up the node network" step_wireguard
 add_step "Setting up disk limits and traffic counting" step_quota
 add_step "Setting up updates from the panel" step_update_helper

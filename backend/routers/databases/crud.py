@@ -23,6 +23,7 @@ from dbs.state import _busy, _operation, claim, release
 from dbs.view import _as_dict, _client_ip
 from routers.databases.schemas import CreateDatabaseRequest, PublicAccessRequest, UpdateDatabaseRequest
 from dbs.backups import run_backup
+from nodes import capacity
 from core import projects as core_projects
 from core import tenant
 
@@ -126,6 +127,9 @@ async def update_database(
     node = await _node_for(database, db)
     if database.desired_state == "running" and not _node_reachable(node):
         raise HTTPException(409, f"Node '{node.name}' is offline; limits can only change while it is reachable")
+    after = capacity.need_of(cpu, mem, disk) if database.desired_state == "running" else capacity.Need(0.0, 0, int(disk or 0))
+    if not after.at_most(capacity.database_need(database)):
+        await capacity.ensure(db, node, after, exclude_database=database.id, instance=False)   # bigger: it must fit
 
     database.cpu_limit = cpu
     database.memory_limit_mb = mem

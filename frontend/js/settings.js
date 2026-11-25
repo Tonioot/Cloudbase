@@ -341,6 +341,30 @@ function renderSystem(root) {
         ${numField('sys-log-days', 'Keep for (days)', 'Older days are removed every hour.', 'min="1" max="365"')}
         ${numField('sys-log-mb', 'At most per app (MB)', 'On each server. The oldest days go first; today’s output always stays.', 'min="10"')}
       </div>`)}
+    ${group('Reservations', 'What every node may give out to apps, cron jobs and databases. Something new only goes to a node where its limits fit; what already runs is never stopped or moved.',
+      `<div class="form-pair">
+        <div class="field">
+          <label class="field-label" for="cap-mode">Reservations</label>
+          <select class="input" id="cap-mode">
+            <option value="auto">Automatic: on in tenant mode</option>
+            <option value="on">On</option>
+            <option value="off">Off: place as before, by count</option>
+          </select>
+        </div>
+        ${numField('cap-cpu-ratio', 'CPU overcommit', 'CPU promised may be this many times the cores. Memory is never promised twice. 1 = none, 2 is a good start.', 'min="1" max="16" step="0.1"')}
+      </div>
+      <div class="form-pair">
+        ${numField('cap-res-mem', 'Kept for the system per node (MB)', 'Docker, the sandbox and the agent. 1024 is safe.', 'min="0" step="128"')}
+        ${numField('cap-res-cpu', 'Kept for the system per node (cores)', '', 'min="0" max="64" step="0.25"')}
+      </div>
+      <div class="form-pair">
+        ${numField('cap-res-disk', 'Kept for the system per node (GB)', 'Images and logs. Database disks share the rest.', 'min="0"')}
+        <div class="field">
+          <label class="field-label"><input type="checkbox" id="cap-deploy-room" /> Keep room for deploys</label>
+          <div class="field-hint">A rolling deploy starts the new version next to the old one: every node keeps room for one more instance of its biggest app.</div>
+        </div>
+      </div>
+      <div class="field-hint" id="cap-total">Reading…</div>`)}
     ${group('Crash protection', 'When an instance keeps crashing, Cloudbase stops restarting it and marks it as failed.',
       `<div class="form-pair">
         ${numField('sys-max-restarts', 'Max restarts', 'Within one window.', 'min="1"')}
@@ -352,6 +376,22 @@ function renderSystem(root) {
     for (const [sec, key, id] of SYS_FIELDS) document.getElementById(id).value = data[sec]?.[key] ?? '';
     document.getElementById('sys-wg-endpoint').value = data.wireguard?.endpoint ?? '';
   }).catch(e => setStatus(e.message, 'error'));
+
+  const fmtMb = mb => mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
+  const showCapacity = c => {
+    const s = c.settings;
+    document.getElementById('cap-mode').value = s.mode;
+    document.getElementById('cap-cpu-ratio').value = s.cpu_ratio;
+    document.getElementById('cap-res-mem').value = s.reserve_memory_mb;
+    document.getElementById('cap-res-cpu').value = s.reserve_cpu;
+    document.getElementById('cap-res-disk').value = s.reserve_disk_gb;
+    document.getElementById('cap-deploy-room').checked = !!s.deploy_room;
+    const t = c.total;
+    document.getElementById('cap-total').innerHTML = !c.enabled ? 'Reservations are off: everything is placed by count, as before.'
+      : `Promised now: <b>${fmtMb(t.promised.memory_mb)}</b> of ${fmtMb(t.allocatable.memory_mb)} memory, `
+        + `<b>${t.promised.cpu}</b> of ${t.allocatable.cpu} CPU, ${fmtMb(t.promised.disk_mb)} of ${fmtMb(t.allocatable.disk_mb)} disk, on the nodes that run things.`;
+  };
+  api.getCapacity().then(showCapacity).catch(() => { document.getElementById('cap-total').textContent = ''; });
 
   api.getMesh().then(m => {
     document.getElementById('wg-port').textContent = m.port;
@@ -370,6 +410,14 @@ function renderSystem(root) {
     setStatus('Saving…');
     try {
       await api.saveSystemSettings(body);
+      showCapacity(await api.saveCapacity({
+        mode: document.getElementById('cap-mode').value,
+        cpu_ratio: parseFloat(document.getElementById('cap-cpu-ratio').value),
+        reserve_memory_mb: parseInt(document.getElementById('cap-res-mem').value, 10),
+        reserve_cpu: parseFloat(document.getElementById('cap-res-cpu').value),
+        reserve_disk_gb: parseInt(document.getElementById('cap-res-disk').value, 10),
+        deploy_room: document.getElementById('cap-deploy-room').checked,
+      }));
       setStatus('Saved. Port changes apply after a restart.', 'ok');
     } catch (e) {
       setStatus(e.message || 'Failed to save', 'error');

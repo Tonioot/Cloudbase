@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from workers import autodeploy as workers_autodeploy
+from workers import bootstrap as workers_bootstrap
 from containers import processes as pm
 from core import auth, loopwatch, selfupdate
 from core import projects as core_projects
@@ -82,6 +83,7 @@ async def _start_panel_tasks() -> list[asyncio.Task]:
         asyncio.create_task(_cron.scheduler()),
         asyncio.create_task(uptime_monitor()),
         asyncio.create_task(traffic_counter()),
+        asyncio.create_task(workers_bootstrap.apply_pending()),     # what install.sh was asked to set up, once
     ]
     if os.environ.get("CLOUDBASE_DEV_DEMO_LOGS"):
         tasks.append(asyncio.create_task(_dev_demo_logs(os.environ["CLOUDBASE_DEV_DEMO_LOGS"])))

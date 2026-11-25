@@ -23,6 +23,8 @@ from core import activity, applog
 from core.audit import log_audit
 from core.database import AsyncSessionLocal
 from core.models import Application, Instance, Node
+from core import tenant
+from nodes import capacity
 from nodes.registry import ensure_local_node
 from workers.autoscaler import pick_nodes
 
@@ -66,7 +68,13 @@ async def _move(app_id: int, offline_ids: list[int], like_id: int) -> None:
         nodes = list((await s.execute(select(Node).where(Node.enabled == True, Node.status == "online"))).scalars())  # noqa: E712
         if not any(n.id == local.id for n in nodes):
             nodes.append(local)
-        picked = pick_nodes(nodes, 1)
+        if capacity.enabled():
+            picked = await capacity.choose_many(s, [n for n in nodes if tenant.may_run_on(n)],
+                                                capacity.instance_need(like, app), 1)
+            if not picked:
+                raise RuntimeError("no other node has room to take over (add a node)")
+        else:
+            picked = pick_nodes(nodes, 1)
         if not picked:
             raise RuntimeError("no other node is online to take over")
         node = picked[0]

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from containers import processes as pm, dockerfiles as containers_dockerfiles
 from nginx import certbot as nginx_certbot, certificates as nginx_certificates
+from nodes import capacity
 from nodes.registry import ensure_local_node
 from core.env_crypto import decrypt_env, encrypt_env
 from core.audit import log_audit
@@ -74,6 +75,10 @@ async def update_app(app_id: int, req: UpdateRequest, db: AsyncSession = Depends
         if req.port != app.port:
             dockerfile_changed = True
         app.port = req.port
+    new_cpu = req.docker_cpu_limit if req.docker_cpu_limit is not None else app.docker_cpu_limit
+    new_memory = req.docker_memory_limit_mb if req.docker_memory_limit_mb is not None else app.docker_memory_limit_mb
+    if (new_cpu, new_memory) != (app.docker_cpu_limit, app.docker_memory_limit_mb):
+        await capacity.check_new_limits(db, app, new_cpu, new_memory)      # refused before anything changed
     if req.docker_cpu_limit is not None:
         app.docker_cpu_limit = req.docker_cpu_limit
     if req.docker_memory_limit_mb is not None:

@@ -18,11 +18,23 @@ from core import tenant
 from routers.databases.schemas import MoveDatabaseRequest
 from dbs.ops import _begin, _get_or_404, _links_for, _node_for, _node_reachable, _run_on_node, _set_status, _spawn, _start_operation
 from dbs.provision import _spec
+from nodes import capacity
 from dbs.state import PROVISION_TIMEOUT_SECONDS, _operation, _update_info, claim, release
 from dbs.workers import _check_updates_on
 from dbs.backups import run_backup
 
 router = APIRouter(prefix="/api/databases", tags=["databases"])
+
+
+async def _must_fit(db, database, node) -> None:
+    """A stopped database that starts again takes its CPU and memory back: there must be room (nodes/capacity.py)."""
+    if database.desired_state != "running" and node is not None:
+        try:
+            await capacity.ensure(db, node, capacity.database_need(database, running=True),
+                                  exclude_database=database.id, instance=False)
+        except HTTPException:
+            release(database.id)
+            raise
 
 
 @router.post("/{database_id}/start")
@@ -33,6 +45,7 @@ async def start_database(
     actor: str = Depends(_auth.get_current_actor),
 ):
     database, node = await _begin(database_id, db)
+    await _must_fit(db, database, node)
     database.desired_state = "running"
     database.status = "starting"
     database.last_error = None
@@ -50,6 +63,7 @@ async def restart_database(
     actor: str = Depends(_auth.get_current_actor),
 ):
     database, node = await _begin(database_id, db)
+    await _must_fit(db, database, node)
     database.desired_state = "running"
     database.status = "starting"
     database.last_error = None
@@ -197,6 +211,8 @@ async def move_database_to_node(
             raise HTTPException(409, f"Node '{target.name}' is offline or disabled")
         if not tenant.may_run_on(target):
             raise HTTPException(400, tenant.REFUSED_ON_PRIMARY)
+        # the target takes its CPU, memory and disk (the source keeps its data until the move worked)
+        await capacity.ensure(db, target, capacity.database_need(database), instance=False)
         if database.status not in ("running", "unhealthy"):
             raise HTTPException(409, "The database must be running to move it")
         engine = db_engines.get_engine(database.engine)

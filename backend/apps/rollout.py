@@ -8,6 +8,7 @@ live, and then removes the old ones; nothing here checks health or writes nginx 
 Rolling and blue/green differ only in how many instances are replaced at a time: one, or all of them.
 """
 import asyncio
+import contextlib
 import logging
 from typing import Callable, Optional
 
@@ -26,7 +27,7 @@ from core import activity
 from core.audit import log_audit
 from core.database import AsyncSessionLocal
 from core.models import Application, Instance, Node
-from nodes import desired
+from nodes import capacity, desired
 from core import projects as core_projects
 
 log = logging.getLogger("cloudbase.apps")
@@ -141,7 +142,11 @@ async def replace_instances(app_id: int, db: AsyncSession, actor: str, *, batch:
     replaced: list[int] = []
     for start in range(0, len(slots), size):
         group = slots[start:start + size]
-        new = [await add_instance(app, node, db, like=old, source_revision=source_revision) for old, node in group]
+        new = []
+        for old, node in group:
+            # next to an old one: the new version may use the room kept for deploys (nodes/capacity.py)
+            with capacity.surge() if old is not None else contextlib.nullcontext():
+                new.append(await add_instance(app, node, db, like=old, source_revision=source_revision))
         for instance, (old, node) in zip(new, group):
             push(f"[Deploy] Starting instance {instance.id} on '{node.name}'" + (f" to replace {old.id}…" if old else "…"))
         try:

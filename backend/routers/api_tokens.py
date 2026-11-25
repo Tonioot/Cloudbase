@@ -5,7 +5,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -70,6 +70,22 @@ async def create_token(req: CreateTokenRequest, admin_user: dict = Depends(auth.
     await db.commit()
     await db.refresh(row)
     return {**_json(row), "token": token}      # the only time the token itself is shown
+
+
+@router.post("/rotate")
+async def rotate_own_token(request: Request, _user: dict = Depends(auth.require_auth), db: AsyncSession = Depends(get_db)):
+    """A token replaces itself with a new value (same name, permissions and projects); the old value stops working at once.
+    For a program that got its token in a way that may have left a copy behind, such as an install command."""
+    old = auth.bearer_token(request.headers)
+    row = (await db.execute(select(ApiToken).where(ApiToken.token_hash == auth.hash_api_token(old)))).scalar_one_or_none() if old else None
+    if row is None:
+        raise HTTPException(status_code=400, detail="Only an API token can replace itself (call this with the token)")
+    token, token_hash, prefix = auth.new_api_token()
+    row.token_hash, row.prefix = token_hash, prefix
+    await log_audit(db, "token.rotate", actor=f"token:{row.name}", detail={"name": row.name})
+    await db.commit()
+    await db.refresh(row)
+    return {**_json(row), "token": token}
 
 
 @router.delete("/{token_id}")

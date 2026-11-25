@@ -14,6 +14,7 @@ from dbs.state import claim
 from dbs.provision import NAME_RE, assign_node_port, _new_credentials, _next_database_id, _validate_limits, validate_disk_limit
 from core import projects as core_projects
 from core import tenant
+from nodes import capacity
 from nodes.registry import least_busy_node
 
 
@@ -36,10 +37,15 @@ async def create_database_now(db: AsyncSession, *, name_in, engine_in, version_i
     _validate_limits(engine.key, cpu_limit, memory_limit_mb)
     validate_disk_limit(engine.key, disk_limit_mb)
 
+    need = capacity.need_of(cpu_limit, memory_limit_mb, disk_limit_mb)
     if node_id is not None:
         node = await db.get(Node, node_id)
         if node is None:
             raise HTTPException(404, "Node not found")
+    elif capacity.enabled():
+        # where it fits (nodes/capacity.py): memory and disk are promised one to one
+        online = (await db.execute(select(Node).where(Node.enabled == True, Node.status == "online"))).scalars().all()  # noqa: E712
+        node = await capacity.choose(db, [n for n in online if tenant.may_run_on(n)], need, instance=False)
     elif tenant.enabled():
         node = await least_busy_node(db)
     else:
@@ -50,6 +56,8 @@ async def create_database_now(db: AsyncSession, *, name_in, engine_in, version_i
         raise HTTPException(400, tenant.REFUSED_ON_PRIMARY)
     if not _node_reachable(node):
         raise HTTPException(409, f"Node '{node.name}' is offline or disabled")
+    if node_id is not None:
+        await capacity.ensure(db, node, need, instance=False)          # a node picked by the caller: it must fit there
 
     database = Database(
         id=await _next_database_id(db),

@@ -22,7 +22,7 @@ from typing import Optional
 
 import psutil
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from apps import rollout
 from apps.runtime import has_running_instance
@@ -32,6 +32,7 @@ from core import activity, applog
 from core.audit import log_audit
 from core.database import AsyncSessionLocal
 from core.models import Application, Instance, Node, StatsHistory
+from nodes import capacity
 from nodes.registry import ensure_local_node
 from core import tenant
 
@@ -186,7 +187,20 @@ async def _scale_up(app_id: int, count: int, add: int, reason: str) -> None:
         nodes = list((await s.execute(select(Node).where(Node.enabled == True, Node.status == "online"))).scalars())  # noqa: E712
         if not any(n.id == local.id for n in nodes):
             nodes.append(local)
-        new = [(await rollout.add_instance(app, node, s), node.name) for node in pick_nodes(nodes, add)]
+        if capacity.enabled():
+            have = dict((await s.execute(select(Instance.node_id, func.count()).where(Instance.app_id == app_id)
+                                         .group_by(Instance.node_id))).all())
+            targets = await capacity.choose_many(s, [n for n in nodes if tenant.may_run_on(n)], capacity.app_need(app), add,
+                                                 spread=have)
+            if len(targets) < add:
+                _say(app_id, f"Not enough room on the nodes for {add} more instance{'s' if add > 1 else ''}: "
+                             f"adding {len(targets)}. Add a node to let it grow further.", logging.WARNING)
+        else:
+            targets = pick_nodes(nodes, add)
+        if not targets:
+            return
+        add = len(targets)
+        new = [(await rollout.add_instance(app, node, s), node.name) for node in targets]
     where = ", ".join(f"{i.id} on '{name}'" for i, name in new)
     _say(app_id, f"{reason} — adding {add} instance{'s' if add > 1 else ''} ({where}): {count} → {count + add}…")
     results = await asyncio.gather(*[rollout.wait_until_live(app_id, i.id) for i, _ in new], return_exceptions=True)

@@ -69,6 +69,15 @@ _DEFAULTS = {
         "build_timeout_seconds": 1800,
         "container_disk_mb": 0,          # writable layer per container; needs overlay2 on xfs with pquota. 0 = off
     },
+    # Reservations (nodes/capacity.py): what a node may give out, and what everything on it is promised.
+    "capacity": {
+        "mode": "auto",                  # "on", "off", or "auto": on in tenant mode
+        "reserve_cpu": 0.5,              # cores of every node kept for the system (Docker, gVisor, the agent)
+        "reserve_memory_mb": 1024,       # memory of every node kept for the system
+        "reserve_disk_gb": 10,           # disk of every node kept for the system and images
+        "cpu_ratio": 2.0,                # CPU promised may be this many times the cores (memory: never more than there is)
+        "deploy_room": True,             # keep room on every node to start one new instance next to the old during a deploy
+    },
 }
 
 
@@ -124,6 +133,11 @@ def get_wireguard() -> dict:
 def get_tenant() -> dict:
     """The tenant settings, with defaults filled in."""
     return {**_DEFAULTS["tenant"], **(_config.get("tenant") or {})}
+
+
+def get_capacity() -> dict:
+    """The reservation settings, with defaults filled in."""
+    return {**_DEFAULTS["capacity"], **(_config.get("capacity") or {})}
 
 
 def get_server_port() -> int:

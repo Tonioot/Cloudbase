@@ -80,6 +80,7 @@ GET     /api/roles/permissions
 GET     /api/status
 GET     /api/system/backup-storage
 GET     /api/system/brand
+GET     /api/system/capacity
 GET     /api/system/github-tokens
 GET     /api/system/log-sources
 GET     /api/system/logs
@@ -183,6 +184,7 @@ POST    /api/system/github-tokens
 POST    /api/system/panel-domain
 POST    /api/system/settings
 POST    /api/tokens
+POST    /api/tokens/rotate
 POST    /api/transfer/export
 POST    /api/transfer/full-backup
 POST    /api/transfer/import
@@ -203,6 +205,7 @@ PUT     /api/projects/{project_id}/members
 PUT     /api/roles/{role_id}
 PUT     /api/system/backup-storage
 PUT     /api/system/brand
+PUT     /api/system/capacity
 PUT     /api/users/{user_id}
 WS    /api/nodes/ws/agent
 WS    /api/nodes/{node_id}/events

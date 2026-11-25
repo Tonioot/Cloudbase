@@ -24,6 +24,7 @@ from fastapi import HTTPException
 
 from core.env_crypto import encrypt_text
 from core.models import Instance, Node
+from nodes import capacity
 from nodes.state import _get_node_event
 
 log = logging.getLogger("cloudbase.nodes")
@@ -68,8 +69,10 @@ async def _require_current_agent(db: AsyncSession, node_id: int) -> None:
 async def start(db: AsyncSession, *, node_id: int, instance_id: int, payload: dict) -> str:
     """The instance should run with this payload (replaces any earlier spec, so a running one is recreated).
 
-    The caller commits; the node is told once the list has changed."""
+    The caller commits; the node is told once the list has changed. Refused (NoRoom) when it does not fit on the node
+    and is not a restart that asks for no more (nodes/capacity.py)."""
     await _require_current_agent(db, node_id)
+    await capacity.guard_instance(db, node_id, instance_id, payload)
     spec = {**payload, "instance_id": instance_id, "nonce": secrets.token_hex(4)}
     digest = spec_hash(spec)
     await db.execute(update(Instance).where(Instance.id == instance_id).values(

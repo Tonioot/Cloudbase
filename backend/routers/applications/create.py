@@ -6,6 +6,7 @@ from core.database import get_db
 from core.models import Application, Node
 from containers import dockerfiles as containers_dockerfiles
 from cron import scheduler as _cron
+from nodes import capacity
 from nodes.registry import ensure_local_node, least_busy_node
 from core.env_crypto import encrypt_env
 from core.audit import log_audit
@@ -73,6 +74,15 @@ async def deploy_app(
             containers_dockerfiles.resolve_static_dir("", req.start_command or "")
         except ValueError as exc:
             raise HTTPException(400, str(exc))
+
+    if is_cron and capacity.enabled():
+        # a cron job has a node of its own, and its limits stay promised there: it must fit (nodes/capacity.py)
+        need = capacity.need_of(req.docker_cpu_limit, req.docker_memory_limit_mb)
+        if req.node_id is not None:
+            await capacity.ensure(db, target_node, need)
+        else:
+            online = (await db.execute(select(Node).where(Node.enabled == True, Node.status == "online"))).scalars().all()  # noqa: E712
+            target_node = await capacity.choose(db, [n for n in online if tenant.may_run_on(n)], need)
 
     # no_web apps (discord bots, background workers, etc.) don't need a port or nginx
     is_no_web = (bool(req.no_web) or is_cron) and not is_static

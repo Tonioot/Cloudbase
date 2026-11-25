@@ -18,7 +18,8 @@ from nginx import files as nginx_files
 from nginx import config as nginx_config
 from core.runtime import PORT
 from dbs.public import sync_public_access
-from nginx.panel import _load_panel_https_domain, _refresh_all_app_nginx
+from nginx.panel import _load_panel_https_domain, _refresh_all_app_nginx, apply_panel_domain
+from nodes import capacity
 
 log = logging.getLogger("cloudbase.main")
 
@@ -64,21 +65,10 @@ async def set_panel_domain(req: PanelDomainRequest, _: dict = Depends(auth.requi
         raise HTTPException(400, "Enter a domain")
     cert = nginx_paths._sanitize_ssl_path(req.ssl_cert_path)
     key = nginx_paths._sanitize_ssl_path(req.ssl_key_path)
-    for writer, html in (
-        (nginx_files.write_cloudbase_unavailable_page, nginx_pages.generate_cloudbase_unavailable_html(domain)),
-        (nginx_files.write_cloudbase_unknown_host_page,
-         nginx_pages.generate_cloudbase_unknown_host_html(domain, _syscfg.get_brand_cached())),
-    ):
-        ok, msg = await asyncio.to_thread(writer, html)
-        if not ok:
-            raise HTTPException(500, f"Failed to write status page: {msg}")
-    config = nginx_config.generate_config("cloudbase", domain, PORT, cert, key, strict_hostnames=True)
-    ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, "cloudbase", config)
-    if not ok:
-        raise HTTPException(500, f"Failed to apply nginx config: {msg}")
-    await asyncio.to_thread(nginx_files.write_default_catch_all, cert, key)
-    _load_panel_https_domain()
-    await nginx_certificates.forget_pending([domain])
+    try:
+        await apply_panel_domain(domain, cert, key)
+    except RuntimeError as e:
+        raise HTTPException(500, str(e))
     return {"ok": True, "domain": domain, "https": bool(cert and key)}
 
 
@@ -146,6 +136,22 @@ async def set_brand(req: BrandRequest, db: AsyncSession = Depends(get_db), _: di
         log.warning("Writing the unknown-host page failed: %s", msg)
         raise HTTPException(500, "The brand is saved, but the page could not be written; try again")
     return brand
+
+
+@router.get("/api/system/capacity")
+async def get_capacity(db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_permission("nodes.view", "system.platform"))):
+    """Reservations (nodes/capacity.py): the settings, what every node gives out and has promised, and the totals."""
+    return await capacity.report(db)
+
+
+@router.put("/api/system/capacity")
+async def set_capacity(body: dict = Body(...), db: AsyncSession = Depends(get_db),
+                       _: dict = Depends(auth.require_permission("system.manage", "system.platform"))):
+    """Change the reservation settings. What already runs stays; only what is placed from now on follows them."""
+    clean = capacity.clean_settings(body or {})
+    if clean:
+        _cfg.save_config_sections({"capacity": clean})
+    return await capacity.report(db)
 
 
 class DbDomainRequest(BaseModel):

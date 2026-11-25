@@ -16,6 +16,7 @@ from routers.applications.schemas import ScaleRequest
 from routers.applications.instances import _remove_instances
 from core import projects as core_projects
 from core import tenant
+from nodes import capacity
 
 router = APIRouter(prefix="/api/apps", tags=["applications"])
 
@@ -74,9 +75,11 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
 
     started = []
     error = None
+    need = capacity.need_of(req.docker_cpu_limit or app.docker_cpu_limit, req.docker_memory_limit_mb or app.docker_memory_limit_mb)
     for _ in range(req.count):
-        target_node = pick_node_for_new(candidates, counts)
         try:
+            # where it fits (with reservations on), the fewest instances of this app first
+            target_node = await capacity.choose(db, candidates, need, spread=counts)
             started.append(await _add_one(app, app_id, req, target_node, db, actor))
             counts[target_node.id] = counts.get(target_node.id, 0) + 1
         except Exception as e:

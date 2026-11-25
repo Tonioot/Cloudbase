@@ -7,6 +7,8 @@ from core.models import Application
 from nginx import paths as nginx_paths
 from nginx import config as nginx_config
 from nginx import files as nginx_files
+from nginx import pages as nginx_pages
+from nginx import certificates as nginx_certificates
 from core import system_config as _syscfg
 from nodes.registry import ensure_local_node as _eln
 from apps.nginx_sync import _write_app_nginx_config as _wanc
@@ -82,3 +84,23 @@ async def _refresh_all_app_nginx() -> None:
         ok, msg = await asyncio.to_thread(nginx_files.end_batch)
         if not ok:
             log.warning("nginx refresh: the new configs were not accepted: %s", msg)
+
+
+async def apply_panel_domain(domain: str, cert: str | None, key: str | None) -> None:
+    """Serve the panel at `domain` (with this certificate, when given): its status pages, its nginx config, the catch-all
+    for unknown hostnames. Raises RuntimeError with the reason when nginx does not take it."""
+    for writer, html in (
+        (nginx_files.write_cloudbase_unavailable_page, nginx_pages.generate_cloudbase_unavailable_html(domain)),
+        (nginx_files.write_cloudbase_unknown_host_page,
+         nginx_pages.generate_cloudbase_unknown_host_html(domain, _syscfg.get_brand_cached())),
+    ):
+        ok, msg = await asyncio.to_thread(writer, html)
+        if not ok:
+            raise RuntimeError(f"Failed to write status page: {msg}")
+    config = nginx_config.generate_config("cloudbase", domain, PORT, cert, key, strict_hostnames=True)
+    ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, "cloudbase", config)
+    if not ok:
+        raise RuntimeError(f"Failed to apply nginx config: {msg}")
+    await asyncio.to_thread(nginx_files.write_default_catch_all, cert, key)
+    _load_panel_https_domain()
+    await nginx_certificates.forget_pending([domain])
