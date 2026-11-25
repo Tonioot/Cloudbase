@@ -318,14 +318,17 @@ async def require_superadmin(request: Request) -> dict:
     return _as_principal(user)
 
 
-def require_permission(permission: str):
-    """A FastAPI dependency that requires the user to have this permission. This is the one place an endpoint's
-    permission is decided; the middleware only checks that somebody is signed in."""
+def require_permission(permission: str, *alternatives: str):
+    """A FastAPI dependency that requires the user to have this permission (or one of the alternatives). This is the
+    one place an endpoint's permission is decided; the middleware only checks that somebody is signed in."""
     async def _dep(request: Request) -> dict:
         user = await request_user(request)
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
         refused = await _allowed(user, permission, request.path_params)
+        for other in alternatives:
+            if refused and await _allowed(user, other, request.path_params) is None:
+                refused = None
         if refused == status.HTTP_404_NOT_FOUND:
             raise HTTPException(status_code=refused, detail="Not found")
         if refused:

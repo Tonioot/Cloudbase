@@ -78,7 +78,7 @@ def answer(host: str, port: int, path: str = DEFAULT_PATH, expect: str = "") -> 
             if not path:
                 conn.connect()
                 return True, "port is open"
-            conn.request("GET", path, headers={"User-Agent": "Cloudbase-health-check", "Connection": "close"})
+            conn.request("GET", path, headers={"User-Agent": "health-check", "Connection": "close"})
             status = int(conn.getresponse().status or 0)
         finally:
             conn.close()

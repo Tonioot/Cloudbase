@@ -52,25 +52,35 @@ def _cloudbase_logo_data_uri() -> str | None:
     return None
 
 
-def _cloudbase_status_page(title: str, message: str, meta: str, tone: str, refresh_seconds: int | None = None) -> str:
-    """Minimal Cloudbase-branded status page (light/dark via prefers-color-scheme).
+_SAFE_LOGO = r"^data:image/[a-zA-Z0-9+/.-]+;base64,[A-Za-z0-9+/=]+$"
+
+
+def _cloudbase_status_page(title: str, message: str, meta: str, tone: str, refresh_seconds: int | None = None,
+                           brand: dict | None = None) -> str:
+    """Minimal status page (light/dark via prefers-color-scheme), Cloudbase's or, with `brand`, the brand's.
 
     Served by nginx as a static file while the panel may be down, so everything
     is inline: no fonts, scripts or images are fetched.
     """
+    import re as _re
     refresh = f'<meta http-equiv="refresh" content="{refresh_seconds}">' if refresh_seconds else ""
-    logo = _cloudbase_logo_data_uri()
+    if brand:
+        logo = brand.get("logo_data") if _re.match(_SAFE_LOGO, brand.get("logo_data") or "") else None
+        name = _esc(brand.get("name"))
+    else:
+        logo, name = _cloudbase_logo_data_uri(), "Cloudbase"
     mark = (
-        f'<img class="mark" src="{logo}" alt="Cloudbase">' if logo else
+        f'<img class="mark" src="{logo}" alt="{name}">' if logo else
         '<div class="mark mark-fallback" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 8.5a4 4 0 0 1-.5 9.5z"/></svg></div>'
-    )
+    ) if logo or not brand else ""          # a brand without a logo: no mark (the cloud is Cloudbase's)
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   {refresh}
-  <title>{title} — Cloudbase</title>
+  <meta name="robots" content="noindex">
+  <title>{title}{f" — {name}" if name else ""}</title>
   <style>
     :root {{
       color-scheme: dark;
@@ -134,8 +144,24 @@ def generate_cloudbase_unavailable_html(domain: str | None = None) -> str:
     )
 
 
-def generate_cloudbase_unknown_host_html(domain: str | None = None) -> str:
-    """Shown for hostnames that point at this server but are not linked to an app."""
+def _esc(v) -> str:
+    return str(v or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def generate_cloudbase_unknown_host_html(domain: str | None = None, brand: dict | None = None) -> str:
+    """Shown for hostnames that point at this server but are not linked to an app.
+
+    With a brand (white label) it says nothing about the server or where its panel is: visitors of the platform built
+    on Cloudbase see the platform's name, and a page that could be any host's."""
+    if brand:
+        return _cloudbase_status_page(
+            title=_esc(brand.get("unknown_host_title") or "Site not found"),
+            message=_esc(brand.get("unknown_host_message") or
+                         "There is no site at this address. If it is yours, check that the domain is connected to it."),
+            meta="404 · Not found",
+            tone="#7a7f88",
+            brand=brand,
+        )
     safe_domain = (domain or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return _cloudbase_status_page(
         title="Nothing is deployed here",

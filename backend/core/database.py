@@ -78,6 +78,7 @@ ALL_PERMISSIONS = [
     ("notifications.manage", "Manage notification channels and which events they receive"),
     # System & users
     ("system.manage",     "Manage Cloudbase server settings, server logs and nginx"),
+    ("system.platform",   "Set the panel, app and database domains and the brand of the pages visitors see: what a platform built on Cloudbase sets up itself"),
     ("tokens.manage",     "Manage Git tokens (access tokens for private repositories)"),
     ("secrets.export",    "Download environment variables and Git tokens in clear text (app export). Not part of the Administrator role: grant it on purpose"),
 ]

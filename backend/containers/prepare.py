@@ -9,7 +9,7 @@ import platform
 import subprocess
 from typing import Awaitable, Callable
 
-from containers import naming as containers_naming, build as containers_build, processes as pm
+from containers import naming as containers_naming, build as containers_build, output_log, processes as pm
 
 _logger = logging.getLogger("cloudbase.agent")
 
@@ -65,6 +65,7 @@ async def build_image_local(local_id: int, app_dir: str, spec: dict, push=None) 
 
     def _push(aid, line):
         _log(f"[build] {line}")
+        output_log.add_build_line(aid, line)       # with the app's output, so whoever follows the app sees its build
         if push:
             push(aid, line)
 

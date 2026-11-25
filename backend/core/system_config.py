@@ -77,10 +77,40 @@ def get_base_ssl_key_cached() -> str:
     return _cfg.get_base_ssl_key()
 
 
+_BRAND_KEY = "brand"
+BRAND_FIELDS = ("name", "logo_data", "unknown_host_title", "unknown_host_message")
+
+
+def get_brand_cached() -> dict:
+    """The brand the pages visitors can see carry instead of Cloudbase's (white label). Empty: Cloudbase's own.
+    For a platform built on Cloudbase, whose users must not see what runs underneath."""
+    import json
+    try:
+        brand = json.loads(_cache.get(_BRAND_KEY) or "{}")
+    except ValueError:
+        return {}
+    return {k: str(brand[k]) for k in BRAND_FIELDS if brand.get(k)} if isinstance(brand, dict) else {}
+
+
+async def set_brand(db: AsyncSession, brand: dict) -> dict:
+    import json
+    clean = {k: str(brand[k]).strip() for k in BRAND_FIELDS if str(brand.get(k) or "").strip()}
+    value = json.dumps(clean)
+    row = (await db.execute(select(SystemConfig).where(SystemConfig.key == _BRAND_KEY))).scalar_one_or_none()
+    if row:
+        row.value = value
+    else:
+        db.add(SystemConfig(key=_BRAND_KEY, value=value))
+    _cache[_BRAND_KEY] = value
+    await db.commit()
+    return clean
+
+
 async def load_cache(db: AsyncSession) -> None:
     result = await db.execute(
         select(SystemConfig).where(
             SystemConfig.key.in_([
+                _BRAND_KEY,
                 _BASE_DOMAIN_KEY,
                 _BASE_SSL_CERT_KEY,
                 _BASE_SSL_KEY_KEY,
@@ -92,7 +122,7 @@ async def load_cache(db: AsyncSession) -> None:
     )
     rows = result.scalars().all()
     for row in rows:
-        _cache[row.key] = _normalize(row.value)
+        _cache[row.key] = row.value or "" if row.key == _BRAND_KEY else _normalize(row.value)
 
 
 async def bootstrap_from_config_if_needed(db: AsyncSession) -> None:

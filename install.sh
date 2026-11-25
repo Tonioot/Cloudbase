@@ -666,6 +666,18 @@ server {
 NGINX_EOF
   fi
   ln -sf /etc/nginx/sites-available/cloudbase-default /etc/nginx/sites-enabled/cloudbase-default
+  # The default bucket (64 bytes) is too small for long names like <app>-<suffix>.<base domain>; with it
+  # `nginx -t` fails with "could not build server_names_hash" and no app config can be written any more.
+  if ! grep -qE '^\s*server_names_hash_bucket_size' /etc/nginx/nginx.conf; then
+    cat > /etc/nginx/conf.d/cloudbase-server-names.conf <<'NGINX_EOF'
+server_names_hash_bucket_size 128;
+server_names_hash_max_size 4096;
+NGINX_EOF
+  fi
+  # Responses and nginx's own error pages don't say which nginx version answers
+  if ! grep -qE '^\s*server_tokens' /etc/nginx/nginx.conf; then
+    echo 'server_tokens off;' > /etc/nginx/conf.d/cloudbase-server-tokens.conf
+  fi
   if nginx -t; then
     systemctl reload nginx
   else

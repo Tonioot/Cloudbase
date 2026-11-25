@@ -79,6 +79,7 @@ GET     /api/roles
 GET     /api/roles/permissions
 GET     /api/status
 GET     /api/system/backup-storage
+GET     /api/system/brand
 GET     /api/system/github-tokens
 GET     /api/system/log-sources
 GET     /api/system/logs
@@ -201,6 +202,7 @@ PUT     /api/projects/{project_id}/env
 PUT     /api/projects/{project_id}/members
 PUT     /api/roles/{role_id}
 PUT     /api/system/backup-storage
+PUT     /api/system/brand
 PUT     /api/users/{user_id}
 WS    /api/nodes/ws/agent
 WS    /api/nodes/{node_id}/events

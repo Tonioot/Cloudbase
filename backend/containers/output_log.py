@@ -7,7 +7,9 @@ output of their app containers to
     ~/.cloudbase/logs/output/app-<app_id>/<YYYY-MM-DD>.log      one line per output line:
     <timestamp>\t<instance id>\t<o|e (stdout/stderr)>\t<text>
 
-every few seconds, and once more just before a container is removed (see instances.py). Each machine prunes its
+every few seconds, and once more just before a container is removed (see instances.py). The output of an image build
+made while an instance starts (a node builds the image itself) is kept there too, as stream b without an instance id:
+whoever follows the app's output sees its build as well, also when it runs on a node. Each machine prunes its
 own files with the settings the primary hands out (days to keep, a maximum per app), and answers searches over them
 (routers/log_history.py asks the nodes through the agent).
 """
@@ -20,6 +22,7 @@ import os
 import re
 import shutil
 import threading
+import time
 from typing import Optional
 
 from containers.client import _get_client, is_docker_available
@@ -151,6 +154,21 @@ def capture(container) -> int:
         return len(new)
 
 
+def add_build_line(app_id: int, text: str) -> None:
+    """One line of an image build of this app made on this machine (stream b). Never stands in the way of the build."""
+    try:
+        ns = time.time_ns()
+        stamp = _dt.datetime.fromtimestamp(ns // 1_000_000_000, _dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+        text = str(text).replace("\t", " ").replace("\n", " ").replace("\r", "")
+        folder = _app_dir(int(app_id))
+        with _lock:
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, f"{_day_of(ns)}.log"), "a", encoding="utf-8") as f:
+                f.write(f"{stamp}.{ns % 1_000_000_000:09d}Z\t\tb\t{text}\n")
+    except Exception as e:
+        log.debug("[output] build line not kept: %s", e)
+
+
 def capture_quietly(container) -> None:
     """The last lines of a container about to be removed (never stands in the way of removing it)."""
     try:
@@ -242,7 +260,7 @@ def search(app_id: int, *, since_ns: int, until_ns: Optional[int] = None, q: str
                 if errors_only and not ERROR_RE.search(text):
                     continue
                 keep.append({"ts": ts, "ns": ns, "instance_id": int(inst) if inst.isdigit() else None,
-                             "stream": "stderr" if stream == "e" else "stdout", "text": text})
+                             "stream": {"e": "stderr", "b": "build"}.get(stream, "stdout"), "text": text})
         found.extend(reversed(keep))
         if len(found) >= limit:
             break

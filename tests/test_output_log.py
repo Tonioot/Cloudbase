@@ -122,3 +122,14 @@ def test_settings_from_the_primary_are_kept_and_checked():
     assert output_log.settings() == output_log.DEFAULT_SETTINGS
     output_log.set_settings({"retention_days": 30, "unknown": 1, "max_mb_per_app": "lots"})
     assert output_log.settings() == {"retention_days": 30, "max_mb_per_app": 200}
+
+
+def test_a_build_on_this_machine_is_kept_with_the_apps_output():
+    # a node builds the image while an instance starts: whoever follows the app's output sees the build too
+    output_log.add_build_line(7, "[Docker build] Collecting flask")
+    output_log.add_build_line(7, "[Docker build] ERROR:\tno matching distribution\nfor flask==9")
+    found = output_log.search(7, since_ns=0)
+    assert [(e["stream"], e["instance_id"]) for e in found] == [("build", None), ("build", None)]
+    assert found[0]["text"] == "[Docker build] ERROR: no matching distribution for flask==9"      # one line, no tabs
+    assert [e["text"] for e in output_log.search(7, since_ns=0, errors_only=True)] == [found[0]["text"]]
+    assert output_log.search(7, since_ns=0, instance_id=3) == []          # not an instance's output

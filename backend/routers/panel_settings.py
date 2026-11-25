@@ -28,7 +28,7 @@ router = APIRouter()
 
 # ── System endpoints ──────────────────────────────────────────────────────────
 @router.get("/api/system/nginx-config")
-async def get_cloudbase_nginx(db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_permission("system.manage"))):
+async def get_cloudbase_nginx(db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_permission("system.manage", "system.platform"))):
     config_path = os.path.join(nginx_paths.NGINX_SITES_DIR, "cloudbase")
     exists = os.path.exists(config_path)
     content = None
@@ -57,7 +57,7 @@ class PanelDomainRequest(BaseModel):
 
 
 @router.post("/api/system/panel-domain")
-async def set_panel_domain(req: PanelDomainRequest, _: dict = Depends(auth.require_permission("system.manage"))):
+async def set_panel_domain(req: PanelDomainRequest, _: dict = Depends(auth.require_permission("system.manage", "system.platform"))):
     """Set the panel's domain (and certificate) without touching the base domain."""
     domain = nginx_paths._normalize_domain(req.domain)
     if not domain:
@@ -66,7 +66,8 @@ async def set_panel_domain(req: PanelDomainRequest, _: dict = Depends(auth.requi
     key = nginx_paths._sanitize_ssl_path(req.ssl_key_path)
     for writer, html in (
         (nginx_files.write_cloudbase_unavailable_page, nginx_pages.generate_cloudbase_unavailable_html(domain)),
-        (nginx_files.write_cloudbase_unknown_host_page, nginx_pages.generate_cloudbase_unknown_host_html(domain)),
+        (nginx_files.write_cloudbase_unknown_host_page,
+         nginx_pages.generate_cloudbase_unknown_host_html(domain, _syscfg.get_brand_cached())),
     ):
         ok, msg = await asyncio.to_thread(writer, html)
         if not ok:
@@ -89,7 +90,7 @@ class BaseDomainRequest(BaseModel):
 
 
 @router.post("/api/system/base-domain")
-async def set_base_domain(req: BaseDomainRequest, db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_permission("system.manage"))):
+async def set_base_domain(req: BaseDomainRequest, db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_permission("system.manage", "system.platform"))):
     """Set (or clear) the base domain for app subdomains. Without a certificate HTTPS is automatic: every app gets
     its own. With ssl_cert_pem and ssl_key_pem the user's own wildcard certificate (*.<base domain>) serves every app."""
     import re as _re2
@@ -112,6 +113,41 @@ async def set_base_domain(req: BaseDomainRequest, db: AsyncSession = Depends(get
     return {"ok": True, "base_domain": base_domain, "own_certificate": info}
 
 
+class BrandRequest(BaseModel):
+    name: Optional[str] = None
+    logo_data: Optional[str] = None             # data:image/...;base64,...
+    unknown_host_title: Optional[str] = None
+    unknown_host_message: Optional[str] = None
+
+
+@router.get("/api/system/brand")
+async def get_brand(db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_permission("system.platform", "system.manage"))):
+    await _syscfg.load_cache(db)
+    return _syscfg.get_brand_cached()
+
+
+@router.put("/api/system/brand")
+async def set_brand(req: BrandRequest, db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_permission("system.platform", "system.manage"))):
+    """White label: the pages visitors can see (an unknown hostname) carry this brand instead of Cloudbase's, and say
+    nothing about the server. For a platform built on Cloudbase. Every field empty: Cloudbase's own pages again."""
+    if req.logo_data and not re.match(nginx_pages._SAFE_LOGO, req.logo_data):
+        raise HTTPException(400, "The logo must be a data:image/...;base64 URI")
+    if len(req.logo_data or "") > 200_000:
+        raise HTTPException(400, "The logo is too large (at most about 150 KB)")
+    for field in ("name", "unknown_host_title"):
+        if len(getattr(req, field) or "") > 80:
+            raise HTTPException(400, f"{field} is too long (at most 80 characters)")
+    if len(req.unknown_host_message or "") > 500:
+        raise HTTPException(400, "unknown_host_message is too long (at most 500 characters)")
+    brand = await _syscfg.set_brand(db, req.model_dump())
+    html = nginx_pages.generate_cloudbase_unknown_host_html(_syscfg.get_panel_https_domain(), brand)
+    ok, msg = await asyncio.to_thread(nginx_files.write_cloudbase_unknown_host_page, html)
+    if not ok:
+        log.warning("Writing the unknown-host page failed: %s", msg)
+        raise HTTPException(500, "The brand is saved, but the page could not be written; try again")
+    return brand
+
+
 class DbDomainRequest(BaseModel):
     db_domain: Optional[str] = None
     # A wildcard certificate of your own (PEM text) for *.<db domain>, so clients trust the connection without the
@@ -121,7 +157,7 @@ class DbDomainRequest(BaseModel):
 
 
 @router.post("/api/system/db-domain")
-async def set_db_domain(req: DbDomainRequest, db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_permission("system.manage"))):
+async def set_db_domain(req: DbDomainRequest, db: AsyncSession = Depends(get_db), _: dict = Depends(auth.require_permission("system.manage", "system.platform"))):
     """Set (or clear) the domain public databases are reached under: <database name>.<db domain>. The wildcard record
     has to point at the primary and stay DNS only. Without it a database is reached on the primary's IP."""
     domain = str(req.db_domain or "").strip().strip(".").lower()
