@@ -7,6 +7,7 @@ import itertools
 import pytest
 
 _names = itertools.count(1)
+_made = {"nodes": [], "apps": [], "instances": [], "databases": []}      # removed again after every test (shared database)
 
 
 def _run(coro):
@@ -20,7 +21,23 @@ def cap(client, monkeypatch):
     values = {"mode": "on", "reserve_cpu": 0.5, "reserve_memory_mb": 1024, "reserve_disk_gb": 10, "cpu_ratio": 2.0,
               "deploy_room": False}
     monkeypatch.setattr(_cfg, "get_capacity", lambda: dict(values))
-    return values
+    yield values
+    _clean_up()
+
+
+def _clean_up():
+    from sqlalchemy import delete
+    from core.database import AsyncSessionLocal
+    from core.models import Application, Database, Instance, Node
+
+    async def go():
+        async with AsyncSessionLocal() as db:
+            for model, key in ((Instance, "instances"), (Database, "databases"), (Application, "apps"), (Node, "nodes")):
+                if _made[key]:
+                    await db.execute(delete(model).where(model.id.in_(_made[key])))
+                _made[key].clear()
+            await db.commit()
+    _run(go())
 
 
 def _node(cores=4, memory_mb=4096, disk_gb=100):
@@ -30,11 +47,12 @@ def _node(cores=4, memory_mb=4096, disk_gb=100):
 
     async def go():
         async with AsyncSessionLocal() as db:
-            node = Node(name=name, status="online", auth_token=f"t-{name}", is_local=False, enabled=True, wg_ip="127.0.0.1",
-                        wg_public_key="K" * 44, wg_state="up", agent_version="5.0.0",
+            # no node network address or key: these nodes are not peers of the mesh other tests look at
+            node = Node(name=name, status="online", auth_token=f"t-{name}", is_local=False, enabled=True, agent_version="5.0.0",
                         metadata_json=json.dumps({"cpu_count_logical": cores, "ram_total_mb": memory_mb, "disk_total_gb": disk_gb}))
             db.add(node)
             await db.commit()
+            _made["nodes"].append(node.id)
             return node.id
     return _run(go())
 
@@ -49,6 +67,7 @@ def _app(cpu=None, memory_mb=None, cron=None, node_id=None):
                               docker_cpu_limit=cpu, docker_memory_limit_mb=memory_mb, cron_schedule=cron, node_id=node_id)
             db.add(app)
             await db.commit()
+            _made["apps"].append(app.id)
             return app.id
     return _run(go())
 
@@ -62,6 +81,7 @@ def _instance(app_id, node_id, desired="running"):
             row = Instance(app_id=app_id, node_id=node_id, external_port=20000 + next(_names), status="running", desired=desired)
             db.add(row)
             await db.commit()
+            _made["instances"].append(row.id)
             return row.id
     return _run(go())
 
@@ -79,6 +99,7 @@ def _database(node_id, memory_mb=1024, disk_mb=10240, running=True):
                            cpu_limit=1.0, memory_limit_mb=memory_mb, disk_limit_mb=disk_mb)
             db.add(row)
             await db.commit()
+            _made["databases"].append(row.id)
             return row.id
     return _run(go())
 

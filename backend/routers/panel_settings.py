@@ -10,15 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from core import auth, token_vault, config as _cfg, system_config as _syscfg
 from workers import log_settings
-from nginx import certificates as nginx_certificates
 from nginx import own_certificate
 from nginx import paths as nginx_paths
 from nginx import pages as nginx_pages
 from nginx import files as nginx_files
-from nginx import config as nginx_config
-from core.runtime import PORT
 from dbs.public import sync_public_access
-from nginx.panel import _load_panel_https_domain, _refresh_all_app_nginx, apply_panel_domain
+from nginx.panel import _refresh_all_app_nginx, apply_panel_domain
 from nodes import capacity
 
 log = logging.getLogger("cloudbase.main")
