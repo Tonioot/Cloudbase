@@ -87,7 +87,9 @@ async def _write_app_nginx_config(app: Application, db: AsyncSession) -> None:
     if not ok:
         raise HTTPException(500, f"Nginx config failed: {msg}")
 
-    if not has_custom and not _syscfg.get_base_ssl_cert_cached():
+    # The automatic subdomain gets a certificate of its own without the base domain's wildcard, also when the app has a
+    # domain of its own: it is then served in a block of its own (nginx/config.py generate_config)
+    if not _syscfg.get_base_ssl_cert_cached():
         _schedule_auto_certificate(app)
 
 

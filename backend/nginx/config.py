@@ -17,6 +17,9 @@ def generate_config(
     redirect_domains: list = None,
     strict_hostnames: bool = False,
     site_root: str | None = None,
+    *,
+    _auto: bool = True,
+    _defs: bool = True,
 ) -> str:
     """Generate an nginx server block.
 
@@ -33,6 +36,12 @@ def generate_config(
 
     extra_domains:    list of additional domains/subdomains served by the same app
     redirect_domains: list of domains that issue a 301 redirect to the primary domain
+
+    An app with a domain of its own also answers on its automatic subdomain (<name>.<base domain>). When that subdomain
+    has a certificate of its own (the base domain's wildcard, or its own automatic one), it gets a server block of its
+    own with that certificate: in the block of the custom domain it would be served with the custom domain's
+    certificate, which browsers refuse for it. (_auto, _defs: for that second block, which leaves out the subdomain
+    logic and the upstream and log format the first block already defines.)
     """
     import re as _re
 
@@ -49,7 +58,7 @@ def generate_config(
     # Auto-subdomain: if base_domain is configured, include {slug}.{base_domain}
     # as the primary domain (when no custom domain is set) or as an extra server_name.
     _using_auto_sub = False
-    _base = _scfg.get_base_domain_cached()
+    _base = _scfg.get_base_domain_cached() if _auto else ""
     if _base and (app_name or "").strip().lower() != "cloudbase":
         _slug = subdomain_slug(app_name)
         if _slug:
@@ -58,20 +67,19 @@ def generate_config(
                 domain = _auto_sub
                 _using_auto_sub = True
             elif _auto_sub != domain and _auto_sub not in extra_domains:
-                extra_domains = list(extra_domains) + [_auto_sub]
+                sub_cert, sub_key = auto_subdomain_certificate(_auto_sub)
+                if sub_cert:
+                    # A block of its own with its own certificate, after the custom domain's
+                    def block(name, names, redirects, cert, key, defs):
+                        return generate_config(app_name, name, port, cert, key, app_id, mode, names, redirects,
+                                               strict_hostnames, site_root, _auto=False, _defs=defs)
+                    return (block(domain, extra_domains, redirect_domains, ssl_cert, ssl_key, _defs) + "\n"
+                            + block(_auto_sub, [], [], sub_cert, sub_key, False))
+                extra_domains = list(extra_domains) + [_auto_sub]     # no certificate for it yet: served with the domain
 
-    # When using auto-subdomain with no explicit SSL, apply base SSL (wildcard cert)
+    # When using auto-subdomain with no explicit SSL, apply base SSL (wildcard cert), or its own automatic one
     if _using_auto_sub and not ssl_cert and not ssl_key:
-        _base_cert = _scfg.get_base_ssl_cert_cached()
-        _base_key  = _scfg.get_base_ssl_key_cached()
-        if _base_cert and _base_key:
-            ssl_cert = _base_cert
-            ssl_key  = _base_key
-        else:
-            # No wildcard certificate: use the app's own automatic certificate
-            # for its subdomain once Cloudbase has requested it
-            if nginx_certbot.capability()[0] and nginx_certbot.exists(domain):
-                ssl_cert, ssl_key = nginx_certbot.paths(domain)
+        ssl_cert, ssl_key = auto_subdomain_certificate(domain)
 
     if not domain:
       domain = "localhost"
@@ -103,7 +111,7 @@ def generate_config(
 
     if site_root:
         return _proxy_config(domain, "", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains,
-                             strict_hostnames=strict_hostnames, traffic=traffic, site_root=site_root)
+                             strict_hostnames=strict_hostnames, traffic=traffic, site_root=site_root, defs=_defs)
 
     # list[str] of "host:port" backends (instance-based model)
     if isinstance(port, list):
@@ -111,7 +119,7 @@ def generate_config(
             # No running instances — serve 503 maintenance page
           return _static_page_config(domain, maint_root, "downtime.html", ssl_cert, ssl_key, extra_domains, redirect_domains, strict_hostnames=strict_hostnames)
         if len(port) == 1:
-          return _proxy_config(domain, f"http://{port[0]}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames, traffic=traffic)
+          return _proxy_config(domain, f"http://{port[0]}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames, traffic=traffic, defs=_defs)
         upstream_name = f"cloudbase_app_{app_id}" if app_id else "cloudbase_" + _re.sub(r"[^a-z0-9_]", "_", app_name.lower())
         upstream_block = f"upstream {upstream_name} {{\n"
         for backend in port:
@@ -119,10 +127,21 @@ def generate_config(
             # connect timeout (below) and then no request at all, instead of one in N waiting a minute
             upstream_block += f"    server {backend} max_fails=1 fail_timeout=5s;\n"
         upstream_block += "}\n\n"
-        return _proxy_config(domain, f"http://{upstream_name}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, upstream_block=upstream_block, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames, traffic=traffic)
+        return _proxy_config(domain, f"http://{upstream_name}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, upstream_block=upstream_block, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames, traffic=traffic, defs=_defs)
 
     # One port: the panel itself
     return _proxy_config(domain, f"http://127.0.0.1:{port}", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains, fallback_filename=fallback_filename, strict_hostnames=strict_hostnames, panel=True)
+
+
+def auto_subdomain_certificate(name: str) -> tuple[str | None, str | None]:
+    """(cert, key) for an app's automatic subdomain: the base domain's wildcard certificate, or else the subdomain's
+    own automatic one once Cloudbase has requested it; (None, None) without one."""
+    base_cert, base_key = _scfg.get_base_ssl_cert_cached(), _scfg.get_base_ssl_key_cached()
+    if base_cert and base_key:
+        return base_cert, base_key
+    if nginx_certbot.capability()[0] and nginx_certbot.exists(name):
+        return nginx_certbot.paths(name)
+    return None, None
 
 
 def _traffic_log(app_id: int) -> tuple[str, str]:
@@ -179,7 +198,9 @@ def _site_location(site_root: str, traffic_lines: str) -> str:
     }}"""
 
 
-def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None, upstream_block: str = "", fallback_filename: str = "downtime.html", strict_hostnames: bool = False, panel: bool = False, traffic: tuple[str, str] = ("", ""), site_root: str | None = None) -> str:
+def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None, upstream_block: str = "", fallback_filename: str = "downtime.html", strict_hostnames: bool = False, panel: bool = False, traffic: tuple[str, str] = ("", ""), site_root: str | None = None, defs: bool = True) -> str:
+    if not defs:                    # a second block of the same app: the first one defines its upstream and log format
+        upstream_block, traffic = "", ("", traffic[1])
     upstream_block = traffic[0] + upstream_block
     # The panel receives uploads from nodes (database backups, app sources) that are far larger than the 1 MB nginx
     # accepts by default, which answered 413. No limit here; the panel streams the body to disk itself.

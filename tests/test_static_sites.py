@@ -254,3 +254,54 @@ def test_a_failed_nginx_write_keeps_the_version_that_was_live(client, tmp_path, 
             await db.commit()
 
     asyncio.run(go())
+
+
+# ── a custom domain and the automatic subdomain, each with its own certificate ───────────────────────────────────────
+def _base(monkeypatch, wildcard=True, own_auto=False):
+    monkeypatch.setattr(nginx_config._scfg, "get_base_domain_cached", lambda: "utr-001.onnubora.eu")
+    monkeypatch.setattr(nginx_config._scfg, "get_base_ssl_cert_cached", lambda: "/c/base/fullchain.pem" if wildcard else "")
+    monkeypatch.setattr(nginx_config._scfg, "get_base_ssl_key_cached", lambda: "/c/base/privkey.pem" if wildcard else "")
+    monkeypatch.setattr(nginx_config.nginx_certbot, "capability", lambda: (own_auto, ""))
+    monkeypatch.setattr(nginx_config.nginx_certbot, "exists", lambda name: own_auto)
+    monkeypatch.setattr(nginx_config.nginx_certbot, "paths", lambda name: (f"/le/{name}/fullchain.pem", f"/le/{name}/privkey.pem"))
+
+
+def _blocks(cfg):
+    """(server_name, certificate) of every HTTPS server block."""
+    import re
+    return re.findall(r'listen 443 ssl;\s*server_name ([^;]+);\s*ssl_certificate "([^"]+)"', cfg)
+
+
+@pytest.mark.parametrize("backends", [["10.0.0.2:9001"], ["10.0.0.2:9001", "10.0.0.3:9001"]])
+def test_the_automatic_subdomain_of_an_app_with_its_own_domain_gets_its_own_certificate(monkeypatch, backends):
+    _base(monkeypatch)
+    cfg = nginx_config.generate_config("shop", "shop.example.com", backends, "/le/shop.example.com/fullchain.pem",
+                                       "/le/shop.example.com/privkey.pem", app_id=9)
+    assert _blocks(cfg) == [("shop.example.com", "/le/shop.example.com/fullchain.pem"),
+                            ("shop.utr-001.onnubora.eu", "/c/base/fullchain.pem")]
+    assert cfg.count("upstream cloudbase_app_9 ") == (1 if len(backends) > 1 else 0)     # defined once, used twice
+    assert cfg.count("log_format ") <= 1
+
+
+def test_without_a_certificate_for_it_the_subdomain_stays_with_the_domain(monkeypatch):
+    _base(monkeypatch, wildcard=False)
+    cfg = nginx_config.generate_config("shop", "shop.example.com", ["10.0.0.2:9001"], "/le/shop.example.com/fullchain.pem",
+                                       "/le/shop.example.com/privkey.pem", app_id=9)
+    assert _blocks(cfg) == [("shop.example.com shop.utr-001.onnubora.eu", "/le/shop.example.com/fullchain.pem")]
+    _base(monkeypatch, wildcard=False, own_auto=True)                       # its own automatic certificate came in
+    cfg = nginx_config.generate_config("shop", "shop.example.com", ["10.0.0.2:9001"], "/le/shop.example.com/fullchain.pem",
+                                       "/le/shop.example.com/privkey.pem", app_id=9)
+    assert _blocks(cfg)[1] == ("shop.utr-001.onnubora.eu", "/le/shop.utr-001.onnubora.eu/fullchain.pem")
+
+
+def test_a_static_site_from_disk_logs_what_it_sends_to_visitors(monkeypatch):
+    """Outbound traffic is counted from nginx's per-app log (nginx/traffic_logs.py): a site from disk writes it too, also
+    in the block of its automatic subdomain."""
+    _base(monkeypatch)
+    monkeypatch.setattr(nginx_config.os.path, "isdir", lambda path: path == nginx_paths.TRAFFIC_LOG_DIR or os.path.isdir(path))
+    root = nginx_paths.release_dir(9, "abc-1")
+    cfg = nginx_config.generate_config("shop", "shop.example.com", [], "/le/shop.example.com/fullchain.pem",
+                                       "/le/shop.example.com/privkey.pem", app_id=9, site_root=root)
+    assert cfg.count("log_format cloudbase_traffic_9 ") == 1
+    assert cfg.count(f"access_log {nginx_paths.traffic_log_path(9)} cloudbase_traffic_9") == 2      # both blocks
+    assert cfg.count(f"root {root};") == 2
