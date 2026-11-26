@@ -50,6 +50,7 @@ Set up in one go (primary; for a platform that runs servers for others)
   --base-domain <name>    App subdomains: <app>.<name>, HTTPS per app
   --db-domain <name>      Database hostnames: <database>.<name>
   --api-token <cbt_…>     Make an API token with this value, for the platform that calls this panel
+  --admin-password <pw>   The password of the admin account (12-128 characters; default: a new one, shown at the end)
 
 Maintenance
   --update                Update an installed server to the latest version
@@ -78,6 +79,7 @@ PANEL_DOMAIN=""
 BASE_DOMAIN=""
 DB_DOMAIN=""
 API_TOKEN=""
+ADMIN_PASSWORD=""
 INSTALL_DIR=""
 BRANCH="main"
 RUN_USER=""
@@ -98,6 +100,7 @@ while [[ $# -gt 0 ]]; do
     --base-domain)  BASE_DOMAIN="${2:-}"; shift ;;
     --db-domain)    DB_DOMAIN="${2:-}"; shift ;;
     --api-token)    API_TOKEN="${2:-}"; shift ;;
+    --admin-password) ADMIN_PASSWORD="${2:-}"; shift ;;
     --update)       ACTION="update" ;;
     --uninstall)    ACTION="uninstall" ;;
     --keep-data)    KEEP_DATA=true ;;
@@ -122,8 +125,9 @@ for d in "$PANEL_DOMAIN" "$BASE_DOMAIN" "$DB_DOMAIN"; do
   [[ -z "$d" || "$d" =~ $DOMAIN_RE ]] || die "Not a domain name: $d"
 done
 [[ -z "$API_TOKEN" || ( "$API_TOKEN" == cbt_* && ${#API_TOKEN} -ge 40 ) ]] || die "--api-token must start with cbt_ and be at least 40 characters"
-if [[ "$ROLE" == "node" ]] && { $TENANT || [[ -n "$PANEL_DOMAIN$BASE_DOMAIN$DB_DOMAIN$API_TOKEN" ]]; }; then
-  die "--tenant, the domains and --api-token are for a primary; a node gets them from its primary"
+[[ -z "$ADMIN_PASSWORD" || ( ${#ADMIN_PASSWORD} -ge 12 && ${#ADMIN_PASSWORD} -le 128 ) ]] || die "--admin-password must be 12 to 128 characters"
+if [[ "$ROLE" == "node" ]] && { $TENANT || [[ -n "$PANEL_DOMAIN$BASE_DOMAIN$DB_DOMAIN$API_TOKEN$ADMIN_PASSWORD" ]]; }; then
+  die "--tenant, the domains, --api-token and --admin-password are for a primary; a node gets them from its primary"
 fi
 $TENANT && GVISOR=true          # tenant mode runs apps in the gVisor sandbox
 if [[ -z "$ROLE" ]] && { $TENANT || [[ -n "$PANEL_DOMAIN$BASE_DOMAIN$DB_DOMAIN$API_TOKEN" ]]; }; then
@@ -721,12 +725,16 @@ NGINX_EOF
 
 step_admin() {
   [[ -f "$DATA_DIR/credentials" ]] && return 0
-  local pass
-  pass="$(python3 -c "import secrets, string; a = string.ascii_letters + string.digits; print(''.join(secrets.choice(a) for _ in range(20)))")"
+  local pass="$ADMIN_PASSWORD"
+  [[ -n "$pass" ]] || pass="$(python3 -c "import secrets, string; a = string.ascii_letters + string.digits; print(''.join(secrets.choice(a) for _ in range(20)))")"
   cd "$INSTALL_DIR/backend"
   as_user env CB_PASS="$pass" venv/bin/python -c "import os; from core import auth; auth.save_hashed_password(auth.hash_password(os.environ['CB_PASS']))"
   printf '%s' "$pass" | as_user tee "$DATA_DIR/.first-run-password" > /dev/null
-  printf '%s' "$pass" > "$STATE_DIR/password"
+  if [[ -n "$ADMIN_PASSWORD" ]]; then
+    touch "$STATE_DIR/password-given"           # the caller has it already: not shown at the end
+  else
+    printf '%s' "$pass" > "$STATE_DIR/password"
+  fi
 }
 
 step_register() {
@@ -894,6 +902,9 @@ elif [[ "$ROLE" == "primary" ]]; then
     printf '    Username   admin\n'
     printf '    Password   %b%s%b\n' "$GREEN" "$(cat "$STATE_DIR/password")" "$RESET"
     printf '               %bStore it now — it isn'\''t shown again.%b\n' "$DIM" "$RESET"
+  elif [[ -f "$STATE_DIR/password-given" ]]; then
+    printf '    Username   admin\n'
+    printf '    Password   the one given with --admin-password\n'
   fi
   if $DISCONNECT_NODE; then
     printf '\n'
