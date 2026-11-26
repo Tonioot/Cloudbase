@@ -8,6 +8,7 @@ from core.models import Instance, Node
 from nodes.registry import ensure_local_node
 from core.audit import log_audit
 from core import auth as _auth, config as _cfg
+from apps import static_sites
 from apps.runtime import _start_instance_runtime
 from apps.serializers import _instance_to_dict, _get_or_404
 from apps.state import locked
@@ -31,6 +32,9 @@ async def scale_app(app_id: int, req: ScaleRequest, db: AsyncSession = Depends(g
     if (await _get_or_404(app_id, db)).cron_schedule:
         raise HTTPException(400, "A cron job has no instances: each run starts its own container")
     app = await _get_or_404(app_id, db)
+    if static_sites.serves(app):
+        # nginx serves the files itself: there are no instances, and it scales with nginx
+        return {"instances": [], "removed": [], "requested": req.target, "error": None}
     local_node = await ensure_local_node(db)
 
     current = (await db.execute(

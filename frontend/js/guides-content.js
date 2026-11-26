@@ -176,9 +176,9 @@ cloudbase stop</pre>
 <p>The default. The container runs your start command and must listen on the internal port. nginx routes the app’s domains to every running instance and health-checks new instances during deploys.</p>
 
 <h2>Static sites</h2>
-<p>Static sites are served by nginx inside the container — there is no start command to write. You set a <strong>publish directory</strong>: the folder that contains <code>index.html</code> after the build. Leave it empty and Cloudbase looks for the usual places: the repository root, <code>dist</code>, <code>build</code>, <code>out</code>, <code>public</code> and similar.</p>
-<p>Add a build command (for example <code>npm ci &amp;&amp; npm run build</code>) for sites that need one. The build runs inside the image build, the output is copied into a small nginx image, and nothing of Node.js ends up in the final container.</p>
-<div class="callout"><p>Static sites can’t use a read-only root filesystem: nginx needs to write its temp files. The wizard turns that option off for you.</p></div>
+<p>A static site has no container: Cloudbase’s own nginx serves its files straight from disk, so it costs no memory or CPU on your nodes and has no instances to scale. You set a <strong>publish directory</strong>: the folder that contains <code>index.html</code> after the build. Leave it empty and Cloudbase looks for the usual places: the repository root, <code>dist</code>, <code>build</code>, <code>out</code>, <code>public</code> and similar.</p>
+<p>Add a build command (for example <code>npm ci &amp;&amp; npm run build</code>) for sites that need one. It runs once per deploy, in a sandbox (in tenant mode on a node); only the files it makes in the publish directory go live. Without a build command the files are taken from the repository as they are.</p>
+<p>Every deploy publishes a new version next to the old one and switches over at once, so visitors never see half a site. <strong>Stop</strong> shows the downtime page instead of the site; <strong>Start</strong> brings it back. Only plain files are published: links in the repository are left out.</p>
 
 <h2>Background workers</h2>
 <p>Workers have no port and no domain. Cloudbase starts the container, restarts it according to its restart policy and streams its logs. Maintenance pages, domains and health checks don’t apply.</p>

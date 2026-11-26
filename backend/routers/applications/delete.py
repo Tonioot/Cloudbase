@@ -13,6 +13,7 @@ from nodes.registry import ensure_local_node
 from nodes import desired
 from core.audit import log_audit
 from core import auth as _auth
+from apps import static_sites
 from apps.nginx_sync import _best_effort_remove_app_nginx, _best_effort_delete_app_certificate
 from apps.runtime import _get_app_node, _cleanup_app_dependencies, _load_node_map
 from apps.serializers import _get_or_404
@@ -46,6 +47,7 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dic
         # (also later, when the node was offline just now)
         _best_effort_remove_app_nginx(app.id)
         _best_effort_delete_app_certificate(app)
+        await asyncio.to_thread(static_sites.remove_site, app.id)     # a static site's files, if it has any
         await _cleanup_app_dependencies(db, app.id)
         await db.delete(app)
         try:
@@ -79,6 +81,7 @@ async def delete_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dic
 
     _best_effort_remove_app_nginx(app.id)
     _best_effort_delete_app_certificate(app)
+    await asyncio.to_thread(static_sites.remove_site, app.id)
 
     app_dir = pm.get_app_dir(app.id)
     if os.path.exists(app_dir):

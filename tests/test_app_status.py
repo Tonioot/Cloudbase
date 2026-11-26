@@ -8,8 +8,10 @@ from apps.serializers import app_status
 
 
 class _App:
-    def __init__(self, cron_schedule=None, last_error=None, cron_enabled=True, id=0):
+    def __init__(self, cron_schedule=None, last_error=None, cron_enabled=True, id=0, app_type=None, static_release=None,
+                 static_stopped=False):
         self.cron_schedule, self.last_error, self.cron_enabled, self.id = cron_schedule, last_error, cron_enabled, id
+        self.app_type, self.static_release, self.static_stopped = app_type, static_release, static_stopped
 
 
 @pytest.mark.parametrize("statuses,expected", [
@@ -33,6 +35,12 @@ def test_an_app_without_instances_is_stopped_or_shows_that_its_deploy_failed():
     assert app_status(_App(), []) == "stopped"
     assert app_status(_App(last_error="clone failed"), []) == "error"
     assert app_status(_App(last_error="clone failed"), ["stopped"]) == "stopped"      # once it has instances they decide
+
+
+def test_a_static_site_served_from_disk_runs_without_instances():
+    assert app_status(_App(app_type="static", static_release="abc-1"), []) == "running"
+    assert app_status(_App(app_type="static", static_release="abc-1", static_stopped=True), []) == "stopped"
+    assert app_status(_App(app_type="static"), ["running"]) == "running"      # not published yet: its old instances
 
 
 def test_a_cron_job_follows_its_schedule_not_instances():

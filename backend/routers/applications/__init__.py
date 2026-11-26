@@ -16,6 +16,7 @@ from routers.applications import maintenance
 from routers.applications import webhook
 from routers.applications import connections
 from routers.applications import traffic
+from routers.applications import static_site
 
 router = APIRouter()
 router.include_router(connections.router)
@@ -32,3 +33,4 @@ router.include_router(deploys.router)
 router.include_router(maintenance.router)
 router.include_router(webhook.router)
 router.include_router(traffic.router)
+router.include_router(static_site.agent_router)

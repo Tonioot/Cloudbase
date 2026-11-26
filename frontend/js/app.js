@@ -39,6 +39,13 @@ window.addEventListener('cloudbase-role-ready', (evt) => {
   else _enableSettingsForEditor();
 });
 
+// A static site that nginx serves from disk (backend apps/static_sites.py): nothing runs for it, so it has no instances,
+// metrics, resources, scaling or connections. A static site from before keeps its instances until its next deploy and is
+// shown as before until then.
+function servedFromDisk(a) {
+  return a?.app_type === 'static' && (!!a.static_site || !(a.instance_count || (a.instances || []).length));
+}
+
 // Show only the controls that apply to this app's type:
 // - background workers: no web/nginx features at all
 // - static sites: served by nginx on a fixed port; no server process, so no
@@ -48,14 +55,22 @@ function _updateAppTypeVisibility(app) {
   const noWeb = !!app.no_web;
   const isStatic = app.app_type === 'static';
   const isCron = !!app.cron;
+  const disk = servedFromDisk(app);
   const hide = noWeb ? 'none' : '';
   const el = id => document.getElementById(id);
 
   // Cron jobs: no instances to keep running — runs instead of restart/boot/autoscale
   if (el('set-schedule'))        el('set-schedule').style.display = isCron ? '' : 'none';
-  if (el('set-connections'))     el('set-connections').style.display = isCron ? 'none' : '';     // a cron job's runs get no addresses
-  if (el('cfg-restart-row'))     el('cfg-restart-row').style.display = isCron ? 'none' : '';
-  if (el('set-autoscale'))       el('set-autoscale').style.display = isCron ? 'none' : '';
+  if (el('set-connections'))     el('set-connections').style.display = (isCron || disk) ? 'none' : '';     // a cron job's runs get no addresses
+  if (el('cfg-restart-row'))     el('cfg-restart-row').style.display = (isCron || disk) ? 'none' : '';
+  if (el('set-autoscale'))       el('set-autoscale').style.display = (isCron || disk) ? 'none' : '';
+  // A static site from disk: no container, so no resources and no startup check; one build per deploy, no strategy
+  if (el('docker-runtime-section')) el('docker-runtime-section').style.display = disk ? 'none' : '';
+  if (el('health-section'))      el('health-section').style.display = disk ? 'none' : '';
+  const strategyRow = el('cfg-deploy-strategy')?.closest('.s3-row');
+  if (strategyRow)               strategyRow.style.display = disk ? 'none' : '';
+  if (el('cfg-build-hint') && disk) el('cfg-build-hint').textContent = 'Optional. Runs once per deploy, in a sandbox; what it makes in the publish directory goes live.';
+  if (el('btn-restart'))         el('btn-restart').style.display = disk ? 'none' : (isCron ? 'none' : '');
 
   // Settings panel
   if (el('cfg-port-field'))          el('cfg-port-field').style.display = (noWeb || isStatic) ? 'none' : '';
@@ -97,8 +112,14 @@ export async function initApp() {
 
   renderHeader();
   initTabs();
-  startBgStats();          // Collect stats in the background from the start
+  if (!servedFromDisk(app)) startBgStats();          // Collect stats in the background from the start (nothing runs for a static site)
   scheduleRefresh();
+  // Just created in the wizard (modal.js): a static site is published straight away
+  const publishKey = `cloudbase_publish_${APP_ID}`;
+  if (sessionStorage.getItem(publishKey)) {
+    sessionStorage.removeItem(publishKey);
+    if (servedFromDisk(app) && !app.static_site) streamDeploy('Publish', { strategy: 'rebuild', pull: false });
+  }
 }
 
 // Looks again often while something is being done to the app, so the step shown follows what happens
@@ -150,6 +171,10 @@ function _showStats(running) {
 /* ─── Header ────────────────────────────────────────────────────────────── */
 function formatPortSummary(app) {
   if (app.cron) return cronSummary(app);
+  if (servedFromDisk(app)) {
+    if (!app.static_site) return 'Not published yet';
+    return `Served by nginx · version ${app.static_site.release.split('-')[0]}${app.static_site.stopped ? ' · stopped' : ''}`;
+  }
   const instances = app.instances || [];
   const running = instances.filter(r => r.status === 'running');
   const total = instances.length;
@@ -187,6 +212,16 @@ function renderHeader() {
     typeLabelEl.className = 'service-type-badge' + (app.no_web ? ' service-type-badge--worker' : '');
   }
 
+  if (servedFromDisk(app)) {
+    const item = (id, title, text) => {
+      const t = document.querySelector(`#${id} .menu-item-text span`), s = document.querySelector(`#${id} small`);
+      if (t) t.textContent = title;
+      if (s) s.textContent = text;
+    };
+    item('menu-pull-rebuild', 'Pull & publish', 'Build once, then nginx serves the new version: no downtime');
+    item('menu-rebuild', 'Publish again', 'Build the current code and put it live');
+  }
+
   if (app.cron) {
     const small = (id, text) => { const el = document.querySelector(`#${id} small`); if (el) el.textContent = text; };
     small('menu-pull-rebuild', 'Build the new image; the next run uses it');
@@ -207,9 +242,15 @@ function renderHeader() {
 
   updateHeaderStatus();
 
-  document.getElementById('btn-start').addEventListener('click',   () => quickAction('start'));
+  document.getElementById('btn-start').addEventListener('click',   () => {
+    // A static site without a published version: starting it means building and publishing it
+    if (servedFromDisk(app) && !app.static_site) return streamDeploy('Publish', { strategy: 'rebuild', pull: false });
+    quickAction('start');
+  });
   document.getElementById('btn-stop').addEventListener('click',    async () => {
-    const ok = await confirm('Stop App', `This will stop all running instances of <strong>${escHtml(app.name)}</strong>.`);
+    const ok = servedFromDisk(app)
+      ? await confirm('Stop Site', `Visitors of <strong>${escHtml(app.name)}</strong> see the downtime page until you start it again.`)
+      : await confirm('Stop App', `This will stop all running instances of <strong>${escHtml(app.name)}</strong>.`);
     if (ok) quickAction('stop');
   });
   document.getElementById('btn-restart').addEventListener('click', async () => {
@@ -236,7 +277,7 @@ function _syncZeroDowntimeButton() {
 
   // Base-domain routed apps can have app_url without app.nginx_enabled.
   const hasPublicRoute = !!(app?.app_url || (app?.nginx_enabled && app?.domain));
-  const canDeploy = !!(!app?.no_web && hasPublicRoute);
+  const canDeploy = !!(!app?.no_web && hasPublicRoute && !servedFromDisk(app));     // a static site has no instances to roll
   document.querySelectorAll('.needs-route').forEach(el => { el.style.display = canDeploy ? '' : 'none'; });
 
   if (zdBtn) {
@@ -343,6 +384,11 @@ function updateHeaderStatus() {
 
   btnStart.disabled   = (s === 'running') || busy;
   btnStop.disabled    = (s === 'stopped') || busy;
+  if (servedFromDisk(app)) {
+    const label = app.static_site ? 'Start' : 'Publish';
+    if (btnStart.lastChild?.nodeType === 3) btnStart.lastChild.textContent = ` ${label}`;
+    btnStop.disabled = busy || !app.static_site || app.static_site.stopped;
+  }
   btnRestart.disabled = busy;
 
   if (app.cron) {
@@ -420,7 +466,7 @@ async function quickAction(action) {
 function initTabs() {
   let tabs = ['runs', 'logs', 'stats', 'files', 'instances', 'deployments', 'settings', 'activity'];
   // A cron job has runs instead of instances and metrics; other apps have no runs
-  const hidden = app.cron ? ['instances', 'stats'] : ['runs'];
+  const hidden = app.cron ? ['instances', 'stats'] : servedFromDisk(app) ? ['runs', 'instances', 'stats'] : ['runs'];
   hidden.forEach(t => { document.getElementById(`tab-${t}`).style.display = 'none'; });
   if (app.cron) document.getElementById('tab-runs').style.display = '';
   tabs = tabs.filter(t => !hidden.includes(t));
@@ -3475,7 +3521,9 @@ async function streamDeploy(title, body) {
   } catch (e) {
     toast(e.message, 'error');
   } finally {
+    const wasDisk = servedFromDisk(app);
     try { app = await api.getApp(APP_ID); updateHeaderStatus(); } catch { /* keep the header */ }
+    if (servedFromDisk(app) !== wasDisk) { location.reload(); return; }      // its tabs and settings change with it
     if (activeTab === 'deployments') loadDeployments();
   }
 }

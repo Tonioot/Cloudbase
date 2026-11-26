@@ -181,8 +181,27 @@ def _build_step(build_command: str, build_env_keys) -> str:
     )
 
 
+# Where a build puts its site, in the order they are looked at when no publish directory is set: the first that has an
+# index.html after the build is published. Covers Vite, Astro, Vue, Svelte (dist), Create React App (build), Next.js export
+# (out), Gatsby and Hugo (public), Nuxt generate (.output/public), Angular (dist/<project>/browser, dist/<project>).
+_BUILT_DIR_CANDIDATES = ("dist", "build", "out", ".output/public", "public", "site", "_site", "www", "docs",
+                         "dist/*/browser", "dist/*")
+
+
+def _find_built_dir_step() -> str:
+    """A builder step that copies the first output folder with an index.html to /cb-site, or fails saying what to set."""
+    tries = " ".join(_BUILT_DIR_CANDIDATES)
+    return (
+        "RUN for d in " + tries + "; do "
+        "if [ -f \"$d/index.html\" ]; then echo \"Publishing $d\"; cp -r \"$d\" /cb-site; break; fi; done; "
+        "[ -d /cb-site ] || { echo \"The build made no folder with an index.html (looked in: " + tries + "). "
+        "Set the publish directory to the folder your build writes to.\" >&2; exit 1; }\n"
+    )
+
+
 def _generate_static_dockerfile(app_dir: str, publish_dir: str, build_command: str = "", build_env_keys=()) -> str:
     built = bool((build_command or "").strip())
+    auto = built and not (publish_dir or "").strip()      # found after the build, when the folder is there
     src = resolve_static_dir(app_dir, publish_dir, built=built)
     conf_args = " ".join(f"'{line}'" for line in _STATIC_NGINX_CONF)
     nginx_stage = (
@@ -210,9 +229,11 @@ def _generate_static_dockerfile(app_dir: str, publish_dir: str, build_command: s
         f"{install}"
         "COPY . .\n"
         f"{_build_step(build_command, build_env_keys)}"
-        "\n"
+        + (_find_built_dir_step() if auto else "")
+        + "\n"
         + nginx_stage
-        + f"COPY --from=builder /app/{src}/ /usr/share/nginx/html/\n"
+        + ("COPY --from=builder /cb-site/ /usr/share/nginx/html/\n" if auto
+           else f"COPY --from=builder /app/{src}/ /usr/share/nginx/html/\n")
         + f"EXPOSE {STATIC_INTERNAL_PORT}\n"
     )
 

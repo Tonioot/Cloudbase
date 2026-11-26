@@ -5,6 +5,7 @@ import asyncio
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps import static_sites
 from apps.git import _refresh_app_source_revision
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
 from apps.runtime import _load_app_instances, _load_node_map, _start_instance_runtime
@@ -28,6 +29,13 @@ async def restart_locked(app_id: int, db: AsyncSession, actor: str):
     app = await _get_or_404(app_id, db)
     if app.cron_schedule:
         return await _cron.start_run(app_id, "manual", actor)
+    if static_sites.serves(app):
+        # Nothing runs: nginx serves the files. A restart writes its config again
+        if _has_public_nginx_domain(app):
+            await _write_app_nginx_config(app, db)
+        await log_audit(db, "app.restart", actor=actor, app_id=app_id, detail={"name": app.name})
+        await db.commit()
+        return {"status": app_status(app, []), "instance_count": 0}
     instances = await _load_app_instances(app_id, db)
     if not instances:
         raise HTTPException(400, "No instances configured. Add an instance first before restarting the app.")
@@ -45,8 +53,15 @@ async def start_app_now(app_id: int, db: AsyncSession, actor: str):
     app = await _get_or_404(app_id, db)
     if app.cron_schedule:
         return await _cron.set_enabled(app_id, True, actor)
+    if static_sites.serves(app):
+        await static_sites.set_stopped(app, db, False)
+        await log_audit(db, "app.start", actor=actor, app_id=app_id, detail={"name": app.name})
+        await db.commit()
+        return {"status": app_status(app, []), "instance_count": 0}
     instances = await _load_app_instances(app_id, db)
     if not instances:
+        if app.app_type == "static":
+            raise HTTPException(400, "The site has no published version yet: deploy it first.")
         raise HTTPException(400, "No instances configured. Add an instance first before starting the app.")
     stopped = [r for r in instances if r.status in ("stopped", "error", "pending", "node_offline")]
     pm._push_line(app_id, f"[Start] Starting {len(stopped)} instance(s) by {actor}" if stopped

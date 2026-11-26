@@ -1,3 +1,6 @@
+import os
+import re
+
 NGINX_SITES_DIR = "/etc/nginx/sites-available"
 
 
@@ -8,6 +11,23 @@ MAINTENANCE_DIR = "/var/www/cloudbase/maintenance"
 
 
 ACME_WEBROOT = "/var/www/cloudbase/acme"
+
+
+# Static sites, served by nginx straight from disk (apps/static_sites.py): app-<id>/<release>/ per app. Owned by the
+# Cloudbase user, readable for nginx; made by scripts/setup-nginx-permissions.sh.
+SITES_DIR = os.environ.get("CLOUDBASE_SITES_DIR", "/var/www/cloudbase/sites")
+RELEASE_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+
+
+def site_dir(app_id: int) -> str:
+    return f"{SITES_DIR}/app-{int(app_id)}"
+
+
+def release_dir(app_id: int, release: str) -> str | None:
+    """The folder of one published version of a static site; None for a name that is not one of ours."""
+    if not release or not RELEASE_RE.fullmatch(release):
+        return None
+    return f"{site_dir(app_id)}/{release}"
 
 
 # One file per app, one number per request: what nginx sent to the visitor (nginx/traffic_logs.py). Made by

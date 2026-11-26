@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
 from core.models import Node, Instance
 from core import auth as _auth
+from apps import static_sites
 
 async def _request_can_manage_apps(request: Request) -> bool:
     """Return True if the requester has apps.configure (or is superadmin)."""
@@ -41,7 +42,8 @@ def _require_node_agent_for_app(app_id_param: str = "app_id"):
                 Instance.node_id == node.id,
             ).limit(1)
         )
-        if instance_result.first() is None:
+        # ...or builds this static site right now (apps/static_sites.py)
+        if instance_result.first() is None and not static_sites.node_may_fetch(app_id, node.id):
             raise HTTPException(status_code=403, detail="Node has no instance for this app")
 
     return _dep

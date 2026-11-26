@@ -62,9 +62,15 @@ async def _write_app_nginx_config(app: Application, db: AsyncSession) -> None:
     ssl_cert = ssl_key = None
     if has_custom:
         ssl_cert, ssl_key = await asyncio.to_thread(_resolve_ssl_paths, app.ssl_cert_path, app.ssl_key_path)
-    backends = await _get_nginx_backends(app, db)
-    mode = await _nginx_mode(app, db, backends)
-    log.debug("[nginx] write app_id=%s mode=%s backends=%s", app.id, mode, backends)
+    site_root = None
+    if app.app_type == "static" and app.static_release:
+        # Served from disk (apps/static_sites.py): the live version, or the downtime page while it is stopped
+        backends, mode = [], _get_nginx_mode(app)
+        site_root = None if app.static_stopped else nginx_paths.release_dir(app.id, app.static_release)
+    else:
+        backends = await _get_nginx_backends(app, db)
+        mode = await _nginx_mode(app, db, backends)
+    log.debug("[nginx] write app_id=%s mode=%s backends=%s site=%s", app.id, mode, backends, site_root)
     config = nginx_config.generate_config(
         app.name,
         app.domain if has_custom else None,
@@ -75,6 +81,7 @@ async def _write_app_nginx_config(app: Application, db: AsyncSession) -> None:
         mode=mode,
         extra_domains=json.loads(app.extra_domains or "[]") if has_custom else [],
         redirect_domains=json.loads(app.redirect_domains or "[]") if has_custom else [],
+        site_root=site_root,
     )
     ok, msg = await asyncio.to_thread(nginx_files.write_nginx_config, nginx_paths.app_key(app.id), config)
     if not ok:

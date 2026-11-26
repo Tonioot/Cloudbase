@@ -22,9 +22,12 @@ async def _get_or_404(app_id: int, db: AsyncSession) -> Application:
 
 
 def app_status(app: Application, instance_statuses) -> str:
-    """What the app is: it follows from its instances (a cron job from its schedule); nothing stores it."""
+    """What the app is: it follows from its instances (a cron job from its schedule, a static site served from disk
+    from whether it is stopped); nothing stores it."""
     if app.cron_schedule:
         return _cron.status_of(app)
+    if app.app_type == "static" and app.static_release:
+        return "stopped" if app.static_stopped else "running"
     if not instance_statuses:
         return "error" if app.last_error else "stopped"      # no instance: stopped, or the last deploy failed
     return status_of_instances(instance_statuses)
@@ -90,6 +93,9 @@ def _app_to_dict(
         "docker_image":   app.docker_image,
         "source_revision": app.source_revision,
         "image_revision": app.image_revision,
+        # A static site nginx serves from disk: its live version (no instances); None for everything else
+        "static_site": ({"release": app.static_release, "stopped": bool(app.static_stopped)}
+                        if app.app_type == "static" and app.static_release else None),
         "docker_cpu_limit": app.docker_cpu_limit,
         "docker_memory_limit_mb": app.docker_memory_limit_mb,
         "docker_read_only_root": bool(app.docker_read_only_root),

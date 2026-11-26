@@ -16,11 +16,13 @@ def generate_config(
     extra_domains: list = None,
     redirect_domains: list = None,
     strict_hostnames: bool = False,
+    site_root: str | None = None,
 ) -> str:
     """Generate an nginx server block.
 
     port: single int (the panel itself), or list[str] of "host:port" backends
           for multi-instance load balancing (nginx upstream block).
+    site_root: a static site's published folder: nginx serves its files itself (no backend; `port` is not used).
 
     mode:
       'normal'       -  proxy to app; 502/503 automatically serve downtime.html
@@ -99,6 +101,10 @@ def generate_config(
 
     traffic = _traffic_log(app_id) if app_id and not is_cloudbase else ("", "")
 
+    if site_root:
+        return _proxy_config(domain, "", maint_root, ssl_cert, ssl_key, extra_domains, redirect_domains,
+                             strict_hostnames=strict_hostnames, traffic=traffic, site_root=site_root)
+
     # list[str] of "host:port" backends (instance-based model)
     if isinstance(port, list):
         if not port:
@@ -149,7 +155,31 @@ def _build_strict_host_guard(all_domains: list[str]) -> str:
   }}"""
 
 
-def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None, upstream_block: str = "", fallback_filename: str = "downtime.html", strict_hostnames: bool = False, panel: bool = False, traffic: tuple[str, str] = ("", "")) -> str:
+def _site_location(site_root: str, traffic_lines: str) -> str:
+    """A static site from disk. Only files under its own folder are served: no symlinks (disable_symlinks: the files are
+    copied without any, this is the second lock), no hidden files except .well-known, and nothing but plain files."""
+    if any(ch in site_root for ch in ('"', "'", ";", " ", "\n", "\r", "{", "}", "$")):
+        raise ValueError("Unsafe static site folder")
+    return f"""
+    root {site_root};
+    index index.html index.htm;
+    disable_symlinks on;
+    autoindex off;
+    gzip on;
+    gzip_vary on;
+    gzip_types text/plain text/css text/xml application/javascript application/json application/xml image/svg+xml;
+    location ~ /\\.(?!well-known/) {{
+        return 404;
+    }}
+
+    location / {{
+        # The file, the folder's index, the page without .html, else the site's own index.html (single-page apps)
+        try_files $uri $uri/ $uri.html /index.html =404;
+        add_header X-Content-Type-Options nosniff always;{traffic_lines}
+    }}"""
+
+
+def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str = None, ssl_key: str = None, extra_domains: list = None, redirect_domains: list = None, upstream_block: str = "", fallback_filename: str = "downtime.html", strict_hostnames: bool = False, panel: bool = False, traffic: tuple[str, str] = ("", ""), site_root: str | None = None) -> str:
     upstream_block = traffic[0] + upstream_block
     # The panel receives uploads from nodes (database backups, app sources) that are far larger than the 1 MB nginx
     # accepts by default, which answered 413. No limit here; the panel streams the body to disk itself.
@@ -208,6 +238,9 @@ def _proxy_config(domain: str, proxy_target: str, maint_root: str, ssl_cert: str
         # instead of turning into the unknown-host page meant for the host guard.
         error_page 502 503 504 =503 /_cloudbase_maintenance;
     }}"""
+    if site_root:
+        server_content = f"""\
+  {unknown_host_block}{_site_location(site_root, traffic[1])}"""
 
     # Build server_name lists
     all_domains = [domain] + [d for d in (extra_domains or []) if d and d != domain]

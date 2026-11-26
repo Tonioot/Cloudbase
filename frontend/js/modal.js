@@ -90,18 +90,25 @@ export function openDeployModal(onSuccess, { projectId = null } = {}) {
   modal.querySelector('#modal-cancel-footer').addEventListener('click', close);
 
   // ── Step navigation helpers ────────────────────────────────────────────────
+  // A static site runs no container (nginx serves its files): it has no Docker step
+  const lastStep = () => appType() === 'static' ? STEPS.findIndex(s => s.id === 'docker') - 1 : STEPS.length - 1;
+
   function showStep(idx) {
     currentStep = idx;
+    const last = lastStep();
     modal.querySelectorAll('.wizard-step').forEach((el, i) => {
       el.style.display = i === idx ? '' : 'none';
     });
     modal.querySelectorAll('.wizard-crumb').forEach((el, i) => {
       el.classList.toggle('active',    i === idx);
       el.classList.toggle('completed', i < idx);
+      el.style.display = i > last ? 'none' : '';
+      const line = el.previousElementSibling;                 // the line leading to a hidden step goes with it
+      if (line?.classList.contains('wizard-crumb-line')) line.style.display = el.style.display;
     });
     modal.querySelector('#btn-back').style.display  = idx === 0 ? 'none' : '';
-    modal.querySelector('#btn-next').style.display  = idx < STEPS.length - 1 ? '' : 'none';
-    modal.querySelector('#modal-submit').style.display = idx === STEPS.length - 1 ? '' : 'none';
+    modal.querySelector('#btn-next').style.display  = idx < last ? '' : 'none';
+    modal.querySelector('#modal-submit').style.display = idx === last ? '' : 'none';
     modal.querySelector('#modal-error').style.display = 'none';
 
     // Process step: workers have no port; static sites get a publish directory
@@ -159,6 +166,7 @@ export function openDeployModal(onSuccess, { projectId = null } = {}) {
     btn.addEventListener('click', () => {
       modal.querySelectorAll('.app-type-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
+      showStep(currentStep);                                  // the steps that follow depend on the type
     });
   });
 
@@ -494,8 +502,14 @@ async function handleDeploy(modal, form, onSuccess, close) {
     Object.assign(payload, { cron_schedule: c.schedule, cron_timezone: c.timezone || null, cron_timeout_seconds: c.timeout_seconds });
   }
 
+  if (payload.app_type === 'static') {
+    // Nothing runs for a static site: no limits. Its app page publishes it right away (app.js)
+    Object.assign(payload, { docker_cpu_limit: null, docker_memory_limit_mb: null, docker_read_only_root: false,
+                             docker_tmpfs_enabled: false, docker_tmpfs_size_mb: null });
+  }
   try {
     const app = await api.deploy(payload);
+    if (app.app_type === 'static') sessionStorage.setItem(`cloudbase_publish_${app.id}`, '1');
     close();
     onSuccess(app);
   } catch (err) {

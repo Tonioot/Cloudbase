@@ -11,7 +11,7 @@ from core import tenant
 from core.database import AsyncSessionLocal
 from core import activity
 from core.models import Application, Deployment
-from apps import commit_status, state as apps_state, rollout as apps_rollout, git as apps_git, nginx_sync as apps_nginx_sync, runtime as apps_runtime, images as apps_images
+from apps import commit_status, state as apps_state, rollout as apps_rollout, git as apps_git, nginx_sync as apps_nginx_sync, runtime as apps_runtime, images as apps_images, static_sites
 from core.audit import log_audit as apps_log_audit
 from apps.lifecycle import restart_locked
 
@@ -111,7 +111,11 @@ async def run_deploy(
                 gh = (app.repo_url, app.github_token, sha)
                 await commit_status.report(app_id, *gh, "pending", "Deploying with Cloudbase")
 
-                if strategy in ("rolling", "blue_green"):
+                if app.app_type == "static":
+                    # Built once, served by nginx from disk: no instances to replace (apps/static_sites.py)
+                    res = await static_sites.publish(app, db, push, source_revision)
+                    message = f"Published {commit_info}"
+                elif strategy in ("rolling", "blue_green"):
                     push("[Deploy] Replacing the instances one at a time…" if strategy == "rolling"
                          else "[Deploy] Starting new instances next to the old ones…")
                     res = await apps_rollout.replace_instances(app_id, db, actor, batch=1 if strategy == "rolling" else None)

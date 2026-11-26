@@ -1,10 +1,12 @@
 import os
 import asyncio
 import subprocess
+import tempfile
 from core import power, selfupdate
-from containers import naming as containers_naming, cleanup as containers_cleanup, jobs as containers_jobs, output_log
+from containers import naming as containers_naming, cleanup as containers_cleanup, jobs as containers_jobs, output_log, static_export
 from agent.log import AGENT_LOG_FILE, _agent_log
 from agent.source import ensure_image
+from agent.commands.databases import _upload_base
 
 # ─── Command handlers ─────────────────────────────────────────────────────────
 # Questions and one-off jobs. What should run on this node is not a command:
@@ -94,3 +96,39 @@ async def cmd_cron_run(client, state, main_id, payload):
     )
     _agent_log(f"[cron] app={main_id} run={run_id} exit={result.get('exit_code')} timed_out={result.get('timed_out')}")
     return result
+
+
+_SITE_TMP = os.path.expanduser("~/.cloudbase/site-tmp")
+
+
+async def cmd_static_build(client, state, main_id, payload):
+    """Build a static site in this node's sandbox, as the image of an instance would be, take the site out of the image
+    without starting it, and hand it to the primary, which serves it (apps/static_sites.py). Nothing stays here but
+    the image, which the next build reuses."""
+    app_id = int(main_id)
+    await ensure_image(client, state, {**payload, "app_id": app_id}, lambda _step: None)
+    os.makedirs(_SITE_TMP, exist_ok=True)
+    fd, path = tempfile.mkstemp(prefix=f"site-{app_id}-", suffix=".tar.gz", dir=_SITE_TMP)
+    os.close(fd)
+    try:
+        size = await asyncio.to_thread(static_export.export_site, containers_naming.image_name(app_id), path,
+                                       int(payload.get("max_bytes") or (1 << 30)))
+        base = await _upload_base(client, state, payload.get("hub_url"))
+        url = f"{base}/api/nodes/agent/apps/{app_id}/static-site/{payload['build_id']}"
+
+        async def body():
+            with open(path, "rb") as f:
+                while True:
+                    chunk = await asyncio.to_thread(f.read, 1 << 20)
+                    if not chunk:
+                        return
+                    yield chunk
+
+        resp = await client.post(url, content=body(), headers={"X-Node-Token": state.auth_token}, timeout=None)
+        if resp.status_code != 200:
+            raise RuntimeError(f"the primary did not take the site (HTTP {resp.status_code}: {resp.text[:300]})")
+        _agent_log(f"[static] app={app_id} site handed in ({size // 1024} KB)")
+        return {"size_bytes": size}
+    finally:
+        if os.path.exists(path):
+            os.remove(path)

@@ -69,6 +69,12 @@ EOF
 "$SUDO_BIN" chown -R "$TARGET_USER" /var/www/cloudbase/acme
 "$SUDO_BIN" "$CHMOD_BIN" 755 /var/www/cloudbase/acme /var/www/cloudbase/acme/.well-known /var/www/cloudbase/acme/.well-known/acme-challenge
 
+# Static sites, served by nginx straight from disk (backend/apps/static_sites.py). Owned by the Cloudbase user, which
+# writes the files; nginx only reads them (folders 755, files 644).
+"$SUDO_BIN" "$MKDIR_BIN" -p /var/www/cloudbase/sites
+"$SUDO_BIN" chown "$TARGET_USER" /var/www/cloudbase/sites
+"$SUDO_BIN" "$CHMOD_BIN" 755 /var/www/cloudbase/sites
+
 # What nginx sends to the visitors of each app, one number per request (see nginx/traffic_logs.py). nginx (root)
 # writes the files; Cloudbase reads them and moves them aside when they get big.
 "$SUDO_BIN" "$MKDIR_BIN" -p /var/log/cloudbase-traffic

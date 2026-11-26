@@ -95,6 +95,32 @@ def test_static_site_without_build_is_just_nginx(tmp_path):
 def test_static_site_with_build_is_multi_stage(tmp_path):
     out = containers_dockerfiles.generate_dockerfile("static", "dist", 0, app_dir=str(tmp_path), build_command="npm run build")
     assert "AS builder" in out and "COPY --from=builder /app/dist/" in out
+    assert "/cb-site" not in out                      # a publish directory that is set is used as it is
+
+
+def test_static_site_with_build_finds_its_folder_after_the_build(tmp_path):
+    """No publish directory: the folder with an index.html is looked for once the build has made it, not guessed."""
+    import re
+    import shutil
+    import subprocess
+    out = containers_dockerfiles.generate_dockerfile("static", "", 0, app_dir=str(tmp_path), build_command="npm run build")
+    assert "COPY --from=builder /cb-site/ /usr/share/nginx/html/" in out
+    step = next(line for line in out.splitlines() if "/cb-site;" in line)[len("RUN "):]
+    sh = shutil.which("sh")
+    if not sh:
+        return
+    for made, expect in (("build", "Publishing build"), ("dist/app/browser", "Publishing dist/app/browser"), ("", None)):
+        work = tmp_path / ("w-" + re.sub(r"\W", "_", made or "none"))
+        (work / made).mkdir(parents=True, exist_ok=True)
+        if made:
+            (work / made / "index.html").write_text("hi")
+        script = step.replace("/cb-site", str(work / "cb-site").replace("\\", "/"))
+        r = subprocess.run([sh, "-c", script], cwd=work, capture_output=True, text=True)
+        if expect:
+            assert r.returncode == 0 and expect in r.stdout, r.stderr
+            assert (work / "cb-site" / "index.html").exists()
+        else:
+            assert r.returncode != 0 and "Set the publish directory" in r.stderr
 
 
 def test_static_publish_dir_cannot_escape_the_repo():

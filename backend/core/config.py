@@ -45,6 +45,8 @@ _DEFAULTS = {
         "max_nodes": 100,
         "max_restarts_per_window": 5,
         "restart_window_seconds": 60,
+        "static_site_mb": 1024,          # the largest a static site may be (apps/static_sites.py)
+        "static_site_files": 50000,      # the most files a static site may have
     },
     # App output kept on each machine for searching (containers/output_log.py)
     "logs": {

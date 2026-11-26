@@ -136,6 +136,9 @@ class Application(Base):
     docker_image   = Column(String(500), nullable=True)
     source_revision = Column(String(120), nullable=True)
     image_revision  = Column(String(120), nullable=True)
+    # A static site served from disk (apps/static_sites.py): the folder of the live version, and whether it is stopped
+    static_release = Column(String(64), nullable=True)
+    static_stopped = Column(Boolean, default=False)
     docker_cpu_limit = Column(Float, nullable=True)
     docker_memory_limit_mb = Column(Integer, nullable=True)
     docker_read_only_root = Column(Boolean, default=False)

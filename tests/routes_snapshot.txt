@@ -155,6 +155,7 @@ POST    /api/databases/{database_id}/update
 POST    /api/domains/certificate
 POST    /api/domains/check
 POST    /api/domains/check-dns
+POST    /api/nodes/agent/apps/{app_id}/static-site/{build_id}
 POST    /api/nodes/agent/commands/{command_id}/result
 POST    /api/nodes/agent/databases/{database_id}/backups/{backup_id}/upload
 POST    /api/nodes/agent/observed

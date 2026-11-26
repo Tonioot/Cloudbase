@@ -5,6 +5,7 @@ from core import activity
 from cron import scheduler as _cron
 from core.audit import log_audit
 from core import auth as _auth
+from apps import static_sites
 from apps.lifecycle import restart_app_now, start_app_now
 from apps.nginx_sync import _has_public_nginx_domain, _write_app_nginx_config
 from apps.runtime import _load_app_instances, _load_node_map, _stop_instance_runtime
@@ -27,6 +28,11 @@ async def stop_app(app_id: int, db: AsyncSession = Depends(get_db), _user: dict 
     app = await _get_or_404(app_id, db)
     if app.cron_schedule:
         return await _cron.set_enabled(app_id, False, actor)
+    if static_sites.serves(app):
+        await static_sites.set_stopped(app, db, True)          # nginx shows the downtime page
+        await log_audit(db, "app.stop", actor=actor, app_id=app_id, detail={"name": app.name})
+        await db.commit()
+        return {"status": "stopped", "instance_count": 0}
     instances = await _load_app_instances(app_id, db)
 
     if not instances:
