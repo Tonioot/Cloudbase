@@ -714,6 +714,13 @@ async function _refreshLogInstances() {
   _logInstances = new Map(instances.map(r => [String(r.id), r]));
 
   const current = select.value || 'all';
+  if (servedFromDisk(app)) {
+    // Nothing runs for a static site: its output is the build and publish of each deploy, and Cloudbase's own log
+    select.innerHTML = `<option value="all">Builds &amp; deploys · live</option><option value="${LOG_CLOUDBASE}">Cloudbase · deploys, nginx…</option>`;
+    select.value = current === LOG_CLOUDBASE ? current : 'all';
+    if (_logSourceKey !== _logSourceKeyFor(select.value)) _switchLogInstance();
+    return;
+  }
   select.innerHTML = '<option value="all">All instances</option>';
   instances.forEach(r => {
     const opt = document.createElement('option');
@@ -805,12 +812,15 @@ function _switchLogInstance() {
   }
   terminal.closest('.logs-panel')?.classList.remove('logs-idle');
 
-  if (hint) hint.textContent = isAll ? 'Live · all instances + build & deploy output' : `Live · instance #${val}`;
+  const disk = servedFromDisk(app);
+  if (hint) hint.textContent = disk ? 'Live · build and publish output' : isAll ? 'Live · all instances + build & deploy output' : `Live · instance #${val}`;
   const noneLive = isAll && _logInstances.size > 0 && ![..._logInstances.values()].some(r => LOG_LIVE_STATUSES.has(r.status));
   const reset = () => {
-    terminal.innerHTML = noneLive
-      ? `<div class="log-empty">No instances are running. Build and deploy output still shows up here.</div>`
-      : `<div class="log-empty">Waiting for log output…</div>`;
+    terminal.innerHTML = disk
+      ? `<div class="log-empty">Nothing runs for a static site: nginx serves its files. The build and publish of a deploy show up here while it runs; earlier ones are under Deployments.</div>`
+      : noneLive
+        ? `<div class="log-empty">No instances are running. Build and deploy output still shows up here.</div>`
+        : `<div class="log-empty">Waiting for log output…</div>`;
     logLines = [];
   };
   reset();

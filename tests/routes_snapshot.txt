@@ -162,6 +162,7 @@ POST    /api/nodes/agent/observed
 POST    /api/nodes/agent/register
 POST    /api/nodes/agent/wireguard
 POST    /api/nodes/invites
+POST    /api/nodes/update-all
 POST    /api/nodes/{node_id}/disable
 POST    /api/nodes/{node_id}/docker-cleanup
 POST    /api/nodes/{node_id}/enable

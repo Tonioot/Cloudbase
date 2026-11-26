@@ -1,5 +1,5 @@
 import { api, PermissionError } from './api.js';
-import { icon, toast, confirm, sparkPoints } from './utils.js';
+import { icon, toast, confirm, sparkPoints, spinner, waitForPanel } from './utils.js';
 import { openDeployModal } from './modal.js';
 import { cronSummary } from './cron.js';
 import { renderDatabasesTable, openCreateDatabaseDialog } from './databases.js';
@@ -46,6 +46,7 @@ export async function initDashboard() {
   });
   document.getElementById('btn-deploy')?.addEventListener('click', openDeploy);
   document.getElementById('btn-add-node')?.addEventListener('click', () => openAddNodeModal());
+  document.getElementById('btn-update-all')?.addEventListener('click', e => updateAll(e.currentTarget));
   document.getElementById('btn-new-database')?.addEventListener('click', () => openCreateDatabaseDialog());
 
   document.getElementById('apps-filter')?.addEventListener('click', e => {
@@ -657,3 +658,32 @@ function openAddNodeModal() {
   })();
 }
 
+/* ─── Update all ──────────────────────────────────────────────────────────── */
+// Every connected node first, then this server: the panel restarts last (backend nodes/updates.py update_all)
+async function updateAll(btn) {
+  const ok = await confirm('Update all',
+    'Cloudbase fetches the newest version on <strong>every node</strong> first and restarts their agents, then on '
+    + '<strong>this server</strong>, which restarts the panel. Running apps and databases are not stopped.');
+  if (!ok) return;
+  btn.disabled = true;
+  btn.innerHTML = `${spinner} Updating…`;
+  try {
+    const r = await api.updateAllCloudbase();
+    const failed = r.nodes.filter(n => !['updated', 'installing', 'current'].includes(n.status));
+    failed.forEach(n => toast(`${n.name}: ${n.message || n.status}`, 'error'));
+    const nodesDone = r.nodes.length - failed.length;
+    const p = r.primary || {};
+    const nodesText = r.nodes.length ? `${nodesDone} of ${r.nodes.length} node${r.nodes.length === 1 ? '' : 's'} updated` : 'No nodes';
+    if (p.status === 'updated' || p.status === 'installing') {
+      toast(`${nodesText}. This server is updating to ${p.commit}${p.status === 'installing' ? ', including system files' : ''}; the panel restarts…`);
+      waitForPanel(p.status === 'installing');
+      return;
+    }
+    if (p.status === 'current') toast(`${nodesText}. This server is already up to date.`);
+    else toast(`${nodesText}. This server: ${p.message || 'the update did not run'}`, 'error');
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+  btn.disabled = false;
+  btn.textContent = 'Update all';
+}

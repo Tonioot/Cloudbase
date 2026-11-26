@@ -425,3 +425,24 @@ export function auditTableHTML(entries, { showApp = false } = {}) {
     <tbody>${rows}</tbody>
   </table></div>`;
 }
+
+/** The primary restarts (an update, a reboot): wait until the panel answers again, then load the page anew. */
+export async function waitForPanel(installing = false) {
+    // The primary restarts: wait until it answers again, then show the new version
+    await new Promise(r => setTimeout(r, 6000));
+    if (installing) {
+        // The installer works first (packages, nginx) and only restarts at the end: wait for the panel to go down
+        for (let i = 0; i < 90; i++) {
+            try { await fetch('/api/health', { cache: 'no-store' }); } catch { break; }
+            await new Promise(r => setTimeout(r, 2000));
+        }
+    }
+    for (let i = 0; i < 90; i++) {
+        try {
+            const r = await fetch('/api/health', { cache: 'no-store' });
+            if (r.ok) { location.reload(); return; }
+        } catch { /* still restarting */ }
+        await new Promise(r => setTimeout(r, 2000));
+    }
+    location.reload();
+}

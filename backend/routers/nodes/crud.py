@@ -152,6 +152,24 @@ async def docker_cleanup(
     return res
 
 
+@router.post("/update-all")
+async def update_all_cloudbase(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(_auth.require_permission("nodes.configure")),
+    actor: str = Depends(_auth.get_current_actor),
+):
+    """Update Cloudbase everywhere: every connected node first, then the primary, which restarts the panel."""
+    if user.get("permissions") is not None and "system.manage" not in user["permissions"]:
+        raise HTTPException(403, "Updating the primary restarts the panel: that needs the system.manage permission")
+    nodes = (await db.execute(select(Node).where(Node.enabled == True))).scalars().all()  # noqa: E712
+    res = await node_updates.update_all(list(nodes))
+    await log_audit(db, "node.update_all", actor=actor, detail={
+        "nodes": {n["name"]: n.get("status") for n in res["nodes"]}, "primary": res["primary"].get("status"),
+        "commit": res["primary"].get("commit")})
+    await db.commit()
+    return res
+
+
 @router.post("/{node_id}/update")
 async def update_cloudbase(
     node_id: int,
