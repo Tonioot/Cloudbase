@@ -753,8 +753,9 @@ step_register() {
   fi
   # A new invite replaces an earlier connection.
   rm -f agent_state.json
-  as_user venv/bin/python node_agent.py --main-url "$MAIN_URL" --invite-code "$INVITE_CODE" \
-    --node-name "$NODE_NAME" --exit-after-registration
+  # --opt=value: an invite code may start with '-', which argparse would take for an option
+  as_user venv/bin/python node_agent.py --main-url="$MAIN_URL" --invite-code="$INVITE_CODE" \
+    --node-name="$NODE_NAME" --exit-after-registration
   [[ -f agent_state.json ]]
   printf '%s' "$INVITE_CODE" | as_user tee "$invite_file" > /dev/null
 }

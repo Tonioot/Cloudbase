@@ -37,6 +37,8 @@ async def list_nodes(db: AsyncSession = Depends(get_db), _user: dict = Depends(_
 @router.post("/invites")
 async def create_invite(req: InviteRequest, _user: dict = Depends(_auth.require_permission("nodes.add")), db: AsyncSession = Depends(get_db)):
     code = secrets.token_urlsafe(24)
+    while code[0] == "-":                 # a code that starts with '-' looks like an option on a command line
+        code = secrets.token_urlsafe(24)
     invite = NodeInvite(
         code=code,
         note=req.note,
