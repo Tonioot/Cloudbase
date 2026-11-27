@@ -9,6 +9,7 @@ from containers import processes as pm
 from core.database import AsyncSessionLocal
 from core.models import Application, Instance, Node
 from mesh import routing
+from nodes import desired
 from nodes.commands import _utcnow
 from nodes.liveness import mark_instances_offline
 
@@ -37,8 +38,9 @@ async def promote_when_reachable(instance_id: int) -> None:
                 return                                  # a deploy or a stop got there first
             instance.status, instance.substatus, instance.last_error = "running", None, None
             instance.updated_at = _utcnow()
-            app_id = instance.app_id
+            app_id, node_id = instance.app_id, instance.node_id
             await db.commit()
+        desired.nudge(node_id)          # it takes traffic from the other apps of its project from now on
         pm.instance_line(app_id, instance_id, "running")
         log.info("[mesh] instance %d reachable, live", instance_id)
         await nginx_sync.refresh_app_nginx(app_id)

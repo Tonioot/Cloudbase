@@ -1,5 +1,6 @@
 import logging
 from containers.apps import _restart_policy_config
+from containers import routes
 from containers.client import _apply_linked_databases, _assert_image_local, _get_client, _host_port, start_container
 from containers.naming import instance_container_name
 from containers import hardening, output_log, sandbox_dns
@@ -98,6 +99,8 @@ def run_instance_container(
     hardening.apply(run_kwargs, docker_options.get("hardening"))
     extra_networks = _apply_linked_databases(client, run_kwargs, docker_options)
     sandbox_dns.apply(client, run_kwargs, docker_options)      # gVisor can't reach Docker's own name server
+    if docker_options.get("project"):
+        routes.apply()          # the project's network may be new here: its addresses work from the first moment
     _assert_image_local(client, img)
     # Retry on transient Docker errors: port still releasing or container name
     # still being removed after a force-remove.

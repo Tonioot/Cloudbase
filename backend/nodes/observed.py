@@ -12,7 +12,7 @@ from core.database import AsyncSessionLocal
 from core.models import Instance
 from apps import nginx_sync
 from containers import processes as pm
-from nodes import promote
+from nodes import desired, promote
 from nodes.commands import _utcnow
 
 log = logging.getLogger("cloudbase.nodes")
@@ -74,6 +74,8 @@ async def apply(node_id: int, reports: dict) -> None:
             if db.is_modified(instance):
                 instance.updated_at = _utcnow()
         await db.commit()
+    if rewrite:
+        desired.nudge(node_id)          # an instance stopped serving: the other apps of its project must know
     for line in lines:
         pm.instance_line(*line)
     for instance_id in to_check:

@@ -36,13 +36,26 @@ def app_link_network_name(link_id: int) -> str:
 
 
 def project_network_name(project_id: int) -> str:
-    """The apps of a project whose apps reach each other."""
+    """The apps and databases of a project whose apps reach each other."""
     return f"cloudbase-project-{project_id}"
 
 
 def app_alias(app_id: int) -> str:
     """The name under which an app is reached on the network of a link. From the id, so a rename changes nothing."""
     return f"app-{app_id}"
+
+
+def database_alias(database_id: int) -> str:
+    """The name under which a database is reached by the apps of its project (containers/routes.py)."""
+    return f"db-{database_id}"
+
+
+def route_port(database_id: int | None = None, app_id: int | None = None) -> int:
+    """The port of an app's or database's fixed address inside its project. It only exists in the firewall rule of the
+    project's network, so it never clashes with a port anything listens on."""
+    if app_id is not None:
+        return 20000 + int(app_id) % 20000
+    return 40000 + int(database_id) % 20000
 
 
 def database_container_name(database_id: int) -> str:

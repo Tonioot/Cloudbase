@@ -104,6 +104,10 @@ Visitor ─► NGINX on the primary ─► instance on the primary (127.0.0.1:10
 
 All public traffic enters through NGINX on the primary, which spreads requests over every healthy instance. Every node joins a private WireGuard network with the primary at the centre (UDP port `51820` on the primary; the node connects outwards, so it needs no open ports or public IP). Instances on a node only listen on the node's private address, and the primary reaches them directly through the kernel's WireGuard — there is nothing extra to run per instance.
 
+### Inside a project
+
+The apps and databases of a project reach each other (a setting of the project, on for new ones). Every app, worker and cron job gets `<NAME>_URL` for each web app and each database of its project, at an address that never changes: `http://app-3:20003`, `postgresql://…@db-1:40001/…`. The name points at the app's own server, where a firewall rule forwards the connection to wherever the target runs now, so a deploy, restart, scale or move needs no restart of whoever connects. Only containers on the project's network can use it; other projects can't. A variable an app sets itself wins. The variables are there while the app runs, not during its build, and a new app or database appears at the next start.
+
 ### Node outages
 
 When a node goes offline, its instances are marked `node offline` and taken out of the load balancer; instances elsewhere keep serving. When it reconnects, surviving containers are reattached and missing ones are started again — without manual action.

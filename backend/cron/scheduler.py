@@ -204,6 +204,8 @@ async def _ensure_local_image(app: Application, push) -> str:
 async def _run_local(app: Application, run_id: int, push) -> dict:
     img = await _ensure_local_image(app, push)
     options = apps_runtime._docker_runtime_options(app)
+    async with AsyncSessionLocal() as db:
+        options.update(await app_links.runtime_options(db, app))      # the addresses of its project and its connections
     return await asyncio.to_thread(
         containers_jobs.run_job_container, app.id, run_id, img, app.start_command or "",
         core_projects.app_env(app), options, app.cron_timeout_seconds or 3600,
@@ -215,6 +217,8 @@ async def _run_remote(app: Application, node: Node, run_id: int) -> dict:
     if not (node.enabled and node.status == "online"):
         raise RuntimeError(f"Node '{node.name}' is offline")
     payload = apps_runtime._remote_instance_command_payload(app, core_projects.app_env(app), 0)
+    async with AsyncSessionLocal() as db:
+        payload["docker_options"].update(await app_links.runtime_options(db, app))
     payload.update({"run_id": run_id, "command": app.start_command or "",
                     "timeout_seconds": app.cron_timeout_seconds or 3600})
     done = await node_commands.ask(node.id, "cron_run", payload, app_id=app.id,

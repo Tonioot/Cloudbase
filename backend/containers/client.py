@@ -105,9 +105,41 @@ def ensure_database_network(database_id: int) -> str:
 
 
 def ensure_link_network(network: str) -> str:
-    """The network of an app link: cloudbase-link-<id>."""
-    ensure_network(network, "cbl" + network.rsplit("-", 1)[1])
+    """The network of an app link (cloudbase-link-<id>) or of a project (cloudbase-project-<id>). Their bridges are
+    named apart (cbll / cblp): the ids of links and projects overlap, and two networks can't share a bridge."""
+    kind, number = ("cblp" if network.startswith("cloudbase-project-") else "cbll"), network.rsplit("-", 1)[1]
+    ensure_network(network, kind + number)
     return network
+
+
+def network_gateway(client, network: str) -> str | None:
+    """This machine's own address on a network."""
+    config = (client.networks.get(network).attrs.get("IPAM") or {}).get("Config") or []
+    return next((c["Gateway"].split("/")[0] for c in config if c.get("Gateway")), None)
+
+
+def _project_addresses(client, docker_options: dict, run_kwargs: dict) -> tuple[dict, list[tuple[str, list[str]]]]:
+    """The apps and databases of the project: each one's address as an env var, its name pointing at this machine on
+    the project's network, where a firewall rule forwards it to wherever it runs (containers/routes.py)."""
+    env, hosts, joined = {}, {}, []
+    for entry in docker_options.get("project") or []:
+        network = ensure_link_network(entry["network"])
+        env[entry["env_var"]] = entry["url"]
+        gateway = network_gateway(client, network)
+        if gateway:
+            hosts[entry["alias"]] = gateway
+        joined.append((network, []))
+    if hosts:
+        run_kwargs["extra_hosts"] = {**(run_kwargs.get("extra_hosts") or {}), **hosts}
+    return env, joined
+
+
+def _merged(networks: list[tuple[str, list[str]]]) -> list[tuple[str, list[str]]]:
+    """Each network once, with every name the container answers to there."""
+    found: dict[str, list[str]] = {}
+    for name, aliases in networks:
+        found.setdefault(name, []).extend(a for a in aliases if a not in found.get(name, []))
+    return list(found.items())
 
 
 def attach(client, network: str, container, aliases: list[str] | None = None) -> None:
@@ -223,10 +255,11 @@ def _apply_linked_databases(client, run_kwargs: dict, docker_options: dict) -> l
     linked_env = db_proxy.resolve_links(linked) if linked else {}
     networks = _join_database_networks(client, linked) if linked else []
     app_env, app_networks = _link_apps(docker_options)
-    if linked_env or app_env:
-        run_kwargs["environment"] = {**(run_kwargs.get("environment") or {}), **linked_env, **app_env}
+    project_env, project_networks = _project_addresses(client, docker_options, run_kwargs)
+    if linked_env or app_env or project_env:
+        run_kwargs["environment"] = {**(run_kwargs.get("environment") or {}), **project_env, **linked_env, **app_env}
     retire_legacy_network(client)
-    return networks + app_networks
+    return _merged(networks + app_networks + project_networks)
 
 
 def is_docker_available() -> bool:

@@ -46,6 +46,11 @@ async def list_connections(app_id: int, db: AsyncSession = Depends(get_db),
                        "env_var_name": l.env_var_name} for l, d in databases],
         "apps": [{"id": l.id, "target_id": a.id, "name": a.name, "env_var_name": l.env_var_name} for l, a in outgoing],
         "used_by": [{"id": l.id, "app_id": a.id, "name": a.name} for l, a in incoming],
+        # What the app's project gives it by itself (no addresses with passwords here)
+        "project": [{"kind": e["kind"], "target_id": e["id"], "name": e["name"], "env_var_name": e["env_var"]}
+                    for e in await app_links.project_connections(db, await db.get(Application, app_id))
+                    if core_projects.can(_user, (await db.get(Application, app_id)).project_id,
+                                         "databases.view" if e["kind"] == "database" else "apps.view")],
         "reserved_env": sorted(await app_links.reserved_env_names(db, app_id)),
     }
 

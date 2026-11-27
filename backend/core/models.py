@@ -426,6 +426,8 @@ class Database(Base):
     last_error      = Column(Text, nullable=True)
     container_id    = Column(String(200), nullable=True)
     credentials     = Column(Text, nullable=False)          # encrypted JSON: user, password, db_name
+    # The variable the apps of its project get its address in; empty = <NAME>_URL (apps/app_links.py)
+    env_var_name    = Column(String(100), nullable=True)
     cpu_limit       = Column(Float, nullable=True)
     memory_limit_mb = Column(Integer, nullable=True)
     # A file system of exactly this size holds the data (scripts/cloudbase-quota): full is full. Set when the database

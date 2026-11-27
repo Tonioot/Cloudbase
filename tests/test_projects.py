@@ -152,13 +152,13 @@ def test_the_apps_of_a_connected_project_reach_each_other(world):
             await db.commit()
             api = await db.get(Application, world["shop_app"])
             options = await app_links.runtime_options(db, api)
-            linked = {e["env_var"]: e for e in options.get("linked_apps") or []}
+            linked = {e["env_var"]: e for e in options.get("project") or []}
             assert "SHOP_WEB_URL" in linked and "SHOP_WORKER_URL" not in linked      # only apps with a web server
             assert linked["SHOP_WEB_URL"]["network"] == f"cloudbase-project-{world['shop']}"
             assert {"network": f"cloudbase-project-{world['shop']}", "alias": f"app-{api.id}"} in options["exposed_to"]
             # an app of the default project (not connected) gets nothing of the kind
             tool = (await db.execute(select(Application).where(Application.name == "intern-tool"))).scalar_one()
-            assert "linked_apps" not in await app_links.runtime_options(db, tool)
+            assert "project" not in await app_links.runtime_options(db, tool)
     run(check())
 
 

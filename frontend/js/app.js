@@ -572,7 +572,13 @@ async function renderConnections() {
     <div class="s3-row">
       <span class="s3-label"><a href="${href('app', l.app_id)}" class="s3-title">${escHtml(l.name)}</a><span class="s3-desc">Can reach this app</span></span>
     </div>`);
+  const fromProject = (c.project || []).map(l => `
+    <div class="s3-row">
+      <span class="s3-label"><a href="${href(l.kind, l.target_id)}" class="s3-title">${escHtml(l.name)}</a>
+        <span class="s3-desc"><code>${escHtml(l.env_var_name)}</code> · ${l.kind === 'database' ? 'database' : 'app'}</span></span>
+    </div>`);
   wrap.innerHTML =
+    group('From the project (added by itself, from the next start)', fromProject) +
     group('Databases', c.databases.map(l => row('database', l))) +
     group('Apps this app can reach', c.apps.map(l => row('app', l))) +
     group('Apps that can reach this app', calledBy) ||

@@ -25,7 +25,7 @@ from fastapi import HTTPException
 from core.env_crypto import encrypt_text
 from core.models import Instance, Node
 from nodes import capacity
-from nodes.state import _get_node_event
+from nodes.state import _get_node_event, _node_command_events
 
 log = logging.getLogger("cloudbase.nodes")
 
@@ -42,8 +42,11 @@ def list_hash(entries: list[dict]) -> str:
 
 
 def nudge(node_id: int) -> None:
-    """Tell the node's agent to look at its list now instead of at its next regular check."""
-    asyncio.get_running_loop().call_later(NUDGE_DELAY_SECONDS, _get_node_event(node_id).set)
+    """Tell the node's agent to look at its list now instead of at its next regular check. Every other node too: what
+    runs where changed, and their lists say where the apps of a project are (containers/routes.py)."""
+    loop = asyncio.get_running_loop()
+    for event in {_get_node_event(node_id), *_node_command_events.values()}:
+        loop.call_later(NUDGE_DELAY_SECONDS, event.set)
 
 
 # The oldest agent this panel works with: 5.0 has no database tunnels, the panel no longer offers them

@@ -13,9 +13,12 @@ class CreateDatabaseRequest(BaseModel):
     memory_limit_mb: Optional[int] = None
     # The size of the database's own disk, in MB: writes fail once it is full. Only at creation; it can grow later.
     disk_limit_mb: Optional[int] = None
+    # The variable the apps of its project get its address in; none = <NAME>_URL
+    env_var_name: Optional[str] = Field(default=None, max_length=100)
 
 
 class UpdateDatabaseRequest(BaseModel):
+    env_var_name: Optional[str] = Field(default=None, max_length=100)    # None = keep; "" = back to <NAME>_URL
     cpu_limit: Optional[float] = None
     memory_limit_mb: Optional[int] = None
     disk_limit_mb: Optional[int] = None      # only bigger, and only for a database that was created with a limit

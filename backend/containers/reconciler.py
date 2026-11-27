@@ -19,7 +19,7 @@ import asyncio
 import logging
 import time
 
-from containers import egress, processes as pm, instances as containers_instances, quota
+from containers import egress, processes as pm, instances as containers_instances, quota, routes
 
 _logger = logging.getLogger("cloudbase.agent")      # the node-agent log, also where the primary's reconciler writes
 
@@ -115,6 +115,9 @@ class Reconciler:
         except Exception as exc:
             _log(f"[reconcile] could not set the network rules ({exc}); run: cloudbase update")
         await self._apply_tenant(bool(data.get("tenant")))
+        if "routes" in data:       # before anything is removed: no address may lead to an instance that is going
+            routes.set_wanted(data["routes"], data["node_id"])
+            await asyncio.to_thread(routes.apply)
         _log(f"[reconcile] list received: {sum(e['desired'] == 'running' for e in self.entries.values())} to run, "
                    f"{sum(e['desired'] != 'running' for e in self.entries.values())} stopped")
         self.reconcile_now.set()
@@ -169,6 +172,8 @@ class Reconciler:
         # starts that belong to an instance that left the list
         for instance_id in [r for r in self.tasks if r not in self.entries]:
             self._cancel_start(instance_id)
+
+        await asyncio.to_thread(routes.apply)      # a container that (re)started here may have another address
 
     async def _remove(self, container: dict) -> bool:
         """Remove the container of an instance that should not run. Returns whether it is gone."""

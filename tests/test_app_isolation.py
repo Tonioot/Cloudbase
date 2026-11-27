@@ -221,7 +221,7 @@ def test_an_app_reaches_a_target_on_its_own_node_by_name_over_a_private_network(
     networks = cc._apply_linked_databases(docker, kwargs, {"linked_apps": [app_link([{"node_id": 1, "port": 20001, "address": "10.0.0.1"}])]})
     assert kwargs["environment"] == {"BACKEND_URL": "http://app-9:3000"}
     assert networks == [("cloudbase-link-5", [])]
-    assert docker.network_list["cloudbase-link-5"].options["com.docker.network.bridge.name"] == "cbl5"
+    assert docker.network_list["cloudbase-link-5"].options["com.docker.network.bridge.name"] == "cbll5"
 
 
 def test_a_target_on_another_node_is_reached_at_the_address_its_node_publishes_it_on(docker):

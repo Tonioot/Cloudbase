@@ -1,9 +1,11 @@
 """The list of instances a node asks for (see desired.py for what the list means)."""
+import hashlib
 import json
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from apps import app_links
 from core import tenant
 from core.env_crypto import decrypt_text
 from core.models import Instance
@@ -25,4 +27,8 @@ async def snapshot(db: AsyncSession, node_id: int) -> dict:
                         "spec_hash": instance.spec_hash if spec else None, "spec": spec})
     # Tenant mode is part of the list (and its hash): the node sets its firewall from it (containers/reconciler.py)
     on = tenant.enabled()
-    return {"hash": list_hash(entries) + ("-t" if on else ""), "instances": entries, "tenant": on}
+    # Where the apps and databases of the connected projects run: the node forwards their fixed addresses there
+    routes = await app_links.project_routes(db)
+    digest = hashlib.sha256(json.dumps(routes, sort_keys=True).encode()).hexdigest()[:12]
+    return {"hash": f"{list_hash(entries)}{'-t' if on else ''}-{digest}", "instances": entries, "tenant": on,
+            "routes": routes, "node_id": node_id}

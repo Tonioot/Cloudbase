@@ -16,7 +16,7 @@ from core.audit import log_audit
 from core.database import get_db
 from core.models import DatabaseStatsHistory, DatabaseLink, Database, Node
 from dbs.ops import _get_or_404, _links_for, _node_for, _node_reachable, _run_on_node, _spawn, _start_operation
-from dbs.provision import _data_dir, _validate_limits, validate_disk_limit
+from dbs.provision import ENV_VAR_RE, _data_dir, _validate_limits, validate_disk_limit
 from dbs import public_certs
 from dbs.public import assign_public_port, public_host_for, sync_public_access
 from dbs.state import _busy, _operation, claim, release
@@ -33,6 +33,14 @@ router = APIRouter(prefix="/api/databases", tags=["databases"])
 log = logging.getLogger("cloudbase.databases")
 
 _HOSTNAME_RE = re.compile(r"^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+
+
+def _variable(name: Optional[str]) -> Optional[str]:
+    """A variable name as stored, None for none given."""
+    name = (name or "").strip().upper()
+    if name and not ENV_VAR_RE.match(name):
+        raise HTTPException(400, "Env var name may only contain A–Z, 0–9 and _, and may not start with a digit")
+    return name or None
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -81,10 +89,14 @@ async def create_database(
     actor: str = Depends(_auth.get_current_actor),
 ):
     project_id = await core_projects.project_for_new(db, _user, req.project_id, "databases.create")
+    env_var = _variable(req.env_var_name)
     database, node = await create_database_now(
         db, name_in=req.name, engine_in=req.engine, version_in=req.version, node_id=req.node_id,
         cpu_limit=req.cpu_limit, memory_limit_mb=req.memory_limit_mb, disk_limit_mb=req.disk_limit_mb,
         actor=actor, project_id=project_id)
+    if env_var:
+        database.env_var_name = env_var
+        await db.commit()
     return _as_dict(database, node)
 
 
@@ -111,6 +123,15 @@ async def update_database(
     actor: str = Depends(_auth.get_current_actor),
 ):
     database = await _get_or_404(database_id, db)
+    renamed = req.env_var_name is not None and _variable(req.env_var_name) != database.env_var_name
+    if renamed:                 # only a setting: the apps get it from their next start, the database is not touched
+        database.env_var_name = _variable(req.env_var_name)
+        await log_audit(db, "database.update", actor=actor, detail={
+            "database_id": database.id, "name": database.name, "env_var_name": database.env_var_name})
+        await db.commit()
+        if all(v is None for v in (req.cpu_limit, req.memory_limit_mb, req.disk_limit_mb)) \
+                and not req.clear_cpu_limit and not req.clear_memory_limit:
+            return {"ok": True, "changed": True}
     if database.id in _busy:
         raise HTTPException(409, "Another operation on this database is still running")
     cpu = None if req.clear_cpu_limit else (req.cpu_limit if req.cpu_limit is not None else database.cpu_limit)

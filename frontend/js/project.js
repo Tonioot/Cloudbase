@@ -42,7 +42,7 @@ function renderNew() {
         <input class="input" id="pj-name" maxlength="60" placeholder="e.g. Webshop" autocomplete="off" /></div>
       <div class="field"><label class="field-label" for="pj-desc">Description <span class="hint">optional</span></label>
         <input class="input" id="pj-desc" maxlength="300" placeholder="What runs in it" /></div>
-      <p class="section-hint">The apps of a new project reach each other by name; you can turn that off in its settings.</p>
+      <p class="section-hint">The apps of a new project reach each other and its databases; you can turn that off in its settings.</p>
       <div class="pj-actions"><a class="btn" href="/">Cancel</a><button class="btn btn-primary" id="pj-create">Create project</button></div>
     </div>`;
   const create = document.getElementById('pj-create');
@@ -98,7 +98,7 @@ function render(p) {
       ${kpi('Apps', `${p.apps_running}<span> / ${p.apps}</span>`, 'running')}
       ${kpi('Databases', p.databases, p.databases === 1 ? 'database' : 'databases')}
       ${kpi('Shared variables', p.env_count, 'given to every app')}
-      ${kpi('Apps reach each other', p.apps_connected ? 'On' : 'Off', p.apps_connected ? 'as &lt;NAME&gt;_URL' : 'only through links')}
+      ${kpi('Connected', p.apps_connected ? 'On' : 'Off', p.apps_connected ? 'apps and databases as &lt;NAME&gt;_URL' : 'only through links')}
     </section>
 
     <section class="section">
@@ -125,8 +125,9 @@ function render(p) {
         <button class="btn btn-sm" id="pj-save-general">Save</button>`)}
       ${group('Connected apps', 'Every app of the project gets the address of the others as an environment variable, named after the app: <code>BACKEND_URL</code> for an app called “backend”. A variable or link of the same name wins.', `
         <label class="toggle-row form-toggle">
-          <span><span class="field-label">Apps in this project reach each other</span>
-          <span class="field-hint">Takes effect when an app starts, restarts or deploys.</span></span>
+          <span><span class="field-label">Apps in this project reach each other and its databases</span>
+          <span class="field-hint">Every app gets their addresses as &lt;NAME&gt;_URL from its next start, restart or deploy.
+            The addresses stay the same when something is deployed or moved. A variable of the app itself wins.</span></span>
           <span class="toggle"><input type="checkbox" id="pj-connected" ${p.apps_connected ? 'checked' : ''} /><span class="toggle-slider"></span></span>
         </label>`)}
       ${group('Shared variables', 'Given to every app of the project, also during the build. A variable of the app itself with the same name wins. Changes take effect at the next start or deploy.', `
@@ -164,7 +165,7 @@ async function wireSettings(p) {
   document.getElementById('pj-connected').onchange = async e => {
     try {
       await api.updateProject(p.id, { apps_connected: e.target.checked });
-      toast(e.target.checked ? 'Apps reach each other from their next start' : 'Apps no longer reach each other from their next start');
+      toast(e.target.checked ? 'Apps get the addresses from their next start' : 'The addresses stop working now');
     } catch (err) { e.target.checked = !e.target.checked; toast(err.message, 'error'); }
   };
 

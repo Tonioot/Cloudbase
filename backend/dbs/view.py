@@ -37,6 +37,7 @@ def _as_dict(database: Database, node: Optional[Node], link_count: int = 0) -> d
         "id": database.id,
         "name": database.name,
         "project_id": database.project_id,
+        "env_var_name": database.env_var_name,        # given by hand; none = <NAME>_URL (apps/app_links.py)
         "engine": database.engine,
         "engine_label": engine.label if engine else database.engine,
         "version": database.version,
