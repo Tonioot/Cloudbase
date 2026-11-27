@@ -252,3 +252,215 @@ def test_the_settings_can_be_read_and_changed_within_limits(admin, monkeypatch):
     assert admin.put("/api/system/capacity", json={"mode": "sometimes"}).status_code == 400
     r = admin.put("/api/system/capacity", json={"cpu_ratio": 1.5, "reserve_memory_mb": 768, "mode": "on"})
     assert r.status_code == 200 and saved["capacity"] == {"cpu_ratio": 1.5, "reserve_memory_mb": 768, "mode": "on"}
+
+
+# ── the kept room is shared: deploys and cron jobs use it by turns ───────────
+def test_with_the_shared_room_a_cron_job_is_not_promised_but_the_room_is_as_big(cap):
+    from nodes import capacity
+    cap["deploy_room"] = True
+    node_id = _node(cores=4, memory_mb=3072)                                         # 2048 MB
+    _app(cpu=0.5, memory_mb=768, cron="*/5 * * * *", node_id=node_id)
+    _app(cpu=0.5, memory_mb=768, cron="0 * * * *", node_id=node_id)
+
+    async def go(db):
+        return (await capacity.rooms(db, [await _node_row(db, node_id)]))[0]
+    room = _with_db(go)
+    assert (room.promised.memory_mb, room.biggest.memory_mb) == (0, 768)             # 1280 MB left for apps beside the room
+
+    async def another_job(db, memory):
+        try:
+            await capacity.ensure(db, await _node_row(db, node_id), capacity.Need(0.5, memory), job=True)
+            return True
+        except capacity.NoRoom:
+            return False
+    assert _with_db(lambda db: another_job(db, 2048)) is True                        # the room can be that big
+    assert _with_db(lambda db: another_job(db, 2049)) is False
+
+
+def test_runs_take_the_room_by_turns_and_move_to_a_node_that_has_it(cap, monkeypatch):
+    from nodes import capacity
+    cap["deploy_room"] = True
+    home, other = _node(cores=4, memory_mb=2048), _node(cores=4, memory_mb=2048)    # 1024 MB each
+    _instance(_app(cpu=0.5, memory_mb=512), home)                                    # 512 MB left on home: the room
+    _instance(_app(cpu=0.5, memory_mb=512), other)
+    need = capacity.Need(0.5, 512)
+
+    async def claim(db, key):
+        node = await capacity.claim(db, need, key, prefer=home)
+        return node.id if node else None
+    async def only(db):
+        return [await _node_row(db, home), await _node_row(db, other)]
+    monkeypatch.setattr(capacity, "runnable_nodes", only)
+    try:
+        got = [_with_db(lambda db, k=k: claim(db, k)) for k in ("t:1", "t:2", "t:3")]
+        assert got == [home, other, None]
+
+        async def surge(db):                        # a deploy waits while a run sits in the room
+            node = await _node_row(db, home)
+            return await capacity.deploy_target(db, node, need, surge=True)
+        target = _with_db(surge)
+        assert target is None
+        capacity.release("t:1")
+        assert _with_db(surge).id == home
+    finally:
+        for k in ("t:1", "t:2", "t:3"):
+            capacity.release(k)
+
+
+def test_waiting_for_room_ends(cap, monkeypatch):
+    """Nothing waits forever: it gives up at once when it can never fit, and after the limit when the room stays busy."""
+    from nodes import capacity
+    cap["deploy_room"] = True
+    node_id = _node(cores=4, memory_mb=2048)
+    monkeypatch.setattr(capacity, "POLL_SECONDS", 0.01)
+
+    async def only(db):
+        return [await _node_row(db, node_id)]
+    monkeypatch.setattr(capacity, "runnable_nodes", only)
+    with pytest.raises(capacity.NoRoom):
+        _run(capacity.wait_to_claim(capacity.Need(0.5, 4096), "t:big", wait_seconds=30))
+    capacity.occupy(node_id, "t:busy", capacity.Need(0.5, 1024))
+    said = []
+    try:
+        with pytest.raises(capacity.NoRoom):
+            _run(capacity.wait_to_claim(capacity.Need(0.5, 512), "t:wait", wait_seconds=0.05, say=said.append))
+        assert len(said) == 1
+
+        async def free_soon():
+            task = asyncio.create_task(capacity.wait_to_claim(capacity.Need(0.5, 512), "t:wait", wait_seconds=30))
+            await asyncio.sleep(0.05)
+            capacity.release("t:busy")
+            return (await task).id
+        assert _run(free_soon()) == node_id
+    finally:
+        capacity.release("t:busy")
+        capacity.release("t:wait")
+
+
+def test_a_deploy_goes_to_another_node_when_its_own_is_full(cap, monkeypatch):
+    from nodes import capacity
+    cap["deploy_room"] = True
+    full, roomy = _node(cores=4, memory_mb=2048), _node(cores=4, memory_mb=8192)
+    _instance(_app(cpu=0.5, memory_mb=1024), full)
+
+    async def only(db):
+        return [await _node_row(db, full), await _node_row(db, roomy)]
+    monkeypatch.setattr(capacity, "runnable_nodes", only)
+
+    async def go(db):
+        return (await capacity.deploy_target(db, await _node_row(db, full), capacity.Need(0.5, 512), surge=True)).id
+    assert _with_db(go) == roomy
+
+
+def test_an_app_id_is_never_given_out_twice(client):
+    from core.database import AsyncSessionLocal
+    from core.models import Application
+
+    async def make():
+        async with AsyncSessionLocal() as db:
+            apps = [Application(name=f"cap-id-{next(_names)}", repo_url="https://example.test/x", start_command="x", port=1)
+                    for _ in range(2)]
+            db.add_all(apps)
+            await db.commit()
+            ids = [a.id for a in apps]
+            for a in apps:
+                await db.delete(a)
+            await db.commit()
+            return ids
+    first, second = _run(make()), _run(make())
+    assert len(set(first + second)) == 4 and min(second) > max(first)
+
+
+
+def test_a_cron_run_moves_when_its_own_node_is_busy(cap, monkeypatch):
+    from core.database import AsyncSessionLocal
+    from core.models import Application
+    from cron import scheduler
+    from nodes import capacity
+    cap["deploy_room"] = True
+    home, other = _node(cores=4, memory_mb=2048), _node(cores=4, memory_mb=2048)    # 1024 MB each
+    app_id = _app(cpu=0.5, memory_mb=768, cron="0 * * * *", node_id=home)
+
+    async def only(db):
+        return [await _node_row(db, home), await _node_row(db, other)]
+    monkeypatch.setattr(capacity, "runnable_nodes", only)
+    capacity.occupy(home, "t:busy", capacity.Need(0.5, 768))
+    said = []
+
+    async def go():
+        async with AsyncSessionLocal() as db:
+            app, node = await db.get(Application, app_id), await _node_row(db, home)
+        return (await scheduler._node_with_room(app, node, 0, "t:run", said.append)).id
+    try:
+        assert _run(go()) == other and "goes to" in said[-1]
+        assert capacity.temporary(other).memory_mb == 768
+    finally:
+        capacity.release("t:busy")
+        capacity.release("t:run")
+
+
+def test_the_disk_for_containers_is_not_for_databases_and_a_nearly_full_one_takes_nothing_new(cap):
+    from nodes import capacity
+    cap["deploy_room"] = True
+    node_id = _node(cores=4, memory_mb=8192, disk_gb=150)
+
+    async def look(db, percent):
+        node = await _node_row(db, node_id)
+        node.metadata_json = json.dumps({"cpu_count_logical": 4, "ram_total_mb": 8192, "disk_total_gb": 150,
+                                         "container_area_gb": 50, "container_disk_percent": percent})
+        room = (await capacity.rooms(db, [node]))[0]
+        need = capacity.Need(0.5, 512)
+        return (room.allocatable.disk_mb, room.fits(need), room.fits(need, surge=True),
+                room.fits(need, instance=False), room.fits(need, instance=False, new=False))
+    disk, new, deploy, database, bigger_disk = _with_db(lambda db: look(db, 91))
+    assert disk == 90 * 1024                                                   # 150 - 50 for containers - 10 kept
+    assert "91% full" in new and "91% full" in database
+    assert deploy is None and bigger_disk is None
+    assert _with_db(lambda db: look(db, 50))[1] is None
+
+
+def test_only_what_deleted_apps_left_is_removed(tmp_path, monkeypatch):
+    from containers import cleanup, processes
+    for name in ("app-1", "app-2", "app-2.tmp", "app-9", "something"):
+        (tmp_path / name).mkdir()
+    monkeypatch.setattr(processes, "APPS_BASE_DIR", str(tmp_path))
+    removed = []
+
+    class Image:
+        def __init__(self, tag):
+            self.tags = [tag]
+
+    class Images:
+        def list(self):
+            return [Image(t) for t in ("cloudbase/app-1:latest", "cloudbase/app-2:latest", "cloudbase/app-9:latest", "postgres:17")]
+
+        def remove(self, tag):
+            removed.append(tag)
+
+    class Client:
+        images = Images()
+    monkeypatch.setattr(cleanup, "_get_client", lambda: Client())
+    # app 1 exists, app 2 was deleted, app 9 was made after the list was read
+    assert cleanup.remove_leftovers({1}, up_to=5) == {"images": 1, "sources": 2}
+    assert removed == ["cloudbase/app-2:latest"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["app-1", "app-9", "something"]
+
+
+def test_the_list_of_apps_covers_every_id_given_out(client):
+    from workers import leftovers
+    gone = _app()
+    there = _app()
+    from core.database import AsyncSessionLocal
+    from core.models import Application
+
+    async def delete():
+        async with AsyncSessionLocal() as db:
+            await db.delete(await db.get(Application, gone))
+            await db.commit()
+    _run(delete())
+    _made["apps"].remove(gone)
+    try:
+        got = _run(leftovers.apps_there_are())
+        assert there in got["keep"] and gone not in got["keep"] and got["up_to"] >= max(gone, there)
+    finally:
+        _clean_up()

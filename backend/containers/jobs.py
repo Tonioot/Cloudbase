@@ -50,6 +50,8 @@ def run_job_container(
         "name": cname,
         "security_opt": ["no-new-privileges:true"],
         "environment": env_vars,
+        # as much as an instance: a job that prints without end must not fill the disk while it runs
+        "log_config": {"type": "json-file", "config": {"max-size": "10m", "max-file": "3"}},
         "labels": {
             "cloudbase.app_id": str(app_id),
             "cloudbase.cron_run_id": str(run_id),

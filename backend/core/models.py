@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import BigInteger, Column, Integer, String, DateTime, Date, Text, Boolean, ForeignKey, Float, Index, Table, UniqueConstraint
+from sqlalchemy import BigInteger, Column, Integer, String, DateTime, Date, Text, Boolean, ForeignKey, Float, Index, Table, UniqueConstraint, event, text
 from sqlalchemy.orm import validates
 from core.database import Base
 
@@ -337,6 +337,18 @@ class AppTraffic(Base):
     visitor_bytes  = Column(BigInteger, nullable=False, default=0)
 
 
+class DatabaseTraffic(Base):
+    """What a database sent to the public internet on one day (UTC), through its public port. No foreign key: what a
+    database used stays after it is deleted (it is what gets billed)."""
+    __tablename__ = "database_traffic"
+    __table_args__ = (UniqueConstraint("database_id", "day", name="uq_database_traffic_database_day"),)
+
+    id             = Column(Integer, primary_key=True, index=True)
+    database_id    = Column(Integer, nullable=False, index=True)
+    day            = Column(Date, nullable=False, index=True)
+    internet_bytes = Column(BigInteger, nullable=False, default=0)
+
+
 class OverviewHistory(Base):
     """Cluster-wide samples for the dashboard (every 30s, kept 7 days)."""
     __tablename__ = "overview_history"
@@ -574,3 +586,16 @@ class CronRun(Base):
     actor         = Column(String(100), nullable=True)
     started_at    = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     finished_at   = Column(DateTime, nullable=True)
+
+
+# An app id is never reused: traffic that was counted stays under it after the app is gone (it is what gets billed),
+# and SQLite would give the highest id of a deleted app to the next one. So keep our own high-water mark, as for
+# databases (dbs/provision.py).
+@event.listens_for(Application, "before_insert")
+def _new_app_id(_mapper, connection, app):
+    if app.id is None:
+        app.id = int(connection.execute(text(
+            "INSERT INTO system_config (key, value) VALUES ('applications.last_id', "
+            "max(coalesce((SELECT max(id) FROM applications), 0), coalesce((SELECT max(app_id) FROM app_traffic), 0)) + 1) "
+            "ON CONFLICT(key) DO UPDATE SET value = max(CAST(system_config.value AS INTEGER) + 1, CAST(excluded.value AS INTEGER)) "
+            "RETURNING value")).scalar())

@@ -169,6 +169,7 @@ def list_instance_containers() -> list[dict]:
             "status": c.status,
             "spec": (c.labels or {}).get("cloudbase.spec") or None,
             "exit_code": (c.attrs.get("State") or {}).get("ExitCode"),
+            "oom": bool((c.attrs.get("State") or {}).get("OOMKilled")),       # stopped for using more memory than it may
         })
     return out
 

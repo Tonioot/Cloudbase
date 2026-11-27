@@ -69,7 +69,9 @@ _DEFAULTS = {
         "runtime": "",                   # e.g. "runsc" (gVisor, scripts/setup-gvisor.sh); "" = Docker's own
         "sandbox_databases": False,      # the runtime for databases too (slower; their users can't run programs anyway)
         "build_timeout_seconds": 1800,
-        "container_disk_mb": 0,          # writable layer per container; needs overlay2 on xfs with pquota. 0 = off
+        # What a container may write of its own (a ceiling, nothing is reserved). Only where Docker's folder is on XFS
+        # with project quotas, as install.sh sets up a new node (containers/disk_area.py). 0 = off
+        "container_disk_mb": 1024,
     },
     # Reservations (nodes/capacity.py): what a node may give out, and what everything on it is promised.
     "capacity": {

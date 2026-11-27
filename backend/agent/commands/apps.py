@@ -52,6 +52,12 @@ async def cmd_logs_forget_app(_client, _state, _main_id, payload):
     return {"ok": True}
 
 
+async def cmd_apps_sweep(_client, _state, _main_id, payload):
+    """Remove what apps that no longer exist left here (workers/leftovers.py)."""
+    keep = {int(i) for i in payload["keep"]}
+    return await asyncio.to_thread(containers_cleanup.remove_leftovers, keep, int(payload["up_to"]))
+
+
 async def cmd_get_agent_logs(_client, _state, _main_id, payload):
     # server.log has everything on this node (agent + docker + …); older
     # installs only wrote node-agent.log, so fall back to that.

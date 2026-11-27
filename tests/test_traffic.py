@@ -211,3 +211,65 @@ def test_a_period_must_make_sense(admin):
     today = date.today()
     assert admin.get(f"/api/traffic?start={today}&end={today - timedelta(days=1)}").status_code == 400
     assert admin.get(f"/api/traffic?start={today - timedelta(days=500)}&end={today}").status_code == 400
+
+
+# ── a container is counted from its start; databases through their public port ─
+def test_a_started_app_container_is_counted_at_once(monkeypatch):
+    from containers import traffic
+    listing = {"now": {}}
+    reads = []
+    monkeypatch.setattr(traffic, "container_addresses", lambda: dict(listing["now"]))
+    monkeypatch.setattr(traffic.quota, "traffic", lambda ips: reads.append(ips) or listing.pop("counts", {}))
+    monkeypatch.setattr(traffic, "_counted", {})
+    monkeypatch.setattr(traffic, "_pending", {})
+    assert not traffic.started("something-else") and not reads
+    listing["now"] = {"172.20.0.9": 4}
+    assert traffic.started("cloudbase-cron-4-17") and reads == [["172.20.0.9"]]
+    listing["now"], listing["counts"] = {}, {"172.20.0.9": 800}          # it is gone before the next round
+    assert traffic.collect() == {4: 800}
+    assert traffic.collect() == {}
+
+
+def test_what_a_public_database_sends_to_the_internet_is_counted():
+    from dbs import proxy
+
+    class Writer:
+        def __init__(self, peer):
+            self.peer = peer
+
+        def get_extra_info(self, _name):
+            return (self.peer, 5)
+
+        def write(self, _data):
+            pass
+
+        async def drain(self):
+            pass
+    proxy.take_sent()
+    _run(proxy.VisitorStream(3, None, Writer("93.184.216.34")).send(b"x" * 100))
+    _run(proxy.VisitorStream(3, None, Writer("::ffff:93.184.216.34")).send(b"x" * 20))
+    _run(proxy.VisitorStream(4, None, Writer("192.168.1.10")).send(b"x" * 100))      # the local network is free
+    assert proxy.take_sent() == {3: 120} and proxy.take_sent() == {}
+
+
+def test_database_traffic_is_added_up_and_reported(admin):
+    from apps import traffic
+    from core.database import AsyncSessionLocal
+
+    async def add():
+        async with AsyncSessionLocal() as db:
+            await traffic.add_databases_in(db, {515151: 40})
+            await db.commit()
+            await traffic.add_databases_in(db, {515151: 2})
+            await db.commit()
+    _run(add())
+    body = admin.get("/api/traffic").json()
+    row = next(d for d in body["databases"] if d["database_id"] == 515151)
+    assert row == {"database_id": 515151, "database_name": None, "internet_bytes": 42, "total_bytes": 42}
+
+
+def test_builds_are_limited_when_docker_can(monkeypatch):
+    from containers import buildkit
+    assert buildkit.resource_limit_args(0.5, 512) == ["--resource", "memory=512m", "--resource", "memory-swap=1024m",
+                                                      "--resource", "cpu-period=100000", "--resource", "cpu-quota=50000"]
+    assert buildkit.resource_limit_args(None, None) == []

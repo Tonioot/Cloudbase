@@ -13,6 +13,7 @@ from core.database import AsyncSessionLocal
 from core.models import Node
 from nodes import commands as node_commands
 from nodes.state import _node_ws_connections
+from workers import leftovers
 
 log = logging.getLogger("cloudbase.output_log")
 
@@ -49,13 +50,22 @@ async def forget_app(app_id: int) -> None:
             log.debug("[output] node %s did not remove the output of app %s: %s", node_id, app_id, e)
 
 
+async def _sweep() -> None:
+    try:
+        await leftovers.sweep()
+    except Exception as e:
+        log.warning("[leftovers] could not clean up after deleted apps: %s", e)
+
+
 def forget_app_later(app_id: int) -> None:
     """App ids can be reused: a new app must not show a deleted one's output. Removed now, and once more a few
     minutes later, after the nodes have removed the app's containers (each copies its last lines on the way out)."""
     async def run() -> None:
         await forget_app(app_id)
+        await _sweep()
         await asyncio.sleep(FORGET_AGAIN_AFTER_SECONDS)
         await forget_app(app_id)
+        await _sweep()                  # its containers are gone now, so its images can go
     asyncio.create_task(run())
 
 
@@ -64,6 +74,7 @@ async def log_settings_forever() -> None:
     while True:
         try:
             await hand_out()
+            await _sweep()
         except asyncio.CancelledError:
             raise
         except Exception as e:

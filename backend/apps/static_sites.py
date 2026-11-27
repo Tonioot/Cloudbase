@@ -44,7 +44,7 @@ from core import config as _cfg, projects as core_projects, tenant
 from core.models import Application, Node
 from mesh import addressing
 from nginx import paths as nginx_paths
-from nodes import commands as node_commands
+from nodes import capacity, commands as node_commands
 
 log = logging.getLogger("cloudbase.static")
 
@@ -222,8 +222,13 @@ async def _pick_node(db: AsyncSession) -> Node:
 
 
 async def _build_on_node(app: Application, db: AsyncSession, push, source_revision: Optional[str], archive: str) -> None:
-    node = await _pick_node(db)
     build_id = secrets.token_urlsafe(24)
+    room_key = f"build:{build_id}"
+    if capacity.enabled():
+        # the build takes its memory while it goes, on a node that has it (waiting at most capacity.WAIT_SECONDS)
+        node = await capacity.wait_to_claim(capacity.app_need(app), room_key, say=lambda line: push(f"[Static] {line}"))
+    else:
+        node = await _pick_node(db)
     _builds[build_id] = _Build(app.id, node.id, archive)
     try:
         payload = _remote_instance_command_payload(app, core_projects.app_env(app), 0, source_revision)
@@ -239,6 +244,7 @@ async def _build_on_node(app: Application, db: AsyncSession, push, source_revisi
             raise HTTPException(500, f"Node '{node.name}' finished the build but sent no site")
     finally:
         _builds.pop(build_id, None)
+        capacity.release(room_key)
 
 
 async def _build_here(app: Application, push, archive: str) -> None:

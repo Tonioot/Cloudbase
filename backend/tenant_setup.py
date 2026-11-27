@@ -131,7 +131,8 @@ def ask_settings(current: dict) -> dict:
     print(f"\n{BOLD}3. Per container{RESET}")
     s["pids_limit"] = ask_number("  Most processes (a fork bomb stops there)", int(current["pids_limit"]), int, 32, 65536)
     s["build_timeout_seconds"] = 60 * ask_number("  Most minutes a build may take", int(current["build_timeout_seconds"]) // 60, int, 1, 600)
-    print(f"  {DIM}A disk limit per container needs Docker's storage on xfs with pquota on every node; otherwise 0.{RESET}")
+    print(f"  {DIM}The disk limit holds on nodes whose Docker folder is on xfs with pquota (a new node is set up so);")
+    print(f"  elsewhere containers get none.{RESET}")
     s["container_disk_mb"] = ask_number("  Disk per container in MB (0 = off)", int(current["container_disk_mb"]), int, 0, 1024 * 1024)
     return s
 

@@ -129,38 +129,63 @@ async def replace_instances(app_id: int, db: AsyncSession, actor: str, *, batch:
         slots = [(old, nodes.get(old.node_id)) for old in running]
     else:
         slots = [(None, await _get_app_node(app, db))]          # nothing runs yet: one instance on the app's node
+    reserving = capacity.enabled()
     for old, node in slots:
         if node is None:
             raise HTTPException(409, f"The node of instance {old.id} no longer exists")
-        if not node.is_local and (node.status != "online" or not node.enabled):
-            raise HTTPException(400, f"Node '{node.name}' is offline")
-    if any(node.is_local for _, node in slots):
+        if not reserving and not node.is_local and (node.status != "online" or not node.enabled):
+            raise HTTPException(400, f"Node '{node.name}' is offline")     # with reservations another node takes over
+    built_here = any(node.is_local for _, node in slots)
+    if built_here:
         await _build_here(app, push)
     source_revision = await asyncio.to_thread(_refresh_app_source_revision, app)
 
     size = batch or len(slots)
     replaced: list[int] = []
-    for start in range(0, len(slots), size):
-        group = slots[start:start + size]
-        new = []
-        for old, node in group:
-            # next to an old one: the new version may use the room kept for deploys (nodes/capacity.py)
-            with capacity.surge() if old is not None else contextlib.nullcontext():
-                new.append(await add_instance(app, node, db, like=old, source_revision=source_revision))
-        for instance, (old, node) in zip(new, group):
-            push(f"[Deploy] Starting instance {instance.id} on '{node.name}'" + (f" to replace {old.id}…" if old else "…"))
+    pending = list(slots)
+    while pending:
+        group, new, new_ids = [], [], []
         try:
-            for instance in new:
-                await wait_until_live(app_id, instance.id)
+            for old, node in pending[:size]:
+                target = node
+                if reserving:
+                    need = capacity.running_need(old, app) if old is not None else capacity.app_need(app)
+                    target = await capacity.deploy_target(db, node, need, surge=old is not None)
+                    if target is None:
+                        if group:
+                            break       # first the ones that have room: the old ones they replace make room for the rest
+                        target = await capacity.wait_for_deploy_target(node, need, surge=old is not None,
+                                                                       say=lambda line: push(f"[Deploy] {line}"))
+                    if target.id != node.id:
+                        push(f"[Deploy] No room on '{node.name}': the new instance goes to '{target.name}'.")
+                    if target.is_local and not built_here:
+                        await _build_here(app, push)
+                        built_here = True
+                # next to an old one: the new version may use the room kept for deploys (nodes/capacity.py)
+                with capacity.surge() if old is not None and target.id == node.id else contextlib.nullcontext():
+                    instance = await add_instance(app, target, db, like=old, source_revision=source_revision)
+                group.append((old, node))
+                new.append((instance, target))
+                new_ids.append(instance.id)
+        except HTTPException:
+            await db.rollback()
+            await remove_instances(app_id, new_ids)
+            raise
+        for (instance, target), (old, _) in zip(new, group):
+            push(f"[Deploy] Starting instance {instance.id} on '{target.name}'" + (f" to replace {old.id}…" if old else "…"))
+        try:
+            for instance_id in new_ids:
+                await wait_until_live(app_id, instance_id)
         except RolloutFailed as exc:
             push(f"[Deploy] {exc} — removing the new instance(s); the previous version keeps serving.")
-            await remove_instances(app_id, [r.id for r in new])
+            await remove_instances(app_id, new_ids)
             raise HTTPException(502, f"Deploy rolled back: {exc}")
         await remove_instances(app_id, [old.id for old, _ in group if old is not None])
         for old, _ in group:
             if old is not None:
                 push(f"[Deploy] Old instance {old.id} removed; its node stops it.")
-        replaced += [r.id for r in new]
+        replaced += new_ids
+        pending = pending[len(group):]
 
     app.docker_image = app.docker_image or containers_naming.image_name(app_id)
     if source_revision:

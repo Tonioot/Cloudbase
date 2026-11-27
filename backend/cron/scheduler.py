@@ -34,6 +34,7 @@ from apps import runtime as apps_runtime
 from nodes import commands as node_commands
 from core import projects as core_projects
 from core import tenant
+from nodes import capacity
 
 log = logging.getLogger("cloudbase.cron")
 
@@ -225,6 +226,28 @@ async def _run_remote(app: Application, node: Node, run_id: int) -> dict:
     return done.result or {}
 
 
+async def _node_with_room(app: Application, node: Optional[Node], run_id: int, key: str, push) -> Optional[Node]:
+    """The node this run goes to, with reservations on. With the shared room (deploy_room) the run takes its memory
+    now, on its own node when that has it, else on another; it waits at most capacity.WAIT_SECONDS. Without it the job
+    is promised its room on its own node, and only moves when that node is offline."""
+    home_online = node is None or node.is_local or (node.enabled and node.status == "online")
+    if home_online and not capacity.settings()["deploy_room"]:
+        return node
+    async with AsyncSessionLocal() as db:
+        home = node.id if node is not None else (await db.execute(
+            select(Node.id).where(Node.is_local == True))).scalar_one_or_none()   # noqa: E712
+    target = await capacity.wait_to_claim(capacity.app_need(app), key, prefer=home,
+                                          say=lambda line: push(f"[Cron] {line}"))
+    if target.id != home:
+        push(f"[Cron] Run #{run_id} goes to '{target.name}': its own node has no room or is offline.")
+        async with AsyncSessionLocal() as db:
+            run = await db.get(CronRun, run_id)
+            if run is not None:
+                run.node_id = target.id
+                await db.commit()
+    return target
+
+
 async def _execute(run_id: int) -> None:
     async with AsyncSessionLocal() as db:
         run = await db.get(CronRun, run_id)
@@ -241,7 +264,10 @@ async def _execute(run_id: int) -> None:
     where = f" on {node.name}" if node is not None and not node.is_local else ""
     push(f"[Cron] Run #{run_id} started{where} ({'manual' if run.trigger == 'manual' else 'scheduled'})")
     result, error = None, None
+    room_key = f"cron:{run_id}"
     try:
+        if capacity.enabled():
+            node = await _node_with_room(app, node, run_id, room_key, push)
         if node is not None and not node.is_local:
             result = await _run_remote(app, node, run_id)
         elif tenant.enabled():
@@ -254,6 +280,8 @@ async def _execute(run_id: int) -> None:
         error = str(e) or type(e).__name__
         if "fetching server API version" in error:
             error = "Docker isn't running or can't be reached on this server"
+    finally:
+        capacity.release(room_key)
 
     exit_code = result.get("exit_code") if result else None
     if error:

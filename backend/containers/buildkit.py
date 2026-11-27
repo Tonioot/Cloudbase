@@ -34,6 +34,31 @@ def buildkit_available() -> bool:
     return result
 
 
+_limits_supported: Optional[bool] = None
+
+
+def resource_limits_supported() -> bool:
+    """Can `docker build` limit what a build step uses (--resource: buildx 0.35 and newer)?"""
+    global _limits_supported
+    if _limits_supported is None:
+        try:
+            done = subprocess.run(["docker", "build", "--help"], capture_output=True, text=True, timeout=15)
+            _limits_supported = "--resource" in done.stdout
+        except Exception:
+            return False
+    return _limits_supported
+
+
+def resource_limit_args(cpu: Optional[float], memory_mb: Optional[int]) -> list[str]:
+    """`docker build` arguments that hold every build step to these limits; swap of the same size softens a short peak."""
+    out: list[str] = []
+    if memory_mb:
+        out += ["--resource", f"memory={int(memory_mb)}m", "--resource", f"memory-swap={2 * int(memory_mb)}m"]
+    if cpu:
+        out += ["--resource", "cpu-period=100000", "--resource", f"cpu-quota={max(1000, int(float(cpu) * 100000))}"]
+    return out
+
+
 _BUILD_SECRET_ID = "buildenv"
 
 

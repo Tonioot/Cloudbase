@@ -4,6 +4,7 @@ Two kinds, counted where they happen:
   internet  what an app's containers send to public addresses themselves: requests to other services and the answers
             to them (containers/traffic.py, on every machine; a node reports its numbers to the primary)
   visitors  what nginx on the primary sends back to the people visiting the app's domains (nginx/traffic_logs.py)
+A database counts what its public port sends to the people connected to it (dbs/proxy.py).
 
 Traffic that stays inside (to nginx, to a database, to another app or node, to the local network) is not counted.
 """
@@ -14,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import AsyncSessionLocal
-from core.models import Application, AppTraffic
+from core.models import Application, AppTraffic, Database, DatabaseTraffic
 
 log = logging.getLogger("cloudbase.traffic")
 
@@ -92,4 +93,34 @@ async def per_app(db: AsyncSession, start: date, end: date, app_ids: list[int] |
                                    .where(Application.id.in_([t[0] for t in totals])))).all()) if totals else {}
     out = [{"app_id": app_id, "app_name": names.get(app_id), **_as_dict(internet, visitors)}
            for app_id, internet, visitors in totals]
+    return sorted(out, key=lambda r: -r["total_bytes"])
+
+
+async def add_databases_in(db: AsyncSession, counts: dict[int, int], day: date | None = None) -> None:
+    """Add {database id: bytes} to today's row of each database, in the caller's transaction."""
+    day = day or today()
+    counts = {int(d): int(n) for d, n in (counts or {}).items() if int(n) > 0}
+    if not counts:
+        return
+    rows = {r.database_id: r for r in (await db.execute(
+        select(DatabaseTraffic).where(DatabaseTraffic.day == day, DatabaseTraffic.database_id.in_(counts)))).scalars()}
+    for database_id, n in counts.items():
+        row = rows.get(database_id)
+        if row is None:
+            row = DatabaseTraffic(database_id=database_id, day=day, internet_bytes=0)
+            db.add(row)
+        row.internet_bytes = (row.internet_bytes or 0) + n
+
+
+async def per_database(db: AsyncSession, start: date, end: date, database_ids: list[int] | None = None) -> list[dict]:
+    """Totals per database from start to end (inclusive), the biggest first. Deleted ones are included (name None)."""
+    query = (select(DatabaseTraffic.database_id, func.sum(DatabaseTraffic.internet_bytes))
+             .where(DatabaseTraffic.day >= start, DatabaseTraffic.day <= end).group_by(DatabaseTraffic.database_id))
+    if database_ids is not None:
+        query = query.where(DatabaseTraffic.database_id.in_(database_ids))
+    totals = (await db.execute(query)).all()
+    names = dict((await db.execute(select(Database.id, Database.name)
+                                   .where(Database.id.in_([t[0] for t in totals])))).all()) if totals else {}
+    out = [{"database_id": database_id, "database_name": names.get(database_id), "internet_bytes": int(n or 0),
+            "total_bytes": int(n or 0)} for database_id, n in totals]
     return sorted(out, key=lambda r: -r["total_bytes"])

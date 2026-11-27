@@ -64,6 +64,40 @@ class TcpStream(Stream):
             pass
 
 
+_sent: dict[int, int] = {}      # database id -> bytes sent to the public internet, not stored yet
+
+
+class VisitorStream(TcpStream):
+    """Somebody connected to a database through its public port: what goes to them counts as the database's traffic
+    (apps/traffic.py), unless they are on the local network."""
+    def __init__(self, database_id: int, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        super().__init__(reader, writer)
+        self.database_id = database_id
+        self.public = _is_public((writer.get_extra_info("peername") or ("?",))[0])
+
+    async def send(self, data: bytes) -> None:
+        await super().send(data)
+        if self.public:
+            _sent[self.database_id] = _sent.get(self.database_id, 0) + len(data)
+
+
+def _is_public(address: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return ip.is_global
+
+
+def take_sent() -> dict[int, int]:
+    """{database id: bytes} sent to the public internet since the last call."""
+    global _sent
+    out, _sent = _sent, {}
+    return out
+
+
 async def pipe(a: Stream, b: Stream) -> None:
     """Copy bytes both ways until either side ends, then close both."""
     async def copy(src: Stream, dst: Stream) -> None:
@@ -111,7 +145,7 @@ def local_node_id() -> Optional[int]:
 
 
 async def _serve(database_id: int, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-    client = TcpStream(reader, writer)
+    client = VisitorStream(database_id, reader, writer)
     if _connector is None:
         await client.close()
         return
@@ -234,7 +268,7 @@ async def _serve_mysql_tls(database_id: int, peer: str, reader, writer) -> None:
     """MySQL/MariaDB negotiate TLS inside their own protocol, end to end with the
     server. Forward the server greeting, then require the client's first packet
     to ask for TLS before passing everything through."""
-    client = TcpStream(reader, writer)
+    client = VisitorStream(database_id, reader, writer)
     if _connector is None:
         await client.close()
         return
@@ -254,9 +288,8 @@ async def _serve_mysql_tls(database_id: int, peer: str, reader, writer) -> None:
     try:
         header, greeting = await asyncio.wait_for(_read_packet(read_upstream), timeout=15)
         server_tls = _mysql_greeting_has_ssl(greeting)
-        writer.write(header + greeting + bytes(buffer))
+        await client.send(header + greeting + bytes(buffer))
         buffer.clear()
-        await writer.drain()
 
         c_header, c_payload = await asyncio.wait_for(_read_packet(reader.readexactly), timeout=30)
         client_tls = len(c_payload) >= 4 and int.from_bytes(c_payload[:4], "little") & MYSQL_CLIENT_SSL

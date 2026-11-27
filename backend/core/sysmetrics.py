@@ -4,6 +4,8 @@ import os
 
 import psutil
 
+from containers import disk_area
+
 
 def collect() -> dict:
     """The readings of this machine, in the shape of a heartbeat (the agent and the primary's own sampler share it)."""
@@ -11,6 +13,12 @@ def collect() -> dict:
     try:
         out.update(cpu_percent=psutil.cpu_percent(interval=None), memory_percent=psutil.virtual_memory().percent,
                    disk_percent=psutil.disk_usage("/").percent)
+    except Exception:
+        pass
+    try:
+        area = disk_area.usage()
+        if area:
+            out["container_disk_percent"] = area["percent"]
     except Exception:
         pass
     try:

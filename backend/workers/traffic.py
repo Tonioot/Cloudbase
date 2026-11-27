@@ -12,6 +12,7 @@ from apps import traffic as app_traffic
 from containers import traffic as containers_traffic
 from core.database import AsyncSessionLocal
 from core.models import SystemConfig
+from dbs import proxy as db_proxy
 from nginx import files as nginx_files, traffic_logs
 from nginx.panel import _refresh_all_app_nginx
 from nginx.paths import NGINX_SITES_DIR, TRAFFIC_LOG_DIR
@@ -22,6 +23,7 @@ INTERVAL = 30
 OFFSETS_KEY = "traffic.nginx_offsets"
 
 _pending: dict[int, int] = {}      # counted on this machine, not stored yet (the database was busy)
+_pending_databases: dict[int, int] = {}      # the same for what public databases sent
 _warned = False
 
 
@@ -58,6 +60,8 @@ def _collect_internet() -> dict[int, int]:
 async def count_once() -> None:
     for app_id, n in (await asyncio.to_thread(_collect_internet)).items():
         _pending[app_id] = _pending.get(app_id, 0) + n
+    for database_id, n in db_proxy.take_sent().items():
+        _pending_databases[database_id] = _pending_databases.get(database_id, 0) + n
     async with AsyncSessionLocal() as db:
         row = (await db.execute(select(SystemConfig).where(SystemConfig.key == OFFSETS_KEY))).scalar_one_or_none()
         try:
@@ -67,12 +71,14 @@ async def count_once() -> None:
         visitors, offsets, reopen = await asyncio.to_thread(traffic_logs.read_new, offsets)
         await app_traffic.add_in(db, "visitors", visitors)
         await app_traffic.add_in(db, "internet", dict(_pending))
+        await app_traffic.add_databases_in(db, dict(_pending_databases))
         if row is None:
             db.add(SystemConfig(key=OFFSETS_KEY, value=json.dumps(offsets)))
         else:
             row.value = json.dumps(offsets)
         await db.commit()                  # the numbers and the offsets they came from, together
     _pending.clear()
+    _pending_databases.clear()
     if reopen:
         await asyncio.to_thread(nginx_files.reopen_logs)
 
@@ -84,6 +90,7 @@ async def traffic_counter() -> None:
             await _refresh_all_app_nginx()
     except Exception as e:
         log.warning("[traffic] Could not rewrite the apps' nginx configs: %s", e)
+    containers_traffic.start_watching()
     while True:
         await asyncio.sleep(INTERVAL)
         try:

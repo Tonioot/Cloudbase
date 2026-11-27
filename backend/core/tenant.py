@@ -43,7 +43,7 @@ def hardening(database: bool = False) -> Optional[dict]:
         "cap_add": list(CAPABILITIES),
         "pids_limit": int(s.get("pids_limit") or 512),
         "runtime": runtime,
-        "disk_mb": int(s.get("container_disk_mb") or 0),
+        "disk_mb": int(s.get("container_disk_mb") if s.get("container_disk_mb") is not None else 1024),
         "build_timeout_seconds": int(s.get("build_timeout_seconds") or 1800),
         "isolated_build": True,
     }

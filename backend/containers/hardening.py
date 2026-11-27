@@ -5,6 +5,7 @@ Used for instances, cron jobs and databases, on every machine. Without hardening
 import threading
 from typing import Optional
 
+from containers import disk_area
 from containers.client import _get_client
 
 NOFILE = 65536
@@ -57,5 +58,5 @@ def apply(run_kwargs: dict, hardening: Optional[dict]) -> None:
     if runtime:
         check_runtime(runtime)
         run_kwargs["runtime"] = runtime
-    if int(hardening.get("disk_mb") or 0) > 0:
+    if int(hardening.get("disk_mb") or 0) > 0 and disk_area.limit_supported(lambda: _get_client().info()):      # elsewhere: no limit
         run_kwargs["storage_opt"] = {"size": f"{int(hardening['disk_mb'])}M"}

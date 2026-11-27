@@ -69,6 +69,10 @@ async def build_image_local(local_id: int, app_dir: str, spec: dict, push=None) 
         if push:
             push(aid, line)
 
+    options = spec.get("docker_options") or {}
+    # in tenant mode a build may use what the app's container may (a static site: what its spec says)
+    limits = ({"cpu": options.get("cpu_limit"), "memory_mb": options.get("memory_limit_mb")}
+              if options.get("hardening") else None)
     await asyncio.to_thread(
         containers_build.build_image,
         local_id, app_dir, _push,
@@ -76,7 +80,8 @@ async def build_image_local(local_id: int, app_dir: str, spec: dict, push=None) 
         build_command=build_command, build_env=build_env,
         source_revision=revision,
         linked_databases=(spec.get("docker_options") or {}).get("linked_databases"),
-        hardening=(spec.get("docker_options") or {}).get("hardening"),
+        hardening=options.get("hardening"),
+        limits=limits,
     )
     _log(f"[build] Image {img} ready")
     return img

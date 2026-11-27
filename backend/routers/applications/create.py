@@ -79,10 +79,10 @@ async def deploy_app(
         # a cron job has a node of its own, and its limits stay promised there: it must fit (nodes/capacity.py)
         need = capacity.need_of(req.docker_cpu_limit, req.docker_memory_limit_mb)
         if req.node_id is not None:
-            await capacity.ensure(db, target_node, need)
+            await capacity.ensure(db, target_node, need, job=True)
         else:
             online = (await db.execute(select(Node).where(Node.enabled == True, Node.status == "online"))).scalars().all()  # noqa: E712
-            target_node = await capacity.choose(db, [n for n in online if tenant.may_run_on(n)], need)
+            target_node = await capacity.choose(db, [n for n in online if tenant.may_run_on(n)], need, job=True)
 
     # no_web apps (discord bots, background workers, etc.) don't need a port or nginx
     is_no_web = (bool(req.no_web) or is_cron) and not is_static

@@ -68,6 +68,12 @@ def test_a_sandboxed_container_never_starts_without_its_sandbox(monkeypatch):
     with pytest.raises(hardening.RuntimeMissing, match="setup-gvisor"):
         hardening.apply({}, {"runtime": "runsc", "cap_add": []})
     monkeypatch.setattr(hardening, "_available_runtimes", lambda: {"runc", "runsc"})
+    from containers import disk_area
+    monkeypatch.setattr(disk_area, "limit_supported", lambda *_: False)         # no file system for it: no limit, it still starts
+    kwargs = {}
+    hardening.apply(kwargs, {"runtime": "runsc", "cap_add": [], "disk_mb": 2048})
+    assert "storage_opt" not in kwargs
+    monkeypatch.setattr(disk_area, "limit_supported", lambda *_: True)
     kwargs = {}
     hardening.apply(kwargs, {"runtime": "runsc", "cap_add": [], "disk_mb": 2048})
     assert kwargs["runtime"] == "runsc" and kwargs["storage_opt"] == {"size": "2048M"}
@@ -298,7 +304,7 @@ def test_the_wizard_asks_and_writes_what_was_chosen(wizard):
     assert rc == 0
     assert written == {"enabled": True, "default_cpu_limit": 0.5, "default_memory_limit_mb": 256, "pids_limit": 300,
                        "runtime": "runsc", "sandbox_databases": False, "build_timeout_seconds": 600,
-                       "container_disk_mb": 0}
+                       "container_disk_mb": 1024}
 
 
 def test_the_wizard_asks_again_for_a_wrong_number_and_can_be_cancelled(wizard):

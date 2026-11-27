@@ -175,3 +175,11 @@ def test_the_status_dot_has_a_shape_of_its_own():
     assert "display: inline-block" in dot and "width: 8px" in dot and "height: 8px" in dot
     components = (FRONTEND / "css" / "components.css").read_text(encoding="utf-8")
     assert ".kpi-value--text strong { display: inline-flex" in components
+
+
+def test_what_a_node_tells_about_itself_can_be_collected(monkeypatch):
+    from agent import registration
+    from containers import disk_area
+    monkeypatch.setattr(disk_area, "usage", lambda: {"gb": 50.0, "percent": 81.0, "own_file": True})
+    info = registration._collect_system_info()
+    assert (info["container_area_gb"], info["container_disk_percent"]) == (50.0, 81.0) and info["ram_total_mb"] > 0

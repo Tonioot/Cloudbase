@@ -760,6 +760,101 @@ step_register() {
   printf '%s' "$INVITE_CODE" | as_user tee "$invite_file" > /dev/null
 }
 
+# Swap: a short peak in memory makes the server slow for a moment instead of killing something.
+step_swap() {
+  if [[ -n "$(swapon --show --noheadings 2>/dev/null)" ]]; then
+    echo "Swap is on already"
+    return 0
+  fi
+  if [[ ! -f /swapfile ]]; then
+    fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048
+    chmod 600 /swapfile
+    mkswap /swapfile
+  fi
+  if ! swapon /swapfile; then
+    add_warning "Swap could not be turned on (/swapfile): this server cannot use a swap file"
+    return 0
+  fi
+  grep -q "^/swapfile " /etc/fstab || echo "/swapfile none swap sw 0 0" >> /etc/fstab
+}
+
+# Docker's own file system, so a container can be held to a size (backend/containers/disk_area.py): an XFS image file
+# with project quotas on Docker's folder, a third of the disk. Only on a server where Docker holds nothing yet.
+CONTAINER_IMAGE=/var/lib/cloudbase-containers.img
+
+step_container_disk() {
+  local root=/var/lib/docker size free
+  if mountpoint -q "$root"; then
+    echo "Docker's folder has a file system of its own already"
+    return 0
+  fi
+  if [[ -n "$(docker ps -aq)$(docker images -q)$(docker volume ls -q)" ]]; then
+    add_warning "Containers get no disk limit on this server: Docker holds data already. A new node gets one; move to it and remove this one."
+    return 0
+  fi
+  size=$(( $(df -BG --output=size /var/lib | tail -n 1 | tr -dc '0-9') / 3 ))
+  free=$(df -BG --output=avail /var/lib | tail -n 1 | tr -dc '0-9')
+  if (( size < 10 || free < size + 5 )); then
+    add_warning "Containers get no disk limit on this server: the disk is too small or too full for Docker's own part (${free} GB free)"
+    return 0
+  fi
+  pkg_install xfsprogs
+  rm -f "$CONTAINER_IMAGE"
+  if ! { fallocate -l "${size}G" "$CONTAINER_IMAGE" && chmod 600 "$CONTAINER_IMAGE" && mkfs.xfs -q -n ftype=1 "$CONTAINER_IMAGE"; }; then
+    rm -f "$CONTAINER_IMAGE"
+    add_warning "Containers get no disk limit on this server: the file system for Docker could not be made"
+    return 0
+  fi
+  systemctl stop docker.socket docker
+  rm -rf "$root.before"
+  [[ -d "$root" ]] && mv "$root" "$root.before"
+  mkdir -p "$root"
+  if ! mount -o loop,pquota "$CONTAINER_IMAGE" "$root"; then
+    rmdir "$root"; [[ -d "$root.before" ]] && mv "$root.before" "$root"
+    rm -f "$CONTAINER_IMAGE"
+    systemctl start docker
+    add_warning "Containers get no disk limit on this server: it cannot mount a file system from a file"
+    return 0
+  fi
+  chmod 710 "$root"
+  grep -q "^$CONTAINER_IMAGE " /etc/fstab || echo "$CONTAINER_IMAGE $root xfs loop,pquota,nofail 0 0" >> /etc/fstab
+  # Docker never starts on the empty folder underneath when the mount is missing
+  mkdir -p /etc/systemd/system/docker.service.d
+  printf '[Unit]\nRequiresMountsFor=%s\n' "$root" > /etc/systemd/system/docker.service.d/cloudbase-disk.conf
+  # The limit needs the overlay2 driver; a new Docker would use containerd's image store, which has none
+  python3 - <<'PY'
+import json, os
+path = "/etc/docker/daemon.json"
+config = {}
+if os.path.exists(path) and os.path.getsize(path):
+    with open(path) as f:
+        config = json.load(f)
+config["storage-driver"] = "overlay2"
+config.setdefault("features", {})["containerd-snapshotter"] = False
+os.makedirs("/etc/docker", exist_ok=True)
+with open(path, "w") as f:
+    json.dump(config, f, indent=2)
+PY
+  systemctl daemon-reload
+  systemctl start docker
+  rm -rf "$root.before"
+}
+
+# Does the limit really hold, with the sandbox? Writing past it must fail.
+step_container_disk_check() {
+  mountpoint -q /var/lib/docker || return 0
+  local run=(docker run --rm --storage-opt size=64m)
+  docker info --format '{{json .Runtimes}}' | grep -q '"runsc"' && run+=(--runtime=runsc)
+  if ! "${run[@]}" busybox dd if=/dev/zero of=/fill bs=1M count=8; then
+    add_warning "The disk limit per container could not be checked (see $LOG_FILE)"
+  elif "${run[@]}" busybox dd if=/dev/zero of=/fill bs=1M count=200; then
+    add_warning "The disk limit per container does NOT hold on this server: a container wrote past it (see $LOG_FILE)"
+  else
+    echo "The disk limit per container holds"
+  fi
+  docker image rm busybox >/dev/null 2>&1 || true
+}
+
 step_gvisor() {
   bash "$INSTALL_DIR/scripts/setup-gvisor.sh"
 }
@@ -876,7 +971,10 @@ fi
 if [[ "$ROLE" == "primary" ]] && { $TENANT || [[ -n "$PANEL_DOMAIN$BASE_DOMAIN$DB_DOMAIN$API_TOKEN" ]]; }; then
   add_step "Setting up tenant mode, domains and the API token" step_platform
 fi
+$GVISOR && add_step "Turning on swap" step_swap
+[[ "$ROLE" == "node" ]] && $GVISOR && add_step "Giving containers their own disk space" step_container_disk
 $GVISOR && add_step "Installing the gVisor sandbox" step_gvisor
+[[ "$ROLE" == "node" ]] && $GVISOR && add_step "Checking the disk limit per container" step_container_disk_check
 add_step "Setting up the node network" step_wireguard
 add_step "Setting up disk limits and traffic counting" step_quota
 add_step "Setting up updates from the panel" step_update_helper

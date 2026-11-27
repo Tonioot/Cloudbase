@@ -5,6 +5,7 @@ from typing import Any, Optional
 import httpx
 import psutil
 from agent.state import AgentState
+from containers import disk_area
 from core import hardware, selfupdate, sysmetrics
 
 def _collect_node_metrics() -> dict:
@@ -75,6 +76,10 @@ def _collect_system_info() -> dict:
     except Exception:
         info.setdefault("hostname", _socket.gethostname())
     info["hardware"] = hardware.collect()
+    area = disk_area.usage()
+    if area:      # Docker's own file system: how full, and how much of the disk is spoken for by its image file
+        info["container_disk_percent"] = area["percent"]
+        info["container_area_gb"] = area["gb"] if area["own_file"] else 0
     return info
 
 

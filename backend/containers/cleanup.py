@@ -1,11 +1,15 @@
 import asyncio
 import logging
+import os
+import re
+import shutil
 import threading
 import time
 from typing import Optional
 from containers.client import _get_client, is_docker_available
 from containers.locks import _build_locks, _build_locks_guard
 from containers.naming import image_name
+from containers import disk_area, processes as pm
 
 log = logging.getLogger("cloudbase.docker")
 
@@ -31,7 +35,8 @@ CLEANUP_PRE_BUILD_DISK_PERCENT = 85.0            # clean first when a build star
 def disk_percent() -> Optional[float]:
     try:
         import psutil
-        return float(psutil.disk_usage("/").percent)
+        area = disk_area.usage()
+        return max(float(psutil.disk_usage("/").percent), float(area["percent"]) if area else 0.0)
     except Exception:
         return None
 
@@ -117,6 +122,45 @@ def remove_image(app_id: int) -> None:
         log.info("[docker] Removed image %s", img)
     except Exception:
         pass
+
+
+_APP_IMAGE = re.compile(r"^cloudbase/app-(\d+):")
+_APP_FOLDER = re.compile(r"^app-(\d+)(\.tmp)?$")
+
+
+def remove_leftovers(keep: set, up_to: int) -> dict:
+    """Remove the images and sources of apps that no longer exist: ids up to `up_to` that are not in `keep`. An image
+    a container still uses is left for the next time. {"images": n, "sources": n} removed."""
+    def gone(app_id: int) -> bool:
+        lock = _build_locks.get(app_id)
+        return app_id <= up_to and app_id not in keep and not (lock and lock.locked())
+
+    removed = {"images": 0, "sources": 0}
+    try:
+        client = _get_client()
+        for image in client.images.list():
+            for tag in image.tags:
+                found = _APP_IMAGE.match(tag)
+                if found and gone(int(found.group(1))):
+                    try:
+                        client.images.remove(tag)           # not forced: never from under a container
+                        removed["images"] += 1
+                    except Exception as e:
+                        log.debug("[docker] %s stays for now: %s", tag, e)
+    except Exception as e:
+        log.debug("[docker] could not look for the images of deleted apps: %s", e)
+    try:
+        names = os.listdir(pm.APPS_BASE_DIR)
+    except OSError:
+        names = []
+    for name in names:
+        found = _APP_FOLDER.match(name)
+        if found and gone(int(found.group(1))):
+            shutil.rmtree(os.path.join(pm.APPS_BASE_DIR, name), ignore_errors=True)
+            removed["sources"] += 1
+    if any(removed.values()):
+        log.info("[docker] Deleted apps: removed %d image(s) and %d source folder(s)", removed["images"], removed["sources"])
+    return removed
 
 
 # ── Keeping the disk clean on its own ─────────────────────────────────────────

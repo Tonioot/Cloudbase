@@ -15,11 +15,15 @@ runs is left alone, also on a node that is too full (after the settings changed)
 nothing new is added there, and a restart that does not ask for more is always allowed.
 
 With deploy_room, a new placement leaves room on its node for one more instance of the biggest app there: a rolling
-deploy starts the new version next to the old one, and that one instance may use the room (surge()).
+deploy starts the new version next to the old one, and that one instance may use the room (surge()). Cron jobs use
+that room too, by turns: a cron job is then not promised anything, the room is at least as big as it is, and a run (or
+the build of a static site) takes memory only while it goes (claim(), release()). It waits for room, on whichever node
+has it first, for WAIT_SECONDS at most: nothing waits forever.
 
 The primary in tenant mode runs nothing and gives out nothing. mode "auto" turns reservations on in tenant mode only:
 a Cloudbase at home keeps placing as it always did.
 """
+import asyncio
 import contextlib
 import contextvars
 import json
@@ -31,8 +35,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import config as _cfg, tenant
+from core.database import AsyncSessionLocal
 from core.env_crypto import decrypt_text
 from core.models import Application, Database, Instance, Node
+
+AREA_FULL_PERCENT = 90   # Docker's own file system this full: nothing new goes to the node
+WAIT_SECONDS = 600       # the longest a cron run, a static build or a deploy waits for room before it gives up
+POLL_SECONDS = 5
 
 _surge: contextvars.ContextVar[bool] = contextvars.ContextVar("capacity_surge", default=False)
 
@@ -87,6 +96,27 @@ def surge():
         yield
     finally:
         _surge.reset(token)
+
+
+# ── What runs for a while ────────────────────────────────────────────────────
+
+_temporary: dict[str, tuple[int, "Need"]] = {}      # key (a cron run, a build) -> (node id, what it takes while it goes)
+
+
+def occupy(node_id: int, key: str, need: "Need") -> None:
+    _temporary[key] = (node_id, need)
+
+
+def release(key: str) -> None:
+    _temporary.pop(key, None)
+
+
+def temporary(node_id: int) -> "Need":
+    total = Need()
+    for where, need in list(_temporary.values()):
+        if where == node_id:
+            total = total + need
+    return total
 
 
 # ── What things need ─────────────────────────────────────────────────────────
@@ -178,22 +208,25 @@ def allocatable(node: Node, s: Optional[dict] = None) -> Need:
     md = _meta(node)
     cores = float(md.get("cpu_count_logical") or md.get("cpu_count") or 0)
     memory = int(md.get("ram_total_mb") or 0)
-    disk = float(md.get("disk_total_gb") or 0)
+    # Docker's own file system (containers/disk_area.py) is spoken for: databases cannot have that part of the disk
+    disk = float(md.get("disk_total_gb") or 0) - float(md.get("container_area_gb") or 0)
     return Need(max(0.0, cores - s["reserve_cpu"]) * s["cpu_ratio"], max(0, memory - s["reserve_memory_mb"]),
                 max(0, int((disk - s["reserve_disk_gb"]) * 1024)))
 
 
 async def promised(db: AsyncSession, node_ids: Optional[Iterable[int]] = None, *, exclude_instance: Optional[int] = None,
                    exclude_database: Optional[int] = None) -> dict[int, dict]:
-    """Per node: {"need": Need, "biggest": Need of its biggest app instance} of everything promised there."""
+    """Per node: {"need": Need of everything promised there, "biggest": Need of its biggest app instance or cron job}.
+    With deploy_room a cron job is not promised: it only makes the room that is kept at least as big as it is."""
     ids = set(node_ids) if node_ids is not None else None
     out: dict[int, dict] = {}
 
-    def add(node_id, need: Need, instance=False):
+    def add(node_id, need: Need, instance=False, promise=True):
         if node_id is None or (ids is not None and node_id not in ids):
             return
         entry = out.setdefault(node_id, {"need": Need(), "biggest": Need()})
-        entry["need"] = entry["need"] + need
+        if promise:
+            entry["need"] = entry["need"] + need
         if instance and need.memory_mb > entry["biggest"].memory_mb:
             entry["biggest"] = need
 
@@ -203,9 +236,11 @@ async def promised(db: AsyncSession, node_ids: Optional[Iterable[int]] = None, *
         if instance.id != exclude_instance:
             add(instance.node_id, running_need(instance, app), instance=True)
     local_id = (await db.execute(select(Node.id).where(Node.is_local == True))).scalar_one_or_none()   # noqa: E712
+    shared = settings()["deploy_room"]
     for app in (await db.execute(select(Application).where(Application.cron_schedule.is_not(None)))).scalars():
         if (app.cron_schedule or "").strip():
-            add(app.node_id or local_id, app_need(app), instance=True)       # a job may start any time: always promised
+            # without the shared room a job may start any time, so it is always promised
+            add(app.node_id or local_id, app_need(app), instance=True, promise=not shared)
     for database in (await db.execute(select(Database))).scalars():
         if database.id != exclude_database:
             add(database.node_id, database_need(database))
@@ -218,22 +253,32 @@ class Room:
     allocatable: Need
     promised: Need
     biggest: Need
+    temporary: Need = Need()
 
     @property
     def free(self) -> Need:
         return self.allocatable - self.promised
 
-    def fits(self, need: Need, *, surge: bool = False, instance: bool = True, s: Optional[dict] = None) -> Optional[str]:
+    def fits(self, need: Need, *, surge: bool = False, instance: bool = True, job: bool = False,
+             new: bool = True, s: Optional[dict] = None) -> Optional[str]:
         """None when `need` fits here; otherwise why not. An app instance leaves room for a deploy of the biggest app
-        instance here (itself included); one started by a deploy may use that room."""
+        instance here (itself included); one started by a deploy may use that room. What runs for a while sits in that
+        room, or in whatever else is free. `job`: may a cron job have this node as its own; with deploy_room it only
+        needs the kept room to be able to be that big."""
         s = s or settings()
         if not gives_out(self.node):
             return "nothing runs on the primary"
+        # nothing new on a node whose containers are nearly out of disk; a deploy of what runs there may go on (new=False:
+        # a bigger database disk, which is not on that part of the disk)
+        full = float(_meta(self.node).get("container_disk_percent") or 0)
+        if new and full >= AREA_FULL_PERCENT and not (surge and instance):
+            return f"the disk for containers is {full:.0f}% full"
         keep = Need()
-        if s["deploy_room"] and not surge:
+        if s["deploy_room"] and not surge and not job:
             biggest = need if instance and need.memory_mb > self.biggest.memory_mb else self.biggest
             keep = Need(biggest.cpu, biggest.memory_mb, 0)
-        left = self.free - keep
+        busy = Need() if job and s["deploy_room"] else self.temporary
+        left = self.free - Need(max(keep.cpu, busy.cpu), max(keep.memory_mb, busy.memory_mb), 0)
         if need.memory_mb > left.memory_mb:
             return f"{need.memory_mb} MB memory asked, {max(0, left.memory_mb)} MB free"
         if need.cpu > left.cpu + 1e-9:
@@ -242,16 +287,24 @@ class Room:
             return f"{need.disk_mb // 1024} GB disk asked, {max(0, left.disk_mb) // 1024} GB free"
         return None
 
-    def as_dict(self) -> dict:
-        return {"allocatable": self.allocatable.as_dict(), "promised": self.promised.as_dict(), "free": self.free.as_dict()}
+    def has_room_now(self, need: Need) -> Optional[str]:
+        """None when something that runs for a while can start here now."""
+        return self.fits(need, surge=True, instance=False)
+
+    def as_dict(self, s: Optional[dict] = None) -> dict:
+        """`kept`: what stays free for deploys and cron jobs; a platform counts it as taken."""
+        kept = self.biggest if (s or settings())["deploy_room"] else Need()
+        return {"allocatable": self.allocatable.as_dict(), "promised": self.promised.as_dict(), "free": self.free.as_dict(),
+                "kept": Need(kept.cpu, kept.memory_mb, 0).as_dict(), "temporary": self.temporary.as_dict(),
+                "container_disk_percent": _meta(self.node).get("container_disk_percent")}
 
 
 async def rooms(db: AsyncSession, nodes: Iterable[Node], **exclude) -> list[Room]:
     nodes = list(nodes)
     s = settings()
     taken = await promised(db, [n.id for n in nodes], **exclude)
-    return [Room(n, allocatable(n, s), taken.get(n.id, {}).get("need", Need()), taken.get(n.id, {}).get("biggest", Need()))
-            for n in nodes]
+    return [Room(n, allocatable(n, s), taken.get(n.id, {}).get("need", Need()), taken.get(n.id, {}).get("biggest", Need()),
+                 temporary(n.id)) for n in nodes]
 
 
 class NoRoom(HTTPException):
@@ -268,7 +321,7 @@ def _no_room(need: Need, reasons: list[str]) -> NoRoom:
 # ── Choosing and checking ────────────────────────────────────────────────────
 
 async def choose(db: AsyncSession, candidates: Iterable[Node], need: Need, *, spread: Optional[dict] = None,
-                 surge: bool = False, instance: bool = True) -> Node:
+                 surge: bool = False, instance: bool = True, job: bool = False) -> Node:
     """The node to put `need` on: one where it fits, the fewest of `spread` (instances of the same app) first, then the
     most free memory. Without reservations: the fewest of `spread`, then the fewest things, as before."""
     candidates = list(candidates)
@@ -280,7 +333,7 @@ async def choose(db: AsyncSession, candidates: Iterable[Node], need: Need, *, sp
     s = settings()
     found, reasons = [], []
     for room in await rooms(db, candidates):
-        why = room.fits(need, surge=surge or _surge.get(), instance=instance, s=s)
+        why = room.fits(need, surge=surge or _surge.get(), instance=instance, job=job, s=s)
         (reasons.append(f"{room.node.name}: {why}") if why else found.append(room))
     if not found:
         raise _no_room(need, reasons)
@@ -306,12 +359,13 @@ async def choose_many(db: AsyncSession, candidates: Iterable[Node], need: Need, 
 
 
 async def ensure(db: AsyncSession, node: Node, need: Need, *, exclude_instance: Optional[int] = None,
-                 exclude_database: Optional[int] = None, surge: bool = False, instance: bool = True) -> None:
+                 exclude_database: Optional[int] = None, surge: bool = False, instance: bool = True,
+                 job: bool = False) -> None:
     """Raise NoRoom unless `need` fits on this node (what is excluded counts as gone)."""
     if not enabled():
         return
     room = (await rooms(db, [node], exclude_instance=exclude_instance, exclude_database=exclude_database))[0]
-    why = room.fits(need, surge=surge or _surge.get(), instance=instance)
+    why = room.fits(need, surge=surge or _surge.get(), instance=instance, job=job, new=exclude_database is None)
     if why:
         raise NoRoom(f"No room on node '{node.name}' for {need.cpu:g} CPU and {need.memory_mb} MB memory ({why}). "
                      "Add a node, or make something smaller.")
@@ -347,10 +401,79 @@ async def check_new_limits(db: AsyncSession, app: Application, cpu, memory_mb) -
         node = await db.get(Node, app.node_id) if app.node_id else (await db.execute(select(Node).where(Node.is_local == True))).scalar_one_or_none()  # noqa: E712
         if node is not None:
             room = (await rooms(db, [node]))[0]
-            room.promised = room.promised - app_need(app)
-            why = room.fits(need_of(cpu, memory_mb))
+            if not settings()["deploy_room"]:
+                room.promised = room.promised - app_need(app)       # promised only without the shared room
+            why = room.fits(need_of(cpu, memory_mb), job=True)
             if why:
                 raise NoRoom(f"No room on node '{node.name}' for this job's new limits ({why}). Add a node, or keep it smaller.")
+
+
+# ── Waiting for room ─────────────────────────────────────────────────────────
+
+async def runnable_nodes(db: AsyncSession) -> list[Node]:
+    nodes = (await db.execute(select(Node).where(Node.enabled == True))).scalars().all()   # noqa: E712
+    return [n for n in nodes if (n.is_local or n.status == "online") and tenant.may_run_on(n)]
+
+
+async def claim(db: AsyncSession, need: Need, key: str, prefer: Optional[int] = None) -> Optional[Node]:
+    """Take room for something that runs for a while: on `prefer` when it has it, else where the most is free. None
+    when no node has it right now. release(key) gives it back."""
+    found = await rooms(db, await runnable_nodes(db))
+    for room in found:
+        room.temporary = temporary(room.node.id)      # again: nothing is awaited from here to occupy(), so two never take the same
+    fitting = [r for r in found if r.has_room_now(need) is None]
+    if not fitting:
+        return None
+    room = min(fitting, key=lambda r: (r.node.id != prefer, r.temporary.memory_mb - r.free.memory_mb, r.node.id))
+    occupy(room.node.id, key, need)
+    return room.node
+
+
+async def deploy_target(db: AsyncSession, prefer: Node, need: Need, *, surge: bool) -> Optional[Node]:
+    """Where the new version of an instance goes now: its own node when it fits there (a deploy may use the kept room),
+    else another node where it fits as something new. None when nowhere right now."""
+    nodes = await runnable_nodes(db)
+    found = await rooms(db, nodes)
+    for room in found:
+        if room.node.id == prefer.id and room.fits(need, surge=surge) is None:
+            return room.node
+    others = [r for r in found if r.node.id != prefer.id and r.fits(need) is None]
+    return min(others, key=lambda r: (-r.free.memory_mb, r.node.id)).node if others else None
+
+
+async def _wait(find, need: Need, say, wait_seconds: Optional[float]):
+    """Try `find(db)` until it gives a node. NoRoom at once when no node could ever hold `need` as things are, and after
+    WAIT_SECONDS otherwise."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + (WAIT_SECONDS if wait_seconds is None else wait_seconds)
+    told = False
+    while True:
+        async with AsyncSessionLocal() as db:
+            node = await find(db)
+            if node is not None:
+                return node
+            found = await rooms(db, await runnable_nodes(db))
+        reasons = []
+        for room in found:
+            room.temporary = Need()                   # could it fit once what runs for a while is done?
+            why = room.has_room_now(need)
+            reasons.append(f"{room.node.name}: {why or 'busy with deploys, builds or cron jobs'}")
+        if loop.time() >= deadline or all(r.has_room_now(need) is not None for r in found):
+            raise _no_room(need, reasons)
+        if not told and say:
+            say("Waiting for room: the nodes are busy with deploys, builds or cron jobs.")
+            told = True
+        await asyncio.sleep(POLL_SECONDS)
+
+
+async def wait_to_claim(need: Need, key: str, *, prefer: Optional[int] = None, say=None,
+                        wait_seconds: Optional[float] = None) -> Node:
+    return await _wait(lambda db: claim(db, need, key, prefer), need, say, wait_seconds)
+
+
+async def wait_for_deploy_target(prefer: Node, need: Need, *, surge: bool, say=None,
+                                 wait_seconds: Optional[float] = None) -> Node:
+    return await _wait(lambda db: deploy_target(db, prefer, need, surge=surge), need, say, wait_seconds)
 
 
 async def report(db: AsyncSession) -> dict:
@@ -361,7 +484,7 @@ async def report(db: AsyncSession) -> dict:
     total_alloc = total_promised = Need()
     for room in await rooms(db, nodes):
         entry = {"node_id": room.node.id, "name": room.node.name, "gives_out": gives_out(room.node),
-                 "online": room.node.is_local or room.node.status == "online", **room.as_dict()}
+                 "online": room.node.is_local or room.node.status == "online", **room.as_dict(s)}
         per.append(entry)
         if entry["gives_out"] and entry["online"]:
             total_alloc, total_promised = total_alloc + room.allocatable, total_promised + room.promised

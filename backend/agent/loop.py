@@ -8,6 +8,7 @@ import httpx
 import websockets
 from agent.dispatch import _active_streams, _execute_command, _execute_in_background
 from agent import alive, mesh as agent_mesh, report as agent_report
+from containers import traffic as containers_traffic
 from containers.cleanup import cleanup_forever
 from containers.output_log import output_log_forever
 from agent.log import _agent_log
@@ -142,6 +143,7 @@ async def start_agent(main_url=None, invite_code=None, node_name=None, public_ho
     
     async with httpx.AsyncClient() as client:
         reconciler = Reconciler(client, state)
+        containers_traffic.start_watching()      # count what a new container sends from its start
         background = [asyncio.create_task(agent_mesh.join_forever(client, state)), asyncio.create_task(reconciler.run()),
                       asyncio.create_task(cleanup_forever()), asyncio.create_task(output_log_forever())]
         try:

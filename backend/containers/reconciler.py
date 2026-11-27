@@ -211,7 +211,8 @@ class Reconciler:
         if container and container["status"] == "restarting" and up_to_date:
             # Docker is restarting a crashing app by itself (its restart policy); not for us to fight
             self._set(instance_id, "error", container_id=container["id"], spec_hash=wanted,
-                      error="the app keeps crashing and Docker keeps restarting it; see the logs")
+                      error=("the app ran out of memory and keeps restarting; see the logs" if container.get("oom")
+                             else "the app keeps crashing and Docker keeps restarting it; see the logs"))
             return
 
         attempt = self.attempts.get(instance_id)
@@ -224,7 +225,8 @@ class Reconciler:
         crashed = (container is not None and up_to_date and container["status"] != "running"
                    and started is not None and time.monotonic() - started < CRASH_WINDOW_SECONDS)
         if crashed:
-            self._failed(instance_id, wanted, f"the container exited right after starting (exit code {container['exit_code']}); see the logs")
+            why = "ran out of memory" if container.get("oom") else "exited right after starting"
+            self._failed(instance_id, wanted, f"the container {why} (exit code {container['exit_code']}); see the logs")
             attempt = self.attempts[instance_id]
         if attempt:
             if attempt["count"] >= MAX_ATTEMPTS:

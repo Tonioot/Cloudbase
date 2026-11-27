@@ -1,11 +1,12 @@
 import json
 import logging
 import os
+import re
 import subprocess
 import threading
 from collections import deque
 from dbs import lifecycle as dbs_lifecycle, proxy as db_proxy
-from containers.buildkit import _BUILD_SECRET_ID, buildkit_available
+from containers.buildkit import _BUILD_SECRET_ID, buildkit_available, resource_limit_args, resource_limits_supported
 from containers.cleanup import _cleanup_before_build
 from containers.client import _get_client
 from containers.dockerfiles import _ARG_NAME_RE, _declared_build_args, ensure_dockerfile, has_custom_dockerfile
@@ -13,6 +14,10 @@ from containers.locks import _get_build_lock
 from containers.naming import image_name
 
 log = logging.getLogger("cloudbase.docker")
+
+
+# what a build step prints, or BuildKit says, when it needed more memory than it may use
+_OUT_OF_MEMORY = re.compile(r"exit code: 137|\bKilled\b|heap out of memory|[Cc]annot allocate memory|ENOMEM|signal: killed")
 
 
 def _stringify_build_error(error) -> str:
@@ -199,7 +204,7 @@ def _write_secret_file(build_env: dict) -> str:
 
 def _build_with_cli(
     app_id: int, app_dir: str, img: str, push_line_fn,
-    buildargs=None, labels=None, secret_env=None, host_network=False, timeout_seconds=None,
+    buildargs=None, labels=None, secret_env=None, host_network=False, timeout_seconds=None, limits=None,
 ) -> None:
     """Build through `docker build` so BuildKit does the work; stream its plain log.
 
@@ -210,6 +215,14 @@ def _build_with_cli(
     cmd = ["docker", "build", "--progress=plain", "-t", img]
     if host_network:
         cmd += ["--network", "host"]
+    memory_mb = (limits or {}).get("memory_mb")
+    if limits:
+        if resource_limits_supported():
+            cmd += resource_limit_args(limits.get("cpu"), memory_mb)
+        else:
+            memory_mb = None
+            log.warning("[docker] This Docker cannot limit builds (buildx 0.35 or newer is needed): app %s is built without limits", app_id)
+            push_line_fn(app_id, "[Docker] Warning: this server cannot limit builds yet (update Docker). This build runs without limits.")
     env = {**os.environ, "DOCKER_BUILDKIT": "1"}
     for k, v in (buildargs or {}).items():
         if k == "CB_ENV_HASH":
@@ -264,6 +277,10 @@ def _build_with_cli(
             cut = next((i for i in range(len(lines) - 1, -1, -1) if lines[i].startswith("Dockerfile:")), None)
             body = lines[:cut] if cut else [l for l in lines if not l.startswith("ERROR: failed to")]
             shown = [l for l in body if l.strip("- ")][-12:]
+            if memory_mb and any(_OUT_OF_MEMORY.search(l) for l in lines):
+                push_line_fn(app_id, f"[Docker] The build ran out of memory: it may use {memory_mb} MB. Choose a bigger size.")
+                raise RuntimeError(f"The build ran out of memory: it may use {memory_mb} MB. Choose a bigger size. | "
+                                   + " | ".join(shown))
             raise RuntimeError(f"docker build failed (exit {proc.returncode}): " + " | ".join(shown))
     finally:
         if secret_path:
@@ -275,13 +292,13 @@ def _build_with_cli(
 
 def _run_build(
     app_id: int, app_dir: str, img: str, push_line_fn,
-    buildargs=None, labels=None, secret_env=None, host_network=False, hardening=None,
+    buildargs=None, labels=None, secret_env=None, host_network=False, hardening=None, limits=None,
 ) -> None:
     timeout = int((hardening or {}).get("build_timeout_seconds") or 0) or None
     if buildkit_available():
         try:
             return _build_with_cli(app_id, app_dir, img, push_line_fn, buildargs, labels, secret_env, host_network,
-                                   timeout_seconds=timeout)
+                                   timeout_seconds=timeout, limits=limits)
         except FileNotFoundError:
             pass  # docker CLI vanished: fall back to the classic builder below
     if hardening:
@@ -315,10 +332,12 @@ def build_image(
     source_revision: str | None = None,
     linked_databases: list | None = None,
     hardening: dict | None = None,
+    limits: dict | None = None,
 ) -> str:
     """Build Docker image, streaming build output via push_line_fn. Returns image tag.
 
     hardening (tenant mode, core/tenant.py): the build never runs on the host network, and is stopped after a while.
+    limits ({"cpu", "memory_mb"}): what every build step may use, as the container of the app may.
 
     linked_databases (docker_options["linked_databases"]) put the URLs of the linked databases in the build env,
     like they are in the running container. They are not part of the build key: the address can change per build.
@@ -386,6 +405,7 @@ def build_image(
             secret_env=build_env if use_secret else None,
             host_network=host_network and use_secret,
             hardening=hardening,
+            limits=limits,
         )
     except RuntimeError:
         raise
