@@ -96,6 +96,38 @@ def test_a_project_that_is_not_connected_gives_nothing(shop):
     assert "project" not in _options(shop["worker"]) and "exposed_to" not in _options(shop["api"])
 
 
+def test_a_cron_run_gets_the_addresses_here_and_on_a_node(shop, monkeypatch):
+    from cron import scheduler
+    seen = {}
+
+    async def image(app, push):
+        return "img"
+
+    def job(app_id, run_id, img, command, env, options, timeout, on_line=None):
+        seen["here"] = options
+        return {"exit_code": 0}
+
+    class Done:
+        status, result, error_message = "done", {"exit_code": 0}, None
+
+    async def ask(node_id, command, payload, **kwargs):
+        seen["node"] = payload["docker_options"]
+        return Done()
+    monkeypatch.setattr(scheduler, "_ensure_local_image", image)
+    monkeypatch.setattr(scheduler.containers_jobs, "run_job_container", job)
+    monkeypatch.setattr(scheduler.node_commands, "ask", ask)
+    monkeypatch.setattr(scheduler.apps_runtime, "_refresh_app_source_revision", lambda app: "abc")
+
+    async def go():
+        async with AsyncSessionLocal() as db:
+            app, node = await db.get(Application, shop["worker"]), await db.get(Node, shop["node"])
+        await scheduler._run_local(app, 1, lambda line: None)
+        await scheduler._run_remote(app, node, 2)
+    run(go())
+    for where in ("here", "node"):
+        assert [e["env_var"] for e in seen[where]["project"]] == ["SHOP_DB_URL", "PN_API_URL"]
+
+
 def test_two_databases_never_share_a_variable():
     rows = [Database(id=2, name="shop_db"), Database(id=1, name="shop-db"), Database(id=3, name="x", env_var_name="SHOP_DB_URL")]
     assert [name for name, _ in app_links.database_variables(rows)] == ["SHOP_DB_URL", "SHOP_DB_2_URL", "SHOP_DB_3_URL"]

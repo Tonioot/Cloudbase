@@ -28,6 +28,7 @@ from containers import processes as pm
 from core.database import AsyncSessionLocal
 from core.models import Application, CronRun, Node
 from core.audit import log_audit
+from apps import app_links
 from apps import git as apps_git
 from apps import images as apps_images
 from apps import runtime as apps_runtime
