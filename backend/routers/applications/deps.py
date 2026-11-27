@@ -2,7 +2,7 @@ from fastapi import Request, HTTPException, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import get_db
-from core.models import Node, Instance
+from core.models import CronRun, Node, Instance
 from core import auth as _auth
 from apps import static_sites
 
@@ -42,8 +42,10 @@ def _require_node_agent_for_app(app_id_param: str = "app_id"):
                 Instance.node_id == node.id,
             ).limit(1)
         )
-        # ...or builds this static site right now (apps/static_sites.py)
-        if instance_result.first() is None and not static_sites.node_may_fetch(app_id, node.id):
+        # ...or builds this static site right now (apps/static_sites.py), or runs this cron job now: it has no instances
+        run_here = select(CronRun.id).where(CronRun.app_id == app_id, CronRun.node_id == node.id,
+                                            CronRun.status == "running").limit(1)
+        if instance_result.first() is None and not static_sites.node_may_fetch(app_id, node.id)                 and (await db.execute(run_here)).first() is None:
             raise HTTPException(status_code=403, detail="Node has no instance for this app")
 
     return _dep

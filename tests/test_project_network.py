@@ -128,6 +128,32 @@ def test_a_cron_run_gets_the_addresses_here_and_on_a_node(shop, monkeypatch):
         assert [e["env_var"] for e in seen[where]["project"]] == ["SHOP_DB_URL", "PN_API_URL"]
 
 
+def test_a_node_may_fetch_the_source_of_the_cron_job_it_runs_and_only_then(shop):
+    from fastapi import HTTPException
+
+    from core.models import CronRun
+    from routers.applications.deps import _require_node_agent_for_app
+
+    class Request:
+        headers = {"X-Node-Token": "pn-token"}
+
+    async def fetch(status):
+        async with AsyncSessionLocal() as db:
+            row = CronRun(app_id=shop["worker"], node_id=shop["node"], status=status)
+            db.add(row)
+            await db.commit()
+            try:
+                await _require_node_agent_for_app()(Request(), shop["worker"], db)
+                return True
+            except HTTPException as e:
+                assert e.status_code == 403
+                return False
+            finally:
+                await db.delete(row)
+                await db.commit()
+    assert run(fetch("success")) is False and run(fetch("running")) is True
+
+
 def test_two_databases_never_share_a_variable():
     rows = [Database(id=2, name="shop_db"), Database(id=1, name="shop-db"), Database(id=3, name="x", env_var_name="SHOP_DB_URL")]
     assert [name for name, _ in app_links.database_variables(rows)] == ["SHOP_DB_URL", "SHOP_DB_2_URL", "SHOP_DB_3_URL"]
