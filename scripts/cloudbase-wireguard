@@ -354,11 +354,8 @@ def isolate_apps() -> None:
     # stays a connection to this machine, which the rules above refuse.
     for interface in (*APP_INTERFACES, "cbappx0"):
         _ensure_nat_bypass(interface)
-    try:
-        run(["iptables", "-w", "5", "-t", "nat", "-L", ROUTES_CHAIN, "-n"])
-    except HelperError:
-        return                                            # no project addresses here yet
-    _routes_first()                                       # a bypass added just now must stay below them
+    if os.path.exists(_path(ROUTES_STORE)):               # project addresses were set here:
+        _routes_first()                                   # a bypass added just now must stay below them
 
 
 def check_allowed(items) -> list[tuple[str, int]]:
@@ -475,11 +472,11 @@ def routes_rules(routes: list[dict]) -> str:
 def _jump_first(table: str, parent: str, chain: str) -> None:
     """Make `parent` go to `chain` before any of its other rules."""
     jump = [parent, "-j", chain]
-    try:
-        while True:                                       # wherever it is now, once or more
+    for _ in range(10):                                   # wherever it is now, once or more
+        try:
             run(["iptables", "-w", "5", "-t", table, "-D", *jump])
-    except HelperError:
-        pass
+        except HelperError:
+            break                                         # none left
     run(["iptables", "-w", "5", "-t", table, "-I", *jump])
 
 

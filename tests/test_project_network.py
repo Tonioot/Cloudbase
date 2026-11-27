@@ -344,7 +344,19 @@ def test_the_routes_are_kept_for_the_next_boot(wg, monkeypatch):
     assert ["iptables", "-w", "5", "-t", "filter", "-I", "DOCKER-USER", "-j", "CLOUDBASE-ROUTES-FWD"] in ran
 
 
+def test_the_bypass_for_the_bridges_stays_below_the_project_addresses(wg, monkeypatch):
+    ran = []
+    monkeypatch.setattr(wg, "run", lambda args, stdin=None: ran.append(args) or _fail_delete(wg, args))
+    wg.isolate_apps()
+    assert not any("CLOUDBASE-ROUTES" in args for args in ran)               # none set here yet
+    wg.cmd_routes([], '{"routes": []}')
+    ran.clear()
+    wg.isolate_apps()
+    jump = ["iptables", "-w", "5", "-t", "nat", "-I", "PREROUTING", "-j", "CLOUDBASE-ROUTES"]
+    assert ran.index(jump) > max(i for i, args in enumerate(ran) if "addrtype" in args)
+
+
 def _fail_delete(wg, args):
-    if "-D" in args:
+    if "-D" in args or "-C" in args and "addrtype" in args:
         raise wg.HelperError("no such rule")
     return ""
